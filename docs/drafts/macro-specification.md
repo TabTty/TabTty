@@ -1,0 +1,455 @@
+# Terminal automation macros: accepted specification
+
+Published as [GitHub issue #3](https://github.com/TabTty/TabTty/issues/3)
+with ready-for-agent on 2026-11-14. The [published body](macro-github-issue.md)
+contains the confirmed specification and testing decisions.
+
+Final review confirmed on 2026-11-14. Product decisions Q1-Q77 in the
+[interview](macro-issue.md) are accepted, including all Q70-Q77 recommendations.
+Q69 authorizes drafting routine language, API, resource and validation details.
+Those details and the primary testing seam are confirmed for implementation
+handoff. This is documentation only. Macros remain outside the initial release until scope is explicitly
+amended. No code, prototype or macro runtime tests accompany this draft.
+
+Read with the [language and API](macro-language.md) and
+[budgets and acceptance cases](macro-validation.md). Those documents form one
+accepted contract. The interview preserves decision history; this document describes the
+resulting behavior. Initial session, authentication, vault, terminal, logging,
+broadcast, AI and SFTP contracts continue to apply except for the explicitly
+identified future-macro adaptations below.
+
+## Purpose and boundaries
+
+A trusted, locally authored or reviewed `.tttym` file automates one new terminal
+session using an existing saved connection-profile file. A run can assemble
+strings, loop and branch, observe received text, send text/passwords, wait,
+obtain time/source/argument information, ask the user for ordinary input or a
+decision, and minimize/restore its current host window.
+
+Use a TabTty-owned interpreter with whole-source checking and explicit runtime
+pause/Stop checkpoints (Q62, ADR 0004). The language is C#-style, not full C#.
+It does not expose arbitrary .NET members, local files, processes, network
+clients, clipboard access, custom classes, source imports, user threads/tasks,
+or AI/SFTP control. Required profile reads, vault retrieval and session recording
+are application operations, not general script file access. No untrusted-code
+sandbox or safety of arbitrary remote commands is promised.
+
+Execution is attended: a visible application hosts each run and normal host-key,
+vault-unlock and authentication interactions remain available. No headless mode,
+secret command-line arguments or automatic host-trust acceptance is introduced.
+One invocation creates a distinct run; repeated launches never attach to an
+existing terminal or share script variables. A run has at most one connection
+attempt. A second `Connect` is a recoverable `ConnectionAlreadyAttempted` error,
+including after failure; restart the macro to start another attempt.
+
+## Loading, launch and source identity
+
+Support the Run Macro file picker, attended command-line launch, and an optional
+Windows `.tttym` association. Windows/user choice controls that association.
+Use this CLI shape, with Windows argument parsing and no second shell
+interpretation:
+
+```text
+TabTty.exe --macro "C:\Ops\inspect.tttym" -- "server group A" ""
+```
+
+The source path is a single argument; arguments after `--` are ordered ordinary
+strings, including empty strings. In-app launch uses one editable item per
+argument, not an undocumented shell command line. File activation supplies an
+empty argument list. No command-line execution-result protocol, exit-status
+automation or detached/background execution is promised.
+
+Resolve a relative launch source against the invoking process's captured working
+directory before forwarding activation to an existing instance. Forward its
+absolute path and parsed arguments, not a shell command. Existing activation
+routing selects the most recently active surviving terminal window, creating
+one if needed. Existing blocking application modals retain their bounded FIFO
+activation behavior; macro dialogs do not become application-wide modals.
+
+Read one bounded source snapshot, detect the longest matching BOM first, and
+strictly decode UTF-8 with/without BOM or BOM-marked UTF-16LE/BE/UTF-32LE/BE.
+No BOM means UTF-8. Reject malformed input without repair or legacy guessing.
+Reject a detected incomplete/changed read; do not claim an atomic filesystem
+snapshot against arbitrary concurrent in-place writes. Validate exactly the
+decoded snapshot that will run. External edits after loading affect later runs.
+
+Validate the required version, entire grammar, types, names, permitted members,
+function call graph and resource admission before running any statement. Dead
+branches and unused functions are checked. Source errors cause no connection,
+send, macro dialog or macro-requested window action. Source diagnostics can be
+shown by the application. Runtime input/value errors are distinct from source
+errors; constant folding cannot change whether an error is catchable.
+
+After validation/admission, allocate the new run/tab and capture:
+
+| Information | Meaning |
+| --- | --- |
+| `Macro.FullPath` | Absolute normalized path used to load the source; no claim of resolving every symlink to its physical target |
+| `Macro.FileName` | Final path component including extension |
+| `Macro.BaseName` | Filename with only its last extension removed |
+| `Macro.Extension` | Last extension including the dot, preserving its spelling |
+| `Macro.Args` | Run-local copy of invocation arguments |
+| `Macro.RunId` | Non-secret unique run identity, distinct from source and session generation |
+
+These values survive file rename, base-directory change and tab movement.
+Source location diagnostics use one-based lines/UTF-16 columns, with CRLF one
+line break and CR or LF one each. BOM is not a source column.
+
+## Connection and path handling
+
+`Connect(profilePath)` explicitly requests the run's only connection. Resolve
+relative paths against a run-local base initially equal to the source directory.
+`SetBaseDirectory(path)` resolves a relative new base against the current base;
+`ResetBaseDirectory()` restores the captured source directory. Normalize `.` and
+`..`; do not expand environment variables or `~`, change process working
+directory, or alter other runs. Existing Windows absolute/UNC/long-path rules
+apply; invalid paths report errors without fallback.
+
+Load the profile without registering it, rewriting it or changing its saved
+settings. Preserve existing bounded basic load checks and runtime checks; full
+editor validation is not silently added to every connection. Capture the same
+immutable session settings and generation used by ordinary profile connection.
+Profile-relative log destinations remain relative to the profile directory,
+regardless of the macro base directory.
+
+Attach receive/alternate-screen observation before transport startup can produce
+terminal data. SSH early terminal data is eligible while connection startup is
+pending. `Connect` returns only at existing transport readiness: SSH shell/PTY
+startup complete, Telnet TCP ready, or serial open/configuration complete.
+Telnet readiness does not prove account login. The macro cannot send terminal
+input until readiness, but startup history is available to its first wait.
+
+Initial recording preparation must succeed before transport starts. Failure
+adds the recording pause described below. Explicit retry uses the same captured
+profile/settings and new part numbers; it does not reread edited profile files.
+To change destination/formats/credential selection, stop and start a new run.
+Keep empty files created by a partially successful open, following the recording
+contract. Successful retry still requires a separate macro Resume.
+
+A caught pre-connection failure does not create a usable session or authorize a
+second attempt. Local dialog cancellation is reported without automatic repeat.
+Actual disconnect of an established session permanently ends the macro.
+
+## Sending and credential use
+
+`Write(text)` sends its text without an added ending. `WriteLine(text)` appends
+one captured profile Enter ending, even when text already ends in a newline.
+Embedded CR/LF/TAB and explicit escaped control characters are intentional
+input; do not convert embedded newlines to the Enter setting. The captured
+transmit encoding and existing transport conversions still apply. This is not
+a raw-packet API, bracketed-paste API or general terminal-key API.
+
+Before any payload, validate and encode the entire logical send using a clone
+of the current session encoder state, including an appended ending and required
+codec closure. The captured encoding/Enter settings do not freeze codec or
+Telnet negotiation state. Reject
+unencodable or over-limit input without sending a prefix or changing live codec
+state. Use the common ordered send owner; protocol replies remain possible and
+are never mistaken for manual/macro input. No implicit line pacing is added;
+authors may use Sleep between sends. Submission completion does not prove remote
+execution, command completion or successful login.
+
+Ordinary macro text obeys the session's current effective local-echo behavior,
+including accepted temporary changes and Telnet negotiation; password operations
+generate no local echo, including their appended ending. Stop cancels unsent
+input at safe existing character/codec boundaries without synthesizing Ctrl+C,
+Escape, newline, exit or disconnect solely because a healthy run ended. A script
+may explicitly send a control character; that is a separate script operation.
+Pause lets an already-started logical send finish (Q30), showing Pause requested
+until then; Stop/Disconnect remain available. Release input ownership only after
+necessary send cleanup, not before a second writer can safely operate.
+
+### Profile password and explicit references
+
+`WritePassword()` / `WritePasswordLine()` use the saved-password reference in the
+profile loaded for this connection attempt. The identity is fixed for the run.
+It does not depend on success/failure, the chosen authentication method, or what
+password the person corrected in an authentication dialog. A password reference
+can be the default even when public-key authentication established the session.
+The secret is never an ordinary string property, return value or interpolation
+operand. A failed connection still cannot transmit through an unavailable session.
+
+The overloads taking `CredentialRef` use that explicit reference instead. Each
+send retrieves the current value of the exact vault/entry/kind from the sole
+application-selected vault, just before it is needed. Application-committed
+entry updates affect later sends; a profile-file edit does not retarget the run.
+An external vault change is a stale-store error under the vault contract, not
+permission to reload the changed file automatically. Deleted entries, wrong
+kind, different vault, stale store and unlock cancellation fail visibly and
+recoverably. Do not fall back to display names, empty passwords, old vault
+instances, temporary authentication input or a different entry.
+
+Telnet/serial profiles have no initial saved-password binding. Their default
+password calls report `MissingProfilePassword`; explicit-reference calls can
+perform terminal-level login. Imported private keys, key passphrases, master
+passwords and keyboard-interactive answers are never terminal password defaults.
+
+The vault-management Copy Macro Reference action copies a complete non-secret
+`CredentialRef` expression suitable for the external editor. The copied identity
+contains vault UUID, entry UUID and kind, not entry display name or secret value.
+Private-key references cannot be sent with password operations. Existing unlock
+and management rules apply; this is not a macro vault-management API.
+
+Hold references through waits/pauses, not prepared secret plaintext. If a pause
+intervenes before send commitment, dispose any prepared secret and reacquire on
+resume. Once sending starts, follow the in-flight-send rule. End transient use
+and clear owned buffers on completion/error/cancellation. Do not claim erasure
+of every runtime/OS copy. No new retention of authentication-time passwords is
+introduced. Remote echo can expose sent secrets in terminal output, recordings
+and explicitly shared AI output; the feature does not redact remote data or
+modify Raw logging. Before the first explicit-reference password submission over
+Telnet/serial in a run, show a persistent nonblocking notice that the transport
+provides no TabTty encryption and remote echo may be recorded/shared (Q77).
+Keep Stop available; add neither per-send approval nor stored profile approval.
+
+## Receive text and matching
+
+Keep a non-consuming macro observer separate from display, scrollback, search,
+highlighting and every recording mode. Only received terminal payload is input:
+exclude local echo, SSH authentication/messages, SFTP data, diagnostics and UI
+actions. Keep SSH DATA and stderr decoder/parser state independent and merge
+completed received units in the existing session order. Do not concatenate Raw
+bytes and decode them again.
+
+Observe decoded literal text and delimiter/control classification before
+screen-editing effects. Remove complete terminal sequences and other controls
+except TAB and line delimiters. A sequence-generated display effect, such as
+REP copying the preceding character, contributes no macro text. Likewise screen
+erasure, cursor movement, wrapping and received alternate charset selection do
+not reconstruct a display string for matching. Retain actual decoded text and
+TAB; `abc<BS>X` becomes `abcX`.
+
+CRLF is one delimiter; LF and lone CR are delimiters. CR may close a macro line
+immediately; suppress its immediately adjacent LF from the same receive source,
+including across transport chunks. An intervening received unit from that source
+breaks the CRLF pair; other-source activity neither completes nor breaks it.
+For example DATA `x<CR>`, stderr `y`, then DATA `<LF>` yields a completed `x`
+line and an unfinished `y` line: the last LF completes the source-local CRLF
+pair rather than adding a second delimiter. Delimiters are
+not part of match text. Do not synthesize a delimiter at EOF, chunk end, pause,
+send, resize, receive-boundary marking or decoder flush. Use the session codec's
+existing malformed-receive handling; macro source decoding remains strict and
+is a different concern.
+
+The source contract preserves prompt matching even without a newline. The two
+wait modes differ only in line eligibility:
+
+| Mode | Eligible received text |
+| --- | --- |
+| Completed-line | A receive line with an actual received delimiter |
+| Prompt | Completed lines and the current unfinished line |
+
+Both allow substring matches within one line. No cross-line/multiline match or
+full-screen recognition is promised. Normal-screen full-screen programs can
+remain undetectable. Observed alternate-screen entry, including modes 47/1047/
+1049, permanently stops the macro even if exit follows in the same receive batch
+or the run is paused/waiting for a dialog. Cursor-save-only mode 1048 does not
+trigger that stop. Keep the healthy connection, remote application and logging.
+If this happens during SSH terminal startup before Connect returns, stop the
+macro continuation without using user-Stop's attempt-cancellation path solely
+for that screen event; let healthy session startup reach its normal result.
+An independent startup/transport failure still follows ordinary session rules.
+
+Keep history from startup and between waits. A successful wait consumes through
+the match end, including earlier unmatched text; retain following text. A failed
+wait/timeout does not silently consume text. `MarkReceiveBoundary()` advances
+the match-start floor to the currently admitted tail before a later send. It
+does not guarantee that future text was caused by that command, clear the
+terminal/logs, or remove required parser state. Keep the original intact receive
+line as the regex subject and restrict match start to the cursor/boundary floor
+(Q72). Consuming `abc` in `abcdef` does not make `^def` match; `(?<=abc)def`
+can match. Retained lookbehind context remains available, but neither a match
+body before the floor nor context across a history gap is permitted.
+
+For an alternative wait, inspect eligible unconsumed lines in receive order,
+then select the earliest match start within the earliest matching line, then
+candidate declaration order. Return a zero-based alternative index, match text
+and captures. Evaluate against immutable text snapshots; update scheduling may
+coalesce still-unstarted searches, so prompt results can depend on available
+receive batches. Once committed, a match is never lengthened or withdrawn by
+later input. `foo$`, a negative lookahead and a greedy repetition all describe
+the current subject; they do not predict future bytes or prove a stable prompt.
+
+Empty literal candidates are invalid. An actual regex result of overall length
+zero is `ZeroLengthMatch`, not a successful wait or a match silently skipped in
+favor of a later result. Empty captures inside a positive-length result remain
+valid. A pattern need not be prohibited merely because some other input could
+give an empty match; validate actual results. Pattern syntax and literal-candidate
+value validation always occur when their factories are evaluated, including
+literal arguments. InvalidPattern/InvalidArgument are catchable consistently;
+macro source syntax/type checking does not evaluate those factory calls.
+
+Use the .NET 10 left-to-right regex dialect, invariant culture, case-sensitive
+by default, with optional IgnoreCase and supported inline `i/m/n/s/x` flags.
+No RightToLeft, ECMAScript, runtime option for unlimited evaluation, or switch
+to NonBacktracking is exposed. Lookaround/backreferences are supported; exact
+budgets are in validation. Timeout is approximate per engine operation and
+separate from the response-wait deadline. Regex work never runs on UI, receive
+or recording owners. Captures are bounded copies, not a retained live match
+object that pins unbounded old history.
+
+### Receive EOF
+
+At receive-direction EOF, finalize existing source decoders/parsers once in the
+session's DATA-then-stderr order, then evaluate retained eligible text. Prompt
+waits may use an unterminated final fragment; completed-line waits cannot.
+If no eligible match can be found, return `EndOfInput` immediately even when the
+wait was indefinite. EndOfInput takes precedence over WaitTimeout when EOF is
+already admitted and a zero-timeout search finds no eligible match. Future waits
+may still consume retained matches before
+returning EndOfInput. EOF does not itself disconnect; actual close/disconnect
+still permanently stops the run. An SSH exit-status message alone is neither
+macro text nor proof of receive EOF.
+
+### Bounded history and loss
+
+History and a single receive line have independent bounds. Normal consumption
+can release no-longer-needed complete lines without reporting loss. If retaining
+required history or its line context would exceed a bound, request macro pause,
+retain a bounded recent tail, and record explicit gap intervals. Terminal receive,
+display and healthy recording continue. Report one notification per unresolved
+incident rather than one per dropped unit. A stream may continue dropping older
+history while that incident is unresolved; account the growing gap.
+
+Continue acknowledges loss and rechecks retained unconsumed history for a pending
+wait; End permanently stops the run. Never concatenate across a gap, treat a
+truncated line as an intact line, replay a command, or clear unrelated holds.
+Continue acknowledges losses through its coordinator cutoff; later new loss is
+a new incident (Q71). Skip a truncated line through its next actual delimiter
+in both wait modes (Q73). Its retained suffix is not a searchable new subject.
+Explain that this can miss a final newline-free prompt. A huge line is a macro-history problem,
+not by itself a reason to disconnect a healthy terminal or stop its logger.
+
+## Run state, timers and user actions
+
+A run owns one interpreter continuation, its variables, one in-progress macro
+operation, a receive cursor and a set of pause holds. Waiting for data/sleep/a
+dialog is not itself a user pause. Show Running, Waiting, Pause requested,
+Paused, Stopping and terminal result states, with the specific pending operation
+and applicable reasons. Use stable internal identifiers and EN/JA resources;
+never branch script behavior on localized UI labels.
+
+Pause preserves variables, receive history and exclusive input. Receive/display,
+healthy recording, independent SFTP, wall clocks and real elapsed time continue.
+Freeze remaining Sleep/finite-response-wait budgets. Remote commands, network
+deadlines and OTP expiry cannot be frozen. Resume never replays a completed or
+partially sent operation. An already-started Connect and its necessary
+trust/authentication/unlock interactions may finish while continuation is held;
+answering those dialogs may send authentication data. Stop cancels only this
+run's attempt/waiter, preserving other shared-unlock users (Q70).
+
+Keep UserPause, RecordingFailure/RecordingReady and HistoryLoss independent.
+Successful recording Retry changes Failure to Ready. Explicit Resume clears
+UserPause and Ready, never unresolved recording failure or unacknowledged loss.
+Continue clears only its acknowledged history incident; execution proceeds only
+when no hold remains (Q71).
+
+Preserve committed matches/results/timeouts through pause, but Stop invalidates
+undelivered results. Discard uncommitted worker results after pause/cursor
+generation changes and re-evaluate on Resume. At expiry, evaluate a frozen
+cutoff of input admitted before the deadline. Later input cannot rescue it;
+pause freezes only the remaining unsettled local budget (Q74).
+
+Ordinary errors can be caught only where documented in the language contract.
+An uncaught error ends the macro with source location and a non-secret reason.
+User Stop, disconnect and alternate-screen termination bypass catch. A known
+zero-payload send rejection is catchable; possible partial or uncertain delivery
+permanently ends the macro without automatic replay, preserving a healthy
+session after required cleanup (Q76). Show the
+reason and cancel pending dialogs/unsent work without returning a fabricated
+normal result. No automatic retry or restart follows. A healthy connected tab
+survives success, Stop and ordinary failure. A macro that finishes before making
+a connection leaves its run result visible until the person closes the tab.
+
+While a macro owns the session, block human terminal keys, text, paste, mouse
+input to the remote application, and broadcast input. Browsing, selection,
+copy, app controls, Pause/Stop/Disconnect and protocol-required replies remain
+available. Pausing does not hand input to the person or AI. Necessary send
+cleanup may delay release after Stop; show Stopping and retain Disconnect.
+
+### Dialogs and windows
+
+`Dialog` presents inert title/message text, a fixed supported button set and an
+optional ordinary single-line input field. It returns the button and whether a
+valid text value exists. Accepted empty input is distinct from no text. Cancel,
+window close and Esc return Cancel with no text; Stop closes the request without
+returning a normal answer. Default button is Cancel when offered, else No for
+Yes/No, else OK. No password-masking/secret-input or arbitrary button API is added.
+
+Wait only for the originating run. Identify that run and its current host; other
+tabs/windows remain usable. Each run has at most one outstanding dialog. A tab
+move moves/reparents its outstanding request without losing typed input. Restore
+a minimized host to its prior normal/maximized state when action is needed, but
+do not promise Windows foreground focus. An answer does not clear other holds.
+
+Minimize/Restore target the window currently hosting the run's tab, including
+after moves. Restore is a no-op unless minimized and preserves pre-minimize
+normal/maximized state. Defer a macro Minimize while that window has any pending
+user-action dialog. Reevaluate the host before a deferred action. User window
+controls remain available. A pending obsolete window action must not affect a
+different window or stopped run. Normal completed actions are not undone.
+
+Include active runs in the existing combined close confirmation even before
+connection. Hold new macro operations at their safe boundary during review;
+started sends finish and Q70 governs started connection attempts. Cancel close
+releases only the close-review hold. Confirm close stops the run and follows
+ordinary connection/SFTP cleanup. Moving a tab requires no close confirmation
+(Q75).
+
+## Recording and other features
+
+Use existing profile-selected recording formats and destination. Base each name
+on the captured macro basename with the existing timestamp/UTC offset, unique
+session suffix, part and format markers. Use `<stem>.log`, `<stem>.raw.tttylog`
+and `<stem>.term.tttylog` for Text/Raw/Terminal. Apply filename sanitization and
+create-new/no-overwrite behavior; limits and collision handling are in validation.
+Do not use arbitrary invocation arguments or credential data in names. No name
+override, in-session rename or macro recording-control API is added.
+
+A user's deliberate recording Pause does not pause the macro. Resume creates
+new parts without backfill. Unexpected recording failure pauses the macro;
+successful explicit Retry is necessary, followed by separate explicit macro
+Resume. Show the gap and failed/new-part status. Normal Text's mixed-line skip,
+Raw/Terminal eligibility and incomplete I/O handling retain the recording
+contract. No macro execution-trace file is introduced. Show run state, location
+and bounded error details without copying arguments, sent text or captures into
+diagnostics automatically.
+
+Macro ownership preserves broadcast checks but excludes the session from newly
+captured eligible recipients; other eligible selected sessions still receive.
+Show unavailable counts. Never modify an already frozen recipient set. On macro
+end, normal eligibility applies to later operations only.
+
+Apply the later [AI collaboration contract](../specification/ai-collaboration.md)
+independently: read-only sharing of a macro-owned session is possible, but AI
+control is unavailable while executing/paused. Starting AI sharing is forbidden
+for checked targets of active broadcast. Permitted AI sharing turns that tab's
+check OFF/disabled and leaves it OFF after sharing ends. This AI rule supersedes
+check retention only for AI-shared tabs; it is not a change to ordinary macro
+eligibility. Macro Stop never grants AI control automatically.
+
+Macro Stop/success leaves independent SFTP work on a healthy session running.
+Confirmed disconnect/tab close ends it under the SFTP contract. No macro SFTP
+API, AI-launch API or simulated desktop operation is introduced.
+
+## Accepted final product decisions: Q70-Q77
+
+The user accepted all eight recommendations on 2026-11-14. They are incorporated
+above and are required by the acceptance matrix, not conditional alternatives.
+
+| Question | Accepted rule and reason |
+| --- | --- |
+| Q70: Pause during connection/authentication | Let an already-started connection attempt and its necessary host-trust/auth/unlock interactions reach a result while the macro continuation is held. Accepting such a dialog may still send authentication data. Do not start the next macro operation until resumed. Stop cancels this run's attempt/waiter and never cancels another run's shared unlock need. Do not retain an entered plaintext secret merely to wait for Resume. This preserves ordinary remote deadlines and avoids restarting authentication on Resume. |
+| Q71: Multiple holds and repeated overflow | Keep UserPause, RecordingFailure/RecordingReady and HistoryLoss independent. Recording Retry success changes failure to ready; explicit macro Resume clears UserPause and a ready recording hold, never an unresolved recording failure or unacknowledged gap. Continue acknowledges losses through its coordinator cutoff and clears only that history incident; a later new loss is a new incident. Continue may resume only if no other hold remains. |
+| Q72: Regex context after consumption/boundary | Keep the intact original receive line as the subject and restrict match start to the unconsumed/boundary floor. After consuming `abc` in `abcdef`, `^def` does not match but `(?<=abc)def` can. MarkReceiveBoundary advances the start floor without redefining line start or forbidding retained lookbehind context. No match body may begin before the floor; no context may cross a history gap. |
+| Q73: Truncated line after history loss | Skip an affected line through its next actual delimiter for both prompt and completed-line matching. Retain its recent suffix only for loss reporting/accounting; do not search it as a new intact subject. This is simple and avoids false anchors/lookbehind, but can miss a final newline-free prompt; display that limitation with Continue/End. |
+| Q74: Match/deadline/pause races | Preserve an already committed match/result or timeout through pause; Stop invalidates any undelivered result. Discard uncommitted worker results when the operation's pause/cursor generation changes and re-evaluate retained input on Resume. A deadline settled before pause is not revived by later input. At a deadline, evaluate a frozen cutoff of data admitted before expiry before declaring timeout. Receive after expiry cannot rescue it; local remaining budget freezes when pause is admitted. |
+| Q75: Closing a run before connection | Include an active macro in the existing combined close confirmation even before a transport exists, with one confirmation per affected close scope. While reviewing the close, hold new macro operations at the ordinary safe boundary; started sends finish, and Q70 governs a started connection. Cancel close releases only the close-review hold. Confirm close permanently stops the run and follows existing connection/SFTP cleanup. Do not prompt when merely moving a tab. |
+| Q76: Partial or uncertain transmission failure | A known zero-payload rejection is catchable. Once a send may have delivered a prefix, end the macro with a clear uncertain-delivery result and do not allow catch to replay/continue automatically. Preserve a healthy session after necessary cleanup; actual transport failure still disconnects under its normal rule. |
+| Q77: Unencrypted terminal password notice | Before the first explicit-reference password submission over Telnet/serial in a run, display a persistent nonblocking notice that this transport provides no TabTty encryption and remote echo may be recorded/shared. Do not add per-send approval or profile-approval storage to trusted macros. Keep Stop available and document the risk at the password APIs. SSH remote echo can also be recorded; SSH encryption is not a log-redaction promise. |
+
+The final review confirmed this contract, its language/API and budgets, and the
+primary application-facing run testing seam on 2026-11-14. The specification is
+ready for implementation handoff and published with ready-for-agent as issue #3.
+Initial-release inclusion and implementation still require explicit
+authorization; neither is inferred from approving this specification.

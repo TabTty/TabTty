@@ -1,0 +1,179 @@
+# TabTty initial implementation readiness
+
+Codec decisions updated on 2026-11-17: existing ISO-8859-10/11/14/16 table reuse
+was approved on 2026-11-16, and Japanese proposals A+B are now approved. They
+cover Microsoft CP932 as the candidate base and the specified Rust-owned
+JIS/EUC mapping/state, receive-recovery, and exact whole-send policies in the
+[consultation record](../drafts/terminal-codec-consultation.md). Those known
+scopes no longer await consultation. Newly discovered custom behavior still
+requires consultation before adoption. `Cp932Duplicates` ports and new mapping
+corrections remain unapproved; consult if a concrete mismatch is found. All three
+architecture designs remain ready for separately requested implementation;
+codec approval is not implementation authorization or runtime-parity evidence.
+
+On 2026-11-17, the user approved the ticket breakdown and requested publication.
+The [implementation plan #16](https://github.com/TabTty/TabTty/issues/16) and its
+23 child implementation tickets are published. Implementation of this redesign
+has not started; publication does not authorize implementation or prototyping.
+
+Architecture update, 2026-11-16: the user selected complete Rust terminal
+processing without managed fallback in
+[ADR 0007](../adr/0007-complete-terminal-processing-in-rust.md).
+The [native terminal design](native-terminal-core.md) defines the target
+coverage and verification. The recording-interface design is confirmed through
+Q5, and shared interpretation with admission/execution walks and verification
+is confirmed through Q8. The [closure design](tab-and-window-closure.md) records
+Q9's ownership scope, amended Q10's transfer-window closure for both bulk and
+automatic disconnected-tab removal, Q11's named complete operations, and Q13's
+failure results and ownership after a caller stops waiting. Q12a accepts ordinary
+same-target transfer completion without restarting an open close confirmation.
+Q12b accepts a later window-close request joining an existing tab closure and
+handling the remaining tabs with required confirmation, without duplicate work
+or a user retry. Q14 in the
+[completed interview](../drafts/terminal-architecture-deepening.md) accepts the
+exceptional changed-target outcome and confirms candidate 3's final shared
+understanding. All three designs—recording operations, shared native parser
+rules, and tab/window closure—are ready for separately requested implementation.
+This design review performed no implementation, prototyping, or runtime
+validation. Current source still implements the earlier partial Rust design;
+historical readiness and validation below do not establish this redesign's
+implementation completion.
+
+Scope update, 2026-11-14: the user added broadcast input and split terminal
+views to the initial release. Their [feature interview](../drafts/broadcast-and-split-issue.md)
+has resolved Q162-Q199, consolidated in the
+[broadcast/split contract](broadcast-and-split-views.md). Q197 resets all
+selection on scope-mode changes; Q198 selects the group-removal destination.
+Final shared-understanding review (Q199), including reset timing, is accepted.
+This extension's specification and implementation preparation are complete.
+The user subsequently requested implementation. See the
+[broadcast and split view validation status](implementation-status.md#broadcast-and-split-view-validation-2026-11-14)
+for the implemented feature and acceptance evidence. The historical readiness
+below covers the earlier baseline.
+
+The feature is published as
+[GitHub issue #1](https://github.com/TabTty/TabTty/issues/1) with
+`ready-for-agent`, including the user-confirmed testing seams.
+
+The initial-release SFTP specification was completed on 2026-11-13 under
+[accepted Q1–Q36](../drafts/file-transfer-issue.md) and implemented on
+2026-11-14. The [SFTP file transfer contract](file-transfer.md) defines the
+transfer window, channel multiplexing, file management, and acceptance cases.
+The [implementation status](implementation-status.md#sftp-validation-2026-11-14)
+records the loopback results and outstanding release checks.
+
+Architecture follow-up, 2026-11-14. Architecture Q1-Q27 are accepted in
+the [file-operation](file-operations.md), [retained-history
+observation](ai-history-observation.md), and [broadcast-input
+operation](broadcast-input-operations.md) designs. The user subsequently
+authorized implementation and issue publication. The
+[GitHub plan](https://github.com/TabTty/TabTty/issues/4) links the eleven
+implementation tickets. See the [architecture validation
+record](implementation-status.md#architecture-follow-up-validation-2026-11-14)
+for executed checks and outstanding acceptance cases.
+
+Historical baseline status, 2026-11-10: specification and implementation
+preparation were complete for the scope at that date. The
+user's Q161 choice is UTF-8-only imported-key passphrases. **Implementation,
+prototyping, installation, commit/push, issue publication, and Store publication
+have not been authorized or performed by this specification work.** Wait for
+the user's explicit implementation request.
+
+This is the historical specification handoff. The user subsequently authorized
+development. See [implementation-status.md](implementation-status.md) for
+current build and acceptance evidence.
+
+## Authoritative specification set
+
+Accepted user decisions in the interview drafts remain the product authority.
+The contracts below complete their internal details and replace the historical
+"remaining technical work" lists in those drafts. They must not be used to
+override an explicit user decision. Any newly discovered contradiction requires
+correction before dependent implementation, rather than choosing a convenient
+interpretation silently. Initial engineering limits are labeled separately from
+accepted performance targets and measured results.
+
+| Branch | Completed contract |
+| --- | --- |
+| Profile/settings schemas, storage/recovery, registration identity, activation, windows/DPI | [Persistence and windows](persistence-and-windows.md) |
+| Session generations, receive-source isolation, input ordering, recording eligibility, Text revisions/retirement, file ownership | [Session and recording](session-and-recording.md) |
+| VT/key/mouse baseline, Unicode width, IME/UIA, JIS/EUC mapping, malformed units | [Terminal and encodings](terminal-and-encodings.md) |
+| Complete Rust terminal ownership without managed fallback; detailed design in progress | [Native terminal module](native-terminal-core.md) |
+| SSH identity/framing/rekey/auth/channel, Telnet negotiation/NVT, serial controls/errors | [Transports and authentication](transports-and-authentication.md) |
+| Initial-release SFTP extension | [File transfer](file-transfer.md) |
+| Initial-release broadcast input and two-level split views | [Broadcast input and split views](broadcast-and-split-views.md) |
+| Portable `.tttykey` byte format, AAD/KDF/key use, secret ownership, import and file-failure rules | [Vault format](vault-format.md) |
+| Aggregate budgets, scheduling, deterministic acceptance workload, deployment/servicing, release gates | [Resources and validation](resources-and-validation.md) |
+| Deferred macro seams | [Future macro constraints](../drafts/future-macro-design.md) |
+
+The root [glossary](../../GLOSSARY.md), [SSH ADR](../adr/0001-own-ssh-client-with-openssl.md),
+and repository instructions apply throughout. Exact C# type names, internal
+class decomposition, drawing optimizations, and test fixture implementation are
+development tasks within these contracts, not unresolved product choices.
+
+## Initial release scope
+
+- C#/WPF/.NET 10 LTS application with the Rust terminal module specified in
+  ADR 0007, self-contained Windows 11 x64; ARM64 optional. Native
+  TabTty terminal control; no xterm.js, WebView2, SSH.NET, ssh.exe, or ConPTY.
+- Microsoft/OpenSSL dependency policy and scoped OpenSSH bcrypt_pbkdf exception.
+  ADR 0007 retains the Rust/standard-library exception from ADR 0006.
+  TabTty owns SSH protocol/session logic; OpenSSL supplies cryptography.
+- English and Japanese UI follows the system language by default, with English
+  as the fallback. The surrounding UI supports system, light, and dark themes.
+  The terminal defaults to white on black and honors ANSI colors.
+- Saved `.ttty` profiles are required for SSH/Telnet/COM. Trusted file activation
+  opens a new tab in the last active window. Multi-window drag/merge preserves
+  live sessions. Telnet/serial login remains manual; no initial macro runtime.
+- SFTP v3 provides two-pane file and folder transfer and file management on an
+  on-demand channel within the invoking tab's authenticated SSH connection.
+  Remote names use the effective terminal transmit encoding captured when the
+  transfer window opens. See the [SFTP contract](file-transfer.md).
+- Raw and Text receive-only, Terminal includes enabled local echo; exact mode
+  semantics, filenames, pause/retry, resize/retirement, and failure policies stand.
+- Portable shared `.tttykey`, one first-use unlock per app run, transient selected
+  secrets, explicit host-key trust/replacement, and UTF-8-only source-key import
+  passphrases without normalization or automatic encoding retries.
+- Regex match-only highlighting, retained-output search, native IME/accessibility,
+  paste preview/pacing with app-run-only remembered values, and accepted defaults.
+
+## Review completed in the documentation phase
+
+Primary-source and repository fact reviews checked the terminal/codec, SSH/vault,
+and profile/window branches. Consolidation resolved actual differences: JIS
+Roman versus historical ASCII handling, unsupported JIS repertoires, CP932/C1
+classification, erase versus history retention, UIA GetText semantics, IME cancel
+on tab change, remote right-click ownership, Windows IDNA processor selection,
+and vault external-change lifetime. These were documentation/source checks,
+not executed implementation tests or an independent security audit.
+
+The vault's retained random DEK is now explicitly a root for per-encryption
+HKDF payload keys, preserving the accepted whole-payload AES-GCM and no-repeat-
+prompt behavior. This closes the cloned/restored-file key-use contract without
+claiming global counters, collision freedom, rollback prevention, or certification.
+The fixed v1 framing/AAD and accepted master-password change remain explicit.
+
+## What readiness does and does not mean
+
+Readiness records the accepted product decisions, external file contracts,
+event and failure behavior, initial resource policy, and verification plan.
+The [implementation status](implementation-status.md) tracks code and executed
+checks as each part of the scope is built.
+Requirements are not proven by being written: protocol interoperability,
+cryptographic vectors, accessibility, clean-PC deployment, performance, and
+fault recovery must pass after implementation and before release.
+
+Release gates include independent custom-SSH/vault/native-security review and
+rechecking current primary guidance, supported Windows/.NET/OpenSSL versions,
+dependency provenance/licenses, and servicing. If tests reveal an impossible
+or unsafe contract, report it and revise the specification explicitly; do not
+silently reduce compatibility, lose output, or weaken credential protection.
+
+Initial ZIP delivery uses manual updates. Store identity/signing, final packaged
+storage/transfer/uninstall policy, and certification are later Store gates.
+Macro language/runtime/API, optional ARM64, a replay viewer, and custom log-name
+UI are deferred features and do not block this initial specification readiness.
+
+No GitHub Issues have been published as a result of consolidation. The drafts
+and this index remain available for later authorized issue breakdown and work
+sequencing. Specification completion itself grants no external-write authority.

@@ -1,0 +1,44 @@
+<Project>
+  <PropertyGroup>
+    <OpenSslNativeDirectory Condition="'$(OpenSslNativeDirectory)' == '' and Exists('$(MSBuildThisFileDirectory)artifacts/OpenSSL-MSVC-win-x64-3.5.9/libcrypto-3-x64.dll')">$(MSBuildThisFileDirectory)artifacts/OpenSSL-MSVC-win-x64-3.5.9</OpenSslNativeDirectory>
+    <OpenSslNativeDirectory Condition="'$(OpenSslNativeDirectory)' == '' and Exists('$(MSBuildThisFileDirectory)artifacts/OpenSSL-win-x64-3.5.9/libcrypto-3-x64.dll')">$(MSBuildThisFileDirectory)artifacts/OpenSSL-win-x64-3.5.9</OpenSslNativeDirectory>
+    <TabTtyNativeDirectory Condition="'$(TabTtyNativeDirectory)' == '' and Exists('$(MSBuildThisFileDirectory)artifacts/native-win-x64/TabTty.Native.dll')">$(MSBuildThisFileDirectory)artifacts/native-win-x64</TabTtyNativeDirectory>
+  </PropertyGroup>
+  <PropertyGroup>
+    <TabTtyTerminalDirectory Condition="'$(TabTtyTerminalDirectory)' == ''">$(MSBuildThisFileDirectory)artifacts/terminal-win-x64/$(Configuration)</TabTtyTerminalDirectory>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'TabTty.Core' and '$(OS)' == 'Windows_NT'">
+    <TerminalCoreSource Include="$(MSBuildThisFileDirectory)src/TabTty.Terminal/src/**/*;$(MSBuildThisFileDirectory)src/TabTty.Terminal/Cargo.toml;$(MSBuildThisFileDirectory)src/TabTty.Terminal/Cargo.lock;$(MSBuildThisFileDirectory)eng/Build-TerminalCore.ps1;$(MSBuildThisFileDirectory)src/TabTty.Terminal/Unicode-Data-LICENSE.txt" />
+    <Content Include="$(TabTtyTerminalDirectory)/tabtty_terminal.dll;$(TabTtyTerminalDirectory)/terminal-build.json;$(TabTtyTerminalDirectory)/Rust-LICENSE-MIT.txt;$(TabTtyTerminalDirectory)/Rust-LICENSE-APACHE.txt;$(TabTtyTerminalDirectory)/Rust-COPYRIGHT.txt"
+             Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="BuildTerminalCore" BeforeTargets="PrepareForBuild"
+          Condition="'$(MSBuildProjectName)' == 'TabTty.Core' and '$(OS)' == 'Windows_NT' and '$(SkipTerminalCoreBuild)' != 'true' and '$(DesignTimeBuild)' != 'true'"
+          Inputs="@(TerminalCoreSource)" Outputs="$(TabTtyTerminalDirectory)/tabtty_terminal.dll;$(TabTtyTerminalDirectory)/terminal-build.json;$(TabTtyTerminalDirectory)/Unicode-Data-LICENSE.txt;$(TabTtyTerminalDirectory)/Rust-LICENSE-MIT.txt;$(TabTtyTerminalDirectory)/Rust-LICENSE-APACHE.txt;$(TabTtyTerminalDirectory)/Rust-COPYRIGHT.txt">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)eng/Build-TerminalCore.ps1&quot; -Configuration &quot;$(Configuration)&quot; -OutputDirectory &quot;$(TabTtyTerminalDirectory)&quot;" />
+  </Target>
+  <ItemGroup Condition="'$(OpenSslNativeDirectory)' != '' and ('$(MSBuildProjectName)' == 'TabTty.App' or '$(MSBuildProjectName)' == 'TabTty.Core.Tests' or '$(MSBuildProjectName)' == 'TabTty.App.Tests')">
+    <Content Include="$(OpenSslNativeDirectory)/libcrypto-3-x64.dll"
+             Link="libcrypto-3-x64.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(OpenSslNativeDirectory)/LICENSE"
+             Link="OpenSSL-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TabTtyNativeDirectory)' != '' and ('$(MSBuildProjectName)' == 'TabTty.App' or '$(MSBuildProjectName)' == 'TabTty.Core.Tests' or '$(MSBuildProjectName)' == 'TabTty.App.Tests')">
+    <Content Include="$(TabTtyNativeDirectory)/TabTty.Native.dll"
+             Link="TabTty.Native.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(MSBuildThisFileDirectory)src/TabTty.Native/NOTICE.txt"
+             Link="OpenBSD-BCRYPT-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="RequireOpenSslBundle" BeforeTargets="Publish"
+          Condition="'$(RequireBundledOpenSsl)' == 'true'">
+    <Error Condition="!Exists('$(OpenSslNativeDirectory)/libcrypto-3-x64.dll') or !Exists('$(OpenSslNativeDirectory)/LICENSE')"
+           Text="Set OpenSslNativeDirectory to the Windows x64 OpenSSL runtime and license directory." />
+    <Error Condition="!Exists('$(TabTtyNativeDirectory)/TabTty.Native.dll')"
+           Text="Build the scoped OpenSSH bcrypt helper and set TabTtyNativeDirectory." />
+  </Target>
+  <Target Name="RequireTerminalCoreBundle" BeforeTargets="Publish"
+          Condition="'$(RequireBundledTerminalCore)' == 'true'">
+    <Error Condition="!Exists('$(TabTtyTerminalDirectory)/tabtty_terminal.dll') or !Exists('$(TabTtyTerminalDirectory)/terminal-build.json') or !Exists('$(TabTtyTerminalDirectory)/Rust-COPYRIGHT.txt')"
+           Text="Build the Rust terminal core with eng/Build-TerminalCore.ps1 and retain its licenses and build metadata." />
+  </Target>
+</Project>
