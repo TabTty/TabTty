@@ -155,16 +155,22 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
         // after each operation while the native engine keeps its own hard byte limit.
         Check(Native.CreateRequired(columns, rows, retainedRows, ambiguousWidth, receivePage, out ulong required), "creation preflight");
         memory = quota.Reserve(checked((long)required));
+        CoreHandle? owned = null;
         try
         {
             Check(Native.Create(columns, rows, retainedRows, ambiguousWidth, receivePage, receiveSevenBitKana ? 1U : 0U,
                 required, out nint created), "create");
             if (created == 0) throw new InvalidOperationException("Native terminal returned an empty handle.");
-            handle = new CoreHandle(created);
+            handle = owned = new CoreHandle(created);
             Interlocked.Increment(ref NativeTerminalCoreDiagnostics.CreatedModels);
             ReconcileMemoryCharge();
         }
-        catch { memory.Dispose(); throw; }
+        catch
+        {
+            owned?.Dispose();
+            memory.Dispose();
+            throw;
+        }
     }
 
     internal bool TryFeed(uint source, ReadOnlySpan<byte> payload, uint flags,

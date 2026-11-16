@@ -54,9 +54,12 @@ public sealed class TerminalOutput
     private void EnsureManaged()
     {
         if (nativeCore is not { } native) return;
+        int previousRevision = native.ReadScreenState().Revision;
         native.Export(ImportNativeState);
         aiLayoutEpoch = native.LayoutEpoch;
         nativeCore = null;
+        // Transferring ownership does not change the observed screen.
+        handoffRevision = (previousRevision, ReadAiScreenState().Revision);
         native.Dispose();
         Interlocked.Increment(ref NativeTerminalCoreDiagnostics.ManagedHandoffs);
     }
@@ -317,6 +320,7 @@ public sealed class TerminalOutput
     internal Action? EnteringAlternateScreen { get; set; }
     internal bool IsAlternateScreen => nativeCore?.IsAlternateScreen ?? parkedScreen is not null;
     private long aiLayoutEpoch;
+    private (int Native, int Managed)? handoffRevision;
     internal long AiLayoutEpoch { get => nativeCore?.LayoutEpoch ?? aiLayoutEpoch; private set => aiLayoutEpoch = value; }
     internal int AiColumns => columns;
     internal int AiRows => screenRows;
@@ -340,7 +344,9 @@ public sealed class TerminalOutput
             hash.Add(line.Id);
             hash.Add(line.DisplayRevision);
         }
-        return new AiTerminalState(AiLayoutEpoch, hash.ToHashCode(), columns, screenRows, cursorRow, column,
+        int revision = hash.ToHashCode();
+        if (handoffRevision is { } prior && revision == prior.Managed) revision = prior.Native;
+        return new AiTerminalState(AiLayoutEpoch, revision, columns, screenRows, cursorRow, column,
             cursorVisible, cursorShape, IsAlternateScreen, ApplicationCursorKeys, ApplicationKeypad, BracketedPaste, MouseMode);
     }
 
@@ -373,8 +379,6 @@ public sealed class TerminalOutput
         bool receiveSevenBitKana, int ambiguousWidth, ResourceQuota stateQuota)
     {
         StateQuota = stateQuota;
-        parserMemory = stateQuota.Reserve(128 * 1024);
-        screen = [new(budget: StateQuota)];
         ArgumentOutOfRangeException.ThrowIfLessThan(columns, 2);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(columns, 1024);
         ArgumentOutOfRangeException.ThrowIfLessThan(retainedRowLimit, 100);
@@ -389,29 +393,29 @@ public sealed class TerminalOutput
         ArgumentOutOfRangeException.ThrowIfLessThan(ambiguousWidth, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(ambiguousWidth, 2);
         this.ambiguousWidth = ambiguousWidth;
-        if (receiveEncoding != "utf-8")
+        var codec = receiveEncoding == "utf-8" ? null : new TerminalEncoding(receiveEncoding);
+        parserMemory = stateQuota.Reserve(128 * 1024);
+        TerminalRow? initial = null;
+        try
         {
-            var codec = new TerminalEncoding(receiveEncoding);
-            data.Legacy = new LegacyReceiver(codec, receiveSevenBitKana);
-            standardError.Legacy = new LegacyReceiver(codec, receiveSevenBitKana);
-        }
-        if (NativeTerminalCore.Enabled)
-        {
-            if (receiveEncoding == "utf-8")
+            initial = new(budget: StateQuota);
+            screen = [initial];
+            if (codec is not null)
             {
-                try { nativeCore = new NativeTerminalCore(columns, screenRows, retainedRowLimit, ambiguousWidth, StateQuota); }
-                catch (ResourceLimitException)
-                {
-                    // Native initial capacities can exceed the managed engine's empty
-                    // state. Preserve the managed admission contract under a tight quota.
-                    Interlocked.Increment(ref NativeTerminalCoreDiagnostics.ManagedFallbackModels);
-                }
-                catch (Exception error) when (error is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
-                {
-                    throw new InvalidOperationException("The native terminal engine is missing or incompatible with this application.", error);
-                }
+                data.Legacy = new LegacyReceiver(codec, receiveSevenBitKana);
+                standardError.Legacy = new LegacyReceiver(codec, receiveSevenBitKana);
+                if (NativeTerminalCore.Enabled) Interlocked.Increment(ref NativeTerminalCoreDiagnostics.ManagedFallbackModels);
             }
-            else Interlocked.Increment(ref NativeTerminalCoreDiagnostics.ManagedFallbackModels);
+            else if (NativeTerminalCore.Enabled)
+                nativeCore = new NativeTerminalCore(columns, screenRows, retainedRowLimit, ambiguousWidth, StateQuota);
+        }
+        catch (Exception error)
+        {
+            initial?.ReleaseOwnedState();
+            parserMemory.Dispose();
+            if (error is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
+                throw new InvalidOperationException("The native terminal engine is missing or incompatible with this application.", error);
+            throw;
         }
     }
 
@@ -444,7 +448,7 @@ public sealed class TerminalOutput
         if (nativeCore is not null)
         {
             if (nativeCore.TrySnapshot(out TerminalSnapshot? snapshot)) return snapshot!;
-            EnsureManaged();
+            throw new ResourceLimitException();
         }
         NormalizeAnchors();
         return new(

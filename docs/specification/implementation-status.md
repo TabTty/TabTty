@@ -47,7 +47,11 @@ toolchain is .NET SDK 10.0.404, Rust/Cargo 1.63.0, and MSVC on Windows x64.
 - AI screen capture reads the requested region from the active Rust screen
   without exporting retained history. The WPF Telnet fixture checks a clipped
   wide cell, its format mark, and foreground. AI history and search still
-  use managed terminal state.
+  use managed terminal state. That transition retains an unchanged screen's
+  observation revision.
+- UTF-8 creation and native snapshot requests report an explicit resource
+  failure when their ownership cannot be admitted. The tests check that
+  refusal leaves quota accounting and existing native state intact.
 - Legacy VT execution, retained-history observation and search, removal of
   managed handoffs, and native-only deployment and workload acceptance remain
   open under #16.

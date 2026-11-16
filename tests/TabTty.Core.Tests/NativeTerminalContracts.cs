@@ -7,6 +7,8 @@ internal static class NativeTerminalContracts
     {
         if (!NativeTerminalCore.Enabled) return;
         RejectedOperationPublishesNothingAndOwnedSnapshotSurvives();
+        RefusedCreationDoesNotStartAManagedTerminal();
+        RefusedSnapshotKeepsTheNativeTerminal();
         FailedPairedResizeLeavesBothModelsUntouched();
         HeightOnlyResizeKeepsRetainedRowIdentities();
         LegacyNativeAdmissionDoesNotConsumeTheLiveDecoder();
@@ -50,6 +52,45 @@ internal static class NativeTerminalContracts
         HeldSnapshotsAndSearchAnchorsSurviveHandoff();
         MacroCallbacksSeeOnlyNewInputAfterHandoff();
         LegacyEncodingStartsManaged();
+    }
+
+    private static void RefusedCreationDoesNotStartAManagedTerminal()
+    {
+        long managed = NativeTerminalCoreDiagnostics.ManagedFallbackModels;
+        var quota = new ResourceQuota(192 * 1024, collectOnPressure: false);
+        try
+        {
+            var terminal = new TerminalOutput(20, 100, 4, "utf-8", false, 1, quota);
+            terminal.ReleaseNativeState();
+            throw new InvalidOperationException("The application started a UTF-8 terminal without native admission.");
+        }
+        catch (ResourceLimitException) { }
+        if (NativeTerminalCoreDiagnostics.ManagedFallbackModels != managed || quota.Used != 0)
+            throw new InvalidOperationException("Native creation failure started a managed terminal or retained memory.");
+    }
+
+    private static void RefusedSnapshotKeepsTheNativeTerminal()
+    {
+        const int limit = 4 * 1024 * 1024;
+        var quota = new ResourceQuota(limit, collectOnPressure: false);
+        var terminal = new TerminalOutput(20, 100, 4, "utf-8", false, 1, quota);
+        try
+        {
+            Feed(terminal, "retained");
+            using (quota.Reserve(limit - quota.Used))
+            {
+                try
+                {
+                    _ = terminal.GetRows();
+                    throw new InvalidOperationException("A native snapshot exceeded its ownership allowance.");
+                }
+                catch (ResourceLimitException) { }
+            }
+            Feed(terminal, " text");
+            if (!terminal.UsesNativeCore || terminal.GetRows()[0] != "retained text")
+                throw new InvalidOperationException("A refused snapshot changed or handed off the native terminal.");
+        }
+        finally { terminal.ReleaseNativeState(); }
     }
 
     private static void HeightOnlyResizeKeepsRetainedRowIdentities()
@@ -230,8 +271,11 @@ internal static class NativeTerminalContracts
             var identities = Enumerable.Range(0, before.Count).Select(before.DisplayIdentity).ToArray();
             // Leave cells lazy until after both native mutation and destruction.
             Feed(terminal, "\r\nnext");
+            var observed = terminal.ReadAiScreenState();
             _ = terminal.GetHistoryRows();
             if (terminal.UsesNativeCore) throw new InvalidOperationException("AI history did not transfer ownership.");
+            if (terminal.ReadAiScreenState() != observed)
+                throw new InvalidOperationException("An unchanged screen published a new revision during history observation.");
             var after = terminal.GetRows();
             if (after.MapMatchFrom(before, match) is null)
                 throw new InvalidOperationException("A retained search anchor was lost at handoff.");
@@ -242,6 +286,8 @@ internal static class NativeTerminalContracts
                 foreach (var cell in before.GetCells(row).Span)
                     if (cell.Text is null) throw new InvalidOperationException("Lazy cells lost their owned storage.");
             Feed(terminal, "\u001b[2Jchanged");
+            if (terminal.ReadAiScreenState() == observed)
+                throw new InvalidOperationException("A real screen change kept the transferred observation.");
             if (!before.SequenceEqual(frozenText))
                 throw new InvalidOperationException("A held snapshot changed after managed mutation.");
         }
