@@ -27,6 +27,7 @@ internal sealed class SessionRecording
     private string? failure;
     private readonly ResourceReservation payloadReservation = ApplicationResources.LogPayload.Reserve(0);
     private readonly CancellationTokenSource abandon = new();
+    private Action? failureNotification;
 
     private SessionRecording(string stem, int part, RecordingFormat[] formats)
     {
@@ -61,7 +62,11 @@ internal sealed class SessionRecording
     }
 
     public string? Failure => Volatile.Read(ref failure);
-    internal Action? FailureNotification { get; set; }
+    internal Action? FailureNotification
+    {
+        get => Volatile.Read(ref failureNotification);
+        set => Volatile.Write(ref failureNotification, value);
+    }
 
     public static SessionRecording Open(string profilePath, ConnectionProfile profile, string? nameOverride = null,
         int part = 1, string? runSuffix = null, DateTimeOffset? capturedStart = null)

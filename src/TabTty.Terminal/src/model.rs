@@ -4,6 +4,8 @@ use crate::{
     PageView, RowView, ScreenRowView, ScreenState, SnapshotView, SourceView, Stats, TabView,
     LIVE_MODELS,
 };
+#[cfg(windows)]
+use crate::{legacy_receive::Receiver, windows_icu};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
@@ -437,6 +439,8 @@ impl Row {
 }
 #[derive(Default)]
 struct Source {
+    #[cfg(windows)]
+    legacy: Option<Receiver>,
     pending: [u8; 4],
     pending_count: usize,
     started: bool,
@@ -577,6 +581,7 @@ pub struct PreparedResize {
 enum ResizePage {
     Unchanged,
     Alternate,
+    HeightOnly,
     Normal(reflow::Reflow),
 }
 impl Default for PreparedOperation {
@@ -640,6 +645,7 @@ pub struct Model {
     screen_rows: usize,
     retained: usize,
     ambiguous: usize,
+    decoder_workspace: u64,
     history: VecDeque<Row>,
     screen: VecDeque<Row>,
     spares: Vec<Row>,
@@ -717,6 +723,7 @@ impl Model {
             screen_rows: rows,
             retained,
             ambiguous,
+            decoder_workspace: 0,
             history: VecDeque::with_capacity(retained),
             screen,
             spares: Vec::with_capacity(2),
@@ -838,6 +845,18 @@ impl Model {
             + self.view_rows.capacity() * size_of::<RowView>()
             + self.export_rows.capacity() * size_of::<ExportRow>()
             + self.export_tabs.capacity() * size_of::<TabView>()) as u64
+            + self.decoder_workspace
+    }
+
+    #[cfg(windows)]
+    pub fn use_legacy_decoder(&mut self, page: u32, shift_kana: bool) -> Result<(), i32> {
+        self.sources[0].legacy = Some(Receiver::new(page, shift_kana)?);
+        self.sources[1].legacy = Some(Receiver::new(page, shift_kana)?);
+        self.sources[0].started = true;
+        self.sources[1].started = true;
+        self.decoder_workspace = crate::legacy_receive::workspace_bytes(page);
+        self.update_accounting();
+        Ok(())
     }
     fn update_accounting(&mut self) {
         self.invalidate_prepared();
@@ -1010,6 +1029,8 @@ impl Model {
             ResizePage::Unchanged
         } else if self.parked.is_some() {
             ResizePage::Alternate
+        } else if self.can_resize_height_only(columns) {
+            ResizePage::HeightOnly
         } else {
             ResizePage::Normal(reflow::normal(
                 self,
@@ -1037,6 +1058,7 @@ impl Model {
         match plan.page {
             ResizePage::Unchanged => return Ok(()),
             ResizePage::Alternate => self.clip_alternate(plan.columns, plan.rows),
+            ResizePage::HeightOnly => self.resize_normal_height(plan.rows),
             ResizePage::Normal(reflow) => self.apply_reflow(reflow, plan.columns, plan.rows),
         }
         self.layout_epoch = self.layout_epoch.wrapping_add(1);
@@ -1050,10 +1072,56 @@ impl Model {
     }
 
     pub fn resize_required(&self, columns: usize, rows: usize) -> u64 {
+        let staged = self.quota + size_of::<Option<PreparedResize>>() as u64;
         if columns == self.columns && rows == self.screen_rows || self.parked.is_some() {
-            return self.quota + size_of::<Option<PreparedResize>>() as u64;
+            return staged;
+        }
+        if self.can_resize_height_only(columns) {
+            let total = self.history.len() + self.screen.len();
+            let visible = total.min(rows);
+            let archived = total - visible;
+            let growth = |needed: usize, capacity: usize| {
+                if needed > capacity {
+                    (needed + 1).next_power_of_two().max(capacity * 2) * size_of::<Row>()
+                } else {
+                    0
+                }
+            };
+            return staged
+                + growth(visible, self.screen.capacity()) as u64
+                + growth(archived, self.history.capacity()) as u64;
         }
         self.reflow_required(&self.screen, columns)
+    }
+
+    fn can_resize_height_only(&self, columns: usize) -> bool {
+        columns == self.columns && self.cursor_row < self.screen.len()
+    }
+
+    fn resize_normal_height(&mut self, rows: usize) {
+        let cursor = self.history.len() + self.cursor_row;
+        let archived = (self.history.len() + self.screen.len()).saturating_sub(rows);
+        while self.history.len() < archived {
+            let row = self.screen.pop_front().unwrap();
+            self.history_bytes += row.bytes();
+            self.history_pending_units += row.pending_units();
+            self.history_cell_capacity += row.cells.capacity() as u64;
+            self.history.push_back(row);
+        }
+        while self.history.len() > archived {
+            let row = self.history.pop_back().unwrap();
+            self.history_bytes -= row.bytes();
+            self.history_pending_units -= row.pending_units();
+            self.history_cell_capacity -= row.cells.capacity() as u64;
+            self.screen.push_front(row);
+        }
+        self.cursor_row = cursor.saturating_sub(archived).min(self.screen.len() - 1);
+        self.screen_rows = rows;
+        self.margin_top = 0;
+        self.margin_bottom = rows - 1;
+        if self.cluster_row != 0 && !self.screen.iter().any(|row| row.id == self.cluster_row) {
+            self.cluster_row = 0;
+        }
     }
 
     fn reflow_required(&self, screen: &VecDeque<Row>, columns: usize) -> u64 {
@@ -1140,6 +1208,33 @@ impl Model {
         self.margin_bottom = rows - 1;
     }
     fn decode(&mut self, source: &mut Source, payload: &[u8], flush: bool) -> Result<(), i32> {
+        #[cfg(windows)]
+        if let Some(mut receiver) = source.legacy.take() {
+            let requires_apartment = receiver.requires_apartment();
+            let mut batch = || {
+                for byte in payload
+                    .iter()
+                    .copied()
+                    .map(Some)
+                    .chain(flush.then_some(None))
+                {
+                    for item in receiver
+                        .decode_byte(byte, source.escape != 0, self.recording_interval)?
+                        .into_scalars()
+                    {
+                        self.apply(source, item.scalar, item.interval)?;
+                    }
+                }
+                Ok(())
+            };
+            let result = if requires_apartment {
+                windows_icu::in_apartment(batch)
+            } else {
+                batch()
+            };
+            source.legacy = Some(receiver);
+            return result;
+        }
         for &byte in payload {
             let mut interval = if source.pending_count == 0 {
                 source.pending_interval = self.recording_interval;
@@ -2186,6 +2281,10 @@ impl Model {
         })
     }
     pub fn export(&mut self) -> Result<ExportState, i32> {
+        #[cfg(windows)]
+        if self.sources[0].legacy.is_some() {
+            return Err(UNSUPPORTED);
+        }
         let mut snapshot = self.snapshot()?;
         snapshot.screen_start = self.history.len() as i32;
         self.export_rows.clear();
@@ -2428,7 +2527,7 @@ impl Model {
                 return Err(UNSUPPORTED);
             }
             let mut probe = Probe::from_source(&self.sources[source], self);
-            probe.decode(payload, false)?;
+            probe.decode_source(&self.sources[source], payload, false)?;
             if probe.reply_count + pending_replies > MAX_REPLIES {
                 return Err(4);
             }
@@ -2438,9 +2537,9 @@ impl Model {
             screen_changes = probe.screen_changes as u64;
         } else if operation == 1 {
             let mut probe = Probe::from_source(&self.sources[0], self);
-            probe.decode(&[], true)?;
+            probe.decode_source(&self.sources[0], &[], true)?;
             probe.replace_source(&self.sources[1]);
-            probe.decode(&[], true)?;
+            probe.decode_source(&self.sources[1], &[], true)?;
         }
         let owned = self.quota;
         if operation == 2 && flags & 2 == 0 {
@@ -2939,6 +3038,35 @@ impl<'a> Probe<'a> {
         self.cluster_active = true;
         Ok(())
     }
+    fn decode_source(&mut self, _source: &Source, payload: &[u8], flush: bool) -> Result<(), i32> {
+        #[cfg(windows)]
+        if let Some(legacy) = &_source.legacy {
+            let mut batch = || {
+                let mut preview = legacy.clone_state()?;
+                for byte in payload
+                    .iter()
+                    .copied()
+                    .map(Some)
+                    .chain(flush.then_some(None))
+                {
+                    for item in preview
+                        .decode_byte(byte, self.escape != 0, 0)?
+                        .into_scalars()
+                    {
+                        self.emit(item.scalar)?;
+                    }
+                }
+                Ok(())
+            };
+            return if legacy.requires_apartment() {
+                windows_icu::in_apartment(batch)
+            } else {
+                batch()
+            };
+        }
+        self.decode(payload, flush)
+    }
+
     fn decode(&mut self, payload: &[u8], flush: bool) -> Result<(), i32> {
         let mut offset = 0;
         while offset < payload.len() {

@@ -31,12 +31,19 @@ toolchain is .NET SDK 10.0.404, Rust/Cargo 1.63.0, and MSVC on Windows x64.
   See the [codec decision](../drafts/terminal-codec-consultation.md).
 - Rust now frames legacy receive units and carries incomplete units, kana shifts,
   and recording eligibility independently for DATA and stderr. The production
-  legacy sessions still use the managed VT interpreter.
+  legacy sessions still select the managed VT interpreter. A direct native
+  model test receives JIS and verifies that rejected preflight leaves the
+  live ICU converter, retained output, and outgoing effects unchanged.
 - The native UTF-8 path implements cursor, scrolling, tabs, key and mouse input,
   alternate screens, resize, and recording intervals. Display and receive-only
   Text resize plans are both prepared before either geometry changes. Core
   fixtures cover split units across recording intervals, reflowed text, and a
-  refused second resize plan.
+  refused second resize plan. A height-only resize keeps existing row identities
+  when the cursor row is already materialized.
+- A recording writer failure ends the owned interval while the terminal
+  continues receiving. The session refuses to report a failed pause as
+  successful. The controlled failure test checks actual logs for both parts
+  and verifies that an old writer cannot stop the replacement part.
 - AI screen capture reads the requested region from the active Rust screen
   without exporting retained history. The WPF Telnet fixture checks a clipped
   wide cell, its format mark, and foreground. AI history and search still
@@ -44,6 +51,14 @@ toolchain is .NET SDK 10.0.404, Rust/Cargo 1.63.0, and MSVC on Windows x64.
 - Legacy VT execution, retained-history observation and search, removal of
   managed handoffs, and native-only deployment and workload acceptance remain
   open under #16.
+
+At commit `801f96f`, the self-contained Windows x64 package passed both MCP
+bridge integration checks. The package SHA-256 was
+`6B2DC4928BCC613E3614609241A96222CC4AFF7832C83F2A8B5AFD39C26DF78D`.
+The 20-session, 12-second SSH workload completed and all 20 Raw recordings matched
+the input. The run recorded four interactions, and maximum tab switch latency
+was 267.8503 ms. It missed the local responsiveness target. The run used the
+partial implementation and does not satisfy the native-only acceptance gates.
 
 Target-design update, 2026-11-16: [ADR 0007](../adr/0007-complete-terminal-processing-in-rust.md)
 requires [complete Rust terminal processing](native-terminal-core.md) without

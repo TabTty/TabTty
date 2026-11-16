@@ -56,8 +56,8 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
             terminal.MacroCharacter = macro.Receive;
             terminal.EnteringAlternateScreen = () => macro.Stop("AlternateScreen");
             macro.ObserveSession(this);
-            ObserveRecording(recording);
         }
+        if (recording is not null) ObserveRecording(recording);
     }
 
     public string DisplayName => profile.DisplayName;
@@ -334,8 +334,10 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
 
     private void Receive(TerminalReceiveSource source, byte[] payload, CancellationToken token = default)
     {
+        StopFailedRecording();
         if (projections is null) terminal.Receive(source, payload, token);
         else projections.Receive(source, payload, token);
+        StopFailedRecording();
         macro?.ReceiveBatch();
         if (payload.Length != 0) SignalAiActivity();
     }
@@ -344,8 +346,10 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
     {
         try
         {
+            StopFailedRecording();
             if (projections is null) terminal.EchoUtf8(payload);
             else projections.Echo(payload);
+            StopFailedRecording();
         }
         catch (Exception exception) when (exception is ResourceLimitException or NativeTerminalExecutionException)
         {
@@ -669,9 +673,11 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
             rows = Math.Clamp(rows, 1, Math.Min(512, RetainedRows));
             await ProcessBatchAsync(() =>
             {
+                StopFailedRecording();
                 long prior = terminal.AiLayoutEpoch;
                 if (projections is null) terminal.Resize(columns, rows);
                 else projections.Resize(columns, rows);
+                StopFailedRecording();
                 if (prior != terminal.AiLayoutEpoch) SignalAiActivity();
             }, cancellationToken).ConfigureAwait(false);
             if (protocol is not null)
@@ -737,6 +743,7 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
             await state.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
+                StopFailedRecording();
                 projections?.Cutoff();
                 recordingActive = false;
             }
@@ -745,7 +752,11 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
                 state.Release();
             }
 
-            if (recording is not null) await recording.FinishAsync().WaitAsync(cancellationToken).ConfigureAwait(false);
+            if (recording is not null)
+            {
+                await recording.FinishAsync().WaitAsync(cancellationToken).ConfigureAwait(false);
+                if (recording.Failure is { } failure) throw new IOException(failure);
+            }
         }
         finally
         {
@@ -767,13 +778,14 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
             await state.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (ended || disconnected) throw new IOException("The terminal session has ended.");
                 projections!.Cutoff();
                 projections.Start(candidate);
                 recording = candidate;
+                recordingActive = true;
                 if (macro?.Status.Holds.HasFlag(MacroHold.RecordingFailure) == true) macro.RecordingRecovered();
                 ObserveRecording(candidate);
-                recordingActive = true;
                 candidate = null;
             }
             finally
@@ -786,6 +798,37 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
             if (candidate is not null) await candidate.FinishAsync().ConfigureAwait(false);
             recordingChanges.Release();
         }
+    }
+
+    private void ObserveRecording(SessionRecording part)
+    {
+        int failureReported = 0;
+        part.FailureNotification = ReportFailure;
+        if (part.Failure is not null) ReportFailure();
+
+        void ReportFailure()
+        {
+            if (Interlocked.Exchange(ref failureReported, 1) == 0) _ = ApplyRecordingFailureAsync(part);
+        }
+    }
+
+    private async Task ApplyRecordingFailureAsync(SessionRecording owner)
+    {
+        await state.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (!ReferenceEquals(recording, owner) || terminalReleased) return;
+            StopFailedRecording();
+            macro?.RecordingFailed();
+        }
+        finally { state.Release(); }
+    }
+
+    private void StopFailedRecording()
+    {
+        if (!recordingActive || recording?.Failure is null) return;
+        recordingActive = false;
+        projections?.Abort();
     }
 
     public void Disconnect()

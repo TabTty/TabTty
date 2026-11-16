@@ -8,6 +8,8 @@ internal static class NativeTerminalContracts
         if (!NativeTerminalCore.Enabled) return;
         RejectedOperationPublishesNothingAndOwnedSnapshotSurvives();
         FailedPairedResizeLeavesBothModelsUntouched();
+        HeightOnlyResizeKeepsRetainedRowIdentities();
+        LegacyNativeAdmissionDoesNotConsumeTheLiveDecoder();
         Compare("partial UTF-8 from independent sources", t =>
         {
             t.Receive(TerminalReceiveSource.Data, [0xE3]);
@@ -48,6 +50,52 @@ internal static class NativeTerminalContracts
         HeldSnapshotsAndSearchAnchorsSurviveHandoff();
         MacroCallbacksSeeOnlyNewInputAfterHandoff();
         LegacyEncodingStartsManaged();
+    }
+
+    private static void HeightOnlyResizeKeepsRetainedRowIdentities()
+    {
+        var terminal = new TerminalOutput(12, 100, 4);
+        try
+        {
+            Feed(terminal, "one\r\ntwo\r\nthree\r\nfour\r\nfive");
+            var before = terminal.GetRows();
+            var identities = Enumerable.Range(0, before.Count).Select(before.DisplayIdentity).ToArray();
+            terminal.Resize(12, 2);
+            var shorter = terminal.GetRows();
+            terminal.Resize(12, 5);
+            var taller = terminal.GetRows();
+            foreach (var snapshot in new[] { shorter, taller })
+            {
+                if (!terminal.UsesNativeCore || !snapshot.SequenceEqual(before) ||
+                    !Enumerable.Range(0, snapshot.Count).Select(snapshot.DisplayIdentity).SequenceEqual(identities))
+                    throw new InvalidOperationException("A height-only resize changed the retained text or row identity.");
+            }
+        }
+        finally { terminal.ReleaseNativeState(); }
+    }
+
+    private static void LegacyNativeAdmissionDoesNotConsumeTheLiveDecoder()
+    {
+        var quota = new ResourceQuota(128 * 1024 * 1024, collectOnPressure: false);
+        using var native = new NativeTerminalCore(80, 24, 100, 1, quota, 50220, receiveSevenBitKana: true);
+        var terminal = new List<byte>();
+        var replies = new List<byte>();
+        void Feed(uint source, ReadOnlySpan<byte> bytes)
+        {
+            if (!native.TryFeed(source, bytes, 1, null, terminal.AddRange, replySink: replies.AddRange))
+                throw new InvalidOperationException("The native model rejected a supported JIS receive unit.");
+        }
+        Feed(0, "\u001b$B$"u8);
+        Feed(1, "stderr "u8);
+        byte[] invalid = Encoding.ASCII.GetBytes("\u001b[" + new string('1', 4097) + "m");
+        if (native.TryFeed(0, invalid, 1, null, terminal.AddRange, replySink: replies.AddRange) ||
+            !terminal.SequenceEqual("stderr "u8.ToArray()))
+            throw new InvalidOperationException("JIS admission published effects for a rejected batch.");
+        Feed(0, "\"\u001b(B\u001b[6n"u8);
+        if (!native.TrySnapshot(out var snapshot) || snapshot![0] != "stderr あ" ||
+            !terminal.SequenceEqual("stderr あ"u8.ToArray()) ||
+            !replies.SequenceEqual("\u001b[1;10R"u8.ToArray()))
+            throw new InvalidOperationException("A rejected batch changed JIS state, output, or cursor reports.");
     }
 
     private static void FailedPairedResizeLeavesBothModelsUntouched()

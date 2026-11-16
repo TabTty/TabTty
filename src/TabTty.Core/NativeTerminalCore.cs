@@ -141,22 +141,24 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
         }
     }
 
-    internal NativeTerminalCore(int columns, int rows, int retainedRows, int ambiguousWidth, ResourceQuota quota)
+    internal NativeTerminalCore(int columns, int rows, int retainedRows, int ambiguousWidth, ResourceQuota quota,
+        uint receivePage = 0, bool receiveSevenBitKana = false)
     {
         if (sizeof(EffectsView) != 56 || sizeof(CellView) != 20 || sizeof(RowView) != 72 ||
             sizeof(SnapshotView) != 48 || sizeof(TabView) != 8 || sizeof(ExportRow) != 152 ||
             sizeof(SourceView) != 64 || sizeof(ExportState) != 168 || sizeof(EditingView) != 256 ||
             sizeof(MouseInput) != 20 || sizeof(ScreenStateView) != 48 || sizeof(ScreenRowView) != 56 ||
-            Native.AbiVersion() != 7)
+            Native.AbiVersion() != 8)
             throw new InvalidOperationException("The native terminal ABI does not match this application.");
         this.quota = quota;
         // Admission precedes native allocation; unused temporary allowance is released
         // after each operation while the native engine keeps its own hard byte limit.
-        Check(Native.CreateRequired(columns, rows, retainedRows, ambiguousWidth, out ulong required), "creation preflight");
+        Check(Native.CreateRequired(columns, rows, retainedRows, ambiguousWidth, receivePage, out ulong required), "creation preflight");
         memory = quota.Reserve(checked((long)required));
         try
         {
-            Check(Native.Create(columns, rows, retainedRows, ambiguousWidth, required, out nint created), "create");
+            Check(Native.Create(columns, rows, retainedRows, ambiguousWidth, receivePage, receiveSevenBitKana ? 1U : 0U,
+                required, out nint created), "create");
             if (created == 0) throw new InvalidOperationException("Native terminal returned an empty handle.");
             handle = new CoreHandle(created);
             Interlocked.Increment(ref NativeTerminalCoreDiagnostics.CreatedModels);
@@ -708,7 +710,7 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
         [DllImport(Library, EntryPoint = "tc_preflight", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Preflight(CoreHandle handle, uint operation, uint source, byte* data, uint length, uint flags, out ulong requiredPeak);
         [DllImport(Library, EntryPoint = "tc_create_required", CallingConvention = CallingConvention.Cdecl)]
-        internal static extern int CreateRequired(int columns, int rows, int retained, int ambiguous, out ulong required);
+        internal static extern int CreateRequired(int columns, int rows, int retained, int ambiguous, uint page, out ulong required);
         [DllImport(Library, EntryPoint = "tc_set_limit", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int SetLimit(CoreHandle handle, ulong allowance);
         [DllImport(Library, EntryPoint = "tc_export", CallingConvention = CallingConvention.Cdecl)]
@@ -731,7 +733,8 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
         [DllImport(Library, EntryPoint = "tc_quota_bytes", CallingConvention = CallingConvention.Cdecl)]
         internal static extern ulong QuotaBytes(CoreHandle handle);
         [DllImport(Library, EntryPoint = "tc_create", CallingConvention = CallingConvention.Cdecl)]
-        internal static extern int Create(int columns, int rows, int retained, int ambiguous, ulong allowance, out nint handle);
+        internal static extern int Create(int columns, int rows, int retained, int ambiguous, uint page, uint shiftKana,
+            ulong allowance, out nint handle);
         [DllImport(Library, EntryPoint = "tc_feed", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Feed(CoreHandle handle, uint source, byte* data, uint length, uint flags, out EffectsView effects);
         [DllImport(Library, EntryPoint = "tc_complete", CallingConvention = CallingConvention.Cdecl)]

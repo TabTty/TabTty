@@ -1,4 +1,4 @@
-//! Native UTF-8 terminal engine with transitional managed handoff.
+//! Native terminal engine with transitional managed handoff for UTF-8 sessions.
 mod input;
 mod legacy_encode;
 #[cfg(windows)]
@@ -271,7 +271,7 @@ fn run<F: FnOnce() -> Result<(), i32>>(f: F) -> i32 {
 }
 #[no_mangle]
 pub extern "C" fn tc_abi_version() -> u32 {
-    7
+    8
 }
 
 #[no_mangle]
@@ -442,11 +442,7 @@ pub unsafe extern "C" fn tc_legacy_step(
 #[no_mangle]
 pub unsafe extern "C" fn tc_legacy_destroy(handle: *mut c_void) {
     if valid(handle as *const legacy_receive::Receiver) {
-        let receiver = Box::from_raw(handle as *mut legacy_receive::Receiver);
-        let _ = windows_icu::in_apartment(|| {
-            drop(receiver);
-            Ok(())
-        });
+        drop(Box::from_raw(handle as *mut legacy_receive::Receiver));
     }
 }
 #[no_mangle]
@@ -467,6 +463,7 @@ pub unsafe extern "C" fn tc_create_required(
     rows: i32,
     retained: i32,
     ambiguous: i32,
+    page: u32,
     out: *mut u64,
 ) -> i32 {
     if !valid(out) {
@@ -481,11 +478,11 @@ pub unsafe extern "C" fn tc_create_required(
         {
             return Err(1);
         }
-        out.write(Model::creation_required(
-            columns as usize,
-            rows as usize,
-            retained as usize,
-        ));
+        let workspace = decoder_workspace(page)?;
+        out.write(
+            Model::creation_required(columns as usize, rows as usize, retained as usize)
+                + workspace,
+        );
         Ok(())
     })
 }
@@ -495,6 +492,8 @@ pub unsafe extern "C" fn tc_create(
     rows: i32,
     retained: i32,
     ambiguous: i32,
+    page: u32,
+    shift_kana: u32,
     allowance: u64,
     out: *mut *mut c_void,
 ) -> i32 {
@@ -507,10 +506,13 @@ pub unsafe extern "C" fn tc_create(
             || !(100..=100000).contains(&retained)
             || !(1..=512.min(retained)).contains(&rows)
             || !(1..=2).contains(&ambiguous)
+            || shift_kana > 1
         {
             return Err(1);
         }
-        if Model::creation_required(columns as usize, rows as usize, retained as usize) > allowance
+        let workspace = decoder_workspace(page)?;
+        if Model::creation_required(columns as usize, rows as usize, retained as usize) + workspace
+            > allowance
         {
             return Err(2);
         }
@@ -520,10 +522,25 @@ pub unsafe extern "C" fn tc_create(
             retained as usize,
             ambiguous as usize,
         ));
+        #[cfg(windows)]
+        if page != 0 {
+            terminal.use_legacy_decoder(page, shift_kana != 0)?;
+        }
         terminal.set_limit(allowance)?;
         out.write(Box::into_raw(terminal) as *mut c_void);
         Ok(())
     })
+}
+
+fn decoder_workspace(page: u32) -> Result<u64, i32> {
+    if page == 0 {
+        return Ok(0);
+    }
+    #[cfg(windows)]
+    if legacy_encode::supports(page) {
+        return Ok(legacy_receive::workspace_bytes(page));
+    }
+    Err(1)
 }
 #[no_mangle]
 pub unsafe extern "C" fn tc_destroy(handle: *mut c_void) {

@@ -26,6 +26,12 @@ type FromCallback =
 extern "C" {
     fn ucnv_open(name: *const u8, error: *mut i32) -> *mut c_void;
     fn ucnv_close(converter: *mut c_void);
+    fn ucnv_safeClone(
+        converter: *const c_void,
+        buffer: *mut c_void,
+        buffer_size: *mut i32,
+        error: *mut i32,
+    ) -> *mut c_void;
     fn ucnv_setToUCallBack(
         converter: *mut c_void,
         action: ToCallback,
@@ -122,6 +128,20 @@ pub(crate) fn in_apartment<T>(operation: impl FnOnce() -> Result<T, i32>) -> Res
 }
 
 impl Converter {
+    pub(crate) fn clone_state(&self) -> Result<Self, i32> {
+        let mut error = 0;
+        let handle =
+            unsafe { ucnv_safeClone(self.handle.as_ptr(), null_mut(), null_mut(), &mut error) };
+        let cloned = Self {
+            handle: NonNull::new(handle).ok_or(3)?,
+        };
+        if error > 0 {
+            Err(3)
+        } else {
+            Ok(cloned)
+        }
+    }
+
     pub(crate) fn open(name: &'static [u8], strict_receive: bool) -> Result<Self, i32> {
         let mut error = 0;
         let handle = unsafe { ucnv_open(name.as_ptr(), &mut error) };
@@ -246,6 +266,14 @@ impl Converter {
 
 impl Drop for Converter {
     fn drop(&mut self) {
-        unsafe { ucnv_close(self.handle.as_ptr()) };
+        if in_apartment(|| {
+            unsafe { ucnv_close(self.handle.as_ptr()) };
+            Ok(())
+        })
+        .is_err()
+        {
+            // A failed apartment initialization must not leak the owned converter.
+            unsafe { ucnv_close(self.handle.as_ptr()) };
+        }
     }
 }

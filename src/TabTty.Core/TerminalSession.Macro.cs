@@ -8,13 +8,6 @@ public sealed partial class TerminalSession
 {
     internal bool IsMacroOwned => macro?.IsActive == true;
 
-    private void ObserveRecording(SessionRecording? part)
-    {
-        if (macro is null || part is null) return;
-        part.FailureNotification = macro.RecordingFailed;
-        if (part.Failure is not null) macro.RecordingFailed();
-    }
-
     internal Task<bool> SendMacroTextAsync(string text, bool appendEnter, MacroRun owner, CancellationToken token) =>
         SendMacroAsync(text.AsMemory(), appendEnter, false, owner, token);
 

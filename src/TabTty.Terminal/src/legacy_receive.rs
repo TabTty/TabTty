@@ -4,6 +4,16 @@ use crate::windows_icu::{self, Converter};
 const JIS: u32 = 50220;
 const EUC_JP: u32 = 51932;
 const REPLACEMENT: u32 = 0xfffd;
+// Both source converters and one temporary ICU clone can coexist during admission.
+pub(crate) const JIS_WORKSPACE_BYTES: u64 = 32 * 1024;
+
+pub(crate) fn workspace_bytes(page: u32) -> u64 {
+    if page == JIS {
+        JIS_WORKSPACE_BYTES
+    } else {
+        0
+    }
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -21,6 +31,10 @@ pub struct Decoded {
 }
 
 impl Decoded {
+    pub(crate) fn into_scalars(self) -> impl Iterator<Item = DecodedScalar> {
+        self.scalars.into_iter().take(self.length as usize)
+    }
+
     fn push(&mut self, scalar: u32, interval: u32) {
         let scalar = char::from_u32(scalar).map_or(REPLACEMENT, |valid| valid as u32);
         self.scalars[self.length as usize] = DecodedScalar { scalar, interval };
@@ -131,10 +145,44 @@ impl Receiver {
         })
     }
 
+    pub(crate) fn clone_state(&self) -> Result<Self, i32> {
+        let jis = self.jis.as_ref().map(Converter::clone_state).transpose()?;
+        Ok(Self {
+            page: self.page,
+            shift_kana: self.shift_kana,
+            kana: self.kana,
+            unit: self.unit,
+            count: self.count,
+            unit_interval: self.unit_interval,
+            jis,
+            designation: self.designation,
+            designation_length: self.designation_length,
+            designation_interval: self.designation_interval,
+            jis_partial: self.jis_partial,
+        })
+    }
+
     pub fn step(&mut self, byte: Option<u8>, in_vt: bool, interval: u32) -> Result<Decoded, i32> {
+        if self.requires_apartment() {
+            windows_icu::in_apartment(|| self.decode_byte(byte, in_vt, interval))
+        } else {
+            self.decode_byte(byte, in_vt, interval)
+        }
+    }
+
+    pub(crate) fn requires_apartment(&self) -> bool {
+        self.page == JIS
+    }
+
+    pub(crate) fn decode_byte(
+        &mut self,
+        byte: Option<u8>,
+        in_vt: bool,
+        interval: u32,
+    ) -> Result<Decoded, i32> {
         let mut decoded = Decoded::default();
         if self.page == JIS {
-            windows_icu::in_apartment(|| self.jis_step(byte, in_vt, interval, &mut decoded))?;
+            self.jis_step(byte, in_vt, interval, &mut decoded)?;
         } else if let Some(byte) = byte {
             self.stateless_step(byte, in_vt, interval, &mut decoded);
         } else if self.count != 0 {

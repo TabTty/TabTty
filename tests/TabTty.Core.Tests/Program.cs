@@ -118,6 +118,8 @@ try
     Console.WriteLine("PASS TextRecordingAllocationContracts");
     await RecordingResumeDoesNotBackfillSplitUnits();
     Console.WriteLine("PASS RecordingResumeDoesNotBackfillSplitUnits");
+    await FailedRecordingCannotStopTheSessionOrItsReplacementPart();
+    Console.WriteLine("PASS FailedRecordingCannotStopTheSessionOrItsReplacementPart");
     await ResizeKeepsTextRecordingBoundaries();
     Console.WriteLine("PASS ResizeKeepsTextRecordingBoundaries");
     await TextTabsUseTheSerializedLogicalColumn();
@@ -1112,6 +1114,48 @@ static async Task ResizeKeepsTextRecordingBoundaries()
         throw new InvalidOperationException("Resizing the recorded terminal transferred it out of Rust.");
 }
 
+static async Task FailedRecordingCannotStopTheSessionOrItsReplacementPart()
+{
+    const string failure = "Controlled recording write failure.";
+    long handoffs = NativeTerminalCoreDiagnostics.ManagedHandoffs;
+    using var folder = new TemporaryDirectory();
+    using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    var profile = ConnectionProfile.CreateTelnet("Failure", "127.0.0.1", 23,
+        recordRaw: true, recordText: true, recordTerminal: true);
+    string path = Path.Combine(folder.Path, "failure.ttty");
+    await profile.SaveNewAsync(path, deadline.Token);
+    var first = SessionRecording.Open(path, profile);
+    var wire = new RecordingFailureWire();
+    await using var session = new TerminalSession(wire, profile, first, 100);
+    wire.Next = "before\r\n"u8.ToArray();
+    await session.ReadOutputAsync(deadline.Token);
+    first.MarkIncomplete(failure);
+    wire.Next = "visible only\r\n"u8.ToArray();
+    if (!(await session.ReadOutputAsync(deadline.Token))!.Contains("visible only"))
+        throw new InvalidOperationException("A failed recording stopped the healthy terminal.");
+    try
+    {
+        await session.PauseRecordingAsync(deadline.Token);
+        throw new InvalidOperationException("A failed writer reported a successful pause.");
+    }
+    catch (IOException error) when (error.Message == failure) { }
+    await session.ResumeRecordingAsync(deadline.Token);
+    first.MarkIncomplete("Obsolete writer notification.");
+    wire.Next = "after\r\n"u8.ToArray();
+    await session.ReadOutputAsync(deadline.Token);
+    await session.PauseRecordingAsync(deadline.Token);
+    string logs = Path.Combine(folder.Path, "Logs");
+    foreach (string extension in new[] { "raw.tttylog", "log", "term.tttylog" })
+    {
+        ExpectBytes(await File.ReadAllBytesAsync(Directory.GetFiles(logs, "*-p001." + extension).Single()),
+            "before\r\n"u8.ToArray());
+        ExpectBytes(await File.ReadAllBytesAsync(Directory.GetFiles(logs, "*-p002." + extension).Single()),
+            "after\r\n"u8.ToArray());
+    }
+    if (NativeTerminalCoreDiagnostics.ManagedHandoffs != handoffs)
+        throw new InvalidOperationException("Recording failure handed off the native terminal.");
+}
+
 static async Task TextTabsUseTheSerializedLogicalColumn()
 {
     using var folder = new TemporaryDirectory();
@@ -1629,5 +1673,21 @@ sealed class InterruptedInputWire : ISessionWire
         Submitted.Add(buffer[..2].ToArray());
         return ValueTask.FromException(new IOException(Failure));
     }
+    public void Dispose() { }
+}
+
+sealed class RecordingFailureWire : ISessionWire
+{
+    internal byte[] Next { get; set; } = [];
+
+    public ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken)
+    {
+        Next.AsSpan().CopyTo(buffer.Span);
+        int length = Next.Length;
+        Next = [];
+        return ValueTask.FromResult(length);
+    }
+
+    public ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken) => ValueTask.CompletedTask;
     public void Dispose() { }
 }
