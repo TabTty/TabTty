@@ -166,40 +166,27 @@ press/motion and clamp matching release only at actual button-up. Do not end
 the gesture at grid exit. The [broadcast contract](broadcast-and-split-views.md)
 also covers protocol bounds, capture, and same-session pane coordinates.
 
-## Exact Japanese codec policy
+## Encoding providers
 
-Keep all 48 accepted codec identities. Use official Microsoft mappings/codecs
-only where their behavior matches; use the accepted Unicode mapping data for
-ISO-8859-10/11/14/16. CP932 maps 8160 -> U+FF5E, 5C -> U+005C, 7E -> U+007E,
-and 9B5B -> U+5ABC. No best-fit/normalization/width substitutions.
+The editor and profile validator support 47 identities. Profile validation
+rejects unsupported encoding identifiers. Win32 strict conversion defines the supported Windows/OEM
+code pages and KOI8-R. Undefined printable units yield U+FFFD on receive.
+CP932 A0, FD, FE and FF are undefined as standalone bytes. Strict send
+preflight checks that the library's output decodes to the exact original text.
 
-For JIS/EUC, define a Windows-compatible 94x94 table from defined CP932 two-byte
-positions with leads 81-9F/E0-EF using the ordinary Shift-JIS to row/cell mapping.
-This includes standard 0208 and documented Microsoft extensions in rows
-13/89-92. Exclude undefined cells and F0-F9 private-use mappings outside that
-grid. FA-FC duplicate Unicode characters transmit through their matching
-adopted cell, not direct row/cell conversion. Reverse mapping selects the
-smallest row/cell for duplicate Unicode values after single-byte/kana choices.
+Windows ICU supplies ISO-8859-10/11/14, EUC-JP and JIS. EUC-JP uses
+`euc-jp-2007` for the ASCII, SS2 kana and two-byte repertoire. A well-shaped
+EUC SS3 unit yields one U+FFFD. ICU selects the byte mapping for each accepted
+character, including U+FF5E as A1 C1 and U+2460 as AD A1.
 
-Vectors: U+FF5E -> JIS 2141 / EUC A1C1; U+2460 -> 2D21 / ADA1;
-U+7E8A (CP932 ED40/FA5C) -> 7921 / F9A1; U+2170 (EEEF/FA40) -> 7C71 / FCF1.
-Do not map U+301C to U+FF5E. This is an explicit Windows-compatible extension
-profile, not strict ISO-2022-JP mail encoding or byte round-trip identity.
-
-JIS ESC ( B selects ASCII; ESC ( J selects Roman with 5C=U+00A5 and
-7E=U+203E. Transmit exact Unicode: backslash/tilde require ASCII, yen/overline
-require Roman. Leaving Kanji emits the configured OUT B/J, followed by another
-designation if the next exact character needs it; preserve this order even
-when redundant. IN @/B selects the accepted 0208 table (no separate historical
-1978 glyph map). Default B/B remains. Recognize ESC $ @ / ESC $ B / ESC $ ( B;
-ESC $ ( D and O/P/Q select unsupported two-byte repertoires until redesignation.
-Do not delegate these states blindly to Microsoft's ISO-2022 decoder.
-
-Japanese eight-bit kana is A1-DF in CP932/JIS; selected SO/SI mode invokes
-7-bit kana 21-5F and returns to the previous relevant single-byte state.
-EUC kana always uses SS2 8E A1-DF; SS3 8F followed by two A1-FE bytes is one
-unsupported 0212 unit. JIS transmit kana uses its independent accepted
-eightBit/soSi choice. Other encodings do not gain these kana interpretations.
+JIS uses ICU's Japanese ISO-2022 converters. Each direction's kana setting
+selects ICU version 3 for SO/SI or version 4 for eight-bit kana. ICU owns
+Roman and Kanji designations, repertoire selection, and transmit closure.
+Saved `kanjiIn` and `kanjiOut` values are read for profile compatibility and
+have no effect on transmission. The JIS codec keeps receive state independent
+per source across chunks. TabTty routes VT controls to the terminal parser.
+The CP932 receive SO/SI option remains a terminal wire interpretation that
+routes the invoked kana bytes to the CP932 converter.
 
 For legacy multibyte decoding, a well-shaped undefined/unsupported unit consumes
 its whole unit and produces one U+FFFD. On an invalid continuation, replace
@@ -222,6 +209,7 @@ Narrator workflows in English/Japanese. No such runtime verification has run.
 
 Source facts and explicit differences are in `../drafts/technical-contract-review.md`.
 Mapping/segmentation references:
+[Windows ICU](https://learn.microsoft.com/en-us/windows/win32/intl/international-components-for-unicode--icu-),
 [RFC 1468](https://www.rfc-editor.org/rfc/rfc1468.html),
 [Microsoft CP932 map](https://www.unicode.org/Public/MAPPINGS/VENDORS/MICSFT/WINDOWS/CP932.TXT),
 [Microsoft EUC-JP](https://source.dot.net/System.Text.Encoding.CodePages/System/Text/EUCJPEncoding.cs.html),

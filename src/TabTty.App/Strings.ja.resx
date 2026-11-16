@@ -43,6 +43,8 @@
   <data name="Cancel" xml:space="preserve"><value>キャンセル</value></data>
   <data name="Error" xml:space="preserve"><value>TabTty エラー</value></data>
   <data name="CloseConnections" xml:space="preserve"><value>接続を切断して閉じますか？</value></data>
+  <data name="CloseTabWork" xml:space="preserve"><value>以下の処理を中止して閉じますか？</value></data>
+  <data name="CloseCleanupFailed" xml:space="preserve"><value>終了処理に失敗しました。端末タブは開いたままです。</value></data>
   <data name="CloseTargetChanged" xml:space="preserve"><value>閉じる操作の途中でタブまたは接続が変わりました。現在のタブを確認してから閉じてください。</value></data>
   <data name="Language" xml:space="preserve"><value>言語</value></data>
   <data name="Theme" xml:space="preserve"><value>テーマ</value></data>
@@ -116,8 +118,6 @@
   <data name="SameAsReceive" xml:space="preserve"><value>受信と同じ</value></data>
   <data name="ReceiveEncoding" xml:space="preserve"><value>受信文字コード</value></data>
   <data name="TransmitEncoding" xml:space="preserve"><value>送信文字コード</value></data>
-  <data name="KanjiIn" xml:space="preserve"><value>JIS漢字への切り替え</value></data>
-  <data name="KanjiOut" xml:space="preserve"><value>JIS漢字からの切り替え</value></data>
   <data name="ReceiveKana" xml:space="preserve"><value>SO/SIでカナを受信</value></data>
   <data name="TransmitKana" xml:space="preserve"><value>SO/SIでJISカナを送信</value></data>
   <data name="AmbiguousWidth" xml:space="preserve"><value>幅が曖昧な文字のセル数</value></data>

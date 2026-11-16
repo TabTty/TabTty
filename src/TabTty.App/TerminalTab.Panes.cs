@@ -31,7 +31,7 @@ internal sealed partial class TerminalTab
     }
     internal bool HasMouseCapture => panes.Keys.Any(pane => pane.IsMouseCaptured);
     internal bool OwnsPane(TerminalSurface pane) => panes.ContainsKey(pane);
-    internal TerminalSession? InputSession => IsRunning && !stop.IsCancellationRequested &&
+    internal TerminalSession? InputSession => !ClosePending && IsRunning && !stop.IsCancellationRequested &&
         session is { AcceptsInput: true } active ? active : null;
     internal CancellationToken InputLifetime => IsRunning ? stop.Token : new CancellationToken(canceled: true);
     private BroadcastInput Broadcast => ((App)Application.Current).Broadcast;

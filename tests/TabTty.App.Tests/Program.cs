@@ -53,7 +53,7 @@ internal static partial class Program
                 Task run = application.Dispatcher.InvokeAsync(() => args[0] switch
                 {
                     "--native-utf8-baseline" => TerminalReceivesWhilePresentationIsPaused(verifyNativeResidency: true),
-                    "--terminal-tab-close" => CheckTerminalTabClose(application, settingsDirectory),
+                    "--terminal-tab-close" => CheckTerminalClosure(application, settingsDirectory),
                     _ => CheckTransferWindowClose(settingsDirectory, int.Parse(args[1])),
                 }).Task.Unwrap();
                 _ = run.ContinueWith(_ => integrationFrame.Continue = false, TaskScheduler.Default);
@@ -141,7 +141,7 @@ internal static partial class Program
             closeTest.GetAwaiter().GetResult();
             Console.WriteLine("PASS DisconnectedTabsRespectSettingsAndBulkClose");
             var tabCloseFrame = new DispatcherFrame();
-            Task tabCloseTest = application.Dispatcher.InvokeAsync(() => CheckTerminalTabClose(application, settingsDirectory)).Task.Unwrap();
+            Task tabCloseTest = application.Dispatcher.InvokeAsync(() => CheckTerminalClosure(application, settingsDirectory)).Task.Unwrap();
             _ = tabCloseTest.ContinueWith(_ => tabCloseFrame.Continue = false, TaskScheduler.Default);
             Dispatcher.PushFrame(tabCloseFrame);
             tabCloseTest.GetAwaiter().GetResult();
@@ -931,6 +931,7 @@ internal static partial class Program
             {
                 firstPeer.Client.Shutdown(SocketShutdown.Send);
                 await terminals[^1].Completion.WaitAsync(deadline.Token);
+                while (tabs.Items.Count != 1) await Task.Delay(15, deadline.Token);
                 if (tabs.Items.Count != 1 || !terminals[^1].IsDisconnected)
                     throw new InvalidOperationException("Default settings did not close a disconnected tab.");
             }
@@ -1000,6 +1001,7 @@ internal static partial class Program
                 throw new InvalidOperationException("The tab bar right-click did not offer to close disconnected tabs.");
             command.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent, command));
             menu.IsOpen = false;
+            while (tabs.Items.Count > 3) await Task.Delay(15, deadline.Token);
             if (!tabs.Items.OfType<TabItem>().Select(item => item.Content).SequenceEqual(new object[] { form, active, failed }) ||
                 !active.IsRunning || failed.IsDisconnected)
                 throw new InvalidOperationException("Closing disconnected tabs did not preserve the editor, active session, and failed attempt.");
@@ -1020,12 +1022,14 @@ internal static partial class Program
 
             activePeer.Client.Shutdown(SocketShutdown.Send);
             await active.Completion.WaitAsync(deadline.Token);
+            while (tabs.Items.Count != 2) await Task.Delay(15, deadline.Token);
             if (tabs.Items.Count != 2 || !active.IsDisconnected)
                 throw new InvalidOperationException("Auto-close did not remove the tab after disconnect.");
 
             using TcpClient lastPeer = await Connect(finalHost);
             lastPeer.Client.Shutdown(SocketShutdown.Send);
             await terminals[^1].Completion.WaitAsync(deadline.Token);
+            while (!finalHost.IsClosing) await Task.Delay(15, deadline.Token);
             if (((TabControl)finalHost.FindName("tabs")).HasItems || !finalHost.IsClosing)
                 throw new InvalidOperationException("Auto-close did not close the window after removing its final tab.");
         }
@@ -1097,7 +1101,8 @@ internal static partial class Program
         {
             listener.Start();
             int port = ((IPEndPoint)listener.LocalEndpoint).Port;
-            await ConnectionProfile.CreateTelnet("Presentation test", "127.0.0.1", port, recordRaw: true, recordText: true)
+            await ConnectionProfile.CreateTelnet("Presentation test", "127.0.0.1", port, recordRaw: true,
+                    recordText: true, recordTerminal: verifyNativeResidency)
                 .SaveNewAsync(path, deadline.Token);
             host.Show();
             terminal.Start();
@@ -1112,26 +1117,50 @@ internal static partial class Program
                 await WaitUntilAsync(() => terminal.InputSession is not null);
                 var connected = terminal.InputSession ?? throw new InvalidOperationException("The tab has no connected input session.");
                 await connected.SetLocalEchoAsync("off", deadline.Token);
+                try
+                {
+                    await connected.SendTextAsync("unsent\ud800", deadline.Token);
+                    throw new InvalidOperationException("Malformed Unicode reached the terminal transport.");
+                }
+                catch (EncoderFallbackException) { }
                 await connected.SendTextAsync("入力", deadline.Token);
                 byte[] sent = new byte["入力"u8.Length];
                 await wire.ReadExactlyAsync(sent, deadline.Token);
                 if (!sent.AsSpan().SequenceEqual("入力"u8))
                     throw new InvalidOperationException("The peer did not receive the expected UTF-8 input bytes.");
+                await connected.SetLocalEchoAsync("followRemote", deadline.Token);
+                var composition = new TextComposition(InputManager.Current, surface, "変換", TextCompositionAutoComplete.Off);
+                surface.RaiseEvent(new TextCompositionEventArgs(Keyboard.PrimaryDevice, composition)
+                    { RoutedEvent = TextCompositionManager.PreviewTextInputStartEvent });
+                surface.RaiseEvent(new TextCompositionEventArgs(Keyboard.PrimaryDevice, composition)
+                    { RoutedEvent = TextCompositionManager.PreviewTextInputEvent });
+                byte[] composed = new byte["変換"u8.Length];
+                await wire.ReadExactlyAsync(composed, deadline.Token);
+                if (!composed.AsSpan().SequenceEqual("変換"u8))
+                    throw new InvalidOperationException("The WPF composition did not send the committed UTF-8 bytes.");
+                await WaitForLineAsync("変換");
             }
 
             string visibleLine = verifyNativeResidency ? "visible 表示" : "visible";
+            string editedLinePrefix = "";
+            if (verifyNativeResidency)
+            {
+                await SendOutputAsync("\rABCD\r\u001b[2G\u001b[2P\u001b[2@Z\r\n");
+                await WaitForLineAsync("AZ D");
+                editedLinePrefix = "AZ D\r\n";
+            }
             await SendOutputAsync((verifyNativeResidency ? "\u001b]0;Presentation test\u0007\u001b[?2004h" : "") + visibleLine + "\r\n");
             await WaitForLineAsync(visibleLine);
 
             SystemCommands.MinimizeWindow(host);
             await WaitUntilAsync(() => host.WindowState == WindowState.Minimized);
-            await CheckPausedAsync("minimizex\bd\r\n", visibleLine + "\r\nminimized\r\n");
+            await CheckPausedAsync("minimizex\bd\r\n", editedLinePrefix + visibleLine + "\r\nminimized\r\n");
             SystemCommands.RestoreWindow(host);
             await WaitForLineAsync("minimized");
 
             tabs.SelectedItem = otherTab;
             host.UpdateLayout();
-            string committedText = visibleLine + "\r\nminimized\r\nbackground\r\n";
+            string committedText = editedLinePrefix + visibleLine + "\r\nminimized\r\nbackground\r\n";
             await CheckPausedAsync("\u001b[32mbackground\u001b[0m\r\n", committedText);
             tabs.SelectedItem = sessionTab;
             await WaitForLineAsync("background");
@@ -1149,6 +1178,12 @@ internal static partial class Program
 
             if (verifyNativeResidency)
             {
+                string terminalLog = Directory.EnumerateFiles(directory, "*.term.tttylog", SearchOption.AllDirectories).Single();
+                string operations = await File.ReadAllTextAsync(terminalLog, deadline.Token);
+                if (!operations.StartsWith("変換\rABCD", StringComparison.Ordinal) ||
+                    operations.Contains("入力", StringComparison.Ordinal) ||
+                    operations.Contains("\u001b[5n", StringComparison.Ordinal))
+                    throw new InvalidOperationException("The Terminal log did not preserve only committed local echo and display operations.");
                 if (Interlocked.Read(ref NativeTerminalCoreDiagnostics.ManagedHandoffs) != initialHandoffs ||
                     Interlocked.Read(ref NativeTerminalCoreDiagnostics.ManagedFallbackModels) != initialFallbacks ||
                     Interlocked.Read(ref NativeTerminalCoreDiagnostics.CreatedModels) - initialModels < 2 ||
@@ -1171,11 +1206,12 @@ internal static partial class Program
 
             async Task SendOutputAsync(string output)
             {
-                // Keep the original DSR acknowledgement test. The separate native
-                // case acknowledges through Raw, because DSR deliberately hands off.
-                byte[] payload = Encoding.UTF8.GetBytes(output + (verifyNativeResidency ? "" : "\u001b[5n"));
+                byte[] payload = Encoding.UTF8.GetBytes(output + "\u001b[5n");
                 received.Write(payload);
                 await wire.WriteAsync(payload, deadline.Token);
+                var reply = new byte[4];
+                await wire.ReadExactlyAsync(reply, deadline.Token);
+                Equal(Encoding.ASCII.GetString(reply), "\u001b[0n");
                 if (verifyNativeResidency)
                 {
                     await WaitUntilAsync(() =>
@@ -1183,11 +1219,7 @@ internal static partial class Program
                         using var stream = new FileStream(rawLog, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                         return stream.Length == received.Length;
                     });
-                    return;
                 }
-                var reply = new byte[4];
-                await wire.ReadExactlyAsync(reply, deadline.Token);
-                Equal(Encoding.ASCII.GetString(reply), "\u001b[0n");
             }
 
             async Task CheckPausedAsync(string output, string expectedText)

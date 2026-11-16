@@ -21,21 +21,11 @@ understanding. All three designs are ready for separately requested implementati
 
 ## Scope and ownership
 
-Codec consultation update, 2026-11-17: reuse of the current ISO-8859-10/11/14/16
-tables was approved on 2026-11-16. Japanese proposals A and B are now approved:
-Microsoft CP932 is the candidate base mapper; Rust owns the selected common
-JIS/EUC 94-by-94 repertoire and reverse selection, exact JIS Roman/IN/OUT/kana
-and unsupported-repertoire state, and the specified shared receive-recovery
-and exact whole-send policies. These known custom scopes no longer await a
-codec-design decision. See the
-[codec implementation consultation](../drafts/terminal-codec-consultation.md).
-
-Newly discovered custom behavior still requires consultation before adoption,
-including unapproved ports of existing C# logic. Porting `Cp932Duplicates` or
-adding new mapping corrections is not approved; present a concrete mismatch
-before proposing either. The architecture and all 48 identities remain
-confirmed. These approvals establish neither runtime parity nor permission to
-implement, prototype, or run conversion probes.
+The [codec decision record](../drafts/terminal-codec-consultation.md) records
+47 supported encodings. Use Win32 strict conversion and Windows ICU for the
+designated identities. Windows ICU supplies the Japanese JIS shift sequences
+and repertoires. Rust owns integration, source separation, VT framing,
+resource admission, exact-send validation, and result delivery.
 
 Complete the existing [terminal and encoding](terminal-and-encodings.md),
 [session and recording](session-and-recording.md), and
@@ -46,7 +36,7 @@ extension. The SSH allocation in ADR 0001 and the tab identity in ADR 0002 remai
 
 | Responsibility | Owner in the target design |
 | --- | --- |
-| All 48 receive/transmit encodings, independent incremental source/encoder state, exact mapping and malformed-unit behavior | Rust terminal module |
+| All 47 receive/transmit encodings, independent source state, exact-send and malformed-unit behavior | Rust terminal module calling the approved converters |
 | VT parsing, charset/rendition/modes, normal/alternate screens, Unicode clusters/width, retained rows, reflow and anchor/revision metadata | Rust terminal module |
 | Terminal-dependent key/mouse encoding, replies, strict input preflight, codec closure and local-echo effects | Rust terminal module |
 | Receive-only Text and combined display/Terminal projections, recording eligibility/revisions, serialized Text position, bounded Text/Terminal bytes | Rust terminal module |
@@ -323,7 +313,7 @@ independent specified expected output also remains required.
 | Verification group | Required observations |
 | --- | --- |
 | Native-only execution | Every supported creation/operation/encoding remains Rust; zero managed starts, handoffs, fallback calls or mutable managed replicas, including fault and pressure paths |
-| Encoding and input | All 48 identities, chunk splits/malformed input, independent sources, exact Japanese mappings, strict rejected sends, terminal keys/mouse, paste closure and accepted local echo |
+| Encoding and input | All 47 identities, chunk splits/malformed input, independent sources, Windows/ICU mappings, strict rejected sends, terminal keys/mouse, paste closure and accepted local echo |
 | Shared interpretation | Independent expected state/replies/recording bytes; full command spelling, partial and EOF behavior, embedded controls once, parser limits and numeric overflow; no authoritative native state/effect change on admission rejection |
 | Terminal state | Contracted control/mode combinations, full-screen use, reflow/retirement, alternate parked output, reset, Unicode clusters, snapshots and retained disconnected tabs |
 | Recording lifecycle | All format selections, every old/new part's complete bytes, partial units at pause/resume, tabs/serialized position, alternate transitions, EOF, failure/retry, repeated/invalid operations, cancellation before/after activation, stale writer failure, and valid non-recording effects despite recording rejection |

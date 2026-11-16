@@ -66,6 +66,19 @@ internal sealed class ResourceReservation(ResourceQuota quota) : IDisposable
         if (delta != 0) Resize(checked(size + delta));
     }
 
+    internal ResourceReservation Separate(long chargedBytes)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(chargedBytes);
+        lock (this)
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            if (chargedBytes > size) throw new InvalidDataException("The operation exceeded its reserved output bound.");
+            var ownership = new ResourceReservation(quota) { size = chargedBytes };
+            size -= chargedBytes;
+            return ownership;
+        }
+    }
+
     public void Dispose()
     {
         Release();

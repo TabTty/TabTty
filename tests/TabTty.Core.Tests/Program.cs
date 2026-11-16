@@ -100,8 +100,8 @@ try
     Console.WriteLine("PASS TerminalModesControlWrapAndLineMovement");
     await MissingComPortFailsTheSavedConnectionAttempt();
     Console.WriteLine("PASS MissingComPortFailsTheSavedConnectionAttempt");
-    await JisTransmissionUsesTheSavedDesignations();
-    Console.WriteLine("PASS JisTransmissionUsesTheSavedDesignations");
+    await JisTransmissionUsesIcuDesignations();
+    Console.WriteLine("PASS JisTransmissionUsesIcuDesignations");
     FragmentedTelnetCommandsStayOutOfTerminalData();
     Console.WriteLine("PASS FragmentedTelnetCommandsStayOutOfTerminalData");
     await SavedProfileConnectsAndExchangesTerminalData();
@@ -124,6 +124,8 @@ try
     Console.WriteLine("PASS TextTabsUseTheSerializedLogicalColumn");
     await PasteUsesNegotiatedBracketsWithoutAppendingEnter();
     Console.WriteLine("PASS PasteUsesNegotiatedBracketsWithoutAppendingEnter");
+    await FailedUtf8InputDoesNotEchoOrReplay();
+    Console.WriteLine("PASS FailedUtf8InputDoesNotEchoOrReplay");
     if (File.Exists(Path.Combine(AppContext.BaseDirectory, "libcrypto-3-x64.dll")))
     {
         VaultDecryptsAnIndependentFixedContainer();
@@ -1151,11 +1153,51 @@ static async Task PasteUsesNegotiatedBracketsWithoutAppendingEnter()
     byte[] started = new byte[7];
     await wire.ReadExactlyAsync(started, deadline.Token);
     ExpectBytes(started, "\u001B[200~X"u8.ToArray());
+    try
+    {
+        await session.SendTextAsync("blocked", deadline.Token);
+        throw new InvalidOperationException("Interactive input entered an active paste.");
+    }
+    catch (InvalidOperationException exception) when (exception.Message == "A paste is in progress.") { }
+    await wire.WriteAsync("\u001B[5n\u001B[?2004l\rREADY"u8.ToArray(), deadline.Token);
+    while (await session.ReadOutputAsync(deadline.Token) is { } frame &&
+        !frame.Any(row => row.StartsWith("READY", StringComparison.Ordinal))) { }
     stop.Cancel();
     if (await paced) throw new InvalidOperationException("The paced paste was not stopped.");
-    byte[] closed = new byte[6];
+    byte[] closed = new byte[10];
     await wire.ReadExactlyAsync(closed, deadline.Token);
-    ExpectBytes(closed, "\u001B[201~"u8.ToArray());
+    ExpectBytes(closed, "\u001B[201~\u001B[0n"u8.ToArray());
+    await session.SendPasteAsync(TerminalPaste.Create("界"), 0, 0, cancellationToken: deadline.Token);
+    byte[] next = new byte["界"u8.Length];
+    await wire.ReadExactlyAsync(next, deadline.Token);
+    ExpectBytes(next, "界"u8.ToArray());
+}
+
+static async Task FailedUtf8InputDoesNotEchoOrReplay()
+{
+    using var folder = new TemporaryDirectory();
+    string path = Path.Combine(folder.Path, "failed-input.ttty");
+    var serial = new SerialSettings("COM15", 115200, 8, "none", 1, "none", false, false);
+    var profile = ConnectionProfile.CreateSerial("Failed input", serial, localEcho: true, recordTerminal: true);
+    var wire = new InterruptedInputWire();
+    var recording = SessionRecording.Open(path, profile);
+    await using var session = new TerminalSession(wire, profile, recording, 100);
+    await session.SendTextAsync("済");
+    try
+    {
+        await session.SendTextAsync("未送信");
+        throw new InvalidOperationException("The fixture write was expected to fail.");
+    }
+    catch (IOException exception) when (exception.Message == InterruptedInputWire.Failure) { }
+    var held = await session.GetOutputAsync();
+    if (!held.Contains("済") || wire.Submitted.Count != 2)
+        throw new InvalidOperationException("A failed write changed local echo or was replayed.");
+    ExpectBytes(wire.Submitted[0], "済"u8.ToArray());
+    ExpectBytes(wire.Submitted[1], "未送信"u8[..2].ToArray());
+    await session.DisposeAsync();
+    string file = Directory.EnumerateFiles(folder.Path, "*.term.tttylog", SearchOption.AllDirectories).Single();
+    ExpectBytes(await File.ReadAllBytesAsync(file), "済"u8.ToArray());
+    await session.ReleaseRetainedOutputAsync();
 }
 
 static async Task SavedSerialProfileKeepsItsLineSettings()
@@ -1384,17 +1426,28 @@ static void LegacyReceiveResynchronizesBeforeControlBytes()
     var euc = new TerminalOutput(receiveEncoding: "euc-jp");
     euc.Receive(TerminalReceiveSource.Data, [0xA1, 0xC1, 0xF9, 0xA1, 0x8E, 0xB1, 0x8F, 0xA1, 0xA1]);
     ExpectRows(euc, ["\uFF5E\u7E8A\uFF71\uFFFD"]);
+
+    var strict932 = new TerminalOutput(receiveEncoding: "cp932");
+    strict932.Receive(TerminalReceiveSource.Data, [0xA0, 0xFD, 0xFE, 0xFF]);
+    ExpectRows(strict932, ["\uFFFD\uFFFD\uFFFD\uFFFD"]);
+    var strict857 = new TerminalOutput(receiveEncoding: "cp857");
+    strict857.Receive(TerminalReceiveSource.Data, [0xD5]);
+    ExpectRows(strict857, ["\uFFFD"]);
+    var strict950 = new TerminalOutput(receiveEncoding: "cp950");
+    strict950.Receive(TerminalReceiveSource.Data, [0xA2, 0xA4]);
+    ExpectRows(strict950, ["\u2550"]);
 }
 
 static void EveryProfileEncodingDecodesAscii()
 {
-    if (TerminalEncodings.Identifiers.Distinct().Count() != 48)
+    if (TerminalEncodings.Identifiers.Distinct().Count() != 47)
         throw new InvalidOperationException("The profile encoding inventory is incomplete.");
     foreach (string encoding in TerminalEncodings.Identifiers)
     {
         var output = new TerminalOutput(receiveEncoding: encoding);
         output.Receive(TerminalReceiveSource.Data, "A"u8);
         ExpectRows(output, ["A"]);
+        output.ReleaseNativeState();
     }
 }
 
@@ -1424,7 +1477,7 @@ static async Task MissingComPortFailsTheSavedConnectionAttempt()
     catch (IOException exception) when (exception.InnerException is System.ComponentModel.Win32Exception) { }
 }
 
-static async Task JisTransmissionUsesTheSavedDesignations()
+static async Task JisTransmissionUsesIcuDesignations()
 {
     using var folder = new TemporaryDirectory();
     using var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -1448,7 +1501,7 @@ static async Task JisTransmissionUsesTheSavedDesignations()
     catch (System.Text.EncoderFallbackException) { }
 
     await session.SendPasteAsync(TerminalPaste.Create("\uFF5E\\\uFF71"), 0, 0, cancellationToken: deadline.Token);
-    byte[] expected = "\u001B$@!A\u001B(J\u001B(B\\\u000E1\u000F"u8.ToArray();
+    byte[] expected = "\u001B$B!A\u001B(B\\\u000E1\u000F"u8.ToArray();
     byte[] actual = new byte[expected.Length];
     await wire.ReadExactlyAsync(actual, deadline.Token);
     ExpectBytes(actual, expected);
@@ -1553,4 +1606,22 @@ sealed class PausedSendWire : ISessionWire
         Writes++;
     }
     public void Dispose() => Resume();
+}
+
+sealed class InterruptedInputWire : ISessionWire
+{
+    internal const string Failure = "Fixture lost the connection within a UTF-8 scalar.";
+    internal List<byte[]> Submitted { get; } = [];
+    public ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken) => ValueTask.FromResult(0);
+    public ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken)
+    {
+        if (Submitted.Count == 0)
+        {
+            Submitted.Add(buffer.ToArray());
+            return ValueTask.CompletedTask;
+        }
+        Submitted.Add(buffer[..2].ToArray());
+        return ValueTask.FromException(new IOException(Failure));
+    }
+    public void Dispose() { }
 }

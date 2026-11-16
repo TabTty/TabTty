@@ -101,7 +101,7 @@ public sealed class SftpClient : IDisposable
         try
         {
             if (name.Length > MaxPath) throw new SftpException(SftpFailure.InvalidName);
-            byte[] bytes = codec.Encode(name).Bytes;
+            byte[] bytes = codec.Encode(name);
             if (!ValidComponent(bytes, navigation) || DecodeName(bytes) != name)
                 throw new SftpException(SftpFailure.InvalidName);
             return bytes;

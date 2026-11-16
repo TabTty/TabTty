@@ -87,8 +87,6 @@ internal sealed class ProfileEditor
             var transmit = Choice(terminal, "transmitEncoding", "TransmitEncoding", TerminalEncodings.Identifiers.ToArray());
             Number(terminal, "ambiguousWidth", "AmbiguousWidth");
             var jis = terminal["jis"]!.AsObject();
-            var kanjiIn = Choice(jis, "kanjiIn", "KanjiIn", ["@", "B"]);
-            var kanjiOut = Choice(jis, "kanjiOut", "KanjiOut", ["B", "J"]);
             var receiveKana = Choice(jis, "receiveKana", "ReceiveKana", ["eightBit", "soSi"], ["8-bit", "SO/SI"]);
             var transmitKana = Choice(jis, "transmitKana", "TransmitKana", ["eightBit", "soSi"], ["8-bit", "SO/SI"]);
             receive.SelectionChanged += (_, _) => UpdateEncoding();
@@ -105,10 +103,9 @@ internal sealed class ProfileEditor
                 string tx = separateTransmit ? (string)transmit.SelectedValue : rx;
                 bool showReceiveKana = rx is "jis" or "cp932";
                 receiveKana.IsEnabled = showReceiveKana;
-                kanjiIn.IsEnabled = kanjiOut.IsEnabled = transmitKana.IsEnabled = tx == "jis";
+                transmitKana.IsEnabled = tx == "jis";
                 receiveKana.Visibility = showReceiveKana ? Visibility.Visible : Visibility.Collapsed;
-                kanjiIn.Visibility = kanjiOut.Visibility = transmitKana.Visibility =
-                    tx == "jis" ? Visibility.Visible : Visibility.Collapsed;
+                transmitKana.Visibility = tx == "jis" ? Visibility.Visible : Visibility.Collapsed;
             }
             InheritedFont(terminal["font"]!.AsObject(), app);
             InheritedRetention(terminal["retainedRows"]!.AsObject(), app);

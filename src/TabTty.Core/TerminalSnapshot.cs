@@ -49,9 +49,10 @@ public sealed class TerminalSnapshot : IReadOnlyList<string>
 
     internal TerminalSnapshot(Row[] rows, bool isAlternateScreen, int cursorRow, int cursorColumn, int columns,
         int screenRows, int screenStartRow, bool cursorVisible, TerminalCursorShape cursorShape, bool cursorBlink,
-        TerminalMouseMode mouse, ResourceQuota? budget = null)
+        TerminalMouseMode mouse, ResourceQuota? budget = null, ResourceReservation? admittedCopies = null)
     {
-        memory = budget?.Reserve(rows.LongLength * 256 + 256);
+        long charge = rows.LongLength * 256 + 256;
+        memory = admittedCopies?.Separate(charge) ?? budget?.Reserve(charge);
         this.rows = rows;
         IsAlternateScreen = isAlternateScreen;
         CursorRow = cursorRow;

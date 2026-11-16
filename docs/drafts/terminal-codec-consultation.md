@@ -1,6 +1,28 @@
 # Native terminal codec implementation consultation
 
-Status: identified custom-processing approaches approved through 2026-11-17; no current codec-design consultation remains open. ISO-8859-10/11/14/16 table reuse was approved on 2026-11-16, and Japanese proposal A plus shared recovery/exact-send proposal B on 2026-11-17. The three architecture designs, all 48 identities, and avoidance of a managed terminal fallback remain accepted. Newly discovered custom mappings or compatibility corrections still require consultation. These design decisions do not authorize implementation or establish runtime compatibility.
+## Current decision
+
+Use strict Win32 conversion for the supported Windows/OEM code pages and
+KOI8-R. Use Windows ICU for ISO-8859-10, ISO-8859-11, ISO-8859-14, EUC-JP,
+and JIS. The user requested removing existing conversion tables and
+delegating JIS designations to ICU. The per-direction kana options select
+the corresponding ICU converter. The legacy Kanji IN/OUT values remain
+in the profile schema for file compatibility.
+
+ISO-8859-16 is outside the 47 supported identities. It uses the ordinary
+unsupported-encoding validation. The final decision superseded the tentative
+approval of `encoding_rs`; there is no Cargo dependency on it.
+
+The Windows probes matched all 256 decode positions per ISO-8859-10/11/14
+and all 8,836 selected two-byte EUC-JP positions. The Win32 decoder did not
+offer ISO-8859-16, and the Windows ICU converter could not open its canonical
+name or aliases. ICU's Japanese ISO-2022 versions 3 and 4 emitted their own
+canonical designations and kept the SO/SI and eight-bit kana choices available.
+ICU may choose a different JIS repertoire or byte spelling than the earlier
+TabTty converter. [Windows ICU](https://learn.microsoft.com/en-us/windows/win32/intl/international-components-for-unicode--icu-)
+
+The remaining sections record the earlier proposals and the evidence that led
+to this decision.
 
 ## Consultation requirement
 
@@ -8,7 +30,7 @@ Before selecting or implementing custom codec processing, present the affected i
 
 Apply this requirement to new or changed custom scope, not to reapproving the specific decisions recorded below.
 
-Assess permitted Microsoft native APIs or data against the exact contract. A matching code-page name is not evidence of matching tables, strict reverse mapping, incremental boundaries, malformed-unit recovery, or terminal-specific designation rules. Direct native Windows calls from Rust are the planned base for Microsoft code pages and are not a managed C# terminal fallback. Exact-behavior and supported-platform checks remain implementation acceptance work; no native API has been runtime-validated by this note.
+Assess permitted Microsoft native APIs or data against the exact contract, including mapping tables, strict reverse mapping, incremental boundaries, malformed-unit recovery, and terminal-specific designation rules. Direct Windows calls from Rust are the planned base for Microsoft code pages. The runtime comparison below covers the current Windows environment.
 
 ## Evidence and initial consultation candidates
 
@@ -83,14 +105,45 @@ Preserve the approved shared framing/recovery and exact-send policy around nativ
 
 No additional custom mapping need has been established by this static assessment. It is sufficient to finalize the design/ticket allocation, not to claim verified native compatibility. During authorized implementation, compare every single-byte position and the multibyte mapping/framing cases against independent expected data, including undefined positions, duplicate reverse mappings, best-fit candidates, cp1258 combining marks, and C0/C1 behavior. Preserve the approved payload/source/EOF rules. If these checks expose a need for new correction logic or data, pause adoption of that correction and consult with the exact discrepancy. Existing approved A/B work can proceed independently where unaffected.
 
+## Windows API behavior checked during implementation
+
+On the development Windows x64 environment, Windows CP932 decoded all 645
+defined positions in the existing managed correction tables identically. It
+also matched the four CP932 anchor vectors. This check supports using the
+Windows CP932 mapping directly for those cases. Other platform and encode
+acceptance checks still apply.
+
+The comparison with the current managed code-page provider found decode
+differences in CP857, CP864, CP874, CP1253, CP1255, CP1257, ISO-8859-3/6/7/8,
+and CP936/949/950. This distinguishes behavior of the two Microsoft APIs
+from TabTty's accepted contract. For example, the published
+[CP857 mapping](https://www.unicode.org/Public/MAPPINGS/VENDORS/MICSFT/PC/CP857.TXT)
+marks D5 undefined. The managed provider yields U+F8BB there, while strict
+Windows decoding rejects it. The published
+[CP950 mapping](https://www.unicode.org/Public/MAPPINGS/VENDORS/MICSFT/WINDOWS/CP950.TXT)
+assigns A2 A4 to U+2550. Windows returns that scalar, while the managed
+provider rejects the pair.
+
+The user approved applying strict Windows conversion and the agreed
+undefined-unit rule. Rejected printable units yield one U+FFFD on receive.
+Sending requires an exact round trip. Units defined by Windows, such as
+CP950 A2 A4, use their Windows mapping.
+
 ## Decision status
 
 - ISO-8859-10/11/14/16 existing-table reuse: **approved** on 2026-11-16.
 - Proposal A, Japanese compatibility policy in Rust: **approved** on 2026-11-17.
 - Proposal B, shared recovery and exact-send policy in Rust: **approved** on 2026-11-17.
-- Remaining-code-page static assessment: **complete; no additional custom mapping need demonstrated**. Runtime equivalence remains implementation acceptance work.
-- Additional CP932 overrides or new mapping corrections: **not approved; consult only if a concrete mismatch is found**.
-- Implementation/prototyping/runtime probes: **not authorized by these design consultations**.
+- The initial Windows comparison found differences for thirteen non-Japanese
+  identities. The user approved strict Windows conversion for all thirteen.
+- CP932: comparison of 11,443 terminal-shaped positions found that all
+  two-byte positions agreed, including the 645 existing overrides. Four
+  standalone bytes differ: A0, FD, FE, and FF. The legacy managed provider
+  returns U+F8F0 through U+F8F3, while strict Windows conversion rejects
+  those bytes. The [published CP932 mapping](https://www.unicode.org/Public/MAPPINGS/VENDORS/MICSFT/WINDOWS/CP932.TXT)
+  marks them undefined. The user approved treating the four positions as
+  undefined under strict Windows conversion. The Japanese 94-by-94 table uses the verified two-byte
+  mappings and is unaffected.
 
 ## Primary references checked
 
@@ -99,4 +152,8 @@ No additional custom mapping need has been established by this static assessment
 - [Microsoft code-page identifiers](https://learn.microsoft.com/en-us/windows/win32/intl/code-page-identifiers): available named code-page identifiers, not a guarantee of TabTty-specific compatibility.
 - [Microsoft MultiByteToWideChar](https://learn.microsoft.com/en-us/windows/win32/api/stringapiset/nf-stringapiset-multibytetowidechar) and [WideCharToMultiByte](https://learn.microsoft.com/en-us/windows/win32/api/stringapiset/nf-stringapiset-widechartomultibyte): explicit code pages, conversion/error flags, restrictions, and best-fit/default-character considerations. Do not assume one flag combination works for every codec.
 
-No new conversion code, prototype, mapping generator, or runtime probe was run. The user approved the ticket breakdown and requested publication on 2026-11-17. The [coordination map](https://github.com/TabTty/TabTty/issues/16) and its 23 implementation tickets record these decisions. Additional discovered custom work still requires consultation, and implementation requires a separate explicit request.
+The user approved the ticket breakdown and requested publication on
+2026-11-17. The [coordination map](https://github.com/TabTty/TabTty/issues/16)
+and its 23 implementation tickets record those decisions. The implementation
+request followed publication. Newly discovered custom work still requires
+consultation.

@@ -43,6 +43,8 @@
   <data name="Cancel" xml:space="preserve"><value>Cancel</value></data>
   <data name="Error" xml:space="preserve"><value>TabTty error</value></data>
   <data name="CloseConnections" xml:space="preserve"><value>Disconnect the active connections and close?</value></data>
+  <data name="CloseTabWork" xml:space="preserve"><value>Stop the work listed below and close?</value></data>
+  <data name="CloseCleanupFailed" xml:space="preserve"><value>Cleanup failed. The terminal tab remains open.</value></data>
   <data name="CloseTargetChanged" xml:space="preserve"><value>The tab or its connection changed during the close request. Review the current tab before closing it.</value></data>
   <data name="Language" xml:space="preserve"><value>Language</value></data>
   <data name="Theme" xml:space="preserve"><value>Theme</value></data>
@@ -116,8 +118,6 @@
   <data name="SameAsReceive" xml:space="preserve"><value>Same as receive</value></data>
   <data name="ReceiveEncoding" xml:space="preserve"><value>Receive encoding</value></data>
   <data name="TransmitEncoding" xml:space="preserve"><value>Transmit encoding</value></data>
-  <data name="KanjiIn" xml:space="preserve"><value>JIS Kanji-in designation</value></data>
-  <data name="KanjiOut" xml:space="preserve"><value>JIS Kanji-out designation</value></data>
   <data name="ReceiveKana" xml:space="preserve"><value>Receive kana with SO/SI</value></data>
   <data name="TransmitKana" xml:space="preserve"><value>Transmit JIS kana with SO/SI</value></data>
   <data name="AmbiguousWidth" xml:space="preserve"><value>Ambiguous character width (cells)</value></data>

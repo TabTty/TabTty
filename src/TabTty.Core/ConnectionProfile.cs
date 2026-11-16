@@ -52,8 +52,6 @@ public sealed class ConnectionProfile
     private JsonElement Japanese => Terminal.GetProperty("jis");
     internal bool ReceiveSevenBitKana => Japanese.GetProperty("receiveKana").GetString() == "soSi";
     internal bool TransmitSevenBitKana => Japanese.GetProperty("transmitKana").GetString() == "soSi";
-    internal bool OldKanjiIn => Japanese.GetProperty("kanjiIn").GetString() == "@";
-    internal bool RomanKanjiOut => Japanese.GetProperty("kanjiOut").GetString() == "J";
     public string Enter => Terminal.GetProperty("enter").GetString()!;
     public string Backspace => Terminal.GetProperty("backspace").GetString()!;
     public string LocalEcho => Terminal.GetProperty("localEcho").GetString()!;

@@ -271,13 +271,13 @@ public sealed class App : Application
 
     internal void CommitWindowClose(MainWindow window)
     {
-        if (!started || drainingActivations || windowOrder.Any(other => other != window && !other.IsClosing) || HasEditor()) return;
+        if (!started || drainingActivations || windowOrder.Any(other => other != window) || HasEditor()) return;
         CommitExit();
     }
 
     internal void EditorClosed(Window editor)
     {
-        if (started && !drainingActivations && !windowOrder.Any(window => !window.IsClosing) && !HasEditor(editor))
+        if (started && !drainingActivations && windowOrder.Count == 0 && !HasEditor(editor))
             CommitExit();
         ShutdownIfFinished(editor);
     }

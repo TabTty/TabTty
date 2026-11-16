@@ -62,3 +62,8 @@ mapping/state/recovery and exact-send policies. This does not establish runtime
 parity or approve `Cp932Duplicates` ports, new mapping corrections, or other
 unreviewed custom processing; newly discovered work still requires consultation.
 This decision authorizes documentation changes, not implementation or prototyping.
+
+During subsequent implementation the user approved strict Win32 and Windows
+ICU conversion from Rust. The supported set is 47 encodings, with ICU owning
+JIS designations and repertoire selection. See the current
+[codec decision](../drafts/terminal-codec-consultation.md).

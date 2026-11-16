@@ -13,7 +13,6 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
     private readonly ConnectionProfile profile;
     private readonly MacroRun? macro;
     private readonly TerminalEncoding transmitter;
-    private JisState transmitState;
     private SessionRecording? recording;
     private readonly TerminalRecordings? projections;
     private readonly SemaphoreSlim state = new(1);
@@ -21,6 +20,7 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
     private readonly byte[] receiveBuffer = new byte[8192];
     private readonly ResourceReservation receiveMemory = ApplicationResources.Receive.Reserve(64 * 1024);
     private volatile bool ended;
+    private bool terminalReleased;
     private volatile bool disconnected;
     private bool recordingActive;
     private volatile bool pasteActive;
@@ -49,6 +49,7 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
             receiveEncoding: profile.ReceiveEncoding, receiveSevenBitKana: profile.ReceiveSevenBitKana,
             ambiguousWidth: profile.AmbiguousWidth);
         transmitter = new TerminalEncoding(profile.TransmitEncoding);
+
         if (recording is not null) projections = new TerminalRecordings(terminal, profile, recording, RetainedRows, grid);
         if (macro is not null)
         {
@@ -266,9 +267,11 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
         while (!ended)
         {
             int count = await wire.ReadAsync(receiveBuffer, cancellationToken).ConfigureAwait(false);
+            SessionRecording? finishedRecording = null;
             await state.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
+                if (ended) return false;
                 if (count == 0)
                 {
                     await ProcessBatchAsync(() =>
@@ -279,37 +282,35 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
                     }, cancellationToken).ConfigureAwait(false);
                     ended = true;
                     SignalAiActivity();
-                    if (recording is not null) await recording.FinishAsync().ConfigureAwait(false);
-                    return true;
+                    finishedRecording = recording;
                 }
-
-                var (payload, reply) = protocol is null
-                    ? (receiveBuffer.AsSpan(0, count).ToArray(), Array.Empty<byte>())
-                    : protocol.Receive(receiveBuffer.AsSpan(0, count));
-                if (reply.Length != 0)
-                    await wire.WriteAsync(reply, cancellationToken).ConfigureAwait(false);
-                if (payload.Length != 0)
+                else
                 {
-                    await ProcessPayloadAsync(wire.Source, payload, cancellationToken).ConfigureAwait(false);
-                    if (!pasteActive) await SendRepliesAsync(cancellationToken).ConfigureAwait(false);
-                    wire.Acknowledge(count);
+                    var (payload, reply) = protocol is null
+                        ? (receiveBuffer.AsSpan(0, count).ToArray(), Array.Empty<byte>())
+                        : protocol.Receive(receiveBuffer.AsSpan(0, count));
+                    if (reply.Length != 0)
+                        await wire.WriteAsync(reply, cancellationToken).ConfigureAwait(false);
+                    if (payload.Length != 0)
+                    {
+                        await ProcessPayloadAsync(wire.Source, payload, cancellationToken).ConfigureAwait(false);
+                        if (!pasteActive) await SendRepliesAsync(cancellationToken).ConfigureAwait(false);
+                        wire.Acknowledge(count);
+                    }
                     return true;
                 }
-                return true;
             }
-            catch (ResourceLimitException exception)
+            catch (Exception exception) when (exception is ResourceLimitException or NativeTerminalExecutionException)
             {
-                ended = true;
-                recordingActive = false;
-                projections?.Abort();
-                recording?.MarkIncomplete(exception.Message);
-                Disconnect();
+                FailTerminalOperation(exception);
                 throw;
             }
             finally
             {
                 state.Release();
             }
+            if (finishedRecording is not null) await finishedRecording.FinishAsync().ConfigureAwait(false);
+            return true;
         }
 
         return false;
@@ -320,7 +321,7 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
         for (int offset = 0; offset < payload.Length; offset += 1024)
         {
             byte[] batch = payload.Length <= 1024 ? payload : payload.AsSpan(offset, Math.Min(1024, payload.Length - offset)).ToArray();
-            await ProcessBatchAsync(() => Receive(source, batch), token).ConfigureAwait(false);
+            await ProcessBatchAsync(() => Receive(source, batch, token), token).ConfigureAwait(false);
         }
     }
 
@@ -331,19 +332,36 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
         finally { ProcessingSlots.Release(); }
     }
 
-    private void Receive(TerminalReceiveSource source, byte[] payload)
+    private void Receive(TerminalReceiveSource source, byte[] payload, CancellationToken token = default)
     {
-        if (projections is null) terminal.Receive(source, payload);
-        else projections.Receive(source, payload);
+        if (projections is null) terminal.Receive(source, payload, token);
+        else projections.Receive(source, payload, token);
         macro?.ReceiveBatch();
         if (payload.Length != 0) SignalAiActivity();
     }
 
     private void Echo(ReadOnlySpan<byte> payload)
     {
-        if (projections is null) terminal.EchoUtf8(payload);
-        else projections.Echo(payload);
+        try
+        {
+            if (projections is null) terminal.EchoUtf8(payload);
+            else projections.Echo(payload);
+        }
+        catch (Exception exception) when (exception is ResourceLimitException or NativeTerminalExecutionException)
+        {
+            FailTerminalOperation(exception);
+            throw;
+        }
         SignalAiActivity();
+    }
+
+    private void FailTerminalOperation(Exception exception)
+    {
+        ended = true;
+        recordingActive = false;
+        projections?.Abort();
+        recording?.MarkIncomplete(exception.Message);
+        Disconnect();
     }
 
     private void CompleteReceive()
@@ -435,11 +453,24 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
     {
         if (text.Length > 1024 * 1024 || text.Any(char.IsControl))
             throw new ArgumentException("Terminal text contains a control character or exceeds its size limit.", nameof(text));
+        if (transmitter.IsUtf8)
+        {
+            int size = NativeTerminalCore.CheckUtf8Input(text);
+            var memory = inputBytes.Reserve(size + (altPrefix ? size + 1L : 0L));
+            try
+            {
+                byte[] echo = NativeTerminalCore.PrepareUtf8Input(text, size);
+                byte[] payload = altPrefix ? [0x1B, .. echo] : echo;
+                return SendAsync(() => payload, echo, cancellationToken, memory,
+                    payloadAlreadyCharged: true);
+            }
+            catch { memory.Dispose(); throw; }
+        }
         var echoMemory = inputBytes.Reserve(StrictUtf8.GetByteCount(text));
         try { return SendAsync(() =>
         {
-            EncodedText encoded = EncodeText(text);
-            return altPrefix ? encoded with { Bytes = [0x1B, .. encoded.Bytes] } : encoded;
+            byte[] encoded = EncodeText(text);
+            return altPrefix ? [0x1B, .. encoded] : encoded;
         }, StrictUtf8.GetBytes(text), cancellationToken, echoMemory); }
         catch { echoMemory.Dispose(); throw; }
     }
@@ -455,8 +486,7 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
 
     public Task<IReadOnlyList<string>> SendKeyAsync(TerminalKey key, TerminalModifiers modifiers = TerminalModifiers.None,
         CancellationToken cancellationToken = default) =>
-        SendAsync(() => new EncodedText(TerminalKeys.Encode(key, modifiers, terminal.ApplicationCursorKeys,
-            terminal.ApplicationKeypad), transmitState),
+        SendAsync(() => TerminalKeys.Encode(key, modifiers, terminal.ApplicationCursorKeys, terminal.ApplicationKeypad),
             [], cancellationToken);
 
     public Task<IReadOnlyList<string>> SendControlAsync(char letter, CancellationToken cancellationToken = default)
@@ -470,7 +500,7 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
         using var unit = inputUnits.Reserve(1);
         using var preflight = inputBytes.Reserve(1024 * 1024);
         await state.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try { _ = EncodeText(paste.Text); }
+        try { PreflightPasteText(paste.Text); }
         finally { state.Release(); }
     }
 
@@ -508,8 +538,8 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
             if (stopToken.IsCancellationRequested) return false;
             if (!preflightComplete)
             {
-                if (ai is null) _ = EncodeText(paste.Text);
-                else await ProcessBatchAsync(() => _ = EncodeText(paste.Text), pacing.Token).ConfigureAwait(false);
+                if (ai is null) PreflightPasteText(paste.Text);
+                else await ProcessBatchAsync(() => PreflightPasteText(paste.Text), pacing.Token).ConfigureAwait(false);
             }
             if (ai is not null) CheckAiInput(ai);
             bracketed = framePaste && terminal.BracketedPaste;
@@ -566,11 +596,10 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
                     if (stopToken.IsCancellationRequested) break;
                     EnsureConnected();
                     string text = paste.Text[start..position];
-                    EncodedText payload = EncodeText(text, finalize: false);
-                    await WriteInputAsync(EncodeInput(payload.Bytes), writing.Token, ai).ConfigureAwait(false);
-                    transmitState = payload.Next;
+                    byte[] payload = EncodeText(text);
+                    await WriteInputAsync(EncodeInput(payload), writing.Token, ai).ConfigureAwait(false);
                     if (LocalEcho)
-                        Echo(StrictUtf8.GetBytes(text));
+                        Echo(transmitter.IsUtf8 ? payload : StrictUtf8.GetBytes(text));
                 }
                 finally
                 {
@@ -600,10 +629,6 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
             try
             {
                 EnsureConnected();
-                EncodedText closure = EncodeText("");
-                if (closure.Bytes.Length != 0)
-                    await wire.WriteAsync(EncodeInput(closure.Bytes), closing.Token).ConfigureAwait(false);
-                transmitState = closure.Next;
                 if (bracketed)
                     await wire.WriteAsync("\u001B[201~"u8.ToArray(), closing.Token).ConfigureAwait(false);
                 await SendRepliesAsync(closing.Token).ConfigureAwait(false);
@@ -629,6 +654,7 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
 
     private async Task<TerminalSnapshot> CaptureSnapshotAsync(CancellationToken token)
     {
+        ObjectDisposedException.ThrowIf(terminalReleased, this);
         TerminalSnapshot? snapshot = null;
         await ProcessBatchAsync(() => snapshot = terminal.GetRows(), token).ConfigureAwait(false);
         return snapshot!;
@@ -666,15 +692,19 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
         if (ended && macro is null || disconnected) throw new IOException("The terminal session has ended.");
     }
 
-    private EncodedText EncodeText(string text, bool finalize = true) =>
-        transmitter.Encode(text, transmitState, finalize, profile.OldKanjiIn,
-            profile.RomanKanjiOut, profile.TransmitSevenBitKana);
+    private byte[] EncodeText(string text) => transmitter.Encode(text, profile.TransmitSevenBitKana);
+
+    private void PreflightPasteText(string text)
+    {
+        if (transmitter.IsUtf8) _ = NativeTerminalCore.CheckUtf8Input(text);
+        else _ = NativeTerminalCore.CheckLegacyInput(transmitter.NativePage, text, profile.TransmitSevenBitKana);
+    }
 
     private Task<IReadOnlyList<string>> SendAsync(byte[] bytes, byte[] echo, CancellationToken cancellationToken) =>
-        SendAsync(() => new EncodedText(bytes, transmitState), echo, cancellationToken);
+        SendAsync(() => bytes, echo, cancellationToken);
 
-    private async Task<IReadOnlyList<string>> SendAsync(Func<EncodedText> encode, byte[] echo, CancellationToken cancellationToken,
-        ResourceReservation? echoMemory = null)
+    private async Task<IReadOnlyList<string>> SendAsync(Func<byte[]> encode, byte[] echo, CancellationToken cancellationToken,
+        ResourceReservation? echoMemory = null, bool payloadAlreadyCharged = false)
     {
         using var queuedMemory = echoMemory ?? inputBytes.Reserve(echo.LongLength);
         using var unit = inputUnits.Reserve(1);
@@ -684,11 +714,11 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
             EnsureConnected();
             EnsureManualInput();
             if (pasteActive) throw new InvalidOperationException("A paste is in progress.");
-            EncodedText payload = default;
+            byte[] payload = [];
             await ProcessBatchAsync(() => payload = encode(), cancellationToken).ConfigureAwait(false);
-            using var transmitMemory = inputBytes.Reserve(payload.Bytes.LongLength * (protocol is null ? 1 : 3));
-            await wire.WriteAsync(EncodeInput(payload.Bytes), cancellationToken).ConfigureAwait(false);
-            transmitState = payload.Next;
+            using var transmitMemory = inputBytes.Reserve(payload.LongLength *
+                (protocol is null ? (payloadAlreadyCharged ? 0 : 1) : 3));
+            await wire.WriteAsync(EncodeInput(payload), cancellationToken).ConfigureAwait(false);
             if (LocalEcho)
                 await ProcessBatchAsync(() => Echo(echo), CancellationToken.None).ConfigureAwait(false);
             return await CaptureSnapshotAsync(cancellationToken).ConfigureAwait(false);
@@ -786,29 +816,49 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
         await Task.WhenAll(CloseRecordingsAsync(), close).ConfigureAwait(false);
     }
 
+    internal async Task ReleaseRetainedOutputAsync()
+    {
+        await state.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (terminalReleased) return;
+            FinalizeReceive();
+            terminalReleased = true;
+            terminal.ReleaseNativeState();
+            SignalAiActivity();
+        }
+        finally { state.Release(); }
+    }
+
+    // The caller holds state. Finishing the terminal projection does not wait for the file writer.
+    private void FinalizeReceive()
+    {
+        if (ended) return;
+        try
+        {
+            Receive(TerminalReceiveSource.Data, protocol?.CompleteReceive() ?? []);
+            CompleteReceive();
+        }
+        catch (Exception exception) when (exception is InvalidDataException or InvalidOperationException or
+            ResourceLimitException or NativeTerminalExecutionException)
+        {
+            projections?.Abort();
+            recording?.MarkIncomplete(exception.Message);
+        }
+        finally
+        {
+            recordingActive = false;
+            ended = true;
+        }
+    }
+
     private async Task CloseRecordingsAsync()
     {
         await recordingChanges.WaitAsync().ConfigureAwait(false);
         try
         {
             await state.WaitAsync().ConfigureAwait(false);
-            try
-            {
-                if (!ended)
-                {
-                    try
-                    {
-                        Receive(TerminalReceiveSource.Data, protocol?.CompleteReceive() ?? []);
-                        CompleteReceive();
-                    }
-                    catch (Exception exception) when (exception is InvalidDataException or InvalidOperationException or ResourceLimitException)
-                    {
-                        projections?.Abort();
-                        recording?.MarkIncomplete(exception.Message);
-                    }
-                    finally { ended = true; }
-                }
-            }
+            try { FinalizeReceive(); }
             finally { state.Release(); }
         }
         finally

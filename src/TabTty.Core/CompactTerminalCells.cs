@@ -14,7 +14,7 @@ internal sealed class CompactTerminalCells
     private int expandedCount;
 
     internal CompactTerminalCells(ReadOnlySpan<NativeTerminalCore.CellView> cells,
-        ReadOnlySpan<char> text, ResourceQuota quota)
+        ReadOnlySpan<char> text, ResourceReservation admittedCopies)
     {
         long stringBytes = 0;
         foreach (NativeTerminalCore.CellView cell in cells)
@@ -31,7 +31,7 @@ internal sealed class CompactTerminalCells
         // managed reducer; the owned compact array itself occupies 20 bytes/cell.
         // Reserve the eventual expansion here as well, before publishing the snapshot.
         // Rendering only releases quota; it cannot reject a new allocation reservation.
-        memory = quota.Reserve(80L + cells.Length * 64L + 24L + text.Length * 2L + expandedCharge);
+        memory = admittedCopies.Separate(80L + cells.Length * 64L + 24L + text.Length * 2L + expandedCharge);
         try
         {
             compact = cells.ToArray();

@@ -68,10 +68,10 @@ internal sealed class TerminalRecordings
         receiveOnly.TextRecord = value => Append(RecordingFormat.Text, text, value);
     }
 
-    public void Receive(TerminalReceiveSource source, byte[] payload)
+    public void Receive(TerminalReceiveSource source, byte[] payload, CancellationToken token = default)
     {
         if (raw) part?.Enqueue(RecordingFormat.Raw, payload);
-        terminal.Receive(source, payload);
+        terminal.Receive(source, payload, token);
         receiveOnly?.Receive(source, payload);
         receiveOnly?.TakeReplies();
         FlushBuffers();
@@ -132,6 +132,7 @@ internal sealed class TerminalRecordings
         alternateCr = null;
         text.Clear();
         operations.Clear();
+        receiveOnly?.ReleaseNativeState();
     }
 
     private void AdvanceInterval()

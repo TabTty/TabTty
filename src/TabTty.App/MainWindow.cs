@@ -22,6 +22,7 @@ internal sealed partial class MainWindow : Window
     private IInputElement? focusBeforeMenu;
     private bool closing;
     private bool readyToClose;
+    private bool closed;
     private static TabDrag? currentDrag;
     private TabItem? dragCandidate;
     private Point dragOrigin;
@@ -31,6 +32,11 @@ internal sealed partial class MainWindow : Window
     {
         this.app = app;
         terminalClosure = new(this);
+        Closed += (_, _) =>
+        {
+            closed = true;
+            app.CommitWindowClose(this);
+        };
         // Register before WindowChrome so right-clicking the caption can open the tab menu.
         SourceInitialized += (_, _) =>
             System.Windows.Interop.HwndSource.FromHwnd(new System.Windows.Interop.WindowInteropHelper(this).Handle)
@@ -141,7 +147,7 @@ internal sealed partial class MainWindow : Window
     {
         if (app.AutoCloseDisconnectedTabs && !closing && item.CanCloseAsDisconnected &&
             item.Content is not TerminalTab { Macro: not null })
-            RemoveTerminalTab(item);
+            terminalClosure.CloseAutomatically(item);
     }
 
     private bool SelectForm(string titleKey)
@@ -592,12 +598,8 @@ internal sealed partial class MainWindow : Window
         item.IsEnabled = !closing && AllTabs.Any(tab => tab.CanCloseAsDisconnected);
     }
 
-    private void CloseDisconnectedTabs(object sender, RoutedEventArgs args)
-    {
-        if (closing) return;
-        foreach (WindowTab item in AllTabs.Where(tab => tab.CanCloseAsDisconnected).ToArray())
-            RemoveTerminalTab(item);
-    }
+    private async void CloseDisconnectedTabs(object sender, RoutedEventArgs args) =>
+        await terminalClosure.CloseDisconnectedTabsAsync();
 
     private void MoveTabSelectionByWheel(int delta)
     {
@@ -832,18 +834,18 @@ internal sealed partial class MainWindow : Window
         await terminalClosure.CloseTabAsync(item);
     }
 
-    private void RemoveTerminalTab(WindowTab item)
+    private (bool Removed, Task OutputRelease) RemoveTerminalTab(WindowTab item)
     {
-        if (GroupOf(item) is not { } group) return;
-        if (item.Content is TerminalTab terminal)
-        {
-            app.Ai.EndSharing(terminal);
-            terminal.DisposeMacro();
-        }
+        if (GroupOf(item) is not { } group || item.Content is not TerminalTab terminal)
+            return (false, Task.CompletedTask);
         group.Items.Remove(item);
+        if (GroupOf(item) is not null) return (false, Task.CompletedTask);
         item.Host = null;
+        Task release = terminal.ReleaseRemovedOutputAsync();
+        app.Ai.EndSharing(terminal);
+        terminal.DisposeMacro();
         app.Broadcast.Refresh();
-        CloseIfEmpty();
+        return (true, release);
     }
 
     private void RemoveFormTab(WindowTab item, FormView form)
@@ -857,7 +859,7 @@ internal sealed partial class MainWindow : Window
 
     private void CloseIfEmpty()
     {
-        if (!closing && !AllTabs.Any()) Close();
+        if (!closed && !closing && !AllTabs.Any()) Close();
     }
     protected override void OnClosing(CancelEventArgs e)
     {
@@ -869,23 +871,14 @@ internal sealed partial class MainWindow : Window
             return;
         }
         if (readyToClose) { SavePlacement(); return; }
-        TerminalTab[] terminals = TerminalTabs.ToArray();
-        TerminalTab[] active = terminals.Where(terminal => terminal.IsRunning || terminal.HasActiveTransfer || terminal.HasActiveMacro).ToArray();
-        if (active.Length == 0 && !terminals.Any(terminal => terminal.HasTransferWindow) && !closing)
+        if (!closing && !TerminalTabs.Any())
         {
-            closing = true;
-            foreach (var terminal in terminals) app.Ai.EndSharing(terminal);
-            app.CommitWindowClose(this);
+            closing = readyToClose = true;
             SavePlacement();
             return;
         }
         e.Cancel = true;
-        if (closing || (active.Length != 0 && !ConfirmClose(active))) return;
-        closing = true;
-        foreach (var terminal in terminals) app.Ai.EndSharing(terminal);
-        IsEnabled = false;
-        foreach (TerminalTab terminal in active) terminal.Disconnect();
-        _ = FinishCloseAsync(active, terminals);
+        _ = terminalClosure.CloseWindowAsync();
     }
 
     private void SavePlacement()
@@ -895,62 +888,15 @@ internal sealed partial class MainWindow : Window
         catch (Exception exception) when (ProfileCatalog.IsFileProblem(exception)) { app.Profiles.ReportStateFailure(this); }
     }
 
-    private async Task FinishCloseAsync(TerminalTab[] active, TerminalTab[] terminals)
+    private bool ConfirmCleanupLoss()
     {
-        await Task.Yield();
-        // Present transfer cleanup reports one at a time on this window's close path.
-        Task<bool> transfers = CloseTransfersAsync();
-        Task completion = Task.WhenAll(active.Select(terminal => terminal.Completion).Append(transfers));
-        await WaitForCleanupAsync(completion, () =>
+        var choice = new FormWindow(this, Text("ClosingConnection"));
+        choice.AddField("CleanupPending", new TextBox
         {
-            foreach (TerminalTab terminal in active) terminal.AbandonCleanup();
+            Text = Text("CleanupPendingExplanation"), IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
         });
-        if (!await transfers)
-        {
-            closing = false;
-            IsEnabled = true;
-            return;
-        }
-        app.CommitWindowClose(this);
-        readyToClose = true;
-        Close();
-
-        async Task<bool> CloseTransfersAsync()
-        {
-            bool dismissed = true;
-            foreach (TerminalTab terminal in terminals)
-                dismissed &= (await terminal.CloseFileTransferAsync()).Dismissed;
-            return dismissed;
-        }
-    }
-
-    private async Task<bool> WaitForCleanupAsync(Task cleanup, Action abandon)
-    {
-        while (!cleanup.IsCompleted)
-        {
-            if (await Task.WhenAny(cleanup, Task.Delay(TimeSpan.FromSeconds(5))) == cleanup) break;
-            if (!app.CanOwnCleanup) break;
-            bool acceptLoss = false;
-            try
-            {
-                var choice = new FormWindow(this, Text("ClosingConnection"));
-                choice.AddField("CleanupPending", new TextBox
-                {
-                    Text = Text("CleanupPendingExplanation"), IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
-                });
-                choice.AddButtons(() => { }, acceptKey: "CloseWithLoss", cancelDefault: true, cancelKey: "ContinueWaiting");
-                acceptLoss = app.Modal(choice.ShowDialog) == true;
-            }
-            catch (Exception exception) when (TerminalClosure.IsPresentationFailure(exception)) { }
-            if (acceptLoss && !cleanup.IsCompleted && app.OwnCleanup(cleanup))
-            {
-                abandon();
-                return true;
-            }
-            break;
-        }
-        await cleanup;
-        return false;
+        choice.AddButtons(() => { }, acceptKey: "CloseWithLoss", cancelDefault: true, cancelKey: "ContinueWaiting");
+        return app.Modal(choice.ShowDialog) == true;
     }
 
     private bool ConfirmClose(TerminalTab[] terminals)
@@ -963,7 +909,8 @@ internal sealed partial class MainWindow : Window
                 .Select(terminal => $"\n{Text("FileTransfer")} — {terminal.TabCaption}"));
             string macros = string.Concat(terminals.Where(terminal => terminal.HasActiveMacro)
                 .Select(terminal => $"\n{Text("MacroRunningOnClose")} — {terminal.TabCaption}"));
-            confirmed = app.Modal(() => ThemedMessageBox.Show(this, Text("CloseConnections") + transfers + macros,
+            string prompt = Text(terminals.Any(terminal => terminal.IsRunning) ? "CloseConnections" : "CloseTabWork");
+            confirmed = app.Modal(() => ThemedMessageBox.Show(this, prompt + transfers + macros,
                 Title, MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No)) == MessageBoxResult.Yes;
             return confirmed;
         }
@@ -1079,7 +1026,7 @@ internal sealed partial class MainWindow : Window
         public string? FormKey { get; init; }
         public MainWindow? Host { get; set; }
         public bool IsClosing { get; set; }
-        public bool CanCloseAsDisconnected => !IsClosing && Content is TerminalTab { IsDisconnected: true, HasActiveMacro: false };
+        public bool CanCloseAsDisconnected => Content is TerminalTab { IsDisconnected: true, HasActiveMacro: false };
 
         public void UpdateBroadcast(bool visible, bool editable)
         {

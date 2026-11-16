@@ -1,20 +1,13 @@
 # TabTty initial implementation readiness
 
-Codec decisions updated on 2026-11-17: existing ISO-8859-10/11/14/16 table reuse
-was approved on 2026-11-16, and Japanese proposals A+B are now approved. They
-cover Microsoft CP932 as the candidate base and the specified Rust-owned
-JIS/EUC mapping/state, receive-recovery, and exact whole-send policies in the
-[consultation record](../drafts/terminal-codec-consultation.md). Those known
-scopes no longer await consultation. Newly discovered custom behavior still
-requires consultation before adoption. `Cp932Duplicates` ports and new mapping
-corrections remain unapproved; consult if a concrete mismatch is found. All three
-architecture designs remain ready for separately requested implementation;
-codec approval is not implementation authorization or runtime-parity evidence.
+The [current codec decision](../drafts/terminal-codec-consultation.md)
+records 47 supported identities and the use of strict Win32 or Windows ICU
+conversion. The decision includes delegating Japanese JIS designations to ICU.
 
 On 2026-11-17, the user approved the ticket breakdown and requested publication.
 The [implementation plan #16](https://github.com/TabTty/TabTty/issues/16) and its
-23 child implementation tickets are published. Implementation of this redesign
-has not started; publication does not authorize implementation or prototyping.
+23 child implementation tickets are published. The user subsequently requested
+implementation. See the [implementation status](implementation-status.md).
 
 Architecture update, 2026-11-16: the user selected complete Rust terminal
 processing without managed fallback in

@@ -105,6 +105,74 @@ internal static partial class Program
             if (unresolvedWindow.IsVisible) unresolvedWindow.Close();
         }
 
+        var app = (App)Application.Current;
+        bool previousAutoClose = app.AutoCloseDisconnectedTabs;
+        try
+        {
+            await CheckDisconnectedTransferAsync(autoClose: false);
+            await CheckDisconnectedTransferAsync(autoClose: true);
+        }
+        finally { SetAutoClose(previousAutoClose); }
+
+        async Task CheckDisconnectedTransferAsync(bool autoClose)
+        {
+            SetAutoClose(autoClose);
+            var host = new MainWindow(app) { ShowActivated = false, ShowInTaskbar = false };
+            host.OpenForm("Settings", _ => { });
+            var tab = new TerminalTab(profilePath, interaction);
+            host.AddTerminalTab(tab);
+            host.Show();
+            var tabs = (TabControl)host.FindName("tabs");
+            var item = (TabItem)tabs.SelectedItem;
+            tab.Start();
+            try
+            {
+                while (!tab.CanTransfer) await Task.Delay(10, deadline.Token);
+                tab.OpenFileTransfer();
+                var transfer = tab.TransferWindow ?? throw new InvalidOperationException("The SSH tab did not create a transfer window.");
+                if (!transfer.IsVisible) throw new InvalidOperationException("The transfer window is not visible.");
+                tab.Disconnect();
+                await tab.Completion.WaitAsync(deadline.Token);
+                if (!autoClose)
+                {
+                    if (!tabs.Items.Contains(item) || !transfer.IsVisible)
+                        throw new InvalidOperationException("A retained disconnected tab lost its transfer results.");
+                    host.UpdateLayout();
+                    var strip = (Border)tabs.Template.FindName("tabStripRow", tabs);
+                    var bulk = (MenuItem)strip.ContextMenu.Items[0];
+                    bool dismissalAttempted = false;
+                    void RejectDismissal(object? _, CancelEventArgs args)
+                    {
+                        dismissalAttempted = true;
+                        args.Cancel = true;
+                    }
+                    transfer.Closing += RejectDismissal;
+                    try
+                    {
+                        bulk.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                        while (!dismissalAttempted || tab.ClosePending) await Task.Delay(10, deadline.Token);
+                        if (!tabs.Items.Contains(item) || !transfer.IsVisible || tab.AiSession is not { } retained)
+                            throw new InvalidOperationException("Failed transfer dismissal removed its terminal or retained results.");
+                        _ = await retained.GetOutputAsync(deadline.Token);
+                    }
+                    finally { transfer.Closing -= RejectDismissal; }
+                    bulk.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                }
+                while (tabs.Items.Contains(item) || transfer.IsVisible) await Task.Delay(10, deadline.Token);
+                if (!host.IsVisible || tabs.Items.Count != 1)
+                    throw new InvalidOperationException("Closing a disconnected tab affected its settings tab.");
+            }
+            finally
+            {
+                tab.Disconnect();
+                await tab.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+                if (host.IsVisible) host.Close();
+            }
+        }
+
+        void SetAutoClose(bool autoClose) => app.SaveSettings(app.LanguageChoice, app.ThemeChoice, app.BellChoice,
+            app.TerminalFontFamily, app.TerminalFontSize, app.RetainedRows, autoClose, app.VaultPath, app.SettingsRevision);
+
         FileTransferWindow OpenDisconnected(FileOperationOwnership ownership)
         {
             var window = new FileTransferWindow(session, ownership);

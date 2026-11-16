@@ -5,6 +5,9 @@ using Microsoft.Win32.SafeHandles;
 
 namespace TabTty.Core;
 
+internal sealed class NativeTerminalExecutionException(Exception cause)
+    : IOException("The admitted terminal operation failed during execution.", cause);
+
 internal static class NativeTerminalCoreDiagnostics
 {
     public static long FedBytes, EchoBytes, FeedBatches, SnapshotExports, UnsupportedErrors;
@@ -28,16 +31,106 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
     private readonly HashSet<long> visibleIds = new();
     private readonly List<long> expiredIds = new();
     private bool disposed, completed;
+    // One source preview, its fixed parameter buffer and bounded parser stack.
+    private const int PreviewWorkspaceBytes = 16 * 1024;
     private int? interval;
     internal bool HasReceivedInput { get; private set; }
     internal bool BracketedPaste { get; private set; }
     internal int RecordedInterval => interval ?? 0;
 
+    internal static int CheckUtf8Input(ReadOnlySpan<char> text)
+    {
+        fixed (char* input = text)
+        {
+            int result = Native.EncodeUtf8(input, checked((uint)text.Length), null, 0, out uint bytes);
+            if (result == 1) throw new System.Text.EncoderFallbackException("The terminal input contains invalid Unicode.");
+            if (result == 2) throw new ArgumentException("Terminal text exceeds its size limit.", nameof(text));
+            Check(result, "UTF-8 input preflight");
+            return checked((int)bytes);
+        }
+    }
+
+    internal static byte[] PrepareUtf8Input(ReadOnlySpan<char> text, int size)
+    {
+        if (size == 0) return [];
+        var result = new byte[size];
+        fixed (char* input = text)
+        fixed (byte* output = result)
+        {
+            Check(Native.EncodeUtf8(input, checked((uint)text.Length), output, checked((uint)size), out uint written), "UTF-8 input");
+            if (written != size) throw new InvalidDataException("Terminal input did not match its prepared length.");
+        }
+        return result;
+    }
+
+    internal static int CheckLegacyInput(uint page, ReadOnlySpan<char> text, bool shiftKana)
+    {
+        fixed (char* input = text)
+        {
+            int result = Native.EncodeLegacy(page, input, checked((uint)text.Length), shiftKana ? 8U : 0U,
+                null, 0, out uint size);
+            if (result == 1) throw new EncoderFallbackException("The selected encoding cannot represent this text exactly.");
+            if (result == 2) throw new ArgumentException("Encoded terminal input exceeds 1 MiB.", nameof(text));
+            Check(result, "legacy input preflight");
+            return checked((int)size);
+        }
+    }
+
+    internal static byte[] PrepareLegacyInput(uint page, ReadOnlySpan<char> text, bool shiftKana, int length)
+    {
+        if (length == 0) return [];
+        var result = new byte[length];
+        fixed (char* input = text)
+        fixed (byte* output = result)
+        {
+            Check(Native.EncodeLegacy(page, input, checked((uint)text.Length), shiftKana ? 8U : 0U,
+                output, checked((uint)length), out uint size), "legacy input");
+            if (size != length)
+                throw new InvalidDataException("Terminal input did not match its prepared length.");
+        }
+        return result;
+    }
+
+    internal static Rune DecodeLegacyUnit(uint page, ReadOnlySpan<byte> bytes)
+    {
+        fixed (byte* input = bytes)
+        {
+            Check(Native.DecodeLegacyUnit(page, input, checked((uint)bytes.Length), out uint scalar), "legacy decoding");
+            return Rune.TryCreate(checked((int)scalar), out Rune rune) ? rune : Rune.ReplacementChar;
+        }
+    }
+
+    internal sealed class JisReceiver : SafeHandleZeroOrMinusOneIsInvalid
+    {
+        internal JisReceiver(bool shiftKana) : base(true)
+        {
+            Check(Native.JisOpen(shiftKana ? 1U : 0U, out nint receiver), "JIS converter creation");
+            SetHandle(receiver);
+        }
+
+        internal (int Written, bool Partial) Decode(ReadOnlySpan<byte> bytes, Span<char> output, bool flush)
+        {
+            fixed (byte* input = bytes)
+            fixed (char* result = output)
+            {
+                Check(Native.JisReceive(this, input, checked((uint)bytes.Length), result, checked((uint)output.Length),
+                    flush ? 1U : 0U, out uint written, out uint pending), "JIS reception");
+                return (checked((int)written), pending != 0);
+            }
+        }
+
+        protected override bool ReleaseHandle()
+        {
+            Native.JisDestroy(handle);
+            return true;
+        }
+    }
+
     internal NativeTerminalCore(int columns, int rows, int retainedRows, int ambiguousWidth, ResourceQuota quota)
     {
-        if (sizeof(EffectsView) != 32 || sizeof(CellView) != 20 || sizeof(RowView) != 72 ||
+        if (sizeof(EffectsView) != 40 || sizeof(CellView) != 20 || sizeof(RowView) != 72 ||
             sizeof(SnapshotView) != 40 || sizeof(TabView) != 8 || sizeof(ExportRow) != 120 ||
-            sizeof(SourceView) != 48 || sizeof(ExportState) != 152 || Native.AbiVersion() != 2)
+            sizeof(SourceView) != 48 || sizeof(ExportState) != 152 || Native.AbiVersion() != 5)
             throw new InvalidOperationException("The native terminal ABI does not match this application.");
         this.quota = quota;
         // Admission precedes native allocation; unused temporary allowance is released
@@ -56,26 +149,21 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
     }
 
     internal bool TryFeed(uint source, ReadOnlySpan<byte> payload, uint flags, int recordingInterval,
-        Action<byte[]>? textSink, Action<byte[]>? terminalSink)
+        Action<byte[]>? textSink, Action<byte[]>? terminalSink, CancellationToken token = default,
+        Action<byte[]>? replySink = null, int pendingReplies = 0, Action? bell = null)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         if (completed) throw new InvalidOperationException("Terminal reception has ended.");
         if (payload.IsEmpty) return true;
         if (interval is { } initial && initial != recordingInterval)
             return false;
-        if (!TryPrepare(0, source, payload, flags)) return false;
-        EffectsView effects;
-        long started = Stopwatch.GetTimestamp();
-        fixed (byte* bytes = payload)
-            Check(Native.Feed(handle, source, bytes, checked((uint)payload.Length), flags, out effects), "receive");
-        Interlocked.Add(ref NativeTerminalCoreDiagnostics.NativeFeedElapsedTicks, Stopwatch.GetTimestamp() - started);
-        ReconcileMemoryCharge();
+        if (!TryRunEffects(0, source, payload, flags | (checked((uint)pendingReplies) << 8),
+            textSink, terminalSink, token, replySink, bell)) return false;
         interval = recordingInterval;
         HasReceivedInput = true;
         Interlocked.Increment(ref NativeTerminalCoreDiagnostics.FeedBatches);
         if (source == 2) Interlocked.Add(ref NativeTerminalCoreDiagnostics.EchoBytes, payload.Length);
         else Interlocked.Add(ref NativeTerminalCoreDiagnostics.FedBytes, payload.Length);
-        PublishEffects(effects, textSink, terminalSink);
         return true;
     }
 
@@ -83,22 +171,56 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         if (completed) return true;
-        if (!TryPrepare(1, 0, [], flags)) return false;
-        Check(Native.Complete(handle, flags, out EffectsView effects), "complete receive");
-        ReconcileMemoryCharge();
+        if (!TryRunEffects(1, 0, [], flags, textSink, terminalSink)) return false;
         completed = true;
-        PublishEffects(effects, textSink, terminalSink);
         return true;
     }
 
     internal bool TryFlushText(uint flags, Action<byte[]>? textSink, Action<byte[]>? terminalSink)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
-        if (!TryPrepare(2, 0, [], flags)) return false;
-        Check(Native.FlushText(handle, flags, out EffectsView effects), "flush Text recording");
-        ReconcileMemoryCharge();
-        PublishEffects(effects, textSink, terminalSink);
-        return true;
+        return TryRunEffects(2, 0, [], flags, textSink, terminalSink);
+    }
+
+    private bool TryRunEffects(uint operation, uint source, ReadOnlySpan<byte> payload, uint flags,
+        Action<byte[]>? textSink, Action<byte[]>? terminalSink, CancellationToken token = default,
+        Action<byte[]>? replySink = null, Action? bell = null)
+    {
+        if (payload.Length > 1024 * 1024) return false;
+        ResourceReservation workspace;
+        try { workspace = quota.Reserve(PreviewWorkspaceBytes + payload.Length); }
+        catch (ResourceLimitException) { return false; }
+        using (workspace)
+        {
+            Span<byte> input = payload.Length <= 1024 ? stackalloc byte[payload.Length] : new byte[payload.Length];
+            payload.CopyTo(input);
+            if (!TryPrepare(operation, source, input, flags)) return false;
+            try
+            {
+                try
+                {
+                    token.ThrowIfCancellationRequested();
+                    EffectsView effects;
+                    if (operation == 0)
+                    {
+                        long started = Stopwatch.GetTimestamp();
+                        fixed (byte* bytes = input)
+                            Check(Native.Feed(handle, source, bytes, checked((uint)input.Length), flags, out effects), "receive");
+                        Interlocked.Add(ref NativeTerminalCoreDiagnostics.NativeFeedElapsedTicks, Stopwatch.GetTimestamp() - started);
+                    }
+                    else if (operation == 1)
+                        Check(Native.Complete(handle, flags, out effects), "complete receive");
+                    else Check(Native.FlushText(handle, flags, out effects), "flush Text recording");
+                    PublishEffects(effects, textSink, terminalSink, replySink, bell);
+                    return true;
+                }
+                finally { ReconcileMemoryCharge(); }
+            }
+            catch (Exception exception) when (exception is InvalidDataException or InvalidOperationException or OverflowException)
+            {
+                throw new NativeTerminalExecutionException(exception);
+            }
+        }
     }
 
     internal void Resize(int columns, int rows)
@@ -112,11 +234,17 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
     {
         resultSnapshot = null;
         ObjectDisposedException.ThrowIf(disposed, this);
+        Check(Native.SnapshotCopyRequired(handle, out ulong copyRequired), "snapshot ownership estimate");
+        ResourceReservation copies;
+        try { copies = quota.Reserve(checked((long)copyRequired)); }
+        catch (ResourceLimitException) { return false; }
+        using var unownedCopies = copies;
         if (!TryPrepare(3, 0, [], 0)) return false;
         long nativeStarted = Stopwatch.GetTimestamp();
-        Check(Native.Snapshot(handle, out SnapshotView snapshot), "snapshot");
+        SnapshotView snapshot;
+        try { Check(Native.Snapshot(handle, out snapshot), "snapshot"); }
+        finally { ReconcileMemoryCharge(); }
         Interlocked.Add(ref NativeTerminalCoreDiagnostics.NativeSnapshotElapsedTicks, Stopwatch.GetTimestamp() - nativeStarted);
-        ReconcileMemoryCharge();
         Interlocked.Increment(ref NativeTerminalCoreDiagnostics.SnapshotExports);
         long started = Stopwatch.GetTimestamp();
         try
@@ -132,7 +260,7 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
                     cached.DisplayRevision != row.DisplayRevision || cached.LogicalId != row.LogicalId ||
                     cached.LogicalOffset != row.LogicalOffset || cached.SoftWrapToNext != (row.SoftWrap != 0))
                 {
-                    cached = MaterializeRow(row);
+                    cached = MaterializeRow(row, copies);
                     rowCache[row.Id] = cached;
                 }
                 result[index] = cached;
@@ -144,7 +272,7 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
             var rows = new TerminalSnapshot(result, (snapshot.Flags & 4) != 0, snapshot.CursorRow,
                 snapshot.CursorColumn, snapshot.Columns, snapshot.ScreenRows, snapshot.ScreenStart,
                 (snapshot.Flags & 1) != 0, (TerminalCursorShape)snapshot.CursorShape,
-                (snapshot.Flags & 2) != 0, default, quota);
+                (snapshot.Flags & 2) != 0, default, admittedCopies: copies);
             GC.KeepAlive(handle);
             resultSnapshot = rows;
             return true;
@@ -158,16 +286,16 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
         }
     }
 
-    private TerminalSnapshot.Row MaterializeRow(RowView row)
+    private static TerminalSnapshot.Row MaterializeRow(RowView row, ResourceReservation admittedCopies)
     {
         int textLength = checked((int)row.TextLength);
-        ResourceReservation textMemory = quota.Reserve(textLength == 0 ? 0 : 24L + textLength * 2L);
+        ResourceReservation textMemory = admittedCopies.Separate(textLength == 0 ? 0 : 24L + textLength * 2L);
         try
         {
             string displayText = new(row.Text, 0, textLength);
             CompactTerminalCells? cells = row.CellCount == 0 ? null : new(
                 new ReadOnlySpan<CellView>(row.Cells, checked((int)row.CellCount)),
-                new ReadOnlySpan<char>(row.CellText, checked((int)row.CellTextLength)), quota);
+                new ReadOnlySpan<char>(row.CellText, checked((int)row.CellTextLength)), admittedCopies);
             return new TerminalSnapshot.Row(row.Id, row.LogicalId, row.LogicalOffset, displayText,
                 row.SoftWrap != 0, default, textMemory, null, row.DisplayRevision, cells);
         }
@@ -183,10 +311,13 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
             status = Native.Preflight(handle, operation, source, bytes, checked((uint)payload.Length), flags, out required);
         Interlocked.Add(ref NativeTerminalCoreDiagnostics.NativePreflightElapsedTicks, Stopwatch.GetTimestamp() - started);
         if (status == 2) return false;
+        if (status == 4) throw new ResourceLimitException("Terminal reply queue exceeds its size limit.");
         Check(status, "operation preflight");
-        try { memory.Resize(Math.Max(memory.Size, checked((long)required))); }
+        long prior = memory.Size;
+        try { memory.Resize(Math.Max(prior, checked((long)required))); }
         catch (ResourceLimitException) { return false; }
-        Check(Native.SetLimit(handle, checked((ulong)memory.Size)), "memory admission");
+        try { Check(Native.SetLimit(handle, checked((ulong)memory.Size)), "memory admission"); }
+        catch { memory.Resize(prior); throw; }
         return true;
     }
 
@@ -207,30 +338,53 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
             throw new InvalidDataException("The native terminal exceeded its admitted memory allowance.");
         memory.Resize(charged);
     }
-    private void PublishEffects(EffectsView effects, Action<byte[]>? textSink, Action<byte[]>? terminalSink)
+    private void PublishEffects(EffectsView effects, Action<byte[]>? textSink, Action<byte[]>? terminalSink,
+        Action<byte[]>? replySink, Action? bell)
     {
         BracketedPaste = (effects.ModeFlags & 16) != 0;
+        List<byte[]>? text;
+        List<byte[]>? terminal;
+        List<byte[]>? replies = null;
         try
         {
-            PublishChunks(new ReadOnlySpan<byte>(effects.Text, checked((int)effects.TextLength)), textSink);
-            PublishChunks(new ReadOnlySpan<byte>(effects.Terminal, checked((int)effects.TerminalLength)), terminalSink);
+            text = textSink is null ? null : CopyChunks(new ReadOnlySpan<byte>(effects.Text, checked((int)effects.TextLength)));
+            terminal = terminalSink is null ? null : CopyChunks(new ReadOnlySpan<byte>(effects.Terminal, checked((int)effects.TerminalLength)));
+            if (replySink is not null && effects.ReplyLength != 0)
+            {
+                replies = new List<byte[]>();
+                var bytes = new ReadOnlySpan<byte>(effects.Replies, checked((int)effects.ReplyLength));
+                while (!bytes.IsEmpty)
+                {
+                    int length = bytes[0];
+                    if (length == 0 || length >= bytes.Length)
+                        throw new InvalidDataException("The native terminal returned an invalid response.");
+                    replies.Add(bytes.Slice(1, length).ToArray());
+                    bytes = bytes[(length + 1)..];
+                }
+            }
         }
         finally { GC.KeepAlive(handle); }
+        if (text is not null) foreach (byte[] chunk in text) textSink!(chunk);
+        if (terminal is not null) foreach (byte[] chunk in terminal) terminalSink!(chunk);
+        if (replies is not null) foreach (byte[] reply in replies) replySink!(reply);
+        if (bell is not null)
+            for (uint bells = effects.ModeFlags >> 8; bells != 0; bells--) bell();
     }
 
-    private static void PublishChunks(ReadOnlySpan<byte> bytes, Action<byte[]>? sink)
+    private static List<byte[]>? CopyChunks(ReadOnlySpan<byte> bytes)
     {
-        if (sink is null) return;
+        if (bytes.IsEmpty) return null;
+        var owned = new List<byte[]>((bytes.Length + 4092) / 4093);
         while (!bytes.IsEmpty)
         {
             int count = Math.Min(bytes.Length, 4096);
             if (count < bytes.Length)
                 while ((bytes[count] & 0xC0) == 0x80) count--;
-            // The sink admits this small owned array before allocating the next one.
             // Never split a UTF-8 scalar, including malformed-input replacement text.
-            sink(bytes[..count].ToArray());
+            owned.Add(bytes[..count].ToArray());
             bytes = bytes[count..];
         }
+        return owned;
     }
 
     internal static InvalidDataException Unsupported(string operation)
@@ -274,7 +428,8 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
         public byte* Text;
         public uint TextLength, ModeFlags;
         public byte* Terminal;
-        public uint TerminalLength, Padding1;
+        public uint TerminalLength, ReplyLength;
+        public byte* Replies;
     }
     [StructLayout(LayoutKind.Sequential)]
     internal struct CellView
@@ -349,6 +504,20 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
         internal static extern int Export(CoreHandle handle, out ExportState state);
         [DllImport(Library, EntryPoint = "tc_abi_version", CallingConvention = CallingConvention.Cdecl)]
         internal static extern uint AbiVersion();
+        [DllImport(Library, EntryPoint = "tc_encode_utf8", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int EncodeUtf8(char* input, uint length, byte* output, uint capacity, out uint required);
+        [DllImport(Library, EntryPoint = "tc_encode_legacy", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int EncodeLegacy(uint page, char* input, uint length, uint flags,
+            byte* output, uint capacity, out uint required);
+        [DllImport(Library, EntryPoint = "tc_decode_legacy_unit", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int DecodeLegacyUnit(uint page, byte* input, uint length, out uint scalar);
+        [DllImport(Library, EntryPoint = "tc_jis_open", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int JisOpen(uint shiftKana, out nint receiver);
+        [DllImport(Library, EntryPoint = "tc_jis_receive", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int JisReceive(JisReceiver receiver, byte* input, uint length, char* output, uint capacity,
+            uint flush, out uint written, out uint partial);
+        [DllImport(Library, EntryPoint = "tc_jis_destroy", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void JisDestroy(nint receiver);
         [DllImport(Library, EntryPoint = "tc_owned_bytes", CallingConvention = CallingConvention.Cdecl)]
         internal static extern ulong OwnedBytes(CoreHandle handle);
         [DllImport(Library, EntryPoint = "tc_quota_bytes", CallingConvention = CallingConvention.Cdecl)]
@@ -365,6 +534,8 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
         internal static extern int Resize(CoreHandle handle, int columns, int rows);
         [DllImport(Library, EntryPoint = "tc_snapshot", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Snapshot(CoreHandle handle, out SnapshotView snapshot);
+        [DllImport(Library, EntryPoint = "tc_snapshot_copy_required", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int SnapshotCopyRequired(CoreHandle handle, out ulong required);
         [DllImport(Library, EntryPoint = "tc_destroy", CallingConvention = CallingConvention.Cdecl)]
         internal static extern void Destroy(nint handle);
         [DllImport(Library, EntryPoint = "tc_live_bytes", CallingConvention = CallingConvention.Cdecl)]

@@ -39,7 +39,7 @@ public sealed partial class TerminalSession
         using var transient = owner.ReserveTransient((text.Length + ending.Length) * 2L + 64);
         char[] characters = new char[text.Length + ending.Length];
         text.Span.CopyTo(characters); ending.AsSpan().CopyTo(characters.AsSpan(text.Length));
-        bool committed = false, mayHaveSent = false;
+        bool mayHaveSent = false;
         try
         {
             using var unit = inputUnits.Reserve(1);
@@ -48,11 +48,9 @@ public sealed partial class TerminalSession
             try
             {
                 if (disconnected || pasteActive) throw new MacroError(MacroErrorCode.OperationUnavailable);
-                EncodedText preflight = transmitter.Encode(characters, transmitState, true,
-                    profile.OldKanjiIn, profile.RomanKanjiOut, profile.TransmitSevenBitKana);
-                CryptographicOperations.ZeroMemory(preflight.Bytes);
+                byte[] preflight = transmitter.Encode(characters, profile.TransmitSevenBitKana);
+                CryptographicOperations.ZeroMemory(preflight);
                 if (!owner.TryCommitSend()) return false;
-                committed = true;
             }
             finally { state.Release(); }
 
@@ -69,15 +67,13 @@ public sealed partial class TerminalSession
                 {
                     token.ThrowIfCancellationRequested();
                     if (disconnected) throw new IOException("The terminal session has ended.");
-                    EncodedText chunk = transmitter.Encode(characters.AsSpan(offset, count), transmitState, false,
-                        profile.OldKanjiIn, profile.RomanKanjiOut, profile.TransmitSevenBitKana);
+                    byte[] chunk = transmitter.Encode(characters.AsSpan(offset, count), profile.TransmitSevenBitKana);
                     byte[]? wireBytes = null;
                     try
                     {
-                        wireBytes = EncodeInput(chunk.Bytes);
+                        wireBytes = EncodeInput(chunk);
                         mayHaveSent = true;
                         await wire.WriteAsync(wireBytes, deadline.Token).ConfigureAwait(false);
-                        transmitState = chunk.Next;
                         if (!secret && LocalEcho)
                         {
                             byte[] echo = new byte[StrictUtf8.GetByteCount(characters.AsSpan(offset, count))];
@@ -87,8 +83,8 @@ public sealed partial class TerminalSession
                     }
                     finally
                     {
-                        CryptographicOperations.ZeroMemory(chunk.Bytes);
-                        if (wireBytes is not null && !ReferenceEquals(wireBytes, chunk.Bytes)) CryptographicOperations.ZeroMemory(wireBytes);
+                        CryptographicOperations.ZeroMemory(chunk);
+                        if (wireBytes is not null && !ReferenceEquals(wireBytes, chunk)) CryptographicOperations.ZeroMemory(wireBytes);
                     }
                 }
                 finally { state.Release(); }
@@ -105,40 +101,7 @@ public sealed partial class TerminalSession
             if (mayHaveSent) throw new MacroTermination("UncertainDelivery");
             throw new MacroError(MacroErrorCode.OperationUnavailable);
         }
-        finally
-        {
-            Array.Clear(characters);
-            if (committed)
-            {
-                try
-                {
-                    using var deadline = PasteWriteDeadline(CancellationToken.None);
-                    await state.WaitAsync(deadline.Token).ConfigureAwait(false);
-                    try
-                    {
-                        if (!disconnected)
-                        {
-                            EncodedText closure = EncodeText("");
-                            byte[]? wireBytes = null;
-                            try
-                            {
-                                wireBytes = EncodeInput(closure.Bytes);
-                                if (wireBytes.Length != 0) await wire.WriteAsync(wireBytes, deadline.Token).ConfigureAwait(false);
-                                transmitState = closure.Next;
-                            }
-                            finally
-                            {
-                                CryptographicOperations.ZeroMemory(closure.Bytes);
-                                if (wireBytes is not null && !ReferenceEquals(wireBytes, closure.Bytes)) CryptographicOperations.ZeroMemory(wireBytes);
-                            }
-                        }
-                    }
-                    finally { state.Release(); }
-                }
-                catch (Exception error) when (error is IOException or SocketException or OperationCanceledException or CryptographicException)
-                { throw new MacroTermination("UncertainDelivery"); }
-            }
-        }
+        finally { Array.Clear(characters); }
     }
 
     internal Task WaitForMacroPeerCloseAsync(CancellationToken token) =>

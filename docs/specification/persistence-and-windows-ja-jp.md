@@ -27,14 +27,14 @@ UTF-8 のオブジェクト、`schemaVersion: 1`、大文字と小文字を区�
 | Telnet | `host`、`port`（既定 23）、`initiateBinary`（既定 false）。ユーザー名、認証情報、ログイン照合フィールドは含まない。 |
 | シリアル | `portName`、`baudRate`（既定 9600）、`dataBits`（既定 8、7/8）、`parity`（既定 `none`、`odd/even/mark/space`）、`stopBits`（既定 1、1/2）、`flowControl`（既定 `none`、`xonXoff/rtsCts/dsrDtr`）、`dtr`（既定 true）、`rts`（既定 true） |
 | terminal | `advertisedType`（既定 `xterm`）、`receiveEncoding`（既定 `utf-8`）、`sameEncoding`（既定 true）、`transmitEncoding`（既定 `utf-8`）、`jis`、`ambiguousWidth`（既定 1、1/2）、`enter`、`backspace`、`localEcho`、`font`、`retainedRows`、`highlightSetId`（null または UUID） |
-| jis | `kanjiIn`（既定 `B`、`@/B`）、`kanjiOut`（既定 `B`、`B/J`）、`receiveKana`（既定 `eightBit`、`eightBit/soSi`）、`transmitKana`（既定 `eightBit`、`eightBit/soSi`）。適用範囲はコーデックの契約で定める。 |
+| jis | `kanjiIn`（既定 `B`、`@/B`）と `kanjiOut`（既定 `B`、`B/J`）はファイル互換性のために保持する。`receiveKana` と `transmitKana`（既定 `eightBit`、`eightBit/soSi`）はコーデックの契約に従う。 |
 | font | `mode` は `inherit` または `override`。`family` は継承時 null、それ以外は指定されたインストール済みフォント名。`sizePoints` は継承時 null、それ以外は 6～72。 |
 | retainedRows | `mode` は `inherit` または `override`。`value` は継承時 null、それ以外は 100～100000 の整数。 |
 | logging | `raw`、`text`、`terminal` は既定 false。`directory` は既定 `Logs`。 |
 
 `enter` は `cr`（SSH/シリアルの既定）、`lf`、`crlf`（Telnet の既定）のいずれか。`../drafts/terminal-interaction-issue.md` の合意どおり、`backspace` は `del`（SSH/Telnet の既定）か `bs`（シリアルの既定）。`localEcho` は SSH で `off`、Telnet で `followRemote`（既定）または `off`、シリアルで `off`（既定）または `on`。対象外の保存済み端末フィールドは動作に影響せず、関連する場合だけ編集できる。sameEncoding=true の場合、実効送信エンコーディングは receiveEncoding に等しい。明示的に保存した送信設定は後で使えるよう保持する。
 
-エンコーディング ID は `utf-8`、`cp932`、`euc-jp`、`jis`、`cp949`、`cp936`、`cp950`、`koi8-r`、小文字の `cp` に合意済みの OEM/Windows 番号を付けたもの、または `iso-8859-` に 1～11、13～16 のいずれかを付けたもの。合意済みの 48 種類に限る。プロファイル ID はコンテンツの識別子であり、ローカル登録の識別子は別に管理する。
+エンコーディング ID は `utf-8`、`cp932`、`euc-jp`、`jis`、`cp949`、`cp936`、`cp950`、`koi8-r`、小文字の `cp` に合意済みの OEM/Windows 番号を付けたもの、または `iso-8859-` に 1～11、13～15 のいずれかを付けたもの。対応は47種類。プロファイル ID はコンテンツの識別子であり、ローカル登録の識別子は別に管理する。
 
 ## アプリケーションストア
 

@@ -135,21 +135,20 @@ public sealed partial class TerminalSession
             CheckAiInput(attempt);
             if (pasteActive) throw new AiInputRejectedException("busy");
             TerminalMouseInput report = default;
-            EncodedText payload;
+            byte[] payload;
             byte[] echo;
             if (mouse is { } mouseAction)
             {
                 report = GetAiMouseReport(attempt.Lease, mouseAction);
                 byte[] bytes = terminal.EncodeMouse(report);
                 if (bytes.Length == 0) throw new AiInputRejectedException("unsupported_action");
-                payload = new EncodedText(bytes, transmitState);
+                payload = bytes;
                 echo = [];
             }
             else (payload, echo) = EncodeOperation(input);
-            using var memory = inputBytes.Reserve(echo.LongLength + payload.Bytes.LongLength * (protocol is null ? 1 : 3));
+            using var memory = inputBytes.Reserve(echo.LongLength + payload.LongLength * (protocol is null ? 1 : 3));
             using var deadline = PasteWriteDeadline(lifetime);
-            await WriteInputAsync(EncodeInput(payload.Bytes), deadline.Token, attempt).ConfigureAwait(false);
-            transmitState = payload.Next;
+            await WriteInputAsync(EncodeInput(payload), deadline.Token, attempt).ConfigureAwait(false);
             if (echo.Length != 0 && LocalEcho)
                 await ProcessBatchAsync(() => Echo(echo), CancellationToken.None).ConfigureAwait(false);
             if (mouse is not { } action) return null;
@@ -212,6 +211,7 @@ public sealed partial class TerminalSession
         await state.WaitAsync(token).ConfigureAwait(false);
         try
         {
+            ObjectDisposedException.ThrowIf(terminalReleased, this);
             T result = default!;
             await ProcessBatchAsync(() => result = observe(terminal, GetAiTerminalState()), token).ConfigureAwait(false);
             return result;
@@ -248,6 +248,11 @@ public sealed partial class TerminalSession
         if (!state.Wait(0, token)) return false;
         try
         {
+            if (terminalReleased)
+            {
+                error = "session_changed";
+                return true;
+            }
             error = TerminalHistory.Validate(terminal, dependencies, token);
             if (error is null) publish();
             return true;

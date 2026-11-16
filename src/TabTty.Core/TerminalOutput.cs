@@ -21,6 +21,8 @@ public sealed class TerminalOutput
     {
         nativeCore?.Dispose();
         nativeCore = null;
+        data.Legacy?.Dispose();
+        standardError.Legacy?.Dispose();
     }
     internal void PrepareRecordingChange()
     {
@@ -29,28 +31,16 @@ public sealed class TerminalOutput
     private bool HasManagedOnlyObservers => MacroCharacter is not null ||
         (!NativeRecordingCallbacks && (DisplayOperation is not null || TextRecord is not null ||
             SourceCharacter is not null || RecordingColumn is not null));
-    private bool TryNativeFeed(uint source, ReadOnlySpan<byte> payload)
+    private bool TryNativeFeed(uint source, ReadOnlySpan<byte> payload, CancellationToken token = default)
     {
         if (nativeCore is null) return false;
         if (HasManagedOnlyObservers || receiveCompleted) { EnsureManaged(); return false; }
-        for (int offset = 0; offset < payload.Length;)
-        {
-            ReadOnlySpan<byte> batch = payload.Slice(offset, Math.Min(1024, payload.Length - offset));
-            if (nativeCore.TryFeed(source, batch, NativeRecordingFlags, RecordingInterval, NativeTextRecord, NativeDisplayRecord))
-            {
-                offset += batch.Length;
-                continue;
-            }
-            EnsureManaged();
-            if (offset == 0) return false;
-            // Earlier batches have already changed state and published their logs.
-            // Import includes any partial decoder/escape state; decode only the tail.
-            SourceState state = source switch { 0 => data, 1 => standardError, 2 => localEcho,
-                _ => throw new ArgumentOutOfRangeException(nameof(source)) };
-            Decode(state, payload[offset..], flush: false);
+        if (nativeCore.TryFeed(source, payload, NativeRecordingFlags, RecordingInterval, NativeTextRecord, NativeDisplayRecord,
+            token, EnqueueReply, replies.Count, Bell))
             return true;
-        }
-        return true;
+        token.ThrowIfCancellationRequested();
+        EnsureManaged();
+        return false;
     }
 
     private void EnsureManaged()
@@ -329,7 +319,9 @@ public sealed class TerminalOutput
         }
     }
 
-    public void Receive(TerminalReceiveSource source, ReadOnlySpan<byte> payload)
+    public void Receive(TerminalReceiveSource source, ReadOnlySpan<byte> payload) => Receive(source, payload, default);
+
+    internal void Receive(TerminalReceiveSource source, ReadOnlySpan<byte> payload, CancellationToken token)
     {
         if (receiveCompleted)
         {
@@ -338,7 +330,8 @@ public sealed class TerminalOutput
 
         if (source is not (TerminalReceiveSource.Data or TerminalReceiveSource.StandardError))
             throw new ArgumentOutOfRangeException(nameof(source));
-        if (TryNativeFeed(source == TerminalReceiveSource.Data ? 0U : 1U, payload)) return;
+        token.ThrowIfCancellationRequested();
+        if (TryNativeFeed(source == TerminalReceiveSource.Data ? 0U : 1U, payload, token)) return;
 
         SourceState state = source switch
         {
@@ -1509,12 +1502,12 @@ public sealed class TerminalOutput
         source.UseG1 = cursor.UseG1;
     }
 
-    private void Reply(string message)
+    private void Reply(string message) => EnqueueReply(Encoding.ASCII.GetBytes(message));
+
+    private void EnqueueReply(byte[] reply)
     {
-        int size = Encoding.ASCII.GetByteCount(message);
-        if (replies.Count == 128 || size > 65536 - replyBytes)
+        if (replies.Count == 128 || reply.Length > 65536 - replyBytes)
             throw new InvalidOperationException("Terminal reply queue exceeds its size limit.");
-        byte[] reply = Encoding.ASCII.GetBytes(message);
         replies.Enqueue(reply);
         replyBytes += reply.Length;
     }

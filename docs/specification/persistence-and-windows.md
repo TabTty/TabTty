@@ -45,7 +45,7 @@ otherwise. Defaults describe newly created profiles, not missing-field repair.
 | Telnet | `host`, `port`: 23, `initiateBinary`: false; no username, credential, or login-matching fields |
 | Serial | `portName`, `baudRate`: 9600, `dataBits`: 8 (7/8), `parity`: `none` (`odd/even/mark/space`), `stopBits`: 1 (1/2), `flowControl`: `none` (`xonXoff/rtsCts/dsrDtr`), `dtr`: true, `rts`: true |
 | terminal | `advertisedType`: `xterm`; `receiveEncoding`: `utf-8`; `sameEncoding`: true; `transmitEncoding`: `utf-8`; `jis`; `ambiguousWidth`: 1 (1/2); `enter`; `backspace`; `localEcho`; `font`; `retainedRows`; `highlightSetId`: null or UUID |
-| jis | `kanjiIn`: `B` (`@/B`); `kanjiOut`: `B` (`B/J`); `receiveKana`: `eightBit` (`eightBit/soSi`); `transmitKana`: `eightBit` (`eightBit/soSi`); applicability is fixed by the codec contract |
+| jis | `kanjiIn`: `B` (`@/B`); `kanjiOut`: `B` (`B/J`); both are retained in existing files as inert fields. `receiveKana`: `eightBit` (`eightBit/soSi`); `transmitKana`: `eightBit` (`eightBit/soSi`); applicability is fixed by the codec contract |
 | font | `mode`: `inherit` or `override`; `family`: null when inherited, otherwise requested installed-font name; `sizePoints`: null when inherited, otherwise 6-72 |
 | retainedRows | `mode`: `inherit` or `override`; `value`: null when inherited, otherwise integer 100-100000 |
 | logging | `raw`: false, `text`: false, `terminal`: false, `directory`: `Logs` |
@@ -61,9 +61,8 @@ later use rather than interpreting it as a live override.
 
 Encoding IDs: `utf-8`, `cp932`, `euc-jp`, `jis`, `cp949`, `cp936`, `cp950`,
 `koi8-r`, lowercase `cp` plus the accepted OEM/Windows number, or `iso-8859-`
-plus one of 1-11, 13-16. This is exactly the accepted 48 identities, not arbitrary
-code-page loading. Profile IDs are content identifiers; they never substitute
-for local registration identity.
+plus one of 1-11, 13-15. These are the 47 supported identities.
+Profile IDs are content identifiers, distinct from local registration identity.
 
 ## Application stores
 

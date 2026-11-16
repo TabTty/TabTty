@@ -45,7 +45,7 @@ public sealed partial class TerminalSession
                 EnsureManualInput();
                 if (pasteActive) throw new InvalidOperationException("A paste is in progress.");
                 int? mouseGeneration = null;
-                (EncodedText payload, byte[] echo) prepared;
+                (byte[] payload, byte[] echo) prepared;
                 if (input.Kind == TerminalInputKind.Mouse)
                 {
                     mouseGeneration = gestureGeneration ?? terminal.MouseMode.Generation;
@@ -56,7 +56,7 @@ public sealed partial class TerminalSession
                         unit.Dispose();
                         return null;
                     }
-                    prepared = (new EncodedText(report, transmitState), []);
+                    prepared = (report, []);
                 }
                 else
                 {
@@ -70,12 +70,11 @@ public sealed partial class TerminalSession
                 }
                 long bound = input.Kind switch
                 {
-                    TerminalInputKind.Text => prepared.payload.Bytes.LongLength + 16,
+                    TerminalInputKind.Text => prepared.payload.LongLength,
                     TerminalInputKind.Key or TerminalInputKind.Mouse => 64,
-                    _ => prepared.payload.Bytes.LongLength,
+                    _ => prepared.payload.LongLength,
                 };
                 memory.Resize(prepared.echo.LongLength + bound * (protocol is null ? 1 : 3));
-                var previousState = transmitState;
                 return new PreparedInput(unit, memory, async cancellation =>
                 {
                     await state.WaitAsync(cancellation).ConfigureAwait(false);
@@ -89,19 +88,14 @@ public sealed partial class TerminalSession
                         {
                             byte[] report = terminal.EncodeBroadcastMouse(input.Mouse with { Generation = generation });
                             if (report.Length == 0) return false;
-                            payload = new EncodedText(report, transmitState);
+                            payload = report;
                         }
-                        else if (input.Kind == TerminalInputKind.Key || input.Kind == TerminalInputKind.Text && transmitState != previousState)
+                        else if (input.Kind == TerminalInputKind.Key)
                         {
                             (payload, echo) = EncodeOperation(input);
                         }
-                        else if (input.Kind != TerminalInputKind.Text)
-                        {
-                            payload = payload with { Next = transmitState };
-                        }
-                        memory.Resize(echo.LongLength + payload.Bytes.LongLength * (protocol is null ? 1 : 3));
-                        await wire.WriteAsync(EncodeInput(payload.Bytes), cancellation).ConfigureAwait(false);
-                        transmitState = payload.Next;
+                        memory.Resize(echo.LongLength + payload.LongLength * (protocol is null ? 1 : 3));
+                        await wire.WriteAsync(EncodeInput(payload), cancellation).ConfigureAwait(false);
                         if (echo.Length > 0 && LocalEcho)
                             await ProcessBatchAsync(() => Echo(echo), CancellationToken.None).ConfigureAwait(false);
                         return true;
@@ -119,12 +113,12 @@ public sealed partial class TerminalSession
         }
     }
 
-    private (EncodedText Payload, byte[] Echo) EncodeOperation(TerminalInput input)
+    private (byte[] Payload, byte[] Echo) EncodeOperation(TerminalInput input)
     {
         if (input.Kind == TerminalInputKind.Text)
         {
-            EncodedText payload = EncodeText(input.Text);
-            if (input.Alt) payload = payload with { Bytes = [0x1b, .. payload.Bytes] };
+            byte[] payload = EncodeText(input.Text);
+            if (input.Alt) payload = [0x1b, .. payload];
             return (payload, StrictUtf8.GetBytes(input.Text));
         }
         (byte[] Bytes, byte[] Echo) result = input.Kind switch
@@ -139,7 +133,7 @@ public sealed partial class TerminalSession
                 terminal.ApplicationKeypad), []),
             _ => throw new ArgumentOutOfRangeException(nameof(input)),
         };
-        return (new EncodedText(result.Bytes, transmitState), result.Echo);
+        return result;
     }
 
     internal async Task<PreparedInput> PreparePasteAsync(TerminalPaste paste, int characterDelay, int lineDelay,

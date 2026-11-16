@@ -1,6 +1,9 @@
 //! Native UTF-8 normal-screen terminal engine with lossless managed handoff.
+mod legacy_encode;
 mod model;
 mod unicode;
+#[cfg(windows)]
+mod windows_icu;
 use model::Model;
 use std::ffi::c_void;
 use std::mem::align_of;
@@ -70,7 +73,8 @@ pub struct Effects {
     pub reserved0: u32,
     pub terminal: *const u8,
     pub terminal_length: u32,
-    pub reserved1: u32,
+    pub reply_length: u32,
+    pub replies: *const u8,
 }
 #[repr(C)]
 pub struct Stats {
@@ -174,7 +178,180 @@ fn run<F: FnOnce() -> Result<(), i32>>(f: F) -> i32 {
 }
 #[no_mangle]
 pub extern "C" fn tc_abi_version() -> u32 {
-    2
+    5
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tc_encode_utf8(
+    input: *const u16,
+    length: u32,
+    output: *mut u8,
+    capacity: u32,
+    required: *mut u32,
+) -> i32 {
+    const MAX_BYTES: usize = 1024 * 1024;
+    if !valid(required) || (length != 0 && !valid(input)) {
+        return 1;
+    }
+    run(|| {
+        if length as usize > MAX_BYTES {
+            return Err(2);
+        }
+        let input = if length == 0 {
+            &[]
+        } else {
+            slice::from_raw_parts(input, length as usize)
+        };
+        let mut total = 0usize;
+        for scalar in char::decode_utf16(input.iter().copied()) {
+            let scalar = scalar.map_err(|_| 1)?;
+            total += scalar.len_utf8();
+            if total > MAX_BYTES {
+                return Err(2);
+            }
+        }
+        required.write(total as u32);
+        if output.is_null() {
+            return Ok(());
+        }
+        if (capacity as usize) < total {
+            return Err(2);
+        }
+        let destination = slice::from_raw_parts_mut(output, total);
+        let mut offset = 0;
+        for scalar in char::decode_utf16(input.iter().copied()) {
+            let scalar = scalar.map_err(|_| 1)?;
+            let end = offset + scalar.len_utf8();
+            scalar.encode_utf8(&mut destination[offset..end]);
+            offset = end;
+        }
+        Ok(())
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tc_encode_legacy(
+    page: u32,
+    input: *const u16,
+    length: u32,
+    flags: u32,
+    output: *mut u8,
+    capacity: u32,
+    required: *mut u32,
+) -> i32 {
+    if !valid(required) || (length != 0 && !valid(input)) {
+        return 1;
+    }
+    run(|| {
+        if length > 1024 * 1024 {
+            return Err(2);
+        }
+        let input = if length == 0 {
+            &[]
+        } else {
+            slice::from_raw_parts(input, length as usize)
+        };
+        let plan = legacy_encode::encode(page, input, flags, None)?;
+        if !output.is_null() {
+            if (capacity as usize) < plan {
+                return Err(2);
+            }
+            let destination = slice::from_raw_parts_mut(output, plan);
+            let applied = legacy_encode::encode(page, input, flags, Some(destination))?;
+            if applied != plan {
+                return Err(1);
+            }
+        }
+        required.write(plan as u32);
+        Ok(())
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tc_decode_legacy_unit(
+    page: u32,
+    input: *const u8,
+    length: u32,
+    scalar: *mut u32,
+) -> i32 {
+    if !valid(scalar) || input.is_null() || !(1..=3).contains(&length) {
+        return 1;
+    }
+    run(|| {
+        let input = slice::from_raw_parts(input, length as usize);
+        scalar.write(legacy_encode::decode_unit(page, input).map_or(0xfffd, u32::from));
+        Ok(())
+    })
+}
+
+#[cfg(windows)]
+#[no_mangle]
+pub unsafe extern "C" fn tc_jis_open(shift_kana: u32, out: *mut *mut c_void) -> i32 {
+    if shift_kana > 1 || !valid(out) {
+        return 1;
+    }
+    out.write(ptr::null_mut());
+    run(|| {
+        let name = if shift_kana == 0 {
+            windows_icu::JIS_EIGHT_BIT_KANA
+        } else {
+            windows_icu::JIS_SHIFT_KANA
+        };
+        let converter = windows_icu::in_apartment(|| windows_icu::Converter::open(name, false))?;
+        out.write(Box::into_raw(Box::new(converter)) as *mut c_void);
+        Ok(())
+    })
+}
+
+#[cfg(windows)]
+#[no_mangle]
+pub unsafe extern "C" fn tc_jis_receive(
+    handle: *mut c_void,
+    input: *const u8,
+    length: u32,
+    output: *mut u16,
+    capacity: u32,
+    flush: u32,
+    written: *mut u32,
+    partial: *mut u32,
+) -> i32 {
+    let converter = handle as *mut windows_icu::Converter;
+    if !valid(converter)
+        || (length != 0 && input.is_null())
+        || length > 4
+        || !valid(output)
+        || capacity != 16
+        || flush > 1
+        || !valid(written)
+        || !valid(partial)
+    {
+        return 1;
+    }
+    run(|| {
+        let input = if length == 0 {
+            &[]
+        } else {
+            slice::from_raw_parts(input, length as usize)
+        };
+        let output = slice::from_raw_parts_mut(output, capacity as usize);
+        let (count, pending) =
+            windows_icu::in_apartment(|| (*converter).receive(input, output, flush != 0))?;
+        written.write(count as u32);
+        partial.write(pending as u32);
+        Ok(())
+    })
+}
+
+#[cfg(windows)]
+#[no_mangle]
+pub unsafe extern "C" fn tc_jis_destroy(handle: *mut c_void) {
+    if valid(handle as *const windows_icu::Converter) {
+        let converter = Box::from_raw(handle as *mut windows_icu::Converter);
+        let _ = windows_icu::in_apartment(|| {
+            drop(converter);
+            Ok(())
+        });
+    }
 }
 #[no_mangle]
 pub extern "C" fn tc_live_bytes() -> u64 {
@@ -362,6 +539,16 @@ pub unsafe extern "C" fn tc_resize(handle: *mut c_void, columns: i32, rows: i32)
     })
 }
 #[no_mangle]
+pub unsafe extern "C" fn tc_snapshot_copy_required(handle: *mut c_void, out: *mut u64) -> i32 {
+    if !valid(out) {
+        return 1;
+    }
+    run(|| {
+        out.write(model(handle)?.snapshot_copy_required());
+        Ok(())
+    })
+}
+#[no_mangle]
 pub unsafe extern "C" fn tc_snapshot(handle: *mut c_void, out: *mut SnapshotView) -> i32 {
     if !valid(out) {
         return 1;
@@ -439,7 +626,7 @@ mod tests {
         assert_eq!(size_of::<CellView>(), 20);
         assert_eq!(size_of::<RowView>(), 72);
         assert_eq!(size_of::<SnapshotView>(), 40);
-        assert_eq!(size_of::<Effects>(), 32);
+        assert_eq!(size_of::<Effects>(), 40);
         assert_eq!(size_of::<Stats>(), 56);
     }
     #[test]
@@ -485,6 +672,24 @@ mod tests {
         t.complete(1).unwrap();
         assert_eq!(effects(&t).1, "\u{fffd}".as_bytes());
     }
+    #[test]
+    fn interleaved_repeat_control_strings_and_cursor_style() {
+        let mut terminal = Model::new(24, 4, 100, 1);
+        terminal.feed(0, "e\u{301}".as_bytes(), 3).unwrap();
+        terminal.feed(1, "界".as_bytes(), 3).unwrap();
+        let operation = b"\x1b[2b\x1bPdiscard\x07also discard\x1b\\\x1b[\x076 q\x07";
+        terminal.preflight(0, 0, operation, 3).unwrap();
+        terminal.feed(0, operation, 3).unwrap();
+        assert_eq!(effects(&terminal).1, "e\u{301}e\u{301}\x1b[6 q".as_bytes());
+        assert_eq!(terminal.effects().reserved0 >> 8, 2);
+        let snapshot = terminal.snapshot().unwrap();
+        assert_eq!(snapshot.cursor_shape, 2);
+        assert_eq!(snapshot.flags & 2, 0);
+        assert_eq!(row_text(&mut terminal, 0), "e\u{301}界e\u{301}e\u{301}");
+        terminal.feed(1, b"\x1b[1b", 3).unwrap();
+        assert_eq!(row_text(&mut terminal, 0), "e\u{301}界e\u{301}e\u{301}界");
+    }
+
     #[test]
     fn retention_wrap_and_repeat_flush() {
         let mut t = Model::new(8, 4, 100, 1);

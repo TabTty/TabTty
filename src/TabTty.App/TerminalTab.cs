@@ -156,11 +156,12 @@ internal sealed partial class TerminalTab : UserControl
     public string ProfilePath => path;
     private Task connectionCompletion = Task.CompletedTask;
     public Task Completion => Macro is null ? connectionCompletion : Task.WhenAll(connectionCompletion, Macro.Completion);
-    public bool CanTransfer => IsRunning && !stop.IsCancellationRequested && session?.CanTransfer == true;
+    public bool CanTransfer => !ClosePending && IsRunning && !stop.IsCancellationRequested && session?.CanTransfer == true;
     public bool HasActiveTransfer => transferWindow?.HasActiveOperation == true;
-    public bool HasTransferWindow => transferWindow is not null;
     internal object ConnectionGeneration => stop;
     internal FileTransferWindow? TransferWindow => transferWindow;
+    internal bool ClosePending { get; set; }
+    private bool removed;
 
     public async void OpenFileTransfer()
     {
@@ -186,9 +187,8 @@ internal sealed partial class TerminalTab : UserControl
 
     public void Start(Action<ConnectionProfile>? opened = null)
     {
-        if (Macro is not null || !Completion.IsCompleted) return;
+        if (removed || ClosePending || Macro is not null || !Completion.IsCompleted) return;
         AiCollaboration.EndSharing(this);
-        retainedAiSession = null;
         if (!IsRunning)
         {
             stop = new CancellationTokenSource();
@@ -208,6 +208,12 @@ internal sealed partial class TerminalTab : UserControl
     {
         try
         {
+            if (retainedAiSession is { } previous)
+            {
+                retainedAiSession = null;
+                await previous.ReleaseRetainedOutputAsync();
+            }
+            stop.Token.ThrowIfCancellationRequested();
             var app = (App)Application.Current;
             var interaction = sshInteraction ?? new SshInteraction(ApproveHostAsync, RequestSshPasswordAsync,
                 message => Dispatcher.BeginInvoke(() => sshMessages.Add(message)), RequestSshChallengeAsync,
@@ -285,12 +291,23 @@ internal sealed partial class TerminalTab : UserControl
             await mousePump;
             if (session is { } closing)
             {
-                await closing.DisposeAsync();
-                retainedAiSession = closing;
-                session = null;
-                try { Display(await closing.GetOutputAsync()); }
-                catch (Exception exception) when (exception is IOException or InvalidOperationException)
-                { SetStatus("Failed", exception.Message); }
+                try { await closing.DisposeAsync(); }
+                finally
+                {
+                    session = null;
+                    if (removed) await closing.ReleaseRetainedOutputAsync();
+                    else retainedAiSession = closing;
+                }
+                if (!removed)
+                {
+                    try
+                    {
+                        var rows = await closing.GetOutputAsync();
+                        if (!removed) Display(rows);
+                    }
+                    catch (Exception exception) when (exception is IOException or InvalidOperationException)
+                    { if (!removed) SetStatus("Failed", exception.Message); }
+                }
                 if (closing.RecordingError is { } problem) SetStatus(statusKey, problem);
             }
             resizeTimer.Stop();
@@ -300,6 +317,16 @@ internal sealed partial class TerminalTab : UserControl
             CaptionChanged?.Invoke();
             if (IsDisconnected) Disconnected?.Invoke();
         }
+    }
+
+    internal Task ReleaseRemovedOutputAsync()
+    {
+        removed = true;
+        frameTimer.Stop();
+        pendingFrame = null;
+        var owner = session ?? retainedAiSession;
+        retainedAiSession = null;
+        return owner?.ReleaseRetainedOutputAsync() ?? Task.CompletedTask;
     }
 
     private async Task ReceiveOutputAsync(TerminalSession active)
@@ -723,7 +750,7 @@ internal sealed partial class TerminalTab : UserControl
             try
             {
                 IReadOnlyList<string> frame = await active.GetOutputAsync();
-                if (session == active) pendingFrame = frame;
+                if (!removed && session == active) pendingFrame = frame;
             }
             catch (Exception exception) when (exception is InvalidOperationException or IOException or ObjectDisposedException)
             {
@@ -741,7 +768,7 @@ internal sealed partial class TerminalTab : UserControl
 
     private void ScheduleFrame(bool immediately = false)
     {
-        if (!output.IsPresentationActive || capturingFrame || immediateFrameQueued ||
+        if (removed || !output.IsPresentationActive || capturingFrame || immediateFrameQueued ||
             pendingFrame is null && (session is null || Volatile.Read(ref receivedRevision) == 0)) return;
         if (immediately)
         {

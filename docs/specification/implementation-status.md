@@ -17,11 +17,21 @@ toolchain is .NET SDK 10.0.404, Rust/Cargo 1.63.0, and MSVC on Windows x64.
   outcome. A vetoed dismissal or a report closed before rendering retains the
   results. Pending provider ownership survives visual dismissal until actual
   completion.
-- The [shared interpretation](https://github.com/TabTty/TabTty/issues/18) and
-  [complete tab close](https://github.com/TabTty/TabTty/issues/34) slices are
-  in progress. Remaining work includes full operation-level reservation and
-  result delivery, and closure coordination and fault coverage beyond the
-  current explicit single-tab path.
+- The UTF-8 application path uses shared Rust admission and execution rules.
+  The loopback fixture checks exact reply, Raw, Text, and Terminal output,
+  IME commits, and retained WPF presentation. The core tests exercise
+  paste cancellation, response ordering, and a failed transport write.
+- Terminal tabs, window closure, bulk removal, and automatic removal share
+  a per-tab operation. Loopback WPF tests exercise stale confirmation,
+  an overlapping window review, the cleanup wait decision, SFTP dismissal
+  rejection, and held output after the Rust model is released.
+- The 47 supported encoding identities use strict Win32 or Windows ICU
+  conversion from Rust. Windows ICU supplies the JIS designations and
+  repertoires. The former IN/OUT choices remain readable profile fields.
+  See the [codec decision](../drafts/terminal-codec-consultation.md).
+- Legacy VT interpretation, full alternate-screen and resize support,
+  recording intervals, and retained history still require migration before
+  the complete native-only acceptance run.
 
 Target-design update, 2026-11-16: [ADR 0007](../adr/0007-complete-terminal-processing-in-rust.md)
 requires [complete Rust terminal processing](native-terminal-core.md) without

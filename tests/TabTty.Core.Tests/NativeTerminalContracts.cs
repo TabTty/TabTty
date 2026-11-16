@@ -6,6 +6,7 @@ internal static class NativeTerminalContracts
     internal static void Run()
     {
         if (!NativeTerminalCore.Enabled) return;
+        RejectedOperationPublishesNothingAndOwnedSnapshotSurvives();
         Compare("partial UTF-8 from independent sources", t =>
         {
             t.Receive(TerminalReceiveSource.Data, [0xE3]);
@@ -22,7 +23,8 @@ internal static class NativeTerminalContracts
         {
             Feed(t, "e\u0301");
             t.Receive(TerminalReceiveSource.StandardError, Encoding.UTF8.GetBytes("界"));
-        }, t => Feed(t, "\u001b[3b"), t =>
+            Feed(t, "\u001b[3b");
+        }, t => _ = t.AiColumns, t =>
         {
             t.Receive(TerminalReceiveSource.StandardError, "\u001b[2b"u8);
             Feed(t, "\r\n");
@@ -43,6 +45,46 @@ internal static class NativeTerminalContracts
         HeldSnapshotsAndSearchAnchorsSurviveHandoff();
         MacroCallbacksSeeOnlyNewInputAfterHandoff();
         LegacyEncodingStartsManaged();
+    }
+
+    private static void RejectedOperationPublishesNothingAndOwnedSnapshotSurvives()
+    {
+        var budget = new ResourceQuota(128L * 1024 * 1024, collectOnPressure: false);
+        using var native = new NativeTerminalCore(80, 24, 100, 1, budget);
+        var text = new List<byte>();
+        var display = new List<byte>();
+        var replies = new List<byte>();
+        if (!native.TryFeed(0, "saved 界\r\n\u001b[?6n"u8, 3, 1, text.AddRange, display.AddRange,
+            replySink: replies.AddRange) ||
+            !native.TrySnapshot(out TerminalSnapshot? before))
+            throw new InvalidOperationException("The native test operation did not reach its admitted effect boundary.");
+        byte[] expected = "saved 界\r\n"u8.ToArray();
+        if (!text.SequenceEqual(expected) || !display.SequenceEqual(expected) || !replies.SequenceEqual("\u001b[?2;1R"u8.ToArray()))
+            throw new InvalidOperationException("The admitted operation did not deliver the exact Text and Terminal bytes.");
+        long beforeRejection = budget.Used;
+        try
+        {
+            native.TryFeed(0, "cancelled\r\n"u8, 3, 1, text.AddRange, display.AddRange, new CancellationToken(true));
+            throw new InvalidOperationException("Cancelled native execution reached the terminal.");
+        }
+        catch (OperationCanceledException) { }
+        try
+        {
+            native.TryFeed(0, "rejected\r\n\u001b[5n"u8, 3, 1, text.AddRange, display.AddRange,
+                replySink: replies.AddRange, pendingReplies: 128);
+            throw new InvalidOperationException("A full reply queue admitted a responding operation.");
+        }
+        catch (ResourceLimitException) { }
+        byte[] rejected = Encoding.ASCII.GetBytes(new string('x', 2048) + "\u001b[" + new string('1', 4097) + "m");
+        if (native.TryFeed(0, rejected, 3, 1, text.AddRange, display.AddRange) ||
+            !text.SequenceEqual(expected) || !display.SequenceEqual(expected) || budget.Used != beforeRejection)
+            throw new InvalidOperationException("Rejected operation changed an effect or retained its preparation charge.");
+        if (!native.TrySnapshot(out TerminalSnapshot? after) || !before!.SequenceEqual(after!))
+            throw new InvalidOperationException("Rejected operation changed the original screen.");
+        native.Dispose();
+        if (budget.Used == 0 || before is null || !before.Contains("saved 界") || before.GetCells(0).IsEmpty)
+            throw new InvalidOperationException("The owned snapshot lost its data or charge when native state was released.");
+        GC.KeepAlive(after);
     }
 
     private static void Compare(string name, Action<TerminalOutput> prefix,

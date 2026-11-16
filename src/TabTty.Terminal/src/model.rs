@@ -245,6 +245,49 @@ impl Row {
             }
         }
     }
+    fn shift_cells(
+        &mut self,
+        start: usize,
+        count: usize,
+        columns: usize,
+        insert: bool,
+        style: Style,
+    ) {
+        if insert {
+            if self.cells.get(start).map_or(false, |cell| cell.width == -1) {
+                self.clear_cells(start, start + 1);
+            }
+            self.cells.resize(
+                self.cells.len().max(start) + count,
+                CellView::blank(Style::default()),
+            );
+            let old_end = self.cells.len() - count;
+            self.cells.copy_within(start..old_end, start + count);
+            self.cells[start..start + count].fill(CellView::blank(style));
+            if self.cells.len() > columns {
+                if self.cells[columns].width == -1 {
+                    self.cells[columns - 1] = CellView::blank(Style::default());
+                }
+                self.cells.truncate(columns);
+            }
+        } else {
+            self.clear_cells(start, start + count);
+            if start < self.cells.len() {
+                let end = (start + count).min(self.cells.len());
+                self.cells.drain(start..end);
+            }
+            if style != Style::default() {
+                self.cells.resize(
+                    self.cells.len().max(columns - count),
+                    CellView::blank(Style::default()),
+                );
+                self.cells.resize(columns, CellView::blank(style));
+            }
+        }
+        self.tabs.clear();
+        self.tab_revision += 1;
+        self.invalidate();
+    }
     fn add_tab(&mut self, start: usize, end: usize) {
         if end != (start / 8 + 1) * 8 {
             return;
@@ -418,8 +461,11 @@ pub struct Model {
     bracketed_paste: bool,
     cursor_visible: bool,
     cursor_blink: bool,
+    cursor_shape: u32,
+    bells: u32,
     terminal_log: Vec<u8>,
     text_log: Vec<u8>,
+    replies: Vec<u8>,
     position: RecordedPosition,
     view_rows: Vec<RowView>,
     feed_bytes: u64,
@@ -477,8 +523,11 @@ impl Model {
             bracketed_paste: false,
             cursor_visible: true,
             cursor_blink: true,
+            cursor_shape: 0,
+            bells: 0,
             terminal_log: Vec::with_capacity(8192),
             text_log: Vec::with_capacity(8192),
+            replies: Vec::with_capacity(2048),
             position: RecordedPosition::default(),
             view_rows: Vec::new(),
             feed_bytes: 0,
@@ -516,6 +565,7 @@ impl Model {
                 .sum::<usize>()
             + self.terminal_log.capacity()
             + self.text_log.capacity()
+            + self.replies.capacity()
             + self.view_rows.capacity() * size_of::<RowView>()
             + self.export_rows.capacity() * size_of::<ExportRow>()
             + self.export_tabs.capacity() * size_of::<TabView>()) as u64
@@ -550,22 +600,23 @@ impl Model {
         Effects {
             text: self.text_log.as_ptr(),
             text_length: self.text_log.len() as u32,
-            reserved0: (self.bracketed_paste as u32) << 4,
+            reserved0: ((self.bracketed_paste as u32) << 4) | (self.bells << 8),
             terminal: self.terminal_log.as_ptr(),
             terminal_length: self.terminal_log.len() as u32,
-            reserved1: 0,
+            reply_length: self.replies.len() as u32,
+            replies: self.replies.as_ptr(),
         }
     }
     fn start_call(&mut self, flags: u32) -> Result<(), i32> {
         self.invalidate_prepared();
         self.text_log.clear();
         self.terminal_log.clear();
+        self.replies.clear();
+        self.bells = 0;
         if self.failed {
             return Err(UNSUPPORTED);
         }
-        if flags & !3 != 0 {
-            return Err(1);
-        }
+        let flags = flags & 3;
         if let Some(prior) = self.logging {
             if prior != flags {
                 self.unsupported += 1;
@@ -684,9 +735,26 @@ impl Model {
             Parameters::Live(&mut source.parameters),
         )? {
             Unit::Ignored => return Ok(()),
+            Unit::Bell => {
+                self.bells += 1;
+                return Ok(());
+            }
             Unit::Index(left) => {
                 self.operation_bytes(&[27, c as u8]);
                 self.move_down(left);
+                return Ok(());
+            }
+            Unit::Csi(Csi::Repeat(count)) => {
+                let mut spelling = [0; 256];
+                let spelling = copy_graphic(&source.last_graphic, &mut spelling);
+                if spelling.is_empty() {
+                    return Ok(());
+                }
+                for _ in 0..count {
+                    for &scalar in spelling {
+                        self.print(source, scalar)?;
+                    }
+                }
                 return Ok(());
             }
             Unit::Csi(command) => return self.csi(&source.parameters, c as u8, command),
@@ -727,6 +795,9 @@ impl Model {
             }
             _ => {}
         }
+        self.print(source, c)
+    }
+    fn print(&mut self, source: &mut Source, c: u32) -> Result<(), i32> {
         if !source.last_was_graphic || !self.unicode.joins(&source.last_graphic, c) {
             source.last_graphic.clear();
         }
@@ -850,20 +921,7 @@ impl Model {
             0
         };
         if self.cursor_row == self.screen_rows - 1 {
-            self.cluster_row = 0;
-            while self.screen.len() < self.screen_rows {
-                let row = self.new_row();
-                self.screen.push_back(row);
-            }
-            let old = self.screen.pop_front().unwrap();
-            self.history_bytes += old.bytes();
-            self.history_pending_units += old.pending_units();
-            self.history_cell_capacity += old.cells.capacity() as u64;
-            self.history.push_back(old);
-            let mut row = self.new_row();
-            row.erase(0, self.columns, self.style.erase());
-            self.screen.push_back(row);
-            self.retire();
+            self.scroll_region(0, self.screen_rows - 1, 1, false);
         } else if self.cursor_row < self.screen_rows - 1 {
             self.cursor_row += 1;
             self.ensure_cursor();
@@ -873,6 +931,26 @@ impl Model {
             self.screen[self.cursor_row].logical_offset = prev_offset + prev_len as i64;
             self.screen[self.cursor_row].logical_cluster_offset =
                 prev_cluster_offset + prev_clusters as i64;
+        }
+    }
+    fn scroll_region(&mut self, top: usize, bottom: usize, count: usize, down: bool) {
+        self.cluster_row = 0;
+        while self.screen.len() <= bottom {
+            let row = self.new_row();
+            self.screen.push_back(row);
+        }
+        for _ in 0..count.min(bottom - top + 1) {
+            let old = self.screen.remove(if down { bottom } else { top }).unwrap();
+            if !down && top == 0 && bottom == self.screen_rows - 1 {
+                self.history_bytes += old.bytes();
+                self.history_pending_units += old.pending_units();
+                self.history_cell_capacity += old.cells.capacity() as u64;
+                self.history.push_back(old);
+            }
+            let mut row = self.new_row();
+            row.erase(0, self.columns, self.style.erase());
+            self.screen.insert(if down { top } else { bottom }, row);
+            self.retire();
         }
     }
     fn move_down(&mut self, left: bool) {
@@ -963,7 +1041,36 @@ impl Model {
         }
     }
     fn csi(&mut self, p: &[u8], final_byte: u8, command: Csi) -> Result<(), i32> {
-        if matches!(command, Csi::Rendition) {
+        if let Csi::Reply(reply) = command {
+            use std::io::Write;
+            let length_at = self.replies.len();
+            self.replies.push(0);
+            match reply {
+                Reply::Status => self.replies.extend_from_slice(b"\x1b[0n"),
+                Reply::Attributes => self.replies.extend_from_slice(b"\x1b[?1;2c"),
+                Reply::Position(private) => {
+                    let prefix = if private { "?" } else { "" };
+                    write!(
+                        self.replies,
+                        "\x1b[{}{};{}R",
+                        prefix,
+                        self.cursor_row + 1,
+                        self.column + 1
+                    )
+                    .map_err(|_| 3)?;
+                }
+            }
+            self.replies[length_at] = (self.replies.len() - length_at - 1) as u8;
+            return Ok(());
+        }
+        if let Csi::CursorStyle(style) = command {
+            self.cursor_shape = match style {
+                3 | 4 => 1,
+                5 | 6 => 2,
+                _ => 0,
+            };
+            self.cursor_blink = matches!(style, 0 | 1 | 3 | 5);
+        } else if matches!(command, Csi::Rendition) {
             if !apply_sgr(p, &mut self.style) {
                 return Ok(());
             }
@@ -1020,6 +1127,27 @@ impl Model {
                         self.style.erase(),
                     );
                 }
+                b'@' | b'P' => {
+                    self.ensure_cursor();
+                    self.screen[self.cursor_row].shift_cells(
+                        self.column,
+                        count.min(self.columns - self.column),
+                        self.columns,
+                        final_byte == b'@',
+                        self.style.erase(),
+                    );
+                }
+                b'L' | b'M' => {
+                    self.scroll_region(
+                        self.cursor_row,
+                        self.screen_rows - 1,
+                        count,
+                        final_byte == b'L',
+                    );
+                }
+                b'S' | b'T' => {
+                    self.scroll_region(0, self.screen_rows - 1, count, final_byte == b'T');
+                }
                 b'J' if v[0] == 2 => {
                     self.cluster_row = 0;
                     while self.screen.len() < self.screen_rows {
@@ -1073,6 +1201,17 @@ impl Model {
         self.operation_bytes(p);
         self.operation_bytes(&[f]);
     }
+    pub fn snapshot_copy_required(&self) -> u64 {
+        // Per row: snapshot slot and string headers, compact and expanded cell
+        // slots, and UTF-16 units in the arena, row text and expanded strings.
+        256 + self
+            .history
+            .iter()
+            .chain(self.screen.iter())
+            .map(|row| 384 + row.cells.len() as u64 * 154 + row.arena.len() as u64 * 6)
+            .sum::<u64>()
+    }
+
     pub fn snapshot(&mut self) -> Result<SnapshotView, i32> {
         self.invalidate_prepared();
         self.snapshots += 1;
@@ -1109,7 +1248,7 @@ impl Model {
             screen_start: self.history.len() as i32,
             flags: (if self.cursor_visible { 1 } else { 0 })
                 | (if self.cursor_blink { 2 } else { 0 }),
-            cursor_shape: 0,
+            cursor_shape: self.cursor_shape,
         })
     }
     pub fn export(&mut self) -> Result<ExportState, i32> {
@@ -1257,22 +1396,31 @@ impl Model {
         if self.failed && operation <= 2 {
             return Err(UNSUPPORTED);
         }
-        if operation > 4 || source > 2 || flags & !3 != 0 {
+        let pending_replies = (flags >> 8) as usize;
+        if operation > 4 || source > 2 || flags & 0xfc != 0 || pending_replies > MAX_REPLIES {
             return Err(1);
         }
+        let flags = flags & 3;
         if operation <= 2 {
             if self.logging.map_or(false, |prior| prior != flags) {
                 return Err(UNSUPPORTED);
             }
         }
         let mut revisits_rows = false;
+        let mut row_moves = 0;
+        let mut repeated_bytes = 0;
         if operation == 0 {
             if self.finished || payload.len() > 1024 * 1024 {
                 return Err(UNSUPPORTED);
             }
             let mut probe = Probe::from_source(&self.sources[source], self);
             probe.decode(payload, false)?;
+            if probe.reply_count + pending_replies > MAX_REPLIES {
+                return Err(4);
+            }
             revisits_rows = probe.revisits_rows;
+            row_moves = probe.row_moves.min(self.retained) as u64;
+            repeated_bytes = probe.repeated_bytes as u64;
         } else if operation == 1 {
             let mut probe = Probe::from_source(&self.sources[0], self);
             probe.decode(&[], true)?;
@@ -1297,7 +1445,7 @@ impl Model {
                 .sum::<u64>();
         let required = if operation <= 2 {
             let bytes = if operation == 0 {
-                payload.len() as u64
+                payload.len() as u64 + repeated_bytes
             } else if operation == 1 && !self.finished {
                 16
             } else {
@@ -1320,7 +1468,7 @@ impl Model {
                 return Err(UNSUPPORTED);
             }
             let row_growth = if operation <= 1 {
-                (bytes + self.screen_rows as u64 + 1)
+                (bytes + self.screen_rows as u64 + row_moves + 1)
                     * (self.columns as u64 * 80 + size_of::<Row>() as u64 + 128)
                     * 2
             } else {
@@ -1486,6 +1634,7 @@ fn is_control(scalar: u32) -> bool {
 
 enum Unit {
     Ignored,
+    Bell,
     Graphic,
     Control,
     Index(bool),
@@ -1550,7 +1699,8 @@ fn interpret_scalar(
             *escape = 0;
             return Ok(Unit::Ignored);
         }
-        7 | 14 | 15 => return Err(UNSUPPORTED),
+        7 => return Ok(Unit::Bell),
+        14 | 15 => return Err(UNSUPPORTED),
         8..=13 => return Ok(Unit::Control),
         _ if is_control(scalar) => return Ok(Unit::Ignored),
         _ => {}
@@ -1562,9 +1712,9 @@ fn interpret_scalar(
             *escape = 0;
             match scalar {
                 91 => *escape = 2,
-                93 => {
+                93 | 80 | 88 | 94 | 95 => {
                     *escape = 3;
-                    *osc = true;
+                    *osc = scalar == 93;
                     *string_bytes = 0;
                 }
                 92 => {}
@@ -1593,6 +1743,9 @@ struct Probe<'a> {
     cluster_count: usize,
     cluster_active: bool,
     revisits_rows: bool,
+    row_moves: usize,
+    reply_count: usize,
+    repeated_bytes: usize,
     pending: [u8; 4],
     pending_count: usize,
     started: bool,
@@ -1613,6 +1766,9 @@ impl<'a> Probe<'a> {
             cluster_count: model.cluster.len(),
             cluster_active: model.cluster_row != 0,
             revisits_rows: false,
+            row_moves: 0,
+            reply_count: 0,
+            repeated_bytes: 0,
             pending: source.pending,
             pending_count: source.pending_count,
             started: source.started,
@@ -1720,12 +1876,39 @@ impl<'a> Probe<'a> {
         )
         .map_err(|_| UNSUPPORTED)?;
         match unit {
-            Unit::Ignored | Unit::Csi(Csi::Rendition | Csi::Mode(..)) => {}
+            Unit::Ignored
+            | Unit::Bell
+            | Unit::Csi(Csi::Rendition | Csi::Mode(..) | Csi::CursorStyle(_)) => {}
+            Unit::Csi(Csi::Reply(_)) => self.reply_count += 1,
+            Unit::Csi(Csi::Repeat(count)) => {
+                let mut spelling = [0; 256];
+                let spelling =
+                    copy_graphic(&self.source_graphic[..self.source_count], &mut spelling);
+                if spelling.is_empty() {
+                    return Ok(());
+                }
+                let bytes: usize = spelling
+                    .iter()
+                    .map(|&scalar| char::from_u32(scalar).unwrap().len_utf8())
+                    .sum();
+                self.repeated_bytes += bytes * count;
+                if self.repeated_bytes > 1024 * 1024 {
+                    return Err(RESOURCE);
+                }
+                for _ in 0..count {
+                    for &scalar in spelling {
+                        self.graphic(scalar)?;
+                    }
+                }
+            }
             Unit::Graphic => return self.graphic(c),
             Unit::Control | Unit::Index(_) => self.cluster_active = false,
             Unit::Csi(Csi::Edit(values)) => {
                 let final_byte = c as u8;
                 self.revisits_rows |= !matches!(final_byte, b'J' | b'K' | b'X');
+                if matches!(final_byte, b'L' | b'M' | b'S' | b'T') {
+                    self.row_moves = self.row_moves.saturating_add(values[0].max(1));
+                }
                 if final_byte != b'J' || values[0] != 3 {
                     self.cluster_active = false;
                 }
@@ -1746,9 +1929,40 @@ enum Csi {
     Rendition,
     Mode(Mode, bool),
     Edit([usize; 2]),
+    Reply(Reply),
+    Repeat(usize),
+    CursorStyle(usize),
+}
+
+const MAX_REPLIES: usize = 128;
+
+enum Reply {
+    Status,
+    Position(bool),
+    Attributes,
 }
 
 fn parse_csi(parameters: &[u8], final_byte: u8) -> Result<Unit, i32> {
+    if final_byte == b'q' {
+        let style = parameters
+            .strip_suffix(b" ")
+            .filter(|value| !value.is_empty())
+            .and_then(number);
+        return Ok(match style {
+            Some(style @ 0..=6) => Unit::Csi(Csi::CursorStyle(style)),
+            _ => Unit::Ignored,
+        });
+    }
+    let reply = match (final_byte, parameters) {
+        (b'n', b"5") => Some(Reply::Status),
+        (b'n', b"6") => Some(Reply::Position(false)),
+        (b'n', b"?6") => Some(Reply::Position(true)),
+        (b'c', b"" | b"0") => Some(Reply::Attributes),
+        _ => None,
+    };
+    if let Some(reply) = reply {
+        return Ok(Unit::Csi(Csi::Reply(reply)));
+    }
     if final_byte == b'm' {
         let mut groups = 0;
         for parameter in parameters.split(|&byte| byte == b';') {
@@ -1788,12 +2002,20 @@ fn parse_csi(parameters: &[u8], final_byte: u8) -> Result<Unit, i32> {
         }
     }
     match final_byte {
-        b'H' | b'f' | b'A' | b'B' | b'C' | b'D' | b'E' | b'F' | b'G' | 96 | b'd' | b'X' => {}
+        b'H' | b'f' | b'A' | b'B' | b'C' | b'D' | b'E' | b'F' | b'G' | 96 | b'd' | b'X' | b'@'
+        | b'P' | b'L' | b'M' | b'S' | b'T' => {}
         b'K' if values[0] <= 2 => {}
         b'J' if values[0] <= 3 => {}
+        b'b' => return Ok(Unit::Csi(Csi::Repeat(values[0].max(1)))),
         _ => return Err(UNSUPPORTED),
     }
     Ok(Unit::Csi(Csi::Edit(values)))
+}
+
+fn copy_graphic<'a>(source: &[u32], copy: &'a mut [u32; 256]) -> &'a [u32] {
+    let destination = &mut copy[..source.len()];
+    destination.copy_from_slice(source);
+    destination
 }
 #[inline]
 fn decode_utf8_byte(
