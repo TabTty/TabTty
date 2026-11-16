@@ -165,26 +165,21 @@ internal sealed partial class AiCollaboration
             int first = region.Column, last = first + region.Columns - 1;
             var cells = new List<ScreenCell>();
             int next = first;
-            var line = model.AiScreenRow(row - 1);
-            if (line is not null)
+            var rowIdentity = model.ReadAiScreenRow(row - 1, first, last, cell =>
             {
-                foreach (var cell in line.GetAiCells(first, last, model.AiColumns).Span)
-                {
-                    int column = cell.Column + 1;
-                    if (column + cell.Width - 1 < first) continue;
-                    if (column > last) break;
-                    if (next < column) Add(next, column - next, " ", default, true);
-                    if (cell.IsErased && cell.Text == " " && cells.LastOrDefault() is { blank: true } previous &&
-                        previous.column + previous.width == column && previous.foreground == (cell.Style.Foreground ?? 0xFFFFFF) &&
-                        previous.background == (cell.Style.Background ?? 0) && previous.flags == (int)cell.Style.Flags)
-                        cells[^1] = previous with { width = previous.width + cell.Width };
-                    else Add(column, cell.Width, cell.Text, cell.Style, cell.IsErased);
-                    next = column + cell.Width;
-                }
-            }
+                int column = cell.Column + 1;
+                if (column + cell.Width - 1 < first || column > last) return;
+                if (next < column) Add(next, column - next, " ", default, true);
+                if (cell.IsErased && cell.Text == " " && cells.LastOrDefault() is { blank: true } previous &&
+                    previous.column + previous.width == column && previous.foreground == (cell.Style.Foreground ?? 0xFFFFFF) &&
+                    previous.background == (cell.Style.Background ?? 0) && previous.flags == (int)cell.Style.Flags)
+                    cells[^1] = previous with { width = previous.width + cell.Width };
+                else Add(column, cell.Width, cell.Text, cell.Style, cell.IsErased);
+                next = column + cell.Width;
+            });
             if (next <= last) Add(next, last - next + 1, " ", default, true);
             lines[i] = new ScreenRow(row, Math.Min(first, cells[0].column),
-                Math.Max(last, next - 1), cells.ToArray(), null, line?.Id ?? 0, line?.DisplayRevision ?? 0);
+                Math.Max(last, next - 1), cells.ToArray(), null, rowIdentity.Id, rowIdentity.Revision);
             memory.Add(96 + cells.Count * 16L);
 
             void Add(int column, int width, string text, TerminalStyle style, bool blank)

@@ -29,9 +29,21 @@ toolchain is .NET SDK 10.0.404, Rust/Cargo 1.63.0, and MSVC on Windows x64.
   conversion from Rust. Windows ICU supplies the JIS designations and
   repertoires. The former IN/OUT choices remain readable profile fields.
   See the [codec decision](../drafts/terminal-codec-consultation.md).
-- Legacy VT interpretation, full alternate-screen and resize support,
-  recording intervals, and retained history still require migration before
-  the complete native-only acceptance run.
+- Rust now frames legacy receive units and carries incomplete units, kana shifts,
+  and recording eligibility independently for DATA and stderr. The production
+  legacy sessions still use the managed VT interpreter.
+- The native UTF-8 path implements cursor, scrolling, tabs, key and mouse input,
+  alternate screens, resize, and recording intervals. Display and receive-only
+  Text resize plans are both prepared before either geometry changes. Core
+  fixtures cover split units across recording intervals, reflowed text, and a
+  refused second resize plan.
+- AI screen capture reads the requested region from the active Rust screen
+  without exporting retained history. The WPF Telnet fixture checks a clipped
+  wide cell, its format mark, and foreground. AI history and search still
+  use managed terminal state.
+- Legacy VT execution, retained-history observation and search, removal of
+  managed handoffs, and native-only deployment and workload acceptance remain
+  open under #16.
 
 Target-design update, 2026-11-16: [ADR 0007](../adr/0007-complete-terminal-processing-in-rust.md)
 requires [complete Rust terminal processing](native-terminal-core.md) without
@@ -48,7 +60,7 @@ packaging remains future work.
 | Area | Implementation |
 | --- | --- |
 | Windows and profiles | Native WPF shell, English and Japanese, system language/theme resolution, fixed terminal defaults, same-user activation, movable/detachable tabs, monitor-aware placement and retained disconnected output. File-backed SSH/Telnet/COM profiles use a typed editor, bounded versioned JSON, registration/search/favorites, duplicate and recycle operations, and explicit store recovery. |
-| Terminal | TabTty-owned screen/parser/renderer, Unicode 17 clusters and widths, 48 encodings, independent SSH DATA/stderr decoding, VT input/display modes, reflow, selection/copy and UIA Text ranges. Literal search and scheduled regex highlighting run off the receive path. Multiline paste has separately paced character/line delays, cancellation and application-run memory. |
+| Terminal | TabTty-owned screen/parser/renderer, Unicode 17 clusters and widths, 47 encodings, independent SSH DATA/stderr decoding, VT input/display modes, reflow, selection/copy and UIA Text ranges. Literal search and scheduled regex highlighting run off the receive path. Multiline paste has separately paced character/line delays, cancellation and application-run memory. |
 | Transports | TCP Telnet negotiation and NVT processing, Win32 COM with line settings and BREAK, and a TabTty-owned SSH client with app-local OpenSSL. SSH supports host trust/replacement, password, keyboard-interactive and public key, PTY/shell, channel credit and bounded close, rekey and liveness. Initial SSH PTY and Telnet NAWS use the available viewport. |
 | SSH algorithms | ML-KEM-768/X25519, Curve25519 and its alias, three NIST ECDH groups and DH group 14/16. AES-128/256-GCM and AES-128/256-CTR with HMAC-SHA-256/512 EtM. Ed25519, NIST ECDSA and RSA SHA-2 host and user signatures. |
 | Credentials | Portable encrypted .tttykey container with Argon2id and authenticated root/payload encryption. One shared first-use unlock. Entry updates/deletion, encrypted backup, guarded restore, master-password change, and supported OpenSSH, PKCS#8, RSA and EC private-key import envelopes. |

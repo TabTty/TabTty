@@ -213,7 +213,7 @@ public sealed partial class TerminalSession
         {
             ObjectDisposedException.ThrowIf(terminalReleased, this);
             T result = default!;
-            await ProcessBatchAsync(() => result = observe(terminal, GetAiTerminalState()), token).ConfigureAwait(false);
+            await ProcessBatchAsync(() => result = observe(terminal, terminal.ReadAiScreenState()), token).ConfigureAwait(false);
             return result;
         }
         finally { state.Release(); }
@@ -271,27 +271,4 @@ public sealed partial class TerminalSession
         activity?.TrySetResult();
     }
 
-    private AiTerminalState GetAiTerminalState()
-    {
-        var hash = new HashCode();
-        hash.Add(terminal.AiCursorRow);
-        hash.Add(terminal.AiCursorColumn);
-        hash.Add(terminal.AiCursorVisible);
-        hash.Add(terminal.AiCursorShape);
-        hash.Add(terminal.ApplicationKeypad);
-        hash.Add(terminal.ApplicationCursorKeys);
-        hash.Add(terminal.BracketedPaste);
-        hash.Add(terminal.MouseMode);
-        hash.Add(terminal.AiLayoutEpoch);
-        for (int row = 0; row < terminal.AiRows; row++)
-        {
-            if (terminal.AiScreenRow(row) is not { } line) continue;
-            hash.Add(line.Id);
-            hash.Add(line.DisplayRevision);
-        }
-        return new AiTerminalState(terminal.AiLayoutEpoch, hash.ToHashCode(), terminal.AiColumns, terminal.AiRows,
-            terminal.AiCursorRow, terminal.AiCursorColumn, terminal.AiCursorVisible, terminal.AiCursorShape,
-            terminal.IsAlternateScreen, terminal.ApplicationCursorKeys, terminal.ApplicationKeypad,
-            terminal.BracketedPaste, terminal.MouseMode);
-    }
 }

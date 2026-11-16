@@ -75,6 +75,11 @@ fn windows_page(page: u32) -> bool {
 }
 
 #[cfg(windows)]
+pub(crate) fn supports(page: u32) -> bool {
+    windows_page(page) || icu_name(page, 0).is_some()
+}
+
+#[cfg(windows)]
 fn icu_name(page: u32, flags: u32) -> Option<&'static [u8]> {
     match page {
         51932 => Some(windows_icu::EUC_JP),

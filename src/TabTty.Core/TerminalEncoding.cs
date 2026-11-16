@@ -54,10 +54,6 @@ internal sealed class TerminalEncoding
         return text.ToString();
     }
 
-    public Rune DecodeUnit(ReadOnlySpan<byte> bytes) =>
-        bytes.Length == 1 && (bytes[0] < 0x20 || bytes[0] == 0x7F)
-            ? new Rune(bytes[0]) : NativeTerminalCore.DecodeLegacyUnit(NativePage, bytes);
-
     public byte[] Encode(ReadOnlySpan<char> text, bool sevenBitKana = false)
     {
         if (IsUtf8)

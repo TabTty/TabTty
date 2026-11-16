@@ -825,6 +825,7 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
             FinalizeReceive();
             terminalReleased = true;
             terminal.ReleaseNativeState();
+            projections?.ReleaseReceiveOnlyState();
             SignalAiActivity();
         }
         finally { state.Release(); }

@@ -1,15 +1,21 @@
 use crate::unicode::Unicode;
 use crate::{
-    account, CellView, Effects, ExportRow, ExportState, RowView, SnapshotView, SourceView, Stats,
-    TabView, LIVE_MODELS,
+    account, CellView, CursorView, EditingView, Effects, ExportRow, ExportState, FormatView,
+    PageView, RowView, ScreenRowView, ScreenState, SnapshotView, SourceView, Stats, TabView,
+    LIVE_MODELS,
 };
+use std::collections::hash_map::DefaultHasher;
 use std::collections::VecDeque;
+use std::hash::{Hash, Hasher};
 use std::mem::size_of;
 use std::ptr;
 use std::sync::atomic::{AtomicI64, Ordering};
+
 #[cfg(test)]
 #[path = "admission_tests.rs"]
 mod admission_tests;
+#[path = "reflow.rs"]
+mod reflow;
 // Native identities are process-unique and disjoint from C#'s positive row IDs.
 static NEXT_ROW_ID: AtomicI64 = AtomicI64::new(-1);
 fn next_row_id() -> i64 {
@@ -68,6 +74,9 @@ struct Row {
     plain: Vec<u16>,
     submitted: Option<Vec<u16>>,
     tabs: Vec<(usize, usize)>,
+    formats: Vec<FormatView>,
+    recorded_columns: Vec<TabView>,
+    excluded: bool,
     soft: bool,
     dirty: bool,
 }
@@ -88,6 +97,9 @@ impl Row {
             plain: Vec::new(),
             submitted: None,
             tabs: Vec::new(),
+            formats: Vec::new(),
+            recorded_columns: Vec::new(),
+            excluded: false,
             soft: false,
             dirty: true,
         }
@@ -107,6 +119,9 @@ impl Row {
         self.plain.clear();
         self.submitted = None;
         self.tabs.clear();
+        self.formats.clear();
+        self.recorded_columns.clear();
+        self.excluded = false;
         self.soft = false;
         self.dirty = true;
     }
@@ -116,11 +131,14 @@ impl Row {
             + self.plain.capacity() * 2
             + self.submitted.as_ref().map_or(0, |s| s.capacity() * 2)
             + self.tabs.capacity() * size_of::<(usize, usize)>()
+            + self.formats.capacity() * size_of::<FormatView>()
+            + self.recorded_columns.capacity() * size_of::<TabView>()
     }
     fn pending_units(&self) -> u64 {
-        if self.submitted.is_some()
-            && self.submitted_revision == self.content_revision
-            && self.submitted_tab_revision == self.tab_revision
+        if self.excluded
+            || self.submitted.is_some()
+                && self.submitted_revision == self.content_revision
+                && self.submitted_tab_revision == self.tab_revision
         {
             0
         } else {
@@ -128,11 +146,38 @@ impl Row {
         }
     }
     fn potential_units(&self) -> u64 {
-        (self.arena.len() + self.cells.len() + self.tabs.last().map_or(0, |t| t.1)) as u64
+        (self.arena.len()
+            + self.cells.len()
+            + self.tabs.last().map_or(0, |t| t.1)
+            + self.format_units()) as u64
+    }
+    fn contains_text(&self) -> bool {
+        !self.formats.is_empty() || self.cells.iter().any(|cell| cell.width > 0)
+    }
+    fn format_units(&self) -> usize {
+        self.formats.len() + self.formats.last().map_or(0, |mark| mark.column as usize)
+    }
+    fn add_format(&mut self, column: usize) -> Result<(), i32> {
+        let column = column as u32;
+        let start = self.formats.partition_point(|mark| mark.column < column);
+        let end = self.formats.partition_point(|mark| mark.column <= column);
+        if end - start >= 256 {
+            return Err(RESOURCE);
+        }
+        self.formats.insert(
+            end,
+            FormatView {
+                column,
+                scalar: 0xfeff,
+            },
+        );
+        self.invalidate();
+        Ok(())
     }
     fn invalidate(&mut self) {
         self.revision += 1;
         self.content_revision += 1;
+        self.recorded_columns.clear();
         self.dirty = true;
     }
     fn text(&self, c: CellView) -> &[u16] {
@@ -236,6 +281,8 @@ impl Row {
             end += 1;
         }
         self.clear_cells(start, end);
+        self.formats
+            .retain(|mark| !(start..end).contains(&(mark.column as usize)));
         if style != Style::default() {
             if self.cells.len() < end {
                 self.cells.resize(end, CellView::blank(Style::default()));
@@ -285,6 +332,19 @@ impl Row {
             }
         }
         self.tabs.clear();
+        for mark in &mut self.formats {
+            let column = mark.column as usize;
+            if column >= start {
+                mark.column = if insert {
+                    column + count
+                } else if column >= start + count {
+                    column - count
+                } else {
+                    columns + 1
+                } as u32;
+            }
+        }
+        self.formats.retain(|mark| mark.column <= columns as u32);
         self.tab_revision += 1;
         self.invalidate();
     }
@@ -310,6 +370,14 @@ impl Row {
         }
     }
     fn serialize(&self, preserve_tabs: bool, prefix: Option<usize>) -> Vec<u16> {
+        self.serialize_columns(preserve_tabs, prefix, false)
+    }
+    fn serialize_columns(
+        &self,
+        preserve_tabs: bool,
+        prefix: Option<usize>,
+        pending_only: bool,
+    ) -> Vec<u16> {
         let mut end = self.cells.len();
         while end > 0 && self.cells[end - 1].width == 0 {
             end -= 1;
@@ -317,21 +385,41 @@ impl Row {
         if preserve_tabs {
             end = end.max(self.tabs.last().map_or(0, |t| t.1));
         }
-        let mut output = Vec::with_capacity(end);
+        end = end.max(self.formats.last().map_or(0, |mark| mark.column as usize));
+        let mut output = Vec::with_capacity(end + self.formats.len());
+        let mut marks = self.formats.iter().peekable();
         let mut column = 0;
-        while column < end {
+        while column <= end {
+            let recorded = pending_only
+                && self
+                    .recorded_columns
+                    .iter()
+                    .any(|span| (span.start..span.end).contains(&(column as u32)));
+            while let Some(mark) = marks.next_if(|mark| mark.column as usize == column) {
+                if !recorded {
+                    output.push(mark.scalar as u16);
+                }
+            }
             if preserve_tabs {
                 if let (Some(prefix), Some(&(_, to))) =
                     (prefix, self.tabs.iter().find(|t| t.0 == column))
                 {
-                    if to - column == 8 - (prefix + column) % 8 {
+                    if (!pending_only || self.recorded_columns.is_empty())
+                        && to - column == 8 - (prefix + column) % 8
+                        && marks.peek().map_or(true, |mark| mark.column as usize >= to)
+                    {
                         output.push(9);
                         column = to;
                         continue;
                     }
                 }
             }
-            if column >= self.cells.len() || self.cells[column].width == 0 {
+            if column == end {
+                break;
+            }
+            if recorded {
+                // Each occupied column belongs to the recorded span as a unit.
+            } else if column >= self.cells.len() || self.cells[column].width == 0 {
                 output.push(32);
             } else if self.cells[column].width > 0 {
                 output.extend_from_slice(self.text(self.cells[column]));
@@ -359,8 +447,108 @@ struct Source {
     parameters: Vec<u8>,
     last_graphic: Vec<u32>,
     last_was_graphic: bool,
+    charset: Charset,
+    pending_interval: u32,
+    escape_interval: u32,
+    previous_interval: u32,
 }
-#[derive(Default)]
+
+#[derive(Clone, Copy, Default)]
+struct Charset(u8);
+
+impl Charset {
+    fn designate(&mut self, slot: u8, graphics: bool) {
+        self.0 = (self.0 & !(1 << slot)) | ((graphics as u8) << slot);
+    }
+
+    fn invoke(&mut self, second: bool) {
+        self.0 = (self.0 & 3) | ((second as u8) << 2);
+    }
+
+    fn graphics(self) -> bool {
+        self.0 & (1 << (self.0 >> 2)) != 0
+    }
+
+    fn graphic(self, scalar: u32) -> u32 {
+        const GRAPHICS: [char; 32] = [
+            ' ', '◆', '▒', '␉', '␌', '␍', '␊', '°', '±', '␤', '␋', '┘', '┐', '┌', '└', '┼', '⎺',
+            '⎻', '─', '⎼', '⎽', '├', '┤', '┴', '┬', '│', '≤', '≥', 'π', '≠', '£', '·',
+        ];
+        if self.graphics() && (0x5f..=0x7e).contains(&scalar) {
+            GRAPHICS[(scalar - 0x5f) as usize] as u32
+        } else {
+            scalar
+        }
+    }
+}
+
+struct Page {
+    screen: VecDeque<Row>,
+    row: usize,
+    column: usize,
+    wrap: bool,
+    columns: usize,
+    rows: usize,
+}
+
+impl Page {
+    fn view(&self, first: usize) -> PageView {
+        PageView {
+            first: first as u32,
+            count: self.screen.len() as u32,
+            row: self.row as u32,
+            column: self.column as u32,
+            columns: self.columns as u32,
+            rows: self.rows as u32,
+            wrap: self.wrap as u32,
+        }
+    }
+}
+
+const DEFAULT_TABS: [u64; 16] = [
+    0x0101010101010100,
+    0x0101010101010101,
+    0x0101010101010101,
+    0x0101010101010101,
+    0x0101010101010101,
+    0x0101010101010101,
+    0x0101010101010101,
+    0x0101010101010101,
+    0x0101010101010101,
+    0x0101010101010101,
+    0x0101010101010101,
+    0x0101010101010101,
+    0x0101010101010101,
+    0x0101010101010101,
+    0x0101010101010101,
+    0x0101010101010101,
+];
+
+#[derive(Clone, Copy)]
+struct SavedCursor {
+    row: usize,
+    column: usize,
+    style: Style,
+    origin: bool,
+    auto_wrap: bool,
+    wrap_pending: bool,
+    charset: Charset,
+}
+
+impl Default for SavedCursor {
+    fn default() -> Self {
+        Self {
+            row: 0,
+            column: 0,
+            style: Style::default(),
+            origin: false,
+            auto_wrap: true,
+            wrap_pending: false,
+            charset: Charset::default(),
+        }
+    }
+}
+#[derive(Clone, Default)]
 struct RecordedPosition {
     column: usize,
     cluster: Vec<u32>,
@@ -376,6 +564,20 @@ struct PreparedOperation {
     length: usize,
     required: u64,
     payload: [u8; 1024],
+}
+
+pub struct PreparedResize {
+    owner: i64,
+    generation: u64,
+    columns: usize,
+    rows: usize,
+    page: ResizePage,
+}
+
+enum ResizePage {
+    Unchanged,
+    Alternate,
+    Normal(reflow::Reflow),
 }
 impl Default for PreparedOperation {
     fn default() -> Self {
@@ -432,6 +634,7 @@ impl RecordedPosition {
     }
 }
 pub struct Model {
+    id: i64,
     unicode: Unicode,
     columns: usize,
     screen_rows: usize,
@@ -448,15 +651,35 @@ pub struct Model {
     wrap_pending: bool,
     style: Style,
     cluster: Vec<u32>,
+    layout_epoch: i64,
     cluster_row: i64,
     cluster_column: usize,
     cluster_width: usize,
     cluster_style: Style,
     sources: [Source; 3],
     logging: Option<u32>,
+    recording_interval: u32,
+    record_unit: bool,
     finished: bool,
     failed: bool,
     auto_wrap: bool,
+    origin: bool,
+    insert: bool,
+    application_cursor: bool,
+    application_keypad: bool,
+    mouse_tracking: u32,
+    mouse_sgr: bool,
+    mouse_generation: i32,
+    margin_top: usize,
+    margin_bottom: usize,
+    tab_stops: [u64; 16],
+    saved_cursor: SavedCursor,
+    saved_position: Option<(usize, usize)>,
+    parked: Option<Page>,
+    alternate: Option<Page>,
+    normal_return: Option<SavedCursor>,
+    alternate_cr: Option<usize>,
+    active_source: usize,
     line_feed_returns: bool,
     bracketed_paste: bool,
     cursor_visible: bool,
@@ -481,12 +704,14 @@ pub struct Model {
     export_rows: Vec<ExportRow>,
     export_tabs: Vec<TabView>,
     export_sources: [SourceView; 3],
+    export_editing: EditingView,
 }
 impl Model {
     pub fn new(columns: usize, rows: usize, retained: usize, ambiguous: usize) -> Self {
         let mut screen = VecDeque::with_capacity(rows);
         screen.push_back(Row::new(next_row_id(), columns));
         let mut result = Self {
+            id: screen[0].id,
             unicode: Unicode::new(),
             columns,
             screen_rows: rows,
@@ -503,6 +728,7 @@ impl Model {
             wrap_pending: false,
             style: Style::default(),
             cluster: Vec::with_capacity(256),
+            layout_epoch: 0,
             cluster_row: 0,
             cluster_column: 0,
             cluster_width: 0,
@@ -516,9 +742,28 @@ impl Model {
                 },
             ],
             logging: None,
+            recording_interval: 0,
+            record_unit: true,
             finished: false,
             failed: false,
             auto_wrap: true,
+            origin: false,
+            insert: false,
+            application_cursor: false,
+            application_keypad: false,
+            mouse_tracking: 0,
+            mouse_sgr: false,
+            mouse_generation: 0,
+            margin_top: 0,
+            margin_bottom: rows - 1,
+            tab_stops: DEFAULT_TABS,
+            saved_cursor: SavedCursor::default(),
+            saved_position: None,
+            parked: None,
+            alternate: None,
+            normal_return: None,
+            alternate_cr: None,
+            active_source: 0,
             line_feed_returns: false,
             bracketed_paste: false,
             cursor_visible: true,
@@ -543,6 +788,22 @@ impl Model {
             export_rows: Vec::new(),
             export_tabs: Vec::new(),
             export_sources: [SourceView::empty(); 3],
+            export_editing: EditingView {
+                margin_top: 0,
+                margin_bottom: 0,
+                position_row: -1,
+                position_column: 0,
+                saved_row: 0,
+                saved_column: 0,
+                saved_fg: 0,
+                saved_bg: 0,
+                saved_style: 0,
+                saved_flags: 0,
+                tab_stops: DEFAULT_TABS,
+                parked: PageView::default(),
+                alternate: PageView::default(),
+                normal_return: CursorView::default(),
+            },
         };
         LIVE_MODELS.fetch_add(1, Ordering::Relaxed);
         result.update_accounting();
@@ -556,6 +817,14 @@ impl Model {
             + self.history_bytes
             + self.screen.iter().map(Row::bytes).sum::<usize>()
             + self.spares.iter().map(Row::bytes).sum::<usize>()
+            + [&self.parked, &self.alternate]
+                .into_iter()
+                .flatten()
+                .map(|page| {
+                    page.screen.capacity() * size_of::<Row>()
+                        + page.screen.iter().map(Row::bytes).sum::<usize>()
+                })
+                .sum::<usize>()
             + self.cluster.capacity() * 4
             + self.position.cluster.capacity() * 4
             + self
@@ -600,19 +869,23 @@ impl Model {
         Effects {
             text: self.text_log.as_ptr(),
             text_length: self.text_log.len() as u32,
-            reserved0: ((self.bracketed_paste as u32) << 4) | (self.bells << 8),
+            reserved0: ((self.bracketed_paste as u32) << 4)
+                | ((self.application_cursor as u32) << 5)
+                | ((self.application_keypad as u32) << 6)
+                | ((self.parked.is_some() as u32) << 7)
+                | (self.bells << 8),
             terminal: self.terminal_log.as_ptr(),
             terminal_length: self.terminal_log.len() as u32,
             reply_length: self.replies.len() as u32,
             replies: self.replies.as_ptr(),
+            mouse_tracking: self.mouse_tracking | ((self.mouse_sgr as u32) << 31),
+            mouse_generation: self.mouse_generation,
+            layout_epoch: self.layout_epoch,
         }
     }
     fn start_call(&mut self, flags: u32) -> Result<(), i32> {
         self.invalidate_prepared();
-        self.text_log.clear();
-        self.terminal_log.clear();
-        self.replies.clear();
-        self.bells = 0;
+        self.clear_effects();
         if self.failed {
             return Err(UNSUPPORTED);
         }
@@ -645,6 +918,7 @@ impl Model {
         }
         self.feed_batches += 1;
         self.feed_bytes += payload.len() as u64;
+        self.active_source = index;
         let mut source = std::mem::take(&mut self.sources[index]);
         let result = self.decode(&mut source, payload, false);
         self.sources[index] = source;
@@ -657,6 +931,7 @@ impl Model {
         }
         let mut result = Ok(());
         for index in 0..2 {
+            self.active_source = index;
             let mut source = std::mem::take(&mut self.sources[index]);
             result = self.decode(&mut source, &[], true);
             self.sources[index] = source;
@@ -665,68 +940,279 @@ impl Model {
             }
         }
         self.finished = true;
+        self.flush_alternate_cr();
         self.finish_result(result)
     }
     pub fn flush(&mut self, flags: u32) -> Result<(), i32> {
         self.start_call(flags)?;
         if flags & 2 != 0 {
-            for index in 0..self.history.len() {
-                self.submit_history(index, false);
-            }
-            for index in 0..self.screen.len() {
-                self.submit_screen(index, false);
+            if self.parked.is_some() {
+                self.flush_alternate_cr();
+            } else {
+                self.flush_normal_text();
             }
         }
         self.update_accounting();
         Ok(())
     }
-    pub fn resize(&mut self, columns: usize, rows: usize) -> Result<(), i32> {
-        self.invalidate_prepared();
-        if columns == self.columns && rows == self.screen_rows {
-            return Ok(());
+
+    pub fn begin_recording(&mut self, flags: u32, interval: u32) -> Result<(), i32> {
+        if self.finished || self.failed || flags == 0 || flags & !3 != 0 {
+            return Err(1);
         }
-        if self.feed_bytes != 0 {
-            self.unsupported += 1;
-            return Err(UNSUPPORTED);
+        if self.logging.map_or(false, |active| active != 0) {
+            return Err(1);
         }
-        self.columns = columns;
-        self.screen_rows = rows.min(self.retained);
+        self.logging = Some(flags);
+        self.recording_interval = interval;
+        self.position = RecordedPosition::default();
+        if flags & 2 != 0 {
+            let screen = if let Some(page) = &mut self.parked {
+                &mut page.screen
+            } else {
+                &mut self.screen
+            };
+            let mut carry = false;
+            for row in self.history.iter_mut().chain(screen.iter_mut()) {
+                row.excluded = carry || row.contains_text();
+                carry = row.soft && row.excluded;
+            }
+            carry = false;
+            for row in self.history.iter_mut().chain(screen.iter_mut()).rev() {
+                row.excluded |= row.soft && carry;
+                carry = row.excluded;
+            }
+            self.history_pending_units = self.history.iter().map(Row::pending_units).sum();
+        }
         self.update_accounting();
         Ok(())
+    }
+
+    pub fn cutoff_recording(&mut self, flags: u32, interval: u32, abort: bool) -> Result<(), i32> {
+        if abort {
+            self.clear_effects();
+            self.alternate_cr = None;
+        } else {
+            self.admit(2, 0, &[], flags)?;
+            self.flush(flags)?;
+        }
+        self.logging = Some(0);
+        self.recording_interval = interval;
+        self.update_accounting();
+        Ok(())
+    }
+    pub fn prepare_resize(&self, columns: usize, rows: usize) -> Result<PreparedResize, i32> {
+        let rows = rows.min(self.retained);
+        if self.resize_required(columns, rows) > self.limit {
+            return Err(5);
+        }
+        let page = if columns == self.columns && rows == self.screen_rows {
+            ResizePage::Unchanged
+        } else if self.parked.is_some() {
+            ResizePage::Alternate
+        } else {
+            ResizePage::Normal(reflow::normal(
+                self,
+                &self.screen,
+                self.cursor_row,
+                self.column,
+                self.wrap_pending,
+                columns,
+            )?)
+        };
+        Ok(PreparedResize {
+            owner: self.id,
+            generation: self.generation,
+            columns,
+            rows,
+            page,
+        })
+    }
+
+    pub fn apply_resize(&mut self, plan: PreparedResize) -> Result<(), i32> {
+        if plan.owner != self.id || plan.generation != self.generation {
+            return Err(1);
+        }
+        self.clear_effects();
+        match plan.page {
+            ResizePage::Unchanged => return Ok(()),
+            ResizePage::Alternate => self.clip_alternate(plan.columns, plan.rows),
+            ResizePage::Normal(reflow) => self.apply_reflow(reflow, plan.columns, plan.rows),
+        }
+        self.layout_epoch = self.layout_epoch.wrapping_add(1);
+        self.update_accounting();
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn resize(&mut self, columns: usize, rows: usize) -> Result<(), i32> {
+        self.apply_resize(self.prepare_resize(columns, rows)?)
+    }
+
+    pub fn resize_required(&self, columns: usize, rows: usize) -> u64 {
+        if columns == self.columns && rows == self.screen_rows || self.parked.is_some() {
+            return self.quota + size_of::<Option<PreparedResize>>() as u64;
+        }
+        self.reflow_required(&self.screen, columns)
+    }
+
+    fn reflow_required(&self, screen: &VecDeque<Row>, columns: usize) -> u64 {
+        let content = self
+            .history
+            .iter()
+            .chain(screen)
+            .map(|r| r.cells.len() + r.format_units())
+            .sum::<usize>();
+        let fragments = (self.history.len() + screen.len() + 2 + content / (columns - 1))
+            .min(self.retained + 1);
+        let copy = self
+            .history
+            .iter()
+            .chain(screen)
+            .map(Row::bytes)
+            .sum::<usize>();
+        self.quota
+            + (copy as u64 * 6)
+            + (fragments as u64 * (columns as u64 * 96 + 512))
+            + 2 * 1024 * 1024
+    }
+
+    fn clear_effects(&mut self) {
+        self.text_log.clear();
+        self.terminal_log.clear();
+        self.replies.clear();
+        self.bells = 0;
+    }
+
+    fn apply_reflow(&mut self, mut planned: reflow::Reflow, columns: usize, rows: usize) {
+        let first = planned.rows.len().saturating_sub(rows);
+        self.screen = planned.rows.split_off(first);
+        self.history = planned.rows;
+        self.history_bytes = self.history.iter().map(Row::bytes).sum();
+        self.history_pending_units = self.history.iter().map(Row::pending_units).sum();
+        self.history_cell_capacity = self
+            .history
+            .iter()
+            .map(|row| row.cells.capacity() as u64)
+            .sum();
+        self.cursor_row = planned
+            .cursor
+            .saturating_sub(first)
+            .min(self.screen.len() - 1);
+        self.column = planned.column.min(columns - 1);
+        self.wrap_pending = self.auto_wrap && planned.column == columns;
+        self.cluster_row = 0;
+        if let Some((row, column)) = planned.cluster {
+            if self.screen.iter().any(|r| r.id == row) {
+                self.cluster_row = row;
+                self.cluster_column = column;
+            }
+        }
+        self.text_log.extend(planned.text);
+        self.position = planned.position;
+        self.columns = columns;
+        self.screen_rows = rows;
+        self.margin_top = 0;
+        self.margin_bottom = self.screen_rows - 1;
+    }
+
+    fn clip_alternate(&mut self, columns: usize, rows: usize) {
+        self.screen.truncate(rows);
+        for row in &mut self.screen {
+            if row.cells.len() > columns {
+                if row.cells[columns].width == -1 {
+                    row.cells[columns - 1] = CellView::blank(Style::default());
+                }
+                row.cells.truncate(columns);
+            }
+            row.tabs.retain(|&(_, end)| end <= columns);
+            row.formats.retain(|mark| mark.column as usize <= columns);
+            row.soft = false;
+            row.invalidate();
+        }
+        self.cluster_row = 0;
+        self.cursor_row = self.cursor_row.min(rows - 1);
+        self.column = self.column.min(columns - 1);
+        self.wrap_pending = false;
+        self.columns = columns;
+        self.screen_rows = rows;
+        self.margin_top = 0;
+        self.margin_bottom = rows - 1;
     }
     fn decode(&mut self, source: &mut Source, payload: &[u8], flush: bool) -> Result<(), i32> {
         for &byte in payload {
+            let mut interval = if source.pending_count == 0 {
+                source.pending_interval = self.recording_interval;
+                self.recording_interval
+            } else {
+                source.pending_interval
+            };
             for scalar in decode_utf8_byte(&mut source.pending, &mut source.pending_count, byte)? {
-                self.emit(source, scalar)?;
+                self.emit(source, scalar, interval)?;
+                interval = self.recording_interval;
+                source.pending_interval = interval;
             }
         }
         if let Some(scalar) = finish_utf8(flush, &mut source.pending_count) {
-            self.emit(source, scalar)?;
+            self.emit(source, scalar, source.pending_interval)?;
         }
         Ok(())
     }
-    fn emit(&mut self, source: &mut Source, c: u32) -> Result<(), i32> {
+    fn emit(&mut self, source: &mut Source, c: u32, interval: u32) -> Result<(), i32> {
         if suppress_initial_bom(&mut source.started, c) {
             return Ok(());
         }
-        self.apply(source, c)
+        self.apply(source, c, interval)
     }
     fn operation_scalar(&mut self, c: u32) {
-        if self.logging.unwrap_or(0) & 1 != 0 {
+        if self.record_unit && self.logging.unwrap_or(0) & 1 != 0 {
             append_utf8(&mut self.terminal_log, c);
         }
     }
     fn operation_bytes(&mut self, bytes: &[u8]) {
-        if self.logging.unwrap_or(0) & 1 != 0 {
+        if self.record_unit && self.logging.unwrap_or(0) & 1 != 0 {
             self.terminal_log.extend_from_slice(bytes);
         }
     }
-    fn apply(&mut self, source: &mut Source, c: u32) -> Result<(), i32> {
+    fn text_scalar(&mut self, scalar: u32) {
+        append_utf8(&mut self.text_log, scalar);
+        self.position.append(scalar, &self.unicode, self.ambiguous);
+    }
+
+    fn flush_normal_text(&mut self) {
+        for index in 0..self.history.len() {
+            self.submit_history(index, false);
+        }
+        for index in 0..self.screen.len() {
+            self.submit_screen(index, false);
+        }
+    }
+
+    fn flush_alternate_cr(&mut self) {
+        if self.alternate_cr.take().is_some() {
+            self.text_scalar(10);
+        }
+    }
+
+    fn recording_alternate(&self) -> bool {
+        self.record_unit && self.parked.is_some() && self.logging.unwrap_or(0) & 2 != 0
+    }
+
+    fn apply(&mut self, source: &mut Source, c: u32, interval: u32) -> Result<(), i32> {
         if is_control(c) {
             source.last_was_graphic = false;
         }
-        let crlf = source.previous_cr;
+        let crlf = source.previous_cr && source.previous_interval == interval;
         source.previous_cr = c == 13;
+        source.previous_interval = interval;
+        self.record_unit = interval == self.recording_interval;
+        if c == 27 {
+            source.escape_interval = interval;
+        }
+        let alternate_crlf = self.alternate_cr == Some(self.active_source) && c == 10;
+        if !alternate_crlf {
+            self.flush_alternate_cr();
+        }
         match interpret_scalar(
             c,
             &mut source.escape,
@@ -739,12 +1225,12 @@ impl Model {
                 self.bells += 1;
                 return Ok(());
             }
-            Unit::Index(left) => {
-                self.operation_bytes(&[27, c as u8]);
-                self.move_down(left);
-                return Ok(());
+            Unit::Escape(command) => {
+                self.record_unit &= source.escape_interval == self.recording_interval;
+                return self.escape(source, c as u8, command);
             }
             Unit::Csi(Csi::Repeat(count)) => {
+                self.record_unit &= source.escape_interval == self.recording_interval;
                 let mut spelling = [0; 256];
                 let spelling = copy_graphic(&source.last_graphic, &mut spelling);
                 if spelling.is_empty() {
@@ -757,12 +1243,19 @@ impl Model {
                 }
                 return Ok(());
             }
-            Unit::Csi(command) => return self.csi(&source.parameters, c as u8, command),
-            Unit::Control | Unit::Graphic => {}
+            Unit::Csi(command) => {
+                self.record_unit &= source.escape_interval == self.recording_interval;
+                return self.csi(source, c as u8, command);
+            }
+            Unit::Control => {}
+            Unit::Graphic => return self.print(source, source.charset.graphic(c)),
         }
         match c {
             13 => {
                 self.operation_scalar(c);
+                if self.recording_alternate() {
+                    self.alternate_cr = Some(self.active_source);
+                }
                 self.cluster_row = 0;
                 self.column = 0;
                 self.wrap_pending = false;
@@ -777,9 +1270,13 @@ impl Model {
             }
             9 => {
                 self.operation_scalar(c);
+                if self.recording_alternate() {
+                    self.text_scalar(c);
+                }
                 self.cluster_row = 0;
                 self.ensure_cursor();
-                let next = ((self.column / 8 + 1) * 8).min(self.columns - 1);
+                let next = self.next_tab(self.column);
+                self.screen[self.cursor_row].excluded |= !self.record_unit;
                 self.screen[self.cursor_row].add_tab(self.column, next);
                 self.column = next;
                 self.wrap_pending = false;
@@ -787,15 +1284,28 @@ impl Model {
             }
             10 | 11 | 12 => {
                 self.operation_scalar(c);
-                if c == 10 && self.logging.unwrap_or(0) & 2 != 0 {
-                    self.record_line_feed(crlf);
+                if c == 10 && self.record_unit && self.logging.unwrap_or(0) & 2 != 0 {
+                    if self.parked.is_some() {
+                        if alternate_crlf {
+                            self.text_scalar(13);
+                        }
+                        self.alternate_cr = None;
+                        self.text_scalar(10);
+                    } else {
+                        self.record_line_feed(crlf);
+                    }
                 }
                 self.move_down(self.line_feed_returns);
                 return Ok(());
             }
+            14 | 15 => {
+                source.charset.invoke(c == 14);
+                self.operation_scalar(c);
+                return Ok(());
+            }
             _ => {}
         }
-        self.print(source, c)
+        Ok(())
     }
     fn print(&mut self, source: &mut Source, c: u32) -> Result<(), i32> {
         if !source.last_was_graphic || !self.unicode.joins(&source.last_graphic, c) {
@@ -807,11 +1317,30 @@ impl Model {
         source.last_graphic.push(c);
         source.last_was_graphic = true;
         self.operation_scalar(c);
+        if self.recording_alternate() {
+            self.text_scalar(c);
+        }
+        if c == 0xfeff {
+            self.cluster_row = 0;
+            self.ensure_cursor();
+            self.screen[self.cursor_row].excluded |= !self.record_unit;
+            return self.screen[self.cursor_row]
+                .add_format(self.column + self.wrap_pending as usize);
+        }
         if self.cluster_row != 0 && self.unicode.joins(&self.cluster, c) {
             if self.cluster.len() == 256 {
                 return Err(RESOURCE);
             }
             self.cluster.push(c);
+            if !self.record_unit {
+                if let Some(row) = self
+                    .screen
+                    .iter_mut()
+                    .find(|row| row.id == self.cluster_row)
+                {
+                    row.excluded = true;
+                }
+            }
             return self.extend_cluster();
         }
         self.cluster.clear();
@@ -829,6 +1358,16 @@ impl Model {
         self.cluster_column = self.column;
         self.cluster_width = width;
         self.cluster_style = self.style;
+        self.screen[self.cursor_row].excluded |= !self.record_unit;
+        if self.insert {
+            self.screen[self.cursor_row].shift_cells(
+                self.column,
+                width,
+                self.columns,
+                true,
+                self.style.erase(),
+            );
+        }
         let mut text = [0u16; 2];
         let value = char::from_u32(c).unwrap().encode_utf16(&mut text);
         self.screen[self.cursor_row].write(self.column, value, width, self.style)?;
@@ -914,19 +1453,21 @@ impl Model {
             0
         };
         let prev_cluster_offset = self.screen[self.cursor_row].logical_cluster_offset;
+        let excluded = self.screen[self.cursor_row].excluded;
         let prev_clusters = if soft {
             self.unicode
                 .count_utf16(&self.screen[self.cursor_row].plain)
         } else {
             0
         };
-        if self.cursor_row == self.screen_rows - 1 {
-            self.scroll_region(0, self.screen_rows - 1, 1, false);
+        if self.cursor_row == self.margin_bottom {
+            self.scroll_region(self.margin_top, self.margin_bottom, 1, false);
         } else if self.cursor_row < self.screen_rows - 1 {
             self.cursor_row += 1;
             self.ensure_cursor();
         }
         if soft {
+            self.screen[self.cursor_row].excluded |= excluded;
             self.screen[self.cursor_row].logical_id = prev_id;
             self.screen[self.cursor_row].logical_offset = prev_offset + prev_len as i64;
             self.screen[self.cursor_row].logical_cluster_offset =
@@ -941,7 +1482,7 @@ impl Model {
         }
         for _ in 0..count.min(bottom - top + 1) {
             let old = self.screen.remove(if down { bottom } else { top }).unwrap();
-            if !down && top == 0 && bottom == self.screen_rows - 1 {
+            if !down && top == 0 && bottom == self.screen_rows - 1 && self.parked.is_none() {
                 self.history_bytes += old.bytes();
                 self.history_pending_units += old.pending_units();
                 self.history_cell_capacity += old.cells.capacity() as u64;
@@ -962,6 +1503,9 @@ impl Model {
         self.wrap_pending = false;
     }
     fn retire(&mut self) {
+        if self.parked.is_some() {
+            return;
+        }
         while self.history.len() + self.screen.len() > self.retained {
             if self.history.is_empty() {
                 break;
@@ -1018,11 +1562,17 @@ impl Model {
         while first > 0 && self.screen[first - 1].soft {
             first -= 1;
         }
+        if (first..=self.cursor_row).any(|index| self.screen[index].excluded) {
+            return;
+        }
         let mut changed = false;
         if first == 0 {
             let mut start = self.history.len();
             while start > 0 && self.history[start - 1].soft {
                 start -= 1;
+            }
+            if (start..self.history.len()).any(|index| self.history[index].excluded) {
+                return;
             }
             for index in start..self.history.len() {
                 changed |= self.submit_history(index, true);
@@ -1040,7 +1590,203 @@ impl Model {
             self.position.append(10, &self.unicode, self.ambiguous);
         }
     }
-    fn csi(&mut self, p: &[u8], final_byte: u8, command: Csi) -> Result<(), i32> {
+    fn next_tab(&self, column: usize) -> usize {
+        ((column + 1)..self.columns)
+            .find(|&stop| self.tab_stops[stop / 64] & (1 << (stop % 64)) != 0)
+            .unwrap_or(self.columns - 1)
+    }
+
+    fn previous_tab(&self, column: usize) -> usize {
+        (0..column)
+            .rev()
+            .find(|&stop| self.tab_stops[stop / 64] & (1 << (stop % 64)) != 0)
+            .unwrap_or(0)
+    }
+
+    fn capture_cursor(&self, charset: Charset) -> SavedCursor {
+        SavedCursor {
+            row: self.cursor_row,
+            column: self.column,
+            style: self.style,
+            origin: self.origin,
+            auto_wrap: self.auto_wrap,
+            wrap_pending: self.wrap_pending,
+            charset,
+        }
+    }
+
+    fn restore_cursor(&mut self, source: &mut Source, saved: SavedCursor) {
+        self.cluster_row = 0;
+        self.cursor_row = saved.row.min(self.screen_rows - 1);
+        self.column = saved.column.min(self.columns - 1);
+        self.style = saved.style;
+        self.origin = saved.origin;
+        self.auto_wrap = saved.auto_wrap;
+        self.wrap_pending = saved.wrap_pending && self.column == self.columns - 1;
+        source.charset = saved.charset;
+    }
+
+    fn reset(&mut self, charset: &mut Charset, hard: bool) {
+        self.layout_epoch = self.layout_epoch.wrapping_add(1);
+        self.cluster_row = 0;
+        self.style = Style::default();
+        self.insert = false;
+        self.origin = false;
+        self.line_feed_returns = false;
+        self.application_cursor = false;
+        self.application_keypad = false;
+        self.auto_wrap = true;
+        self.wrap_pending = false;
+        self.margin_top = 0;
+        self.margin_bottom = self.screen_rows - 1;
+        self.saved_cursor = SavedCursor::default();
+        self.saved_position = None;
+        self.cursor_visible = true;
+        if hard {
+            self.flush_alternate_cr();
+            self.parked = None;
+            self.alternate = None;
+            self.normal_return = None;
+            self.screen.clear();
+            let row = self.new_row();
+            self.screen.push_back(row);
+            self.clear_history();
+            self.cursor_row = 0;
+            self.column = 0;
+            self.cursor_shape = 0;
+            self.cursor_blink = true;
+            self.bracketed_paste = false;
+            self.mouse_tracking = 0;
+            self.mouse_sgr = false;
+            self.mouse_generation = self.mouse_generation.wrapping_add(1);
+            self.tab_stops = DEFAULT_TABS;
+            self.sources
+                .iter_mut()
+                .for_each(|source| source.charset = Charset::default());
+            *charset = Charset::default();
+        }
+    }
+
+    fn clear_history(&mut self) {
+        self.history.clear();
+        self.history_bytes = 0;
+        self.history_pending_units = 0;
+        self.history_cell_capacity = 0;
+    }
+
+    fn take_page(&mut self) -> Page {
+        Page {
+            screen: std::mem::take(&mut self.screen),
+            row: self.cursor_row,
+            column: self.column,
+            wrap: self.wrap_pending,
+            columns: self.columns,
+            rows: self.screen_rows,
+        }
+    }
+
+    fn use_page(&mut self, page: Page) {
+        self.screen = page.screen;
+        self.cursor_row = page.row;
+        self.column = page.column;
+        self.wrap_pending = page.wrap;
+    }
+
+    fn select_screen(&mut self, source: &mut Source, mode: u32, enable: bool) -> Result<(), i32> {
+        if self.parked.is_some() == enable {
+            return Ok(());
+        }
+        self.cluster_row = 0;
+        if enable {
+            if self.logging.unwrap_or(0) & 2 != 0 {
+                self.flush_normal_text();
+            }
+            if mode == 1049 {
+                self.normal_return = Some(self.capture_cursor(source.charset));
+                self.alternate = None;
+            }
+            self.parked = Some(self.take_page());
+            if let Some(alternate) = self.alternate.take() {
+                let changed =
+                    alternate.columns != self.columns || alternate.rows != self.screen_rows;
+                self.use_page(alternate);
+                if changed {
+                    self.clip_alternate(self.columns, self.screen_rows);
+                }
+            } else {
+                let row = self.new_row();
+                self.screen.push_back(row);
+                self.cursor_row = 0;
+                self.column = 0;
+                self.wrap_pending = false;
+            }
+        } else {
+            let parked = self.parked.as_ref().unwrap();
+            let changed = parked.columns != self.columns || parked.rows != self.screen_rows;
+            let planned = if changed {
+                Some(reflow::normal(
+                    self,
+                    &parked.screen,
+                    parked.row,
+                    parked.column,
+                    parked.wrap,
+                    self.columns,
+                )?)
+            } else {
+                None
+            };
+            self.flush_alternate_cr();
+            let normal = self.parked.take().unwrap();
+            self.alternate = if mode == 1047 {
+                None
+            } else {
+                Some(self.take_page())
+            };
+            self.use_page(normal);
+            if let Some(planned) = planned {
+                self.apply_reflow(planned, self.columns, self.screen_rows);
+            }
+            if mode == 1049 {
+                if let Some(saved) = self.normal_return.take() {
+                    self.style = saved.style;
+                    self.origin = saved.origin;
+                    self.auto_wrap = saved.auto_wrap;
+                    source.charset = saved.charset;
+                }
+            }
+        }
+        self.layout_epoch = self.layout_epoch.wrapping_add(1);
+        Ok(())
+    }
+
+    fn escape(&mut self, source: &mut Source, final_byte: u8, command: Escape) -> Result<(), i32> {
+        match command {
+            Escape::Index(left) => self.move_down(left),
+            Escape::ReverseIndex => {
+                self.cluster_row = 0;
+                self.wrap_pending = false;
+                if self.cursor_row == self.margin_top {
+                    self.scroll_region(self.margin_top, self.margin_bottom, 1, true);
+                } else {
+                    self.cursor_row = self.cursor_row.saturating_sub(1);
+                }
+            }
+            Escape::Save => self.saved_cursor = self.capture_cursor(source.charset),
+            Escape::Restore => self.restore_cursor(source, self.saved_cursor),
+            Escape::Tab => self.tab_stops[self.column / 64] |= 1 << (self.column % 64),
+            Escape::Keypad(application) => self.application_keypad = application,
+            Escape::Reset => self.reset(&mut source.charset, true),
+            Escape::Designate(slot, graphics) => {
+                source.charset.designate(slot, graphics);
+                self.operation_bytes(&[27, b'(' + slot, final_byte]);
+                return Ok(());
+            }
+        }
+        self.operation_bytes(&[27, final_byte]);
+        Ok(())
+    }
+
+    fn csi(&mut self, source: &mut Source, final_byte: u8, command: Csi) -> Result<(), i32> {
         if let Csi::Reply(reply) = command {
             use std::io::Write;
             let length_at = self.replies.len();
@@ -1054,7 +1800,13 @@ impl Model {
                         self.replies,
                         "\x1b[{}{};{}R",
                         prefix,
-                        self.cursor_row + 1,
+                        self.cursor_row as isize
+                            - if self.origin {
+                                self.margin_top as isize
+                            } else {
+                                0
+                            }
+                            + 1,
                         self.column + 1
                     )
                     .map_err(|_| 3)?;
@@ -1071,42 +1823,83 @@ impl Model {
             };
             self.cursor_blink = matches!(style, 0 | 1 | 3 | 5);
         } else if matches!(command, Csi::Rendition) {
-            if !apply_sgr(p, &mut self.style) {
+            if !apply_sgr(&source.parameters, &mut self.style) {
                 return Ok(());
             }
-        } else if let Csi::Mode(mode, set) = command {
-            match mode {
-                Mode::Wrap => {
-                    self.auto_wrap = set;
-                    if !set {
+        } else if let Csi::Modes(modes, set, private) = command {
+            self.operation_bytes(if private { b"\x1b[?" } else { b"\x1b[" });
+            for (index, mode) in modes.into_iter().flatten().enumerate() {
+                match mode {
+                    Mode::Wrap => {
+                        self.auto_wrap = set;
+                        if !set {
+                            self.wrap_pending = false;
+                        }
+                    }
+                    Mode::Cursor => self.cursor_visible = set,
+                    Mode::Paste => self.bracketed_paste = set,
+                    Mode::Newline => self.line_feed_returns = set,
+                    Mode::Insert => self.insert = set,
+                    Mode::ApplicationCursor => self.application_cursor = set,
+                    Mode::Mouse(tracking) => {
+                        self.mouse_tracking = if set { tracking } else { 0 };
+                        self.mouse_generation = self.mouse_generation.wrapping_add(1);
+                    }
+                    Mode::MouseCoordinates => {
+                        self.mouse_sgr = set;
+                        self.mouse_generation = self.mouse_generation.wrapping_add(1);
+                    }
+                    Mode::Screen(mode) => self.select_screen(source, mode, set)?,
+                    Mode::Origin => {
+                        self.origin = set;
+                        self.cursor_row = if set { self.margin_top } else { 0 };
+                        self.column = 0;
+                        self.cluster_row = 0;
                         self.wrap_pending = false;
                     }
+                    Mode::SaveCursor => {
+                        if set {
+                            self.saved_cursor = self.capture_cursor(source.charset);
+                        } else {
+                            self.restore_cursor(source, self.saved_cursor);
+                        }
+                    }
                 }
-                Mode::Cursor => self.cursor_visible = set,
-                Mode::Paste => self.bracketed_paste = set,
-                Mode::Newline => self.line_feed_returns = set,
+                if index != 0 {
+                    self.operation_bytes(b";");
+                }
+                self.operation_bytes(mode.spelling());
             }
+            self.operation_bytes(&[final_byte]);
+            return Ok(());
+        } else if matches!(command, Csi::Reset) {
+            self.reset(&mut source.charset, false);
         } else if let Csi::Edit(v) = command {
             let count = v[0].max(1);
+            let (top, bottom) = if self.origin {
+                (self.margin_top, self.margin_bottom)
+            } else {
+                (0, self.screen_rows - 1)
+            };
             match final_byte {
                 b'H' | b'f' => {
-                    self.cursor_row = v[0].max(1).min(self.screen_rows) - 1;
+                    self.cursor_row = (top + v[0].max(1) - 1).min(bottom);
                     self.column = v[1].max(1).min(self.columns) - 1;
                 }
-                b'A' => self.cursor_row = self.cursor_row.saturating_sub(count),
-                b'B' => self.cursor_row = (self.cursor_row + count).min(self.screen_rows - 1),
+                b'A' => self.cursor_row = self.cursor_row.saturating_sub(count).max(top),
+                b'B' => self.cursor_row = (self.cursor_row + count).min(bottom),
                 b'C' => self.column = (self.column + count).min(self.columns - 1),
                 b'D' => self.column = self.column.saturating_sub(count),
                 b'E' => {
-                    self.cursor_row = (self.cursor_row + count).min(self.screen_rows - 1);
+                    self.cursor_row = (self.cursor_row + count).min(bottom);
                     self.column = 0;
                 }
                 b'F' => {
-                    self.cursor_row = self.cursor_row.saturating_sub(count);
+                    self.cursor_row = self.cursor_row.saturating_sub(count).max(top);
                     self.column = 0;
                 }
                 b'G' | 96 => self.column = count.min(self.columns) - 1,
-                b'd' => self.cursor_row = count.min(self.screen_rows) - 1,
+                b'd' => self.cursor_row = (top + count - 1).min(bottom),
                 b'K' if v[0] <= 2 => {
                     self.cluster_row = 0;
                     self.ensure_cursor();
@@ -1116,7 +1909,7 @@ impl Model {
                         _ => (0, self.columns),
                     };
                     self.screen[self.cursor_row].erase(start, end, self.style.erase());
-                    self.operation_csi(p, final_byte);
+                    self.operation_csi(&source.parameters, final_byte);
                     return Ok(());
                 }
                 b'X' => {
@@ -1138,15 +1931,64 @@ impl Model {
                     );
                 }
                 b'L' | b'M' => {
-                    self.scroll_region(
-                        self.cursor_row,
-                        self.screen_rows - 1,
-                        count,
-                        final_byte == b'L',
-                    );
+                    if (self.margin_top..=self.margin_bottom).contains(&self.cursor_row) {
+                        self.scroll_region(
+                            self.cursor_row,
+                            self.margin_bottom,
+                            count,
+                            final_byte == b'L',
+                        );
+                    }
                 }
                 b'S' | b'T' => {
-                    self.scroll_region(0, self.screen_rows - 1, count, final_byte == b'T');
+                    self.scroll_region(
+                        self.margin_top,
+                        self.margin_bottom,
+                        count,
+                        final_byte == b'T',
+                    );
+                }
+                b'r' => {
+                    let margin_top = v[0].max(1) - 1;
+                    let margin_bottom = if v[1] == 0 {
+                        self.screen_rows - 1
+                    } else {
+                        v[1] - 1
+                    };
+                    if margin_top >= margin_bottom || margin_bottom >= self.screen_rows {
+                        return Ok(());
+                    }
+                    self.margin_top = margin_top;
+                    self.margin_bottom = margin_bottom;
+                    self.cursor_row = if self.origin { margin_top } else { 0 };
+                    self.column = 0;
+                }
+                b'I' | b'Z' => {
+                    for _ in 0..count.min(self.columns) {
+                        let next = if final_byte == b'I' {
+                            self.next_tab(self.column)
+                        } else {
+                            self.previous_tab(self.column)
+                        };
+                        if next == self.column {
+                            break;
+                        }
+                        self.column = next;
+                    }
+                }
+                b'g' => {
+                    if v[0] == 3 {
+                        self.tab_stops = [0; 16];
+                    } else {
+                        self.tab_stops[self.column / 64] &= !(1 << (self.column % 64));
+                    }
+                }
+                b's' => self.saved_position = Some((self.cursor_row, self.column)),
+                b'u' => {
+                    if let Some((row, column)) = self.saved_position {
+                        self.cursor_row = row.min(self.screen_rows - 1);
+                        self.column = column.min(self.columns - 1);
+                    }
                 }
                 b'J' if v[0] == 2 => {
                     self.cluster_row = 0;
@@ -1157,15 +1999,14 @@ impl Model {
                     for row in &mut self.screen {
                         row.erase(0, self.columns, self.style.erase());
                     }
-                    self.operation_csi(p, final_byte);
+                    self.operation_csi(&source.parameters, final_byte);
                     return Ok(());
                 }
                 b'J' if v[0] == 3 => {
-                    self.history.clear();
-                    self.history_bytes = 0;
-                    self.history_pending_units = 0;
-                    self.history_cell_capacity = 0;
-                    self.operation_csi(p, final_byte);
+                    if self.parked.is_none() {
+                        self.clear_history();
+                    }
+                    self.operation_csi(&source.parameters, final_byte);
                     return Ok(());
                 }
                 b'J' if v[0] <= 1 => {
@@ -1193,7 +2034,7 @@ impl Model {
             self.cluster_row = 0;
             self.wrap_pending = false;
         }
-        self.operation_csi(p, final_byte);
+        self.operation_csi(&source.parameters, final_byte);
         Ok(())
     }
     fn operation_csi(&mut self, p: &[u8], f: u8) {
@@ -1201,14 +2042,91 @@ impl Model {
         self.operation_bytes(p);
         self.operation_bytes(&[f]);
     }
+    pub fn screen_state(&self) -> ScreenState {
+        let flags = (self.cursor_visible as u32)
+            | ((self.parked.is_some() as u32) << 1)
+            | ((self.application_cursor as u32) << 2)
+            | ((self.application_keypad as u32) << 3)
+            | ((self.bracketed_paste as u32) << 4);
+        let mouse_tracking = self.mouse_tracking | ((self.mouse_sgr as u32) << 31);
+        let mut hash = DefaultHasher::new();
+        (
+            self.layout_epoch,
+            self.cursor_row,
+            self.column,
+            flags,
+            self.cursor_shape,
+            mouse_tracking,
+            self.mouse_generation,
+        )
+            .hash(&mut hash);
+        for row in &self.screen {
+            (row.id, row.revision).hash(&mut hash);
+        }
+        ScreenState {
+            layout_epoch: self.layout_epoch,
+            revision: hash.finish() as i32,
+            columns: self.columns as i32,
+            rows: self.screen_rows as i32,
+            cursor_row: self.cursor_row as i32,
+            cursor_column: self.column as i32,
+            flags,
+            cursor_shape: self.cursor_shape,
+            mouse_tracking,
+            mouse_generation: self.mouse_generation,
+        }
+    }
+
+    pub fn screen_row(&self, row: u32, first: u32, end: u32) -> Result<Option<ScreenRowView>, i32> {
+        if row as usize >= self.screen_rows || first >= end || end as usize > self.columns {
+            return Err(1);
+        }
+        let row = match self.screen.get(row as usize) {
+            Some(row) => row,
+            None => return Ok(None),
+        };
+        let first = if row
+            .cells
+            .get(first as usize)
+            .map_or(false, |cell| cell.width < 0)
+        {
+            first - 1
+        } else {
+            first
+        };
+        let begin_format = row.formats.partition_point(|mark| mark.column < first);
+        let end_format = row.formats.partition_point(|mark| {
+            mark.column < end || (end as usize == self.columns && mark.column == end)
+        });
+        let cells =
+            &row.cells[(first as usize).min(row.cells.len())..(end as usize).min(row.cells.len())];
+        let formats = &row.formats[begin_format..end_format];
+        Ok(Some(ScreenRowView {
+            id: row.id,
+            revision: row.revision,
+            cells: cells.as_ptr(),
+            arena: row.arena.as_ptr(),
+            formats: formats.as_ptr(),
+            cell_count: cells.len() as u32,
+            format_count: formats.len() as u32,
+            first,
+            end,
+        }))
+    }
+
     pub fn snapshot_copy_required(&self) -> u64 {
         // Per row: snapshot slot and string headers, compact and expanded cell
         // slots, and UTF-16 units in the arena, row text and expanded strings.
-        256 + self
-            .history
-            .iter()
+        let history = self.parked.is_none().then(|| self.history.iter());
+        256 + history
+            .into_iter()
+            .flatten()
             .chain(self.screen.iter())
-            .map(|row| 384 + row.cells.len() as u64 * 154 + row.arena.len() as u64 * 6)
+            .map(|row| {
+                384 + row.cells.len() as u64 * 154
+                    + row.arena.len() as u64 * 6
+                    + row.format_units() as u64 * 2
+            })
             .sum::<u64>()
     }
 
@@ -1217,22 +2135,35 @@ impl Model {
         self.snapshots += 1;
         self.view_rows.clear();
         let mut previous = None;
-        self.history_bytes = 0;
-        for row in &mut self.history {
-            row.refresh_plain();
-            normalize_row(row, &mut previous);
-            self.view_rows.push(view(row));
-            self.history_bytes += row.bytes();
+        let history_size = if self.parked.is_none() {
+            self.history_bytes = 0;
+            for row in &mut self.history {
+                row.refresh_plain();
+                normalize_row(row, &mut previous);
+                self.view_rows.push(view(row));
+                self.history_bytes += row.bytes();
+            }
+            self.history.len()
+        } else {
+            0
+        };
+        if let Some(first) = self.screen.front_mut() {
+            if self.parked.is_some() {
+                first.logical_id = first.id;
+                first.logical_offset = 0;
+                first.logical_cluster_offset = 0;
+            }
         }
         for row in &mut self.screen {
             row.refresh_plain();
             normalize_row(row, &mut previous);
             self.view_rows.push(view(row));
         }
-        let empty = self.history.is_empty()
+        let empty = history_size == 0
             && self.screen.len() == 1
             && self.screen[0].cells.is_empty()
-            && self.screen[0].tabs.is_empty();
+            && self.screen[0].tabs.is_empty()
+            && self.screen[0].formats.is_empty();
         self.update_accounting();
         Ok(SnapshotView {
             rows: self.view_rows.as_ptr(),
@@ -1241,28 +2172,41 @@ impl Model {
             } else {
                 self.view_rows.len() as u32
             },
-            cursor_row: (self.history.len() + self.cursor_row) as i32,
+            cursor_row: (history_size + self.cursor_row) as i32,
             cursor_column: self.column as i32,
             columns: self.columns as i32,
             screen_rows: self.screen_rows as i32,
-            screen_start: self.history.len() as i32,
+            screen_start: history_size as i32,
             flags: (if self.cursor_visible { 1 } else { 0 })
-                | (if self.cursor_blink { 2 } else { 0 }),
+                | (if self.cursor_blink { 2 } else { 0 })
+                | (if self.parked.is_some() { 4 } else { 0 }),
             cursor_shape: self.cursor_shape,
+            mouse_tracking: self.mouse_tracking | ((self.mouse_sgr as u32) << 31),
+            mouse_generation: self.mouse_generation,
         })
     }
     pub fn export(&mut self) -> Result<ExportState, i32> {
-        let snapshot = self.snapshot()?;
+        let mut snapshot = self.snapshot()?;
+        snapshot.screen_start = self.history.len() as i32;
         self.export_rows.clear();
         self.export_tabs.clear();
-        let tab_count = self
+        let primary_count = self.history.len() + self.screen.len();
+        let parked = self
+            .parked
+            .as_ref()
+            .map_or(PageView::default(), |page| page.view(primary_count));
+        let alternate = self.alternate.as_ref().map_or(PageView::default(), |page| {
+            page.view(primary_count + parked.count as usize)
+        });
+        let rows = self
             .history
             .iter()
-            .chain(self.screen.iter())
-            .map(|r| r.tabs.len())
-            .sum::<usize>();
-        self.export_tabs.reserve(tab_count);
-        for row in self.history.iter().chain(self.screen.iter()) {
+            .chain(&self.screen)
+            .chain(self.parked.iter().flat_map(|page| &page.screen))
+            .chain(self.alternate.iter().flat_map(|page| &page.screen));
+        self.export_tabs
+            .reserve(rows.clone().map(|r| r.tabs.len()).sum::<usize>());
+        for row in rows {
             self.export_tabs
                 .extend(row.tabs.iter().map(|&(start, end)| TabView {
                     start: start as u32,
@@ -1271,12 +2215,35 @@ impl Model {
         }
         let mut tab_index = 0;
         let mut previous: Option<(i64, i64, usize, bool)> = None;
-        for row in self.history.iter_mut().chain(self.screen.iter_mut()) {
+        let last_history = self.history.len();
+        let mut normal_previous = None;
+        self.history_bytes = 0;
+        let rows = self
+            .history
+            .iter_mut()
+            .chain(&mut self.screen)
+            .chain(self.parked.iter_mut().flat_map(|page| &mut page.screen))
+            .chain(self.alternate.iter_mut().flat_map(|page| &mut page.screen));
+        for (index, row) in rows.enumerate() {
+            if parked.count != 0 && index == last_history {
+                normal_previous = previous;
+                previous = None;
+            }
+            if parked.count != 0 && index == primary_count {
+                previous = normal_previous;
+            }
+            if alternate.count != 0 && index == alternate.first as usize {
+                previous = None;
+            }
+            row.refresh_plain();
             if let Some((_, offset, count, soft)) = previous {
                 row.logical_cluster_offset = if soft { offset + count as i64 } else { 0 };
             }
             let count = self.unicode.count_utf16(&row.plain);
             previous = Some((row.logical_id, row.logical_cluster_offset, count, row.soft));
+            if index < last_history {
+                self.history_bytes += row.bytes();
+            }
             self.export_rows.push(ExportRow {
                 view: view(row),
                 tabs: unsafe { self.export_tabs.as_ptr().add(tab_index) },
@@ -1286,6 +2253,11 @@ impl Model {
                 submitted_revision: row.submitted_revision,
                 tab_count: row.tabs.len() as u32,
                 submitted_length: row.submitted.as_ref().map_or(u32::MAX, |s| s.len() as u32),
+                formats: row.formats.as_ptr(),
+                format_count: row.formats.len() as u32,
+                recorded: row.recorded_columns.as_ptr(),
+                recorded_count: row.recorded_columns.len() as u32,
+                excluded: row.excluded as u32,
             });
             tab_index += row.tabs.len();
         }
@@ -1300,11 +2272,47 @@ impl Model {
                 flags: (source.started as u32)
                     | ((source.previous_cr as u32) << 1)
                     | ((source.last_was_graphic as u32) << 2)
-                    | ((source.osc as u32) << 3),
+                    | ((source.osc as u32) << 3)
+                    | ((source.charset.0 as u32) << 4),
                 escape: source.escape as u32,
                 reserved: source.string_bytes as u32,
+                pending_interval: source.pending_interval,
+                escape_interval: source.escape_interval,
+                previous_interval: source.previous_interval,
             };
         }
+        self.export_editing = EditingView {
+            margin_top: self.margin_top as u32,
+            margin_bottom: self.margin_bottom as u32,
+            position_row: self.saved_position.map_or(-1, |position| position.0 as i32),
+            position_column: self.saved_position.map_or(0, |position| position.1 as u32),
+            saved_row: self.saved_cursor.row as u32,
+            saved_column: self.saved_cursor.column as u32,
+            saved_fg: self.saved_cursor.style.fg,
+            saved_bg: self.saved_cursor.style.bg,
+            saved_style: self.saved_cursor.style.flags,
+            saved_flags: (self.saved_cursor.origin as u32)
+                | ((self.saved_cursor.auto_wrap as u32) << 1)
+                | ((self.saved_cursor.wrap_pending as u32) << 2)
+                | ((self.saved_cursor.charset.0 as u32) << 3),
+            tab_stops: self.tab_stops,
+            parked,
+            alternate,
+            normal_return: self
+                .normal_return
+                .map_or(CursorView::default(), |state| CursorView {
+                    row: state.row as u32,
+                    column: state.column as u32,
+                    fg: state.style.fg,
+                    bg: state.style.bg,
+                    style: state.style.flags,
+                    flags: (state.origin as u32)
+                        | ((state.auto_wrap as u32) << 1)
+                        | ((state.wrap_pending as u32) << 2)
+                        | ((state.charset.0 as u32) << 3),
+                    active: 1,
+                }),
+        };
         self.update_accounting();
         Ok(ExportState {
             snapshot,
@@ -1327,14 +2335,19 @@ impl Model {
                 | ((self.line_feed_returns as u32) << 1)
                 | ((self.wrap_pending as u32) << 2)
                 | ((self.finished as u32) << 3)
-                | ((self.bracketed_paste as u32) << 4),
+                | ((self.bracketed_paste as u32) << 4)
+                | ((self.application_cursor as u32) << 5)
+                | ((self.application_keypad as u32) << 6)
+                | ((self.origin as u32) << 7)
+                | ((self.insert as u32) << 8),
             recorded_column: self.position.column as u32,
             recorded_known: (!self.position.initialized || self.position.known) as u32,
             recorded_count: self.position.cluster.len() as u32,
-            row_count: self.export_rows.len() as u32,
+            row_count: primary_count as u32,
             source_count: 3,
-            reserved0: 0,
-            reserved1: 0,
+            reserved0: self.export_rows.len() as u32,
+            reserved1: self.alternate_cr.map_or(0, |source| source as u32 + 1),
+            editing: &self.export_editing,
         })
     }
 
@@ -1409,6 +2422,7 @@ impl Model {
         let mut revisits_rows = false;
         let mut row_moves = 0;
         let mut repeated_bytes = 0;
+        let mut screen_changes = 0;
         if operation == 0 {
             if self.finished || payload.len() > 1024 * 1024 {
                 return Err(UNSUPPORTED);
@@ -1421,6 +2435,7 @@ impl Model {
             revisits_rows = probe.revisits_rows;
             row_moves = probe.row_moves.min(self.retained) as u64;
             repeated_bytes = probe.repeated_bytes as u64;
+            screen_changes = probe.screen_changes as u64;
         } else if operation == 1 {
             let mut probe = Probe::from_source(&self.sources[0], self);
             probe.decode(&[], true)?;
@@ -1428,6 +2443,9 @@ impl Model {
             probe.decode(&[], true)?;
         }
         let owned = self.quota;
+        if operation == 2 && flags & 2 == 0 {
+            return Ok(owned);
+        }
         // Screen edits can change an already submitted row before a later LF.
         // Include its existing tail, even though the old revision is recorded.
         let pending = self.history_pending_units
@@ -1442,6 +2460,12 @@ impl Model {
                         row.pending_units()
                     }
                 })
+                .sum::<u64>()
+            + self
+                .parked
+                .iter()
+                .flat_map(|p| &p.screen)
+                .map(Row::potential_units)
                 .sum::<u64>();
         let required = if operation <= 2 {
             let bytes = if operation == 0 {
@@ -1457,7 +2481,7 @@ impl Model {
                 0
             };
             let text_effect = if flags & 2 != 0 {
-                (pending + bytes) * (line_feeds + 1) * 3
+                (pending + bytes) * (line_feeds + screen_changes + 1) * 3 + 2
             } else {
                 0
             };
@@ -1468,30 +2492,44 @@ impl Model {
                 return Err(UNSUPPORTED);
             }
             let row_growth = if operation <= 1 {
-                (bytes + self.screen_rows as u64 + row_moves + 1)
+                (bytes + self.screen_rows as u64 + row_moves + screen_changes + 1)
                     * (self.columns as u64 * 80 + size_of::<Row>() as u64 + 128)
                     * 2
             } else {
                 0
             };
-            owned * 5 + row_growth + bytes * 8192 + (text_effect + terminal_effect) * 4 + 128 * 1024
+            let reflow_growth = self
+                .parked
+                .as_ref()
+                .filter(|page| {
+                    screen_changes != 0
+                        && (page.columns != self.columns || page.rows != self.screen_rows)
+                })
+                .map_or(0, |page| {
+                    self.reflow_required(&page.screen, self.columns) - owned
+                });
+            owned * 5
+                + row_growth
+                + reflow_growth
+                + bytes * 8192
+                + (text_effect + terminal_effect) * 4
+                + 128 * 1024
         } else {
-            let rows = (self.history.len() + self.screen.len()) as u64;
-            let text = self
+            let row_list = self
                 .history
                 .iter()
                 .chain(self.screen.iter())
+                .chain(self.parked.iter().flat_map(|p| &p.screen))
+                .chain(self.alternate.iter().flat_map(|p| &p.screen));
+            let rows = row_list.clone().count() as u64;
+            let text = row_list
+                .clone()
                 .filter(|r| r.dirty)
-                .map(|r| (r.arena.len() + r.cells.len()) as u64)
+                .map(|r| (r.arena.len() + r.cells.len() + r.format_units()) as u64)
                 .sum::<u64>();
             let snapshot = owned + text * 4 + rows * size_of::<RowView>() as u64 * 2 + 128 * 1024;
             if operation == 4 {
-                let tabs = self
-                    .history
-                    .iter()
-                    .chain(self.screen.iter())
-                    .map(|r| r.tabs.len() as u64)
-                    .sum::<u64>();
+                let tabs = row_list.map(|r| r.tabs.len() as u64).sum::<u64>();
                 snapshot
                     + rows * size_of::<ExportRow>() as u64 * 2
                     + tabs * size_of::<TabView>() as u64 * 2
@@ -1564,6 +2602,9 @@ fn submit(
     u: &Unicode,
     ambiguous: usize,
 ) -> bool {
+    if row.excluded {
+        return false;
+    }
     if row.tabs.is_empty()
         && row.submitted.is_some()
         && row.submitted_revision == row.content_revision
@@ -1580,10 +2621,10 @@ fn submit(
         row.submitted_tab_revision = row.tab_revision;
         return false;
     }
-    let serialized = if row.tabs.is_empty() {
+    let serialized = if row.tabs.is_empty() && row.recorded_columns.is_empty() {
         None
     } else {
-        Some(row.serialize(true, pos.column()))
+        Some(row.serialize_columns(true, pos.column(), !row.recorded_columns.is_empty()))
     };
     for c in char::decode_utf16(serialized.as_ref().unwrap_or(&revision).iter().copied()) {
         let scalar = c.unwrap_or(char::REPLACEMENT_CHARACTER) as u32;
@@ -1595,6 +2636,7 @@ fn submit(
         row.submitted_revision = row.content_revision;
         row.submitted_tab_revision = row.tab_revision;
     }
+    row.recorded_columns.clear();
     true
 }
 
@@ -1637,8 +2679,19 @@ enum Unit {
     Bell,
     Graphic,
     Control,
-    Index(bool),
+    Escape(Escape),
     Csi(Csi),
+}
+
+enum Escape {
+    Index(bool),
+    ReverseIndex,
+    Save,
+    Restore,
+    Tab,
+    Keypad(bool),
+    Reset,
+    Designate(u8, bool),
 }
 
 enum Parameters<'a> {
@@ -1700,13 +2753,11 @@ fn interpret_scalar(
             return Ok(Unit::Ignored);
         }
         7 => return Ok(Unit::Bell),
-        14 | 15 => return Err(UNSUPPORTED),
-        8..=13 => return Ok(Unit::Control),
+        8..=15 => return Ok(Unit::Control),
         _ if is_control(scalar) => return Ok(Unit::Ignored),
         _ => {}
     }
     match *escape {
-        0 if scalar == 0xfeff => return Err(UNSUPPORTED),
         0 => return Ok(Unit::Graphic),
         1 => {
             *escape = 0;
@@ -1718,8 +2769,30 @@ fn interpret_scalar(
                     *string_bytes = 0;
                 }
                 92 => {}
-                68 | 69 => return Ok(Unit::Index(scalar == 69)),
-                _ => return Err(UNSUPPORTED),
+                68 | 69 => return Ok(Unit::Escape(Escape::Index(scalar == 69))),
+                77 => return Ok(Unit::Escape(Escape::ReverseIndex)),
+                55 => return Ok(Unit::Escape(Escape::Save)),
+                56 => return Ok(Unit::Escape(Escape::Restore)),
+                72 => return Ok(Unit::Escape(Escape::Tab)),
+                61 | 62 => return Ok(Unit::Escape(Escape::Keypad(scalar == 61))),
+                99 => return Ok(Unit::Escape(Escape::Reset)),
+                0x20..=0x2f => {
+                    parameters.push(scalar as u8)?;
+                    *escape = 5;
+                }
+                _ => {}
+            }
+        }
+        5 if (0x20..=0x2f).contains(&scalar) => parameters.push(scalar as u8)?,
+        5 => {
+            *escape = 0;
+            let slot = match parameters.as_slice() {
+                b"(" => 0,
+                b")" => 1,
+                _ => return Ok(Unit::Ignored),
+            };
+            if matches!(scalar, 48 | 66) {
+                return Ok(Unit::Escape(Escape::Designate(slot, scalar == 48)));
             }
         }
         _ if (0x40..=0x7e).contains(&scalar) => {
@@ -1736,12 +2809,20 @@ fn interpret_scalar(
 // It neither edits terminal rows nor emits/consumes log buffers.
 struct Probe<'a> {
     unicode: &'a Unicode,
+    initial_screen: &'a VecDeque<Row>,
+    extra_screen: Option<&'a VecDeque<Row>>,
+    alternate_active: bool,
+    screen_changes: usize,
+    return_charset: Option<Charset>,
+    formats_remaining: Option<usize>,
     source_graphic: [u32; 256],
     source_count: usize,
     source_was_graphic: bool,
     cluster: [u32; 256],
     cluster_count: usize,
     cluster_active: bool,
+    charset: Charset,
+    saved_charset: Charset,
     revisits_rows: bool,
     row_moves: usize,
     reply_count: usize,
@@ -1759,12 +2840,24 @@ impl<'a> Probe<'a> {
     fn from_source(source: &Source, model: &'a Model) -> Self {
         let mut result = Self {
             unicode: &model.unicode,
+            initial_screen: &model.screen,
+            extra_screen: model
+                .parked
+                .as_ref()
+                .or(model.alternate.as_ref())
+                .map(|p| &p.screen),
+            alternate_active: model.parked.is_some(),
+            screen_changes: 0,
+            return_charset: model.normal_return.map(|state| state.charset),
+            formats_remaining: None,
             source_graphic: [0; 256],
             source_count: source.last_graphic.len(),
             source_was_graphic: source.last_was_graphic,
             cluster: [0; 256],
             cluster_count: model.cluster.len(),
             cluster_active: model.cluster_row != 0,
+            charset: source.charset,
+            saved_charset: model.saved_cursor.charset,
             revisits_rows: false,
             row_moves: 0,
             reply_count: 0,
@@ -1794,6 +2887,7 @@ impl<'a> Probe<'a> {
         self.parameters[..self.parameter_count].copy_from_slice(&source.parameters);
         self.source_count = source.last_graphic.len();
         self.source_was_graphic = source.last_was_graphic;
+        self.charset = source.charset;
         self.source_graphic[..self.source_count].copy_from_slice(&source.last_graphic);
     }
     fn graphic(&mut self, c: u32) -> Result<(), i32> {
@@ -1810,6 +2904,30 @@ impl<'a> Probe<'a> {
         self.source_graphic[self.source_count] = c;
         self.source_count += 1;
         self.source_was_graphic = true;
+        if c == 0xfeff {
+            // Charge all marks to the busiest starting cell. Cursor movement can
+            // only spread them across more cells during this operation.
+            let remaining = self.formats_remaining.get_or_insert_with(|| {
+                let mut maximum = 0;
+                for row in self
+                    .initial_screen
+                    .iter()
+                    .chain(self.extra_screen.into_iter().flatten())
+                {
+                    let mut previous = u32::MAX;
+                    let mut run = 0;
+                    for mark in &row.formats {
+                        run = if mark.column == previous { run + 1 } else { 1 };
+                        previous = mark.column;
+                        maximum = maximum.max(run);
+                    }
+                }
+                256usize.saturating_sub(maximum)
+            });
+            *remaining = remaining.checked_sub(1).ok_or(RESOURCE)?;
+            self.cluster_active = false;
+            return Ok(());
+        }
         if !self.cluster_active || !self.unicode.joins(&self.cluster[..self.cluster_count], c) {
             self.cluster_count = 0;
         }
@@ -1826,6 +2944,7 @@ impl<'a> Probe<'a> {
         while offset < payload.len() {
             if self.pending_count == 0
                 && self.escape == 0
+                && !self.charset.graphics()
                 && (0x20..=0x7e).contains(&payload[offset])
             {
                 let first = offset;
@@ -1876,9 +2995,54 @@ impl<'a> Probe<'a> {
         )
         .map_err(|_| UNSUPPORTED)?;
         match unit {
-            Unit::Ignored
-            | Unit::Bell
-            | Unit::Csi(Csi::Rendition | Csi::Mode(..) | Csi::CursorStyle(_)) => {}
+            Unit::Ignored | Unit::Bell | Unit::Csi(Csi::Rendition | Csi::CursorStyle(_)) => {}
+            Unit::Escape(command) => match command {
+                Escape::Designate(slot, graphics) => self.charset.designate(slot, graphics),
+                Escape::Save => self.saved_charset = self.charset,
+                Escape::Restore => {
+                    self.charset = self.saved_charset;
+                    self.cluster_active = false;
+                }
+                Escape::Index(_) | Escape::ReverseIndex => self.cluster_active = false,
+                Escape::Reset => {
+                    self.charset = Charset::default();
+                    self.saved_charset = Charset::default();
+                    self.cluster_active = false;
+                    self.alternate_active = false;
+                    self.return_charset = None;
+                }
+                Escape::Tab | Escape::Keypad(_) => {}
+            },
+            Unit::Csi(Csi::Modes(modes, set, _)) => {
+                for mode in modes.into_iter().flatten() {
+                    match mode {
+                        Mode::Origin => self.cluster_active = false,
+                        Mode::SaveCursor if set => self.saved_charset = self.charset,
+                        Mode::SaveCursor => {
+                            self.charset = self.saved_charset;
+                            self.cluster_active = false;
+                        }
+                        Mode::Screen(mode) if set != self.alternate_active => {
+                            self.alternate_active = set;
+                            if mode == 1049 {
+                                if set {
+                                    self.return_charset = Some(self.charset);
+                                } else if let Some(saved) = self.return_charset.take() {
+                                    self.charset = saved;
+                                }
+                            }
+                            self.cluster_active = false;
+                            self.revisits_rows = true;
+                            self.screen_changes += 1;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Unit::Csi(Csi::Reset) => {
+                self.saved_charset = Charset::default();
+                self.cluster_active = false;
+            }
             Unit::Csi(Csi::Reply(_)) => self.reply_count += 1,
             Unit::Csi(Csi::Repeat(count)) => {
                 let mut spelling = [0; 256];
@@ -1901,8 +3065,9 @@ impl<'a> Probe<'a> {
                     }
                 }
             }
-            Unit::Graphic => return self.graphic(c),
-            Unit::Control | Unit::Index(_) => self.cluster_active = false,
+            Unit::Graphic => return self.graphic(self.charset.graphic(c)),
+            Unit::Control if c == 14 || c == 15 => self.charset.invoke(c == 14),
+            Unit::Control => self.cluster_active = false,
             Unit::Csi(Csi::Edit(values)) => {
                 let final_byte = c as u8;
                 self.revisits_rows |= !matches!(final_byte, b'J' | b'K' | b'X');
@@ -1918,16 +3083,49 @@ impl<'a> Probe<'a> {
     }
 }
 
+#[derive(Clone, Copy)]
 enum Mode {
     Wrap,
     Cursor,
     Paste,
     Newline,
+    Origin,
+    Insert,
+    ApplicationCursor,
+    SaveCursor,
+    Mouse(u32),
+    MouseCoordinates,
+    Screen(u32),
+}
+impl Mode {
+    fn spelling(self) -> &'static [u8] {
+        match self {
+            Self::Wrap => b"7",
+            Self::Cursor => b"25",
+            Self::Paste => b"2004",
+            Self::Newline => b"20",
+            Self::Origin => b"6",
+            Self::Insert => b"4",
+            Self::ApplicationCursor => b"1",
+            Self::SaveCursor => b"1048",
+            Self::Mouse(9) => b"9",
+            Self::Mouse(1000) => b"1000",
+            Self::Mouse(1002) => b"1002",
+            Self::Mouse(1003) => b"1003",
+            Self::Mouse(_) => unreachable!(),
+            Self::MouseCoordinates => b"1006",
+            Self::Screen(47) => b"47",
+            Self::Screen(1047) => b"1047",
+            Self::Screen(1049) => b"1049",
+            Self::Screen(_) => unreachable!(),
+        }
+    }
 }
 
 enum Csi {
     Rendition,
-    Mode(Mode, bool),
+    Modes([Option<Mode>; 32], bool, bool),
+    Reset,
     Edit([usize; 2]),
     Reply(Reply),
     Repeat(usize),
@@ -1943,6 +3141,9 @@ enum Reply {
 }
 
 fn parse_csi(parameters: &[u8], final_byte: u8) -> Result<Unit, i32> {
+    if final_byte == b'p' && parameters == b"!" {
+        return Ok(Unit::Csi(Csi::Reset));
+    }
     if final_byte == b'q' {
         let style = parameters
             .strip_suffix(b" ")
@@ -1981,33 +3182,64 @@ fn parse_csi(parameters: &[u8], final_byte: u8) -> Result<Unit, i32> {
         });
     }
     if matches!(final_byte, b'h' | b'l') {
-        let mode = match parameters {
-            b"?7" => Mode::Wrap,
-            b"?25" => Mode::Cursor,
-            b"?2004" => Mode::Paste,
-            b"20" => Mode::Newline,
-            _ => return Err(UNSUPPORTED),
-        };
-        return Ok(Unit::Csi(Csi::Mode(mode, final_byte == b'h')));
+        let private = parameters.starts_with(b"?");
+        let mut modes = [None; 32];
+        let mut any = false;
+        for (index, parameter) in parameters[private as usize..]
+            .split(|&byte| byte == b';')
+            .enumerate()
+        {
+            let slot = modes.get_mut(index).ok_or(RESOURCE)?;
+            if !parameter.iter().all(u8::is_ascii_digit) {
+                return Ok(Unit::Ignored);
+            }
+            *slot = match (private, parameter) {
+                (true, b"7") => Some(Mode::Wrap),
+                (true, b"25") => Some(Mode::Cursor),
+                (true, b"2004") => Some(Mode::Paste),
+                (true, b"1") => Some(Mode::ApplicationCursor),
+                (true, b"6") => Some(Mode::Origin),
+                (true, b"1048") => Some(Mode::SaveCursor),
+                (true, b"9") => Some(Mode::Mouse(9)),
+                (true, b"1000") => Some(Mode::Mouse(1000)),
+                (true, b"1002") => Some(Mode::Mouse(1002)),
+                (true, b"1003") => Some(Mode::Mouse(1003)),
+                (true, b"1006") => Some(Mode::MouseCoordinates),
+                (true, b"47") => Some(Mode::Screen(47)),
+                (true, b"1047") => Some(Mode::Screen(1047)),
+                (true, b"1049") => Some(Mode::Screen(1049)),
+                (false, b"4") => Some(Mode::Insert),
+                (false, b"20") => Some(Mode::Newline),
+                _ => None,
+            };
+            any |= slot.is_some();
+        }
+        return Ok(if any {
+            Unit::Csi(Csi::Modes(modes, final_byte == b'h', private))
+        } else {
+            Unit::Ignored
+        });
     }
     let mut values = [0usize; 2];
     let mut index = 0;
     for &byte in parameters {
         if byte.is_ascii_digit() {
             values[index] = (values[index] * 10 + (byte - b'0') as usize).min(1024);
-        } else if byte == b';' && index == 0 && matches!(final_byte, b'H' | b'f') {
+        } else if byte == b';' && index == 0 && matches!(final_byte, b'H' | b'f' | b'r') {
             index = 1;
         } else {
-            return Err(UNSUPPORTED);
+            return Ok(Unit::Ignored);
         }
     }
     match final_byte {
         b'H' | b'f' | b'A' | b'B' | b'C' | b'D' | b'E' | b'F' | b'G' | 96 | b'd' | b'X' | b'@'
-        | b'P' | b'L' | b'M' | b'S' | b'T' => {}
+        | b'P' | b'L' | b'M' | b'S' | b'T' | b'r' | b'I' | b'Z' => {}
+        b'g' if matches!(values[0], 0 | 3) => {}
+        b's' | b'u' if parameters.is_empty() => {}
         b'K' if values[0] <= 2 => {}
         b'J' if values[0] <= 3 => {}
         b'b' => return Ok(Unit::Csi(Csi::Repeat(values[0].max(1)))),
-        _ => return Err(UNSUPPORTED),
+        _ => return Ok(Unit::Ignored),
     }
     Ok(Unit::Csi(Csi::Edit(values)))
 }

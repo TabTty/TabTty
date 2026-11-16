@@ -13,6 +13,7 @@ public sealed class TerminalOutput
     internal bool NativeRecordingCallbacks { get; set; }
     internal delegate void RecordingPositionImport(int column, bool known, ReadOnlySpan<uint> cluster);
     internal RecordingPositionImport? ImportRecordingPosition { get; set; }
+    internal Action<TerminalReceiveSource?>? ImportAlternateCr { get; set; }
     internal Action<byte[]>? NativeTextRecord { get; set; }
     internal Action<byte[]>? NativeDisplayRecord { get; set; }
     private uint NativeRecordingFlags => (NativeDisplayRecord is not null ? 1U : 0U) |
@@ -24,9 +25,16 @@ public sealed class TerminalOutput
         data.Legacy?.Dispose();
         standardError.Legacy?.Dispose();
     }
-    internal void PrepareRecordingChange()
+    internal void BeginRecording(bool text)
     {
-        if (nativeCore is { HasReceivedInput: true } && !receiveCompleted) EnsureManaged();
+        if (nativeCore is not null) nativeCore.BeginRecording(text ? 2U : 1U, RecordingInterval);
+        else if (text) ExcludeExistingText();
+    }
+    internal void EndRecording(bool text, bool abort)
+    {
+        if (nativeCore is not null)
+            nativeCore.EndRecording(text ? 2U : 1U, RecordingInterval, abort, abort ? null : NativeTextRecord);
+        else if (text && !abort) FlushText();
     }
     private bool HasManagedOnlyObservers => MacroCharacter is not null ||
         (!NativeRecordingCallbacks && (DisplayOperation is not null || TextRecord is not null ||
@@ -35,7 +43,7 @@ public sealed class TerminalOutput
     {
         if (nativeCore is null) return false;
         if (HasManagedOnlyObservers || receiveCompleted) { EnsureManaged(); return false; }
-        if (nativeCore.TryFeed(source, payload, NativeRecordingFlags, RecordingInterval, NativeTextRecord, NativeDisplayRecord,
+        if (nativeCore.TryFeed(source, payload, NativeRecordingFlags, NativeTextRecord, NativeDisplayRecord,
             token, EnqueueReply, replies.Count, Bell))
             return true;
         token.ThrowIfCancellationRequested();
@@ -46,28 +54,31 @@ public sealed class TerminalOutput
     private void EnsureManaged()
     {
         if (nativeCore is not { } native) return;
-        native.Export(state => ImportNativeState(state, native.RecordedInterval));
+        native.Export(ImportNativeState);
+        aiLayoutEpoch = native.LayoutEpoch;
         nativeCore = null;
         native.Dispose();
         Interlocked.Increment(ref NativeTerminalCoreDiagnostics.ManagedHandoffs);
     }
 
-    private unsafe void ImportNativeState(NativeTerminalCore.ExportState state, int nativeInterval)
+    private unsafe void ImportNativeState(NativeTerminalCore.ExportState state)
     {
-        if (state.SourceCount != 3 || state.RowCount is 0 || state.RowCount > retainedRowLimit ||
+        if (state.Editing is null || state.SourceCount != 3 || state.RowCount is 0 ||
+            state.RowCount > retainedRowLimit + 512 || state.Reserved0 < state.RowCount || state.Reserved0 > state.RowCount + 512 ||
             state.Snapshot.ScreenStart < 0 || state.Snapshot.ScreenStart >= state.RowCount)
             throw new InvalidDataException("The native terminal exported an invalid state.");
-        var imported = new List<TerminalRow>(checked((int)state.RowCount));
+        var imported = new List<TerminalRow>(checked((int)state.Reserved0));
         bool committed = false;
         try
         {
             var nextHistory = new LinkedList<TerminalRow>();
             var nextScreen = new List<TerminalRow>(checked((int)state.RowCount - state.Snapshot.ScreenStart));
-            for (int index = 0; index < state.RowCount; index++)
+            for (int index = 0; index < state.Reserved0; index++)
             {
                 NativeTerminalCore.ExportRow row = state.Rows[index];
                 NativeTerminalCore.RowView view = row.View;
                 if (view.CellCount > 1024 || view.CellTextLength > 1024 * 1024 || row.TabCount > 1024 ||
+                    row.FormatCount > 1025 * 256 || row.RecordedCount > 1024 ||
                     row.SubmittedLength != uint.MaxValue && row.SubmittedLength > 1024 * 512)
                     throw new InvalidDataException("The native terminal exported invalid row bounds.");
                 string? submitted = row.SubmittedLength == uint.MaxValue ? null :
@@ -79,27 +90,52 @@ public sealed class TerminalOutput
                     new ReadOnlySpan<NativeTerminalCore.TabView>(row.Tabs, checked((int)row.TabCount)),
                     submitted, StateQuota);
                 imported.Add(managed);
+                managed.ExcludeFromRecording = row.Excluded != 0;
+                foreach (var format in new ReadOnlySpan<NativeTerminalCore.FormatView>(row.Formats, checked((int)row.FormatCount)))
+                {
+                    if (format.Column > 1024 || format.Scalar != 0xFEFF)
+                        throw new InvalidDataException("The native terminal exported invalid format text.");
+                    managed.AddFormat(checked((int)format.Column), new Rune(0xFEFF));
+                }
+                if (row.RecordedCount != 0)
+                {
+                    var recorded = new List<(int Start, int End)>((int)row.RecordedCount);
+                    foreach (var span in new ReadOnlySpan<NativeTerminalCore.TabView>(row.Recorded, (int)row.RecordedCount))
+                        recorded.Add((checked((int)span.Start), checked((int)span.End)));
+                    managed.RecordedColumns = recorded;
+                }
                 managed.LogicalClusterOffset = row.LogicalClusterOffset;
                 if (index < state.Snapshot.ScreenStart) nextHistory.AddLast(managed);
-                else nextScreen.Add(managed);
+                else if (index < state.RowCount) nextScreen.Add(managed);
             }
-            SourceState nextData = ImportSource(state.Sources[0], nativeInterval);
-            SourceState nextError = ImportSource(state.Sources[1], nativeInterval);
-            SourceState nextEcho = ImportSource(state.Sources[2], nativeInterval);
+            var editing = state.Editing;
+            var nextParked = ReadPage(editing->Parked);
+            var nextAlternate = ReadPage(editing->Alternate);
+            if (nextParked is { } normal && nextHistory.Count + normal.Rows.Count > retainedRowLimit)
+                throw new InvalidDataException("The parked screen exceeds its retained-row limit.");
+            SourceState nextData = ImportSource(state.Sources[0]);
+            SourceState nextError = ImportSource(state.Sources[1]);
+            SourceState nextEcho = ImportSource(state.Sources[2]);
             List<Rune> nextCluster = ImportScalars(state.Cluster, state.ClusterCount);
             TerminalRow? nextClusterRow = state.ClusterRow == 0 ? null :
                 nextScreen.FirstOrDefault(row => row.Id == state.ClusterRow) ??
                     throw new InvalidDataException("The native terminal exported an invalid cluster row.");
-            if (state.CursorRow >= nextScreen.Count || state.ClusterCount > 256 || state.RecordedCount > 256)
+            if (state.CursorRow >= state.Snapshot.ScreenRows || state.ClusterCount > 256 || state.RecordedCount > 256)
                 throw new InvalidDataException("The native terminal exported invalid cursor or cluster bounds.");
             ImportRecordingPosition?.Invoke(checked((int)state.RecordedColumn), state.RecordedKnown != 0,
                 new ReadOnlySpan<uint>(state.RecordedCluster, checked((int)state.RecordedCount)));
+            ImportAlternateCr?.Invoke(state.Reserved1 switch
+            {
+                1 => TerminalReceiveSource.Data, 2 => TerminalReceiveSource.StandardError, _ => null,
+            });
 
             foreach (TerminalRow row in screen) row.ReleaseOwnedState();
             foreach (TerminalRow row in scrollback) row.ReleaseOwnedState();
             ClearHistoryIndex();
             scrollback = nextHistory;
             screen = nextScreen;
+            parkedScreen = nextParked;
+            alternatePage = nextAlternate;
             data = nextData;
             standardError = nextError;
             localEcho = nextEcho;
@@ -111,13 +147,26 @@ public sealed class TerminalOutput
             column = state.Snapshot.CursorColumn;
             columns = state.Snapshot.Columns;
             screenRows = state.Snapshot.ScreenRows;
-            marginTop = 0;
-            marginBottom = screenRows - 1;
+            marginTop = checked((int)editing->MarginTop);
+            marginBottom = checked((int)editing->MarginBottom);
+            savedPosition = editing->PositionRow < 0 ? null : (editing->PositionRow, checked((int)editing->PositionColumn));
+            savedCursor = ReadCursor(editing->SavedRow, editing->SavedColumn, editing->SavedForeground,
+                editing->SavedBackground, editing->SavedStyle, editing->SavedFlags);
+            var restore = editing->NormalReturn;
+            normalReturnState = restore.Active == 0 ? null :
+                ReadCursor(restore.Row, restore.Column, restore.Foreground, restore.Background, restore.Style, restore.Flags);
+            tabStops.Clear();
+            for (int stop = 0; stop < 1024; stop++)
+                if ((editing->TabStops[stop / 64] & (1UL << (stop % 64))) != 0) tabStops.Add(stop);
             autoWrap = (state.ModeFlags & 1) != 0;
             lineFeedReturns = (state.ModeFlags & 2) != 0;
             wrapPending = (state.ModeFlags & 4) != 0;
             receiveCompleted = (state.ModeFlags & 8) != 0;
             BracketedPaste = (state.ModeFlags & 16) != 0;
+            ApplicationCursorKeys = (state.ModeFlags & 32) != 0;
+            ApplicationKeypad = (state.ModeFlags & 64) != 0;
+            originMode = (state.ModeFlags & 128) != 0;
+            insertMode = (state.ModeFlags & 256) != 0;
             style = new(NativeTerminalCore.Color(state.StyleForeground), NativeTerminalCore.Color(state.StyleBackground),
                 (TerminalStyleFlags)state.StyleFlags);
             clusterStyle = new(NativeTerminalCore.Color(state.ClusterForeground), NativeTerminalCore.Color(state.ClusterBackground),
@@ -125,29 +174,52 @@ public sealed class TerminalOutput
             cursorVisible = (state.Snapshot.Flags & 1) != 0;
             cursorBlink = (state.Snapshot.Flags & 2) != 0;
             cursorShape = (TerminalCursorShape)state.Snapshot.CursorShape;
+            mouse = NativeTerminalCore.DecodeMouseMode(state.Snapshot.MouseTracking, state.Snapshot.MouseGeneration);
             committed = true;
         }
         finally
         {
             if (!committed) foreach (TerminalRow row in imported) row.ReleaseOwnedState();
         }
+
+        (List<TerminalRow> Rows, int CursorRow, int Column, bool WrapPending, int Width, int Height)?
+            ReadPage(NativeTerminalCore.PageView page)
+        {
+            if (page.Count == 0) return null;
+            if (page.First < state.RowCount || page.First > state.Reserved0 ||
+                page.Count > state.Reserved0 - page.First || page.Rows is 0 or > 512 ||
+                page.Columns is < 2 or > 1024 || page.Row >= page.Rows || page.Column >= page.Columns)
+                throw new InvalidDataException("The native terminal exported an invalid parked page.");
+            return (imported.GetRange((int)page.First, (int)page.Count), (int)page.Row, (int)page.Column,
+                page.Wrap != 0, (int)page.Columns, (int)page.Rows);
+        }
+
+        static CursorState ReadCursor(uint row, uint column, uint foreground, uint background, uint style, uint flags) =>
+            new(checked((int)row), checked((int)column),
+                new(NativeTerminalCore.Color(foreground), NativeTerminalCore.Color(background), (TerminalStyleFlags)style),
+                (flags & 1) != 0, (flags & 2) != 0, (flags & 4) != 0, (flags & 8) != 0 ? '0' : 'B',
+                (flags & 16) != 0 ? '0' : 'B', (flags & 32) != 0);
     }
 
-    private static unsafe SourceState ImportSource(NativeTerminalCore.SourceView source, int interval)
+    private static unsafe SourceState ImportSource(NativeTerminalCore.SourceView source)
     {
         if (source.PendingCount > 4 || source.ParameterCount > 4096 || source.LastGraphicCount > 256 || source.Reserved > 1024 * 1024)
             throw new InvalidDataException("The native terminal exported invalid decoder state.");
         var state = new SourceState
         {
-            PendingCount = checked((int)source.PendingCount), PendingInterval = interval,
-            EscapeInterval = interval, PreviousInterval = interval,
+            PendingCount = checked((int)source.PendingCount), PendingInterval = checked((int)source.PendingInterval),
+            EscapeInterval = checked((int)source.EscapeInterval), PreviousInterval = checked((int)source.PreviousInterval),
             IsAtStart = (source.Flags & 1) == 0, PreviousCr = (source.Flags & 2) != 0,
             LastWasGraphic = (source.Flags & 4) != 0,
             Osc = (source.Flags & 8) != 0, StringBytes = checked((int)source.Reserved),
+            G0 = (source.Flags & 16) != 0 ? '0' : 'B',
+            G1 = (source.Flags & 32) != 0 ? '0' : 'B',
+            UseG1 = (source.Flags & 64) != 0,
             Escape = source.Escape switch
             {
                 0 => EscapeState.Ground, 1 => EscapeState.Escape, 2 => EscapeState.Csi,
                 3 => EscapeState.ControlString, 4 => EscapeState.ControlStringEscape,
+                5 => EscapeState.EscapeIntermediate,
                 _ => throw new InvalidDataException("The native terminal exported an invalid parser state."),
             },
         };
@@ -217,7 +289,8 @@ public sealed class TerminalOutput
     private CursorState savedCursor;
     private readonly Queue<byte[]> replies = new();
     private int replyBytes;
-    internal bool ApplicationKeypad { get; private set; }
+    private bool applicationKeypad;
+    internal bool ApplicationKeypad { get => nativeCore?.ApplicationKeypad ?? applicationKeypad; private set => applicationKeypad = value; }
     private TerminalStyle style;
     private TerminalStyle clusterStyle;
     private TerminalStyle EraseStyle => style with { Flags = style.Flags & TerminalStyleFlags.Inverse };
@@ -225,18 +298,15 @@ public sealed class TerminalOutput
     private bool cursorBlink = true;
     private TerminalCursorShape cursorShape;
     private TerminalMouseMode mouse;
-    internal bool ApplicationCursorKeys { get; private set; }
+    private bool applicationCursorKeys;
+    internal bool ApplicationCursorKeys { get => nativeCore?.ApplicationCursorKeys ?? applicationCursorKeys; private set => applicationCursorKeys = value; }
     private bool bracketedPaste;
     internal bool BracketedPaste { get => nativeCore?.BracketedPaste ?? bracketedPaste; private set => bracketedPaste = value; }
     private int recordingInterval;
     internal int RecordingInterval
     {
         get => recordingInterval;
-        set
-        {
-            if (value != recordingInterval) PrepareRecordingChange();
-            recordingInterval = value;
-        }
+        set => recordingInterval = value;
     }
     internal Action<string, int, TerminalReceiveSource>? DisplayOperation { get; set; }
     internal Action<string>? TextRecord { get; set; }
@@ -245,17 +315,43 @@ public sealed class TerminalOutput
     internal Action<Rune, int, TerminalReceiveSource>? SourceCharacter { get; set; }
     internal Action<TerminalReceiveSource, Rune, bool>? MacroCharacter { get; set; }
     internal Action? EnteringAlternateScreen { get; set; }
-    internal bool IsAlternateScreen => parkedScreen is not null;
+    internal bool IsAlternateScreen => nativeCore?.IsAlternateScreen ?? parkedScreen is not null;
     private long aiLayoutEpoch;
-    internal long AiLayoutEpoch { get => aiLayoutEpoch; private set => aiLayoutEpoch = value; }
-    internal int AiColumns { get { EnsureManaged(); return columns; } }
-    internal int AiRows { get { EnsureManaged(); return screenRows; } }
-    internal int AiCursorRow { get { EnsureManaged(); return cursorRow; } }
-    internal int AiCursorColumn { get { EnsureManaged(); return column; } }
-    internal bool AiCursorVisible { get { EnsureManaged(); return cursorVisible; } }
-    internal TerminalCursorShape AiCursorShape { get { EnsureManaged(); return cursorShape; } }
+    internal long AiLayoutEpoch { get => nativeCore?.LayoutEpoch ?? aiLayoutEpoch; private set => aiLayoutEpoch = value; }
+    internal int AiColumns => columns;
+    internal int AiRows => screenRows;
     internal IEnumerable<TerminalRow> AiNormalRows { get { EnsureManaged(); return scrollback.Concat(parkedScreen?.Rows ?? screen); } }
-    internal TerminalRow? AiScreenRow(int row) { EnsureManaged(); return row < screen.Count ? screen[row] : null; }
+
+    internal AiTerminalState ReadAiScreenState()
+    {
+        if (nativeCore is { } native) return native.ReadScreenState();
+        var hash = new HashCode();
+        hash.Add(cursorRow);
+        hash.Add(column);
+        hash.Add(cursorVisible);
+        hash.Add(cursorShape);
+        hash.Add(ApplicationKeypad);
+        hash.Add(ApplicationCursorKeys);
+        hash.Add(BracketedPaste);
+        hash.Add(MouseMode);
+        hash.Add(AiLayoutEpoch);
+        foreach (var line in screen)
+        {
+            hash.Add(line.Id);
+            hash.Add(line.DisplayRevision);
+        }
+        return new AiTerminalState(AiLayoutEpoch, hash.ToHashCode(), columns, screenRows, cursorRow, column,
+            cursorVisible, cursorShape, IsAlternateScreen, ApplicationCursorKeys, ApplicationKeypad, BracketedPaste, MouseMode);
+    }
+
+    internal (long Id, long Revision) ReadAiScreenRow(int row, int first, int last, Action<TerminalCell> visit)
+    {
+        if (nativeCore is { } native) return native.ReadScreenRow(row, first, last, visit);
+        if (row >= screen.Count) return default;
+        var line = screen[row];
+        foreach (var cell in line.GetAiCells(first, last, columns).Span) visit(cell);
+        return (line.Id, line.DisplayRevision);
+    }
     internal void NormalizeAiHistoryIdentity(bool includeClusterOffsets = false) =>
         NormalizeAnchors(AiNormalRows, trackClusters: includeClusterOffsets);
     public event Action? Bell;
@@ -377,10 +473,11 @@ public sealed class TerminalOutput
         }
     }
 
-    internal byte[] EncodeMouse(TerminalMouseInput input) => TerminalMouse.Encode(input, mouse, columns, screenRows);
-    internal TerminalMouseMode MouseMode => mouse;
+    internal byte[] EncodeMouse(TerminalMouseInput input) => TerminalMouse.Encode(input, MouseMode, columns, screenRows);
+    internal TerminalMouseMode MouseMode => nativeCore?.MouseMode ?? mouse;
     internal byte[] EncodeBroadcastMouse(TerminalMouseInput input)
     {
+        TerminalMouseMode mouse = MouseMode;
         int width = mouse.SgrCoordinates ? columns : Math.Min(columns, 223);
         int height = mouse.SgrCoordinates ? screenRows : Math.Min(screenRows, 223);
         if (!input.Release && (input.Column < 0 || input.Column >= width || input.Row < 0 || input.Row >= height))
@@ -392,13 +489,8 @@ public sealed class TerminalOutput
 
     private TerminalRow NewRow() => spareRows.TryPop(out TerminalRow? spare) ? spare : new(budget: StateQuota);
 
-    internal void ExcludeExistingText()
+    private void ExcludeExistingText()
     {
-        if (nativeCore is not null)
-        {
-            if (!nativeCore.HasReceivedInput) return;
-            EnsureManaged();
-        }
         foreach (TerminalRow row in scrollback.Concat(parkedScreen?.Rows ?? screen))
             row.ExcludeFromRecording = !row.IsEmpty;
     }
@@ -435,23 +527,32 @@ public sealed class TerminalOutput
 
     public void Resize(int width, int height)
     {
+        using var plan = PrepareNativeResize(width, height);
+        Resize(width, height, plan);
+    }
+
+    internal NativeTerminalCore.PreparedResize? PrepareNativeResize(int width, int height)
+    {
         ArgumentOutOfRangeException.ThrowIfLessThan(width, 2);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(width, 1024);
         ArgumentOutOfRangeException.ThrowIfLessThan(height, 1);
         height = Math.Min(height, Math.Min(512, retainedRowLimit));
+        return columns == width && screenRows == height ? null : nativeCore?.PrepareResize(width, height);
+    }
+
+    internal void Resize(int width, int height, NativeTerminalCore.PreparedResize? plan)
+    {
+        height = Math.Min(height, Math.Min(512, retainedRowLimit));
         if (columns == width && screenRows == height) return;
         if (nativeCore is not null)
         {
-            if (!nativeCore.HasReceivedInput)
-            {
-                nativeCore.Resize(width, height);
-                columns = width;
-                screenRows = height;
-                marginBottom = height - 1;
-                aiLayoutEpoch++;
-                return;
-            }
-            EnsureManaged();
+            if (plan is null) throw new InvalidOperationException("The native terminal resize was not prepared.");
+            plan.Apply(NativeTextRecord);
+            columns = width;
+            screenRows = height;
+            marginTop = 0;
+            marginBottom = height - 1;
+            return;
         }
         AiLayoutEpoch++;
         if (IsAlternateScreen)

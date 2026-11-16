@@ -39,6 +39,7 @@ internal sealed class TerminalRecordings
             {
                 NativeRecordingCallbacks = true,
                 ImportRecordingPosition = position.Import,
+                ImportAlternateCr = previous => alternateCr = previous,
                 RecordingColumn = () => position.Column,
                 DisplayOperation = ApplyAlternate,
                 LeavingAlternateScreen = FlushAlternateCr,
@@ -56,14 +57,23 @@ internal sealed class TerminalRecordings
 
     public void Start(SessionRecording recording)
     {
-        terminal.PrepareRecordingChange();
-        receiveOnly?.PrepareRecordingChange();
+        if (part is not null) throw new InvalidOperationException("A recording interval is already active.");
+        AdvanceInterval();
+        try
+        {
+            if (recordTerminal) terminal.BeginRecording(text: false);
+            receiveOnly?.BeginRecording(text: true);
+        }
+        catch
+        {
+            if (recordTerminal) terminal.EndRecording(text: false, abort: true);
+            receiveOnly?.EndRecording(text: true, abort: true);
+            throw;
+        }
         part = recording;
         if (recordTerminal) terminal.NativeDisplayRecord = value => EnqueueNative(RecordingFormat.Terminal, value);
         position.Reset();
-        AdvanceInterval();
         if (receiveOnly is null) return;
-        receiveOnly.ExcludeExistingText();
         receiveOnly.NativeTextRecord = value => EnqueueNative(RecordingFormat.Text, value);
         receiveOnly.TextRecord = value => Append(RecordingFormat.Text, text, value);
     }
@@ -85,8 +95,10 @@ internal sealed class TerminalRecordings
 
     public void Resize(int columns, int rows)
     {
-        terminal.Resize(columns, rows);
-        receiveOnly?.Resize(columns, rows);
+        using var displayResize = terminal.PrepareNativeResize(columns, rows);
+        using var receiveResize = receiveOnly?.PrepareNativeResize(columns, rows);
+        terminal.Resize(columns, rows, displayResize);
+        receiveOnly?.Resize(columns, rows, receiveResize);
         FlushBuffers();
     }
 
@@ -107,20 +119,44 @@ internal sealed class TerminalRecordings
     public void Cutoff()
     {
         if (part is null) return;
-        receiveOnly?.FlushText();
-        FlushAlternateCr();
-        FlushBuffers();
-        if (receiveOnly is not null)
-        {
-            receiveOnly.TextRecord = null;
-            receiveOnly.NativeTextRecord = null;
-        }
-        terminal.NativeDisplayRecord = null;
-        part = null;
         AdvanceInterval();
+        try
+        {
+            receiveOnly?.EndRecording(text: true, abort: false);
+            if (recordTerminal) terminal.EndRecording(text: false, abort: false);
+            FlushAlternateCr();
+            FlushBuffers();
+        }
+        catch (ResourceLimitException exception)
+        {
+            part?.MarkIncomplete(exception.Message);
+            EndWithoutFlush();
+        }
+        finally { ClearActive(); }
     }
 
     public void Abort()
+    {
+        if (part is not null)
+        {
+            AdvanceInterval();
+            try { EndWithoutFlush(); }
+            finally { ClearActive(); }
+        }
+        alternateCr = null;
+        text.Clear();
+        operations.Clear();
+    }
+
+    public void ReleaseReceiveOnlyState() => receiveOnly?.ReleaseNativeState();
+
+    private void EndWithoutFlush()
+    {
+        receiveOnly?.EndRecording(text: true, abort: true);
+        if (recordTerminal) terminal.EndRecording(text: false, abort: true);
+    }
+
+    private void ClearActive()
     {
         if (receiveOnly is not null)
         {
@@ -132,7 +168,6 @@ internal sealed class TerminalRecordings
         alternateCr = null;
         text.Clear();
         operations.Clear();
-        receiveOnly?.ReleaseNativeState();
     }
 
     private void AdvanceInterval()

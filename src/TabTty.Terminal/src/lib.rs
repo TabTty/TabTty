@@ -1,5 +1,8 @@
-//! Native UTF-8 normal-screen terminal engine with lossless managed handoff.
+//! Native UTF-8 terminal engine with transitional managed handoff.
+mod input;
 mod legacy_encode;
+#[cfg(windows)]
+mod legacy_receive;
 mod model;
 mod unicode;
 #[cfg(windows)]
@@ -65,6 +68,33 @@ pub struct SnapshotView {
     pub screen_start: i32,
     pub flags: u32,
     pub cursor_shape: u32,
+    pub mouse_tracking: u32,
+    pub mouse_generation: i32,
+}
+#[repr(C)]
+pub struct ScreenState {
+    pub layout_epoch: i64,
+    pub revision: i32,
+    pub columns: i32,
+    pub rows: i32,
+    pub cursor_row: i32,
+    pub cursor_column: i32,
+    pub flags: u32,
+    pub cursor_shape: u32,
+    pub mouse_tracking: u32,
+    pub mouse_generation: i32,
+}
+#[repr(C)]
+pub struct ScreenRowView {
+    pub id: i64,
+    pub revision: i64,
+    pub cells: *const CellView,
+    pub arena: *const u16,
+    pub formats: *const FormatView,
+    pub cell_count: u32,
+    pub format_count: u32,
+    pub first: u32,
+    pub end: u32,
 }
 #[repr(C)]
 pub struct Effects {
@@ -75,6 +105,9 @@ pub struct Effects {
     pub terminal_length: u32,
     pub reply_length: u32,
     pub replies: *const u8,
+    pub mouse_tracking: u32,
+    pub mouse_generation: i32,
+    pub layout_epoch: i64,
 }
 #[repr(C)]
 pub struct Stats {
@@ -93,6 +126,12 @@ pub struct TabView {
     pub end: u32,
 }
 #[repr(C)]
+#[derive(Clone, Copy)]
+pub struct FormatView {
+    pub column: u32,
+    pub scalar: u32,
+}
+#[repr(C)]
 pub struct ExportRow {
     pub view: RowView,
     pub tabs: *const TabView,
@@ -102,6 +141,11 @@ pub struct ExportRow {
     pub submitted_revision: i64,
     pub tab_count: u32,
     pub submitted_length: u32,
+    pub formats: *const FormatView,
+    pub format_count: u32,
+    pub recorded: *const TabView,
+    pub recorded_count: u32,
+    pub excluded: u32,
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -115,6 +159,9 @@ pub struct SourceView {
     pub flags: u32,
     pub escape: u32,
     pub reserved: u32,
+    pub pending_interval: u32,
+    pub escape_interval: u32,
+    pub previous_interval: u32,
 }
 impl SourceView {
     const fn empty() -> Self {
@@ -128,6 +175,9 @@ impl SourceView {
             flags: 0,
             escape: 0,
             reserved: 0,
+            pending_interval: 0,
+            escape_interval: 0,
+            previous_interval: 0,
         }
     }
 }
@@ -157,8 +207,51 @@ pub struct ExportState {
     pub source_count: u32,
     pub reserved0: u32,
     pub reserved1: u32,
+    pub editing: *const EditingView,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct EditingView {
+    pub margin_top: u32,
+    pub margin_bottom: u32,
+    pub position_row: i32,
+    pub position_column: u32,
+    pub saved_row: u32,
+    pub saved_column: u32,
+    pub saved_fg: u32,
+    pub saved_bg: u32,
+    pub saved_style: u32,
+    pub saved_flags: u32,
+    pub tab_stops: [u64; 16],
+    pub parked: PageView,
+    pub alternate: PageView,
+    pub normal_return: CursorView,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct PageView {
+    pub first: u32,
+    pub count: u32,
+    pub row: u32,
+    pub column: u32,
+    pub columns: u32,
+    pub rows: u32,
+    pub wrap: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct CursorView {
+    pub row: u32,
+    pub column: u32,
+    pub fg: u32,
+    pub bg: u32,
+    pub style: u32,
+    pub flags: u32,
+    pub active: u32,
+}
 fn valid<T>(p: *const T) -> bool {
     !p.is_null() && (p as usize) % align_of::<T>() == 0
 }
@@ -178,7 +271,52 @@ fn run<F: FnOnce() -> Result<(), i32>>(f: F) -> i32 {
 }
 #[no_mangle]
 pub extern "C" fn tc_abi_version() -> u32 {
-    5
+    7
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tc_encode_key(
+    key: u32,
+    modifiers: u32,
+    modes: u32,
+    output: *mut u8,
+    written: *mut u32,
+) -> i32 {
+    if output.is_null() || !valid(written) {
+        return 1;
+    }
+    run(|| {
+        written.write(
+            input::key(key, modifiers, modes, slice::from_raw_parts_mut(output, 32))? as u32,
+        );
+        Ok(())
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tc_encode_mouse(
+    input: *const input::MouseInput,
+    tracking: u32,
+    generation: i32,
+    columns: i32,
+    rows: i32,
+    output: *mut u8,
+    written: *mut u32,
+) -> i32 {
+    if !valid(input) || output.is_null() || !valid(written) {
+        return 1;
+    }
+    run(|| {
+        written.write(input::mouse(
+            &*input,
+            tracking,
+            generation,
+            columns,
+            rows,
+            slice::from_raw_parts_mut(output, 32),
+        )? as u32);
+        Ok(())
+    })
 }
 
 #[no_mangle]
@@ -267,88 +405,46 @@ pub unsafe extern "C" fn tc_encode_legacy(
     })
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn tc_decode_legacy_unit(
-    page: u32,
-    input: *const u8,
-    length: u32,
-    scalar: *mut u32,
-) -> i32 {
-    if !valid(scalar) || input.is_null() || !(1..=3).contains(&length) {
-        return 1;
-    }
-    run(|| {
-        let input = slice::from_raw_parts(input, length as usize);
-        scalar.write(legacy_encode::decode_unit(page, input).map_or(0xfffd, u32::from));
-        Ok(())
-    })
-}
-
 #[cfg(windows)]
 #[no_mangle]
-pub unsafe extern "C" fn tc_jis_open(shift_kana: u32, out: *mut *mut c_void) -> i32 {
+pub unsafe extern "C" fn tc_legacy_open(page: u32, shift_kana: u32, out: *mut *mut c_void) -> i32 {
     if shift_kana > 1 || !valid(out) {
         return 1;
     }
     out.write(ptr::null_mut());
     run(|| {
-        let name = if shift_kana == 0 {
-            windows_icu::JIS_EIGHT_BIT_KANA
-        } else {
-            windows_icu::JIS_SHIFT_KANA
-        };
-        let converter = windows_icu::in_apartment(|| windows_icu::Converter::open(name, false))?;
-        out.write(Box::into_raw(Box::new(converter)) as *mut c_void);
+        let receiver = legacy_receive::Receiver::new(page, shift_kana != 0)?;
+        out.write(Box::into_raw(Box::new(receiver)) as *mut c_void);
         Ok(())
     })
 }
 
 #[cfg(windows)]
 #[no_mangle]
-pub unsafe extern "C" fn tc_jis_receive(
+pub unsafe extern "C" fn tc_legacy_step(
     handle: *mut c_void,
-    input: *const u8,
-    length: u32,
-    output: *mut u16,
-    capacity: u32,
-    flush: u32,
-    written: *mut u32,
-    partial: *mut u32,
+    byte: i32,
+    in_vt: u32,
+    interval: u32,
+    out: *mut legacy_receive::Decoded,
 ) -> i32 {
-    let converter = handle as *mut windows_icu::Converter;
-    if !valid(converter)
-        || (length != 0 && input.is_null())
-        || length > 4
-        || !valid(output)
-        || capacity != 16
-        || flush > 1
-        || !valid(written)
-        || !valid(partial)
-    {
+    let receiver = handle as *mut legacy_receive::Receiver;
+    if !valid(receiver) || !(-1..=255).contains(&byte) || in_vt > 1 || !valid(out) {
         return 1;
     }
     run(|| {
-        let input = if length == 0 {
-            &[]
-        } else {
-            slice::from_raw_parts(input, length as usize)
-        };
-        let output = slice::from_raw_parts_mut(output, capacity as usize);
-        let (count, pending) =
-            windows_icu::in_apartment(|| (*converter).receive(input, output, flush != 0))?;
-        written.write(count as u32);
-        partial.write(pending as u32);
+        out.write((*receiver).step(u8::try_from(byte).ok(), in_vt != 0, interval)?);
         Ok(())
     })
 }
 
 #[cfg(windows)]
 #[no_mangle]
-pub unsafe extern "C" fn tc_jis_destroy(handle: *mut c_void) {
-    if valid(handle as *const windows_icu::Converter) {
-        let converter = Box::from_raw(handle as *mut windows_icu::Converter);
+pub unsafe extern "C" fn tc_legacy_destroy(handle: *mut c_void) {
+    if valid(handle as *const legacy_receive::Receiver) {
+        let receiver = Box::from_raw(handle as *mut legacy_receive::Receiver);
         let _ = windows_icu::in_apartment(|| {
-            drop(converter);
+            drop(receiver);
             Ok(())
         });
     }
@@ -529,13 +625,117 @@ pub unsafe extern "C" fn tc_flush_text(handle: *mut c_void, flags: u32, out: *mu
         Ok(())
     })
 }
+
 #[no_mangle]
-pub unsafe extern "C" fn tc_resize(handle: *mut c_void, columns: i32, rows: i32) -> i32 {
+pub unsafe extern "C" fn tc_begin_recording(handle: *mut c_void, flags: u32, interval: u32) -> i32 {
+    run(|| model(handle)?.begin_recording(flags, interval))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tc_cutoff_recording(
+    handle: *mut c_void,
+    flags: u32,
+    interval: u32,
+    abort: u32,
+    out: *mut Effects,
+) -> i32 {
+    if abort > 1 || !valid(out) {
+        return 1;
+    }
+    run(|| {
+        let terminal = model(handle)?;
+        terminal.cutoff_recording(flags, interval, abort != 0)?;
+        out.write(terminal.effects());
+        Ok(())
+    })
+}
+#[no_mangle]
+pub unsafe extern "C" fn tc_resize_required(
+    handle: *mut c_void,
+    columns: i32,
+    rows: i32,
+    out: *mut u64,
+) -> i32 {
+    if !valid(out) || !(2..=1024).contains(&columns) || !(1..=512).contains(&rows) {
+        return 1;
+    }
+    run(|| {
+        out.write(model(handle)?.resize_required(columns as usize, rows as usize));
+        Ok(())
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tc_resize_prepare(
+    handle: *mut c_void,
+    columns: i32,
+    rows: i32,
+    out: *mut *mut c_void,
+) -> i32 {
+    if !valid(out) {
+        return 1;
+    }
+    out.write(ptr::null_mut());
     run(|| {
         if !(2..=1024).contains(&columns) || !(1..=512).contains(&rows) {
             return Err(1);
         }
-        model(handle)?.resize(columns as usize, rows as usize)
+        let prepared = model(handle)?.prepare_resize(columns as usize, rows as usize)?;
+        out.write(Box::into_raw(Box::new(Some(prepared))) as *mut c_void);
+        Ok(())
+    })
+}
+#[no_mangle]
+pub unsafe extern "C" fn tc_resize_apply(
+    handle: *mut c_void,
+    resize: *mut c_void,
+    out: *mut Effects,
+) -> i32 {
+    let plan = resize as *mut Option<model::PreparedResize>;
+    if !valid(out) || !valid(plan) {
+        return 1;
+    }
+    run(|| {
+        let t = model(handle)?;
+        t.apply_resize((*plan).take().ok_or(1)?)?;
+        out.write(t.effects());
+        Ok(())
+    })
+}
+#[no_mangle]
+pub unsafe extern "C" fn tc_resize_drop(resize: *mut c_void) {
+    let plan = resize as *mut Option<model::PreparedResize>;
+    if valid(plan) {
+        drop(Box::from_raw(plan));
+    }
+}
+#[no_mangle]
+pub unsafe extern "C" fn tc_screen_state(handle: *mut c_void, out: *mut ScreenState) -> i32 {
+    if !valid(out) {
+        return 1;
+    }
+    run(|| {
+        out.write(model(handle)?.screen_state());
+        Ok(())
+    })
+}
+#[no_mangle]
+pub unsafe extern "C" fn tc_screen_row(
+    handle: *mut c_void,
+    row: u32,
+    first: u32,
+    end: u32,
+    out: *mut ScreenRowView,
+) -> i32 {
+    if !valid(out) {
+        return 1;
+    }
+    ptr::write_bytes(out, 0, 1);
+    run(|| {
+        if let Some(view) = model(handle)?.screen_row(row, first, end)? {
+            out.write(view);
+        }
+        Ok(())
     })
 }
 #[no_mangle]
@@ -625,8 +825,10 @@ mod tests {
     fn abi() {
         assert_eq!(size_of::<CellView>(), 20);
         assert_eq!(size_of::<RowView>(), 72);
-        assert_eq!(size_of::<SnapshotView>(), 40);
-        assert_eq!(size_of::<Effects>(), 40);
+        assert_eq!(size_of::<SnapshotView>(), 48);
+        assert_eq!(size_of::<Effects>(), 56);
+        assert_eq!(size_of::<ScreenState>(), 48);
+        assert_eq!(size_of::<ScreenRowView>(), 56);
         assert_eq!(size_of::<Stats>(), 56);
     }
     #[test]
@@ -704,13 +906,21 @@ mod tests {
         assert!(effects(&t).0.is_empty());
     }
     #[test]
-    fn unsupported_never_silently_succeeds() {
+    fn alternate_screen_keeps_normal_output_and_records_its_own_text() {
         let mut t = Model::new(120, 40, 5000, 1);
-        assert_eq!(t.feed(0, b"\x1b[?1049h", 3), Err(2));
-        assert_eq!(t.feed(0, b"after", 3), Err(2));
-        let mut t = Model::new(120, 40, 5000, 1);
-        t.feed(0, b"before", 0).unwrap();
-        assert_eq!(t.resize(100, 40), Err(2));
+        let input = b"normal\x1b[?1049hALT\r\n\x1b[?1049h!\x1b[?1049l";
+        t.preflight(0, 0, input, 3).unwrap();
+        t.feed(0, input, 3).unwrap();
+        assert_eq!(effects(&t).0, b"normalALT\r\n!");
+        assert_eq!(row_text(&mut t, 0), "normal");
+        t.feed(0, b"\x1b[?47h", 3).unwrap();
+        assert_eq!(t.snapshot().unwrap().flags & 4, 4);
+        assert_eq!(row_text(&mut t, 0), "ALT");
+        t.feed(0, b"\x1b[?1047l\x1b[?47h", 3).unwrap();
+        assert_eq!(t.snapshot().unwrap().row_count, 0);
+        t.resize(100, 40).unwrap();
+        t.feed(0, b"\x1b[?47l", 3).unwrap();
+        assert_eq!(row_text(&mut t, 0), "normal");
     }
     #[test]
     fn disabling_autowrap_cancels_pending_wrap() {
@@ -722,9 +932,10 @@ mod tests {
     #[test]
     fn export_preserves_empty_screen_and_all_abi_layouts() {
         assert_eq!(size_of::<TabView>(), 8);
-        assert_eq!(size_of::<ExportRow>(), 120);
-        assert_eq!(size_of::<SourceView>(), 48);
-        assert_eq!(size_of::<ExportState>(), 152);
+        assert_eq!(size_of::<ExportRow>(), 152);
+        assert_eq!(size_of::<SourceView>(), 64);
+        assert_eq!(size_of::<ExportState>(), 168);
+        assert_eq!(size_of::<EditingView>(), 256);
         let mut t = Model::new(16, 4, 100, 1);
         let e = t.export().unwrap();
         assert_eq!(e.snapshot.row_count, 0);
@@ -776,7 +987,10 @@ mod tests {
         let mut t = Model::new(16, 4, 100, 1);
         t.feed(0, b"ABC", 3).unwrap();
         let before = t.stats();
-        assert_eq!(t.preflight(0, 0, b"accepted-prefix\x1b[?1049h", 3), Err(2));
+        assert_eq!(
+            t.preflight(0, 0, b"accepted-prefix\x1b[6n", 3 | 128 << 8),
+            Err(4)
+        );
         assert_eq!(t.stats().feed_bytes, before.feed_bytes);
         assert_eq!(row_text(&mut t, 0), "ABC");
         let required = t.preflight(0, 0, b"D", 3).unwrap();
@@ -897,7 +1111,7 @@ mod tests {
             assert_eq!((*e.sources).flags & 8, 8);
             assert_eq!((*e.sources).reserved, 5);
         }
-        assert_eq!(t.preflight(0, 0, b"c", 3), Err(2));
+        assert_eq!(t.preflight(0, 0, b"[6n", 3 | 128 << 8), Err(4));
         t.feed(0, b"\\C\r\n", 3).unwrap();
         assert_eq!(effects(&t).1, b"C\r\n");
         assert_eq!(effects(&t).0, b"ABC\r\n");

@@ -1168,9 +1168,15 @@ internal static partial class Program
             SystemCommands.MinimizeWindow(host);
             await WaitUntilAsync(() => host.WindowState == WindowState.Minimized);
             await CheckPausedAsync("final line", committedText);
+            string finalText = committedText + "final line";
+            if (verifyNativeResidency)
+            {
+                finalText += "ALT\r\n";
+                await CheckPausedAsync("\u001b[?1049hALT\r\n\u001b[?1049l", finalText);
+            }
             peer.Client.Shutdown(SocketShutdown.Send);
             await terminal.Completion.WaitAsync(deadline.Token);
-            Equal(await File.ReadAllTextAsync(textLog, deadline.Token), committedText + "final line");
+            Equal(await File.ReadAllTextAsync(textLog, deadline.Token), finalText);
             string log = Directory.EnumerateFiles(directory, "*.raw.tttylog", SearchOption.AllDirectories).Single();
             byte[] recorded = await File.ReadAllBytesAsync(log, deadline.Token);
             if (!recorded.AsSpan().SequenceEqual(received.ToArray()))

@@ -1052,6 +1052,7 @@ static async Task RecordingFormatsProjectTheSameSessionIndependently()
 
 static async Task RecordingResumeDoesNotBackfillSplitUnits()
 {
+    long handoffs = Interlocked.Read(ref NativeTerminalCoreDiagnostics.ManagedHandoffs);
     using var folder = new TemporaryDirectory();
     using var listener = new TcpListener(IPAddress.Loopback, 0);
     using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -1078,10 +1079,13 @@ static async Task RecordingResumeDoesNotBackfillSplitUnits()
         [0x82, 13, 10, 66]);
     ExpectBytes(await File.ReadAllBytesAsync(Directory.GetFiles(directory, "*-p002.log").Single()), [66]);
     ExpectBytes(await File.ReadAllBytesAsync(Directory.GetFiles(directory, "*-p002.term.tttylog").Single()), [13, 10, 66]);
+    if (Interlocked.Read(ref NativeTerminalCoreDiagnostics.ManagedHandoffs) != handoffs)
+        throw new InvalidOperationException("Changing recording intervals transferred the terminal out of Rust.");
 }
 
 static async Task ResizeKeepsTextRecordingBoundaries()
 {
+    long handoffs = Interlocked.Read(ref NativeTerminalCoreDiagnostics.ManagedHandoffs);
     using var folder = new TemporaryDirectory();
     using var listener = new TcpListener(IPAddress.Loopback, 0);
     using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -1104,6 +1108,8 @@ static async Task ResizeKeepsTextRecordingBoundaries()
     while (await session.ReadOutputAsync(deadline.Token) is not null) { }
     string log = Directory.GetFiles(Path.Combine(folder.Path, "Logs"), "*.log").Single();
     ExpectBytes(await File.ReadAllBytesAsync(log, deadline.Token), "ABCDEFGHIJKL\r\nabc\r\ntail"u8.ToArray());
+    if (Interlocked.Read(ref NativeTerminalCoreDiagnostics.ManagedHandoffs) != handoffs)
+        throw new InvalidOperationException("Resizing the recorded terminal transferred it out of Rust.");
 }
 
 static async Task TextTabsUseTheSerializedLogicalColumn()

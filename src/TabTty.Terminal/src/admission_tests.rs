@@ -33,10 +33,11 @@ fn prepared_payload_is_owned_and_compared_exactly() {
     let mut model = Model::new(120, 40, 5000, 1);
     model.feed(0, b"before", 0).unwrap();
     let mut payload = *b"ABCDEF";
-    let required = model.preflight(0, 0, &payload, 0).unwrap();
+    let flags = 128 << 8;
+    let required = model.preflight(0, 0, &payload, flags).unwrap();
     model.set_limit(required).unwrap();
-    payload.copy_from_slice(b"\x1b[?6hX");
-    assert_eq!(model.admit(0, 0, &payload, 0), Err(UNSUPPORTED));
+    payload.copy_from_slice(b"\x1b[6nXY");
+    assert_eq!(model.admit(0, 0, &payload, flags), Err(4));
     assert_eq!(model.feed_bytes, 6);
     assert_eq!(model.sources[0].escape, 0);
 }
@@ -45,15 +46,16 @@ fn prepared_payload_is_owned_and_compared_exactly() {
 fn prepared_admission_rechecks_allowance_source_and_flags() {
     let mut model = Model::new(120, 40, 5000, 1);
     model.feed(0, b"before", 0).unwrap();
-    model.feed(1, b"\x1b[?1049", 0).unwrap();
-    let required = model.preflight(0, 0, b"h", 0).unwrap();
+    model.feed(1, b"\x1b[6", 0).unwrap();
+    let flags = 128 << 8;
+    let required = model.preflight(0, 0, b"n", flags).unwrap();
     model.set_limit(model.quota_bytes()).unwrap();
-    assert_eq!(model.admit(0, 0, b"h", 0), Err(UNSUPPORTED));
+    assert_eq!(model.admit(0, 0, b"n", flags), Err(UNSUPPORTED));
     model.set_limit(required).unwrap();
-    model.admit(0, 0, b"h", 0).unwrap();
-    assert_eq!(model.admit(0, 1, b"h", 0), Err(UNSUPPORTED));
-    model.preflight(0, 0, b"h", 0).unwrap();
-    assert_eq!(model.admit(0, 0, b"h", 1), Err(UNSUPPORTED));
+    model.admit(0, 0, b"n", flags).unwrap();
+    assert_eq!(model.admit(0, 1, b"n", flags), Err(4));
+    model.preflight(0, 0, b"n", flags).unwrap();
+    assert_eq!(model.admit(0, 0, b"n", flags | 1), Err(UNSUPPORTED));
     assert_eq!(model.sources[1].escape, 2);
 }
 
@@ -68,9 +70,9 @@ fn prepared_admission_does_not_survive_state_or_capacity_changes() {
     model.preflight(0, 0, b"X", 0).unwrap();
     model.export().unwrap();
     assert!(!model.prepared.valid);
-    model.preflight(0, 0, b"X", 0).unwrap();
-    model.feed(0, b"\x1b[?1049", 0).unwrap();
-    assert_eq!(model.admit(0, 0, b"X", 0), Err(UNSUPPORTED));
+    model.preflight(0, 0, b"n", 128 << 8).unwrap();
+    model.feed(0, b"\x1b[6", 0).unwrap();
+    assert_eq!(model.admit(0, 0, b"n", 128 << 8), Err(4));
 }
 
 #[test]
