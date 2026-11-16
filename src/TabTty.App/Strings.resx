@@ -43,6 +43,7 @@
   <data name="Cancel" xml:space="preserve"><value>Cancel</value></data>
   <data name="Error" xml:space="preserve"><value>TabTty error</value></data>
   <data name="CloseConnections" xml:space="preserve"><value>Disconnect the active connections and close?</value></data>
+  <data name="CloseTargetChanged" xml:space="preserve"><value>The tab or its connection changed during the close request. Review the current tab before closing it.</value></data>
   <data name="Language" xml:space="preserve"><value>Language</value></data>
   <data name="Theme" xml:space="preserve"><value>Theme</value></data>
   <data name="System" xml:space="preserve"><value>Use system setting</value></data>

@@ -43,6 +43,7 @@
   <data name="Cancel" xml:space="preserve"><value>キャンセル</value></data>
   <data name="Error" xml:space="preserve"><value>TabTty エラー</value></data>
   <data name="CloseConnections" xml:space="preserve"><value>接続を切断して閉じますか？</value></data>
+  <data name="CloseTargetChanged" xml:space="preserve"><value>閉じる操作の途中でタブまたは接続が変わりました。現在のタブを確認してから閉じてください。</value></data>
   <data name="Language" xml:space="preserve"><value>言語</value></data>
   <data name="Theme" xml:space="preserve"><value>テーマ</value></data>
   <data name="System" xml:space="preserve"><value>システム設定に従う</value></data>

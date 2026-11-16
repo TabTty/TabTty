@@ -50,15 +50,18 @@ internal sealed class FileOperationOwnership
     private bool active;
     private bool needsRefresh;
     private int pending;
+    private long revision;
     public event Action? Changed;
     public bool IsBusy { get { lock (gate) return active || pending != 0; } }
     public bool NeedsRefresh { get { lock (gate) return needsRefresh; } }
+    public long Revision { get { lock (gate) return revision; } }
     public bool TryEnter()
     {
         lock (gate)
         {
             if (active || pending != 0 || needsRefresh) return false;
             active = true;
+            revision++;
             return true;
         }
     }
@@ -103,6 +106,10 @@ internal sealed class FileOperations(IFileOperationIo files, FileOperationOwners
     public bool CanStart => !lifetime.IsCancellationRequested && files.IsOpen && !ownership.IsBusy && !ownership.NeedsRefresh;
     public bool CanRetry => CanStart && batch.CanRetry;
     public IReadOnlyList<FileOperationUpdate.Entry> Results => Array.AsReadOnly(retained);
+    public FileOperationUpdate.Entry[] UnresolvedForClose() =>
+        (IsRunning ? current.AsEnumerable() : retained)
+            .Where(entry => entry.Reason is "TransferTemporaryRemains" or "SftpUnknownOutcome")
+            .Take(10).ToArray();
     public event Action<FileOperationUpdate>? Changed;
     public void Cancel() => running?.Cancel();
 

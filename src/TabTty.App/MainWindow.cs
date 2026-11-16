@@ -17,6 +17,7 @@ namespace TabTty.App;
 internal sealed partial class MainWindow : Window
 {
     private readonly App app;
+    private readonly TerminalClosure terminalClosure;
     private MenuItem? currentMenu;
     private IInputElement? focusBeforeMenu;
     private bool closing;
@@ -29,6 +30,7 @@ internal sealed partial class MainWindow : Window
     public MainWindow(App app)
     {
         this.app = app;
+        terminalClosure = new(this);
         // Register before WindowChrome so right-clicking the caption can open the tab menu.
         SourceInitialized += (_, _) =>
             System.Windows.Interop.HwndSource.FromHwnd(new System.Windows.Interop.WindowInteropHelper(this).Handle)
@@ -820,21 +822,14 @@ internal sealed partial class MainWindow : Window
 
     private async void CloseTab(WindowTab item)
     {
-        if (closing || item.IsClosing || GroupOf(item) is null) return;
         if (item.Content is FormView form)
         {
+            if (closing || item.IsClosing || GroupOf(item) is null) return;
             form.RequestClose(() => app.Modal(() => ThemedMessageBox.Show(this, Text("DiscardChangesAndClose"),
                 Text("CloseTab"), MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No)) == MessageBoxResult.Yes);
             return;
         }
-        if (item.Content is not TerminalTab terminal) return;
-        if ((terminal.IsRunning || terminal.HasActiveTransfer || terminal.HasActiveMacro) && !ConfirmClose([terminal])) return;
-        item.IsClosing = true;
-        app.Ai.EndSharing(terminal);
-        Task transfer = terminal.CloseFileTransferAsync();
-        terminal.Disconnect();
-        await WaitForCleanupAsync(Task.WhenAll(terminal.Completion, transfer), terminal.AbandonCleanup);
-        RemoveTerminalTab(item);
+        await terminalClosure.CloseTabAsync(item);
     }
 
     private void RemoveTerminalTab(WindowTab item)
@@ -876,24 +871,21 @@ internal sealed partial class MainWindow : Window
         if (readyToClose) { SavePlacement(); return; }
         TerminalTab[] terminals = TerminalTabs.ToArray();
         TerminalTab[] active = terminals.Where(terminal => terminal.IsRunning || terminal.HasActiveTransfer || terminal.HasActiveMacro).ToArray();
-        if (active.Length == 0)
+        if (active.Length == 0 && !terminals.Any(terminal => terminal.HasTransferWindow) && !closing)
         {
             closing = true;
             foreach (var terminal in terminals) app.Ai.EndSharing(terminal);
             app.CommitWindowClose(this);
-            foreach (TerminalTab terminal in terminals) _ = terminal.CloseFileTransferAsync();
             SavePlacement();
             return;
         }
         e.Cancel = true;
-        if (closing || !ConfirmClose(active)) return;
+        if (closing || (active.Length != 0 && !ConfirmClose(active))) return;
         closing = true;
         foreach (var terminal in terminals) app.Ai.EndSharing(terminal);
-        app.CommitWindowClose(this);
         IsEnabled = false;
-        Task[] transfers = terminals.Select(terminal => terminal.CloseFileTransferAsync()).ToArray();
         foreach (TerminalTab terminal in active) terminal.Disconnect();
-        _ = FinishCloseAsync(active, transfers);
+        _ = FinishCloseAsync(active, terminals);
     }
 
     private void SavePlacement()
@@ -903,38 +895,62 @@ internal sealed partial class MainWindow : Window
         catch (Exception exception) when (ProfileCatalog.IsFileProblem(exception)) { app.Profiles.ReportStateFailure(this); }
     }
 
-    private async Task FinishCloseAsync(TerminalTab[] active, Task[] transfers)
+    private async Task FinishCloseAsync(TerminalTab[] active, TerminalTab[] terminals)
     {
         await Task.Yield();
-        Task completion = Task.WhenAll(active.Select(terminal => terminal.Completion).Concat(transfers));
+        // Present transfer cleanup reports one at a time on this window's close path.
+        Task<bool> transfers = CloseTransfersAsync();
+        Task completion = Task.WhenAll(active.Select(terminal => terminal.Completion).Append(transfers));
         await WaitForCleanupAsync(completion, () =>
         {
             foreach (TerminalTab terminal in active) terminal.AbandonCleanup();
         });
+        if (!await transfers)
+        {
+            closing = false;
+            IsEnabled = true;
+            return;
+        }
+        app.CommitWindowClose(this);
         readyToClose = true;
         Close();
+
+        async Task<bool> CloseTransfersAsync()
+        {
+            bool dismissed = true;
+            foreach (TerminalTab terminal in terminals)
+                dismissed &= (await terminal.CloseFileTransferAsync()).Dismissed;
+            return dismissed;
+        }
     }
 
-    private async Task WaitForCleanupAsync(Task cleanup, Action abandon)
+    private async Task<bool> WaitForCleanupAsync(Task cleanup, Action abandon)
     {
         while (!cleanup.IsCompleted)
         {
             if (await Task.WhenAny(cleanup, Task.Delay(TimeSpan.FromSeconds(5))) == cleanup) break;
-            if (!app.CanOwnCleanup) { await cleanup; return; }
-            var choice = new FormWindow(this, Text("ClosingConnection"));
-            choice.AddField("CleanupPending", new TextBox
+            if (!app.CanOwnCleanup) break;
+            bool acceptLoss = false;
+            try
             {
-                Text = Text("CleanupPendingExplanation"), IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
-            });
-            choice.AddButtons(() => { }, acceptKey: "CloseWithLoss", cancelDefault: true, cancelKey: "ContinueWaiting");
-            if (app.Modal(choice.ShowDialog) == true)
-            {
-                if (app.OwnCleanup(cleanup)) { abandon(); return; }
+                var choice = new FormWindow(this, Text("ClosingConnection"));
+                choice.AddField("CleanupPending", new TextBox
+                {
+                    Text = Text("CleanupPendingExplanation"), IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
+                });
+                choice.AddButtons(() => { }, acceptKey: "CloseWithLoss", cancelDefault: true, cancelKey: "ContinueWaiting");
+                acceptLoss = app.Modal(choice.ShowDialog) == true;
             }
-            await cleanup;
-            return;
+            catch (Exception exception) when (TerminalClosure.IsPresentationFailure(exception)) { }
+            if (acceptLoss && !cleanup.IsCompleted && app.OwnCleanup(cleanup))
+            {
+                abandon();
+                return true;
+            }
+            break;
         }
         await cleanup;
+        return false;
     }
 
     private bool ConfirmClose(TerminalTab[] terminals)

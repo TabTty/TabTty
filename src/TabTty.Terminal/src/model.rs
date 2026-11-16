@@ -645,44 +645,17 @@ impl Model {
     }
     fn decode(&mut self, source: &mut Source, payload: &[u8], flush: bool) -> Result<(), i32> {
         for &byte in payload {
-            if source.pending_count == 0 && byte < 128 {
-                self.emit(source, byte as u32)?;
-                continue;
-            }
-            if source.pending_count >= 4 {
-                return Err(RESOURCE);
-            }
-            source.pending[source.pending_count] = byte;
-            source.pending_count += 1;
-            while source.pending_count != 0 {
-                let decoded = std::str::from_utf8(&source.pending[..source.pending_count]);
-                let (c, consumed) = match decoded {
-                    Ok(value) => {
-                        let c = value.chars().next().unwrap();
-                        (c as u32, c.len_utf8())
-                    }
-                    Err(error) => match error.error_len() {
-                        Some(n) => (0xfffd, n),
-                        None => break,
-                    },
-                };
-                self.emit(source, c)?;
-                source
-                    .pending
-                    .copy_within(consumed..source.pending_count, 0);
-                source.pending_count -= consumed;
+            for scalar in decode_utf8_byte(&mut source.pending, &mut source.pending_count, byte)? {
+                self.emit(source, scalar)?;
             }
         }
-        if flush && source.pending_count != 0 {
-            self.emit(source, 0xfffd)?;
-            source.pending_count = 0;
+        if let Some(scalar) = finish_utf8(flush, &mut source.pending_count) {
+            self.emit(source, scalar)?;
         }
         Ok(())
     }
     fn emit(&mut self, source: &mut Source, c: u32) -> Result<(), i32> {
-        let first = !source.started;
-        source.started = true;
-        if first && c == 0xfeff {
+        if suppress_initial_bom(&mut source.started, c) {
             return Ok(());
         }
         self.apply(source, c)
@@ -698,28 +671,28 @@ impl Model {
         }
     }
     fn apply(&mut self, source: &mut Source, c: u32) -> Result<(), i32> {
-        if c < 32 || (127..=159).contains(&c) {
+        if is_control(c) {
             source.last_was_graphic = false;
         }
         let crlf = source.previous_cr;
         source.previous_cr = c == 13;
-        if source.escape == 4 {
-            source.parameters.clear();
-        }
-        if consume_control_string(&mut source.escape, source.osc, &mut source.string_bytes, c)? {
-            return Ok(());
+        match interpret_scalar(
+            c,
+            &mut source.escape,
+            &mut source.osc,
+            &mut source.string_bytes,
+            Parameters::Live(&mut source.parameters),
+        )? {
+            Unit::Ignored => return Ok(()),
+            Unit::Index(left) => {
+                self.operation_bytes(&[27, c as u8]);
+                self.move_down(left);
+                return Ok(());
+            }
+            Unit::Csi(command) => return self.csi(&source.parameters, c as u8, command),
+            Unit::Control | Unit::Graphic => {}
         }
         match c {
-            27 => {
-                source.escape = 1;
-                source.parameters.clear();
-                return Ok(());
-            }
-            24 | 26 => {
-                source.escape = 0;
-                return Ok(());
-            }
-            7 | 14 | 15 => return Err(UNSUPPORTED),
             13 => {
                 self.operation_scalar(c);
                 self.cluster_row = 0;
@@ -753,15 +726,6 @@ impl Model {
                 return Ok(());
             }
             _ => {}
-        }
-        if c < 32 || (127..=159).contains(&c) {
-            return Ok(());
-        }
-        if source.escape != 0 {
-            return self.escape(source, c);
-        }
-        if c == 0xfeff {
-            return Err(UNSUPPORTED);
         }
         if !source.last_was_graphic || !self.unicode.joins(&source.last_graphic, c) {
             source.last_graphic.clear();
@@ -998,79 +962,25 @@ impl Model {
             self.position.append(10, &self.unicode, self.ambiguous);
         }
     }
-    fn escape(&mut self, source: &mut Source, c: u32) -> Result<(), i32> {
-        if source.escape == 1 {
-            if c == 91 {
-                source.escape = 2;
+    fn csi(&mut self, p: &[u8], final_byte: u8, command: Csi) -> Result<(), i32> {
+        if matches!(command, Csi::Rendition) {
+            if !apply_sgr(p, &mut self.style) {
                 return Ok(());
             }
-            if c == 93 {
-                source.escape = 3;
-                source.osc = true;
-                source.string_bytes = 0;
-                return Ok(());
-            }
-            source.escape = 0;
-            if c == 92 {
-                return Ok(());
-            }
-            if c == 68 || c == 69 {
-                self.operation_bytes(&[27, c as u8]);
-                self.move_down(c == 69);
-                return Ok(());
-            }
-            return Err(UNSUPPORTED);
-        }
-        if (0x40..=0x7e).contains(&c) {
-            source.escape = 0;
-            self.csi(&source.parameters, c as u8)?;
-            return Ok(());
-        }
-        if (0x20..=0x3f).contains(&c) {
-            if source.parameters.len() == 4096 {
-                return Err(RESOURCE);
-            }
-            source.parameters.push(c as u8);
-        } else {
-            source.escape = 0;
-        }
-        Ok(())
-    }
-    fn csi(&mut self, p: &[u8], final_byte: u8) -> Result<(), i32> {
-        if final_byte == b'm' {
-            if !apply_sgr(p, &mut self.style)? {
-                return Ok(());
-            }
-        } else if matches!(final_byte, b'h' | b'l') {
-            let set = final_byte == b'h';
-            match p {
-                b"?7" => {
+        } else if let Csi::Mode(mode, set) = command {
+            match mode {
+                Mode::Wrap => {
                     self.auto_wrap = set;
                     if !set {
                         self.wrap_pending = false;
                     }
                 }
-                b"?25" => self.cursor_visible = set,
-                b"?2004" => self.bracketed_paste = set,
-                b"20" => self.line_feed_returns = set,
-                _ => return Err(UNSUPPORTED),
+                Mode::Cursor => self.cursor_visible = set,
+                Mode::Paste => self.bracketed_paste = set,
+                Mode::Newline => self.line_feed_returns = set,
             }
-        } else {
-            let mut v = [0usize; 2];
-            let mut index = 0;
-            for &b in p {
-                if b.is_ascii_digit() {
-                    v[index] = (v[index] * 10 + (b - b'0') as usize).min(1024);
-                } else if b == b';' && index == 0 {
-                    index = 1;
-                } else {
-                    return Err(UNSUPPORTED);
-                }
-            }
+        } else if let Csi::Edit(v) = command {
             let count = v[0].max(1);
-            if index > 0 && !matches!(final_byte, b'H' | b'f') {
-                return Err(UNSUPPORTED);
-            }
             match final_byte {
                 b'H' | b'f' => {
                     self.cursor_row = v[0].max(1).min(self.screen_rows) - 1;
@@ -1570,6 +1480,108 @@ fn consume_control_string(
     Ok(true)
 }
 
+fn is_control(scalar: u32) -> bool {
+    scalar < 32 || (127..=159).contains(&scalar)
+}
+
+enum Unit {
+    Ignored,
+    Graphic,
+    Control,
+    Index(bool),
+    Csi(Csi),
+}
+
+enum Parameters<'a> {
+    Live(&'a mut Vec<u8>),
+    Preview(&'a mut [u8; 4096], &'a mut usize),
+}
+
+impl Parameters<'_> {
+    fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Live(bytes) => bytes,
+            Self::Preview(bytes, length) => &bytes[..**length],
+        }
+    }
+
+    fn clear(&mut self) {
+        match self {
+            Self::Live(bytes) => bytes.clear(),
+            Self::Preview(_, length) => **length = 0,
+        }
+    }
+
+    fn push(&mut self, byte: u8) -> Result<(), i32> {
+        if self.as_slice().len() == 4096 {
+            return Err(RESOURCE);
+        }
+        match self {
+            Self::Live(bytes) => bytes.push(byte),
+            Self::Preview(bytes, length) => {
+                bytes[**length] = byte;
+                **length += 1;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn interpret_scalar(
+    scalar: u32,
+    escape: &mut u8,
+    osc: &mut bool,
+    string_bytes: &mut usize,
+    mut parameters: Parameters<'_>,
+) -> Result<Unit, i32> {
+    if *escape == 4 {
+        parameters.clear();
+    }
+    if consume_control_string(escape, *osc, string_bytes, scalar)? {
+        return Ok(Unit::Ignored);
+    }
+    match scalar {
+        27 => {
+            *escape = 1;
+            parameters.clear();
+            return Ok(Unit::Ignored);
+        }
+        24 | 26 => {
+            *escape = 0;
+            return Ok(Unit::Ignored);
+        }
+        7 | 14 | 15 => return Err(UNSUPPORTED),
+        8..=13 => return Ok(Unit::Control),
+        _ if is_control(scalar) => return Ok(Unit::Ignored),
+        _ => {}
+    }
+    match *escape {
+        0 if scalar == 0xfeff => return Err(UNSUPPORTED),
+        0 => return Ok(Unit::Graphic),
+        1 => {
+            *escape = 0;
+            match scalar {
+                91 => *escape = 2,
+                93 => {
+                    *escape = 3;
+                    *osc = true;
+                    *string_bytes = 0;
+                }
+                92 => {}
+                68 | 69 => return Ok(Unit::Index(scalar == 69)),
+                _ => return Err(UNSUPPORTED),
+            }
+        }
+        _ if (0x40..=0x7e).contains(&scalar) => {
+            *escape = 0;
+            return parse_csi(parameters.as_slice(), scalar as u8);
+        }
+        _ if (0x20..=0x3f).contains(&scalar) => parameters.push(scalar as u8)?,
+        _ => *escape = 0,
+    }
+    Ok(Unit::Ignored)
+}
+
 // This preflight copies only decoder/parser state into fixed stack storage.
 // It neither edits terminal rows nor emits/consumes log buffers.
 struct Probe<'a> {
@@ -1681,170 +1693,155 @@ impl<'a> Probe<'a> {
             }
             let byte = payload[offset];
             offset += 1;
-            if self.pending_count == 0 && byte < 128 {
-                self.emit(byte as u32)?;
-                continue;
-            }
-            if self.pending_count == 4 {
-                return Err(UNSUPPORTED);
-            }
-            self.pending[self.pending_count] = byte;
-            self.pending_count += 1;
-            while self.pending_count != 0 {
-                let (c, used) = match std::str::from_utf8(&self.pending[..self.pending_count]) {
-                    Ok(value) => {
-                        let c = value.chars().next().unwrap();
-                        (c as u32, c.len_utf8())
-                    }
-                    Err(error) => match error.error_len() {
-                        Some(n) => (0xfffd, n),
-                        None => break,
-                    },
-                };
-                self.emit(c)?;
-                self.pending.copy_within(used..self.pending_count, 0);
-                self.pending_count -= used;
+            for scalar in decode_utf8_byte(&mut self.pending, &mut self.pending_count, byte)
+                .map_err(|_| UNSUPPORTED)?
+            {
+                self.emit(scalar)?;
             }
         }
-        if flush && self.pending_count != 0 {
-            self.emit(0xfffd)?;
-            self.pending_count = 0;
+        if let Some(scalar) = finish_utf8(flush, &mut self.pending_count) {
+            self.emit(scalar)?;
         }
         Ok(())
     }
     fn emit(&mut self, c: u32) -> Result<(), i32> {
-        let first = !self.started;
-        self.started = true;
-        if first && c == 0xfeff {
+        if suppress_initial_bom(&mut self.started, c) {
             return Ok(());
         }
-        if c < 32 || (127..=159).contains(&c) {
+        if is_control(c) {
             self.source_was_graphic = false;
         }
-        if self.escape == 4 {
-            self.parameter_count = 0;
-        }
-        if consume_control_string(&mut self.escape, self.osc, &mut self.string_bytes, c)
-            .map_err(|_| UNSUPPORTED)?
-        {
-            return Ok(());
-        }
-        match c {
-            27 => {
-                self.escape = 1;
-                self.parameter_count = 0;
-                return Ok(());
-            }
-            24 | 26 => {
-                self.escape = 0;
-                return Ok(());
-            }
-            7 | 14 | 15 => return Err(UNSUPPORTED),
-            8 | 9 | 10 | 11 | 12 | 13 => {
-                self.cluster_active = false;
-                return Ok(());
-            }
-            _ => {}
-        }
-        if c < 32 || (127..=159).contains(&c) {
-            return Ok(());
-        }
-        if self.escape == 0 {
-            return if c == 0xfeff {
-                Err(UNSUPPORTED)
-            } else {
-                self.graphic(c)
-            };
-        }
-        if self.escape == 1 {
-            if c == 91 {
-                self.escape = 2;
-                return Ok(());
-            }
-            if c == 93 {
-                self.escape = 3;
-                self.osc = true;
-                self.string_bytes = 0;
-                return Ok(());
-            }
-            self.escape = 0;
-            if c == 92 {
-                return Ok(());
-            }
-            return if c == 68 || c == 69 {
-                self.cluster_active = false;
-                Ok(())
-            } else {
-                Err(UNSUPPORTED)
-            };
-        }
-        if (0x40..=0x7e).contains(&c) {
-            self.escape = 0;
-            if supported_csi(&self.parameters[..self.parameter_count], c as u8) {
-                if !matches!(c as u8, b'm' | b'h' | b'l' | b'J' | b'K' | b'X') {
-                    self.revisits_rows = true;
-                }
-                if !matches!(c as u8, b'm' | b'h' | b'l')
-                    && !(c == b'J' as u32
-                        && number(&self.parameters[..self.parameter_count]) == Some(3))
-                {
+        let unit = interpret_scalar(
+            c,
+            &mut self.escape,
+            &mut self.osc,
+            &mut self.string_bytes,
+            Parameters::Preview(&mut self.parameters, &mut self.parameter_count),
+        )
+        .map_err(|_| UNSUPPORTED)?;
+        match unit {
+            Unit::Ignored | Unit::Csi(Csi::Rendition | Csi::Mode(..)) => {}
+            Unit::Graphic => return self.graphic(c),
+            Unit::Control | Unit::Index(_) => self.cluster_active = false,
+            Unit::Csi(Csi::Edit(values)) => {
+                let final_byte = c as u8;
+                self.revisits_rows |= !matches!(final_byte, b'J' | b'K' | b'X');
+                if final_byte != b'J' || values[0] != 3 {
                     self.cluster_active = false;
                 }
-                return Ok(());
             }
-            return Err(UNSUPPORTED);
-        }
-        if (0x20..=0x3f).contains(&c) {
-            if self.parameter_count == self.parameters.len() {
-                return Err(UNSUPPORTED);
-            }
-            self.parameters[self.parameter_count] = c as u8;
-            self.parameter_count += 1;
-        } else {
-            self.escape = 0;
         }
         Ok(())
     }
 }
-fn supported_csi(parameters: &[u8], final_byte: u8) -> bool {
-    let (mut main, mut sub) = (1, 1);
-    for &b in parameters {
-        if b == b';' {
-            main += 1;
-            sub = 1;
-        } else if b == b':' {
-            sub += 1;
-        }
-        if main > 32 || sub > 16 {
-            return false;
-        }
-    }
+
+enum Mode {
+    Wrap,
+    Cursor,
+    Paste,
+    Newline,
+}
+
+enum Csi {
+    Rendition,
+    Mode(Mode, bool),
+    Edit([usize; 2]),
+}
+
+fn parse_csi(parameters: &[u8], final_byte: u8) -> Result<Unit, i32> {
     if final_byte == b'm' {
-        return true;
+        let mut groups = 0;
+        for parameter in parameters.split(|&byte| byte == b';') {
+            groups += 1;
+            if groups > 32 || parameter.iter().filter(|&&byte| byte == b':').count() >= 16 {
+                return Err(RESOURCE);
+            }
+        }
+        let valid = parameters
+            .iter()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b';' | b':'));
+        return Ok(if valid {
+            Unit::Csi(Csi::Rendition)
+        } else {
+            Unit::Ignored
+        });
     }
-    if final_byte == b'h' || final_byte == b'l' {
-        return matches!(parameters, b"?7" | b"?25" | b"?2004" | b"20");
+    if matches!(final_byte, b'h' | b'l') {
+        let mode = match parameters {
+            b"?7" => Mode::Wrap,
+            b"?25" => Mode::Cursor,
+            b"?2004" => Mode::Paste,
+            b"20" => Mode::Newline,
+            _ => return Err(UNSUPPORTED),
+        };
+        return Ok(Unit::Csi(Csi::Mode(mode, final_byte == b'h')));
     }
     let mut values = [0usize; 2];
     let mut index = 0;
-    for &b in parameters {
-        if b.is_ascii_digit() {
-            values[index] = (values[index] * 10 + (b - b'0') as usize).min(1024);
-        } else if b == b';' && index == 0 {
+    for &byte in parameters {
+        if byte.is_ascii_digit() {
+            values[index] = (values[index] * 10 + (byte - b'0') as usize).min(1024);
+        } else if byte == b';' && index == 0 && matches!(final_byte, b'H' | b'f') {
             index = 1;
         } else {
-            return false;
+            return Err(UNSUPPORTED);
         }
     }
-    if index > 0 && !matches!(final_byte, b'H' | b'f') {
-        return false;
-    }
     match final_byte {
-        b'H' | b'f' | b'A' | b'B' | b'C' | b'D' | b'E' | b'F' | b'G' | 96 | b'd' | b'X' => true,
-        b'K' => values[0] <= 2,
-        b'J' => values[0] <= 3,
-        _ => false,
+        b'H' | b'f' | b'A' | b'B' | b'C' | b'D' | b'E' | b'F' | b'G' | 96 | b'd' | b'X' => {}
+        b'K' if values[0] <= 2 => {}
+        b'J' if values[0] <= 3 => {}
+        _ => return Err(UNSUPPORTED),
     }
+    Ok(Unit::Csi(Csi::Edit(values)))
+}
+#[inline]
+fn decode_utf8_byte(
+    pending: &mut [u8; 4],
+    count: &mut usize,
+    byte: u8,
+) -> Result<impl Iterator<Item = u32>, i32> {
+    let mut output = [0; 4];
+    if *count == 0 && byte.is_ascii() {
+        output[0] = byte as u32;
+        return Ok(output.into_iter().take(1));
+    }
+    if *count == pending.len() {
+        return Err(RESOURCE);
+    }
+    pending[*count] = byte;
+    *count += 1;
+    let mut emitted = 0;
+    while *count != 0 {
+        let (scalar, used) = match std::str::from_utf8(&pending[..*count]) {
+            Ok(value) => {
+                let scalar = value.chars().next().unwrap();
+                (scalar as u32, scalar.len_utf8())
+            }
+            Err(error) => match error.error_len() {
+                Some(used) => (0xfffd, used),
+                None => break,
+            },
+        };
+        output[emitted] = scalar;
+        emitted += 1;
+        pending.copy_within(used..*count, 0);
+        *count -= used;
+    }
+    Ok(output.into_iter().take(emitted))
+}
+
+fn finish_utf8(flush: bool, count: &mut usize) -> Option<u32> {
+    if flush && *count != 0 {
+        *count = 0;
+        Some(0xfffd)
+    } else {
+        None
+    }
+}
+
+fn suppress_initial_bom(started: &mut bool, scalar: u32) -> bool {
+    !std::mem::replace(started, true) && scalar == 0xfeff
 }
 
 fn append_utf8(output: &mut Vec<u8>, scalar: u32) {
@@ -1909,24 +1906,24 @@ fn color(fields: &[&[u8]], colon: bool) -> Option<u32> {
     }
     Some((r as u32) << 16 | (g as u32) << 8 | b as u32)
 }
-fn apply_sgr(p: &[u8], style: &mut Style) -> Result<bool, i32> {
-    if p.iter()
-        .any(|b| !b.is_ascii_digit() && *b != b';' && *b != b':')
-    {
-        return Ok(false);
+fn apply_sgr(p: &[u8], style: &mut Style) -> bool {
+    let mut parameters: [&[u8]; 32] = [&[]; 32];
+    let mut length = 0;
+    for parameter in p.split(|b| *b == b';') {
+        parameters[length] = parameter;
+        length += 1;
     }
-    let parts: Vec<&[u8]> = p.split(|b| *b == b';').collect();
-    if parts.len() > 32
-        || parts
-            .iter()
-            .any(|p| p.iter().filter(|b| **b == b':').count() >= 16)
-    {
-        return Err(RESOURCE);
-    }
+    let parts = &parameters[..length];
     let mut applied = false;
     let mut index = 0;
     while index < parts.len() {
-        let fields: Vec<&[u8]> = parts[index].split(|b| *b == b':').collect();
+        let mut subparameters: [&[u8]; 16] = [&[]; 16];
+        let mut length = 0;
+        for field in parts[index].split(|b| *b == b':') {
+            subparameters[length] = field;
+            length += 1;
+        }
+        let fields = &subparameters[..length];
         let command = number(fields[0]).unwrap_or(usize::MAX);
         if command == 38 || command == 48 {
             let selected = if fields.len() > 1 {
@@ -2015,5 +2012,5 @@ fn apply_sgr(p: &[u8], style: &mut Style) -> Result<bool, i32> {
         }
         index += 1;
     }
-    Ok(applied)
+    applied
 }

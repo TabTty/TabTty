@@ -1,5 +1,28 @@
 # Implementation and validation status
 
+The [Rust terminal and closure plan](https://github.com/TabTty/TabTty/issues/16)
+is in implementation on `codex/16-complete-rust-terminal`. Baseline commit
+`61aa1865c1cc083d09cf91eb9747cc0a9340ed69` preserves the original source,
+lockfile, and generated Unicode data. The local `artifacts/issue-16-baseline`
+input record includes SDK versions and native dependency hashes. The working
+toolchain is .NET SDK 10.0.404, Rust/Cargo 1.63.0, and MSVC on Windows x64.
+
+- The [UTF-8 baseline](https://github.com/TabTty/TabTty/issues/17) passed with
+  a saved Telnet profile, independent Japanese transmit bytes, Rust receive,
+  WPF display, exact Raw and Text logs, and retained output after disconnect.
+  The test checks native model creation and zero managed starts or handoffs
+  in that case. The pinned baseline supplies a separate comparison reference.
+- The [transfer-close slice](https://github.com/TabTty/TabTty/issues/33) passed
+  WPF checks with a loopback SSH/SFTP fixture. Duplicate requests share their
+  outcome. A vetoed dismissal or a report closed before rendering retains the
+  results. Pending provider ownership survives visual dismissal until actual
+  completion.
+- The [shared interpretation](https://github.com/TabTty/TabTty/issues/18) and
+  [complete tab close](https://github.com/TabTty/TabTty/issues/34) slices are
+  in progress. Remaining work includes full operation-level reservation and
+  result delivery, and closure coordination and fault coverage beyond the
+  current explicit single-tab path.
+
 Target-design update, 2026-11-16: [ADR 0007](../adr/0007-complete-terminal-processing-in-rust.md)
 requires [complete Rust terminal processing](native-terminal-core.md) without
 managed fallback. That replacement is not implemented or validated. The code

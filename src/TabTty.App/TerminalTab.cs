@@ -158,12 +158,17 @@ internal sealed partial class TerminalTab : UserControl
     public Task Completion => Macro is null ? connectionCompletion : Task.WhenAll(connectionCompletion, Macro.Completion);
     public bool CanTransfer => IsRunning && !stop.IsCancellationRequested && session?.CanTransfer == true;
     public bool HasActiveTransfer => transferWindow?.HasActiveOperation == true;
+    public bool HasTransferWindow => transferWindow is not null;
+    internal object ConnectionGeneration => stop;
+    internal FileTransferWindow? TransferWindow => transferWindow;
 
-    public void OpenFileTransfer()
+    public async void OpenFileTransfer()
     {
         if (!CanTransfer || session is not { } active) return;
         if (transferWindow is { } previous && !previous.OwnsSession(active))
-            _ = previous.CloseWithTerminalAsync();
+        {
+            if (!(await previous.CloseWithTerminalAsync()).Dismissed || !CanTransfer || session != active) return;
+        }
         if (transferWindow is { } existing && existing.OwnsSession(active))
         {
             if (existing.WindowState == WindowState.Minimized) existing.WindowState = WindowState.Normal;
@@ -176,7 +181,8 @@ internal sealed partial class TerminalTab : UserControl
         window.Show();
     }
 
-    public Task CloseFileTransferAsync() => transferWindow?.CloseWithTerminalAsync() ?? Task.CompletedTask;
+    public Task<TransferWindowCloseResult> CloseFileTransferAsync() => transferWindow?.CloseWithTerminalAsync() ??
+        Task.FromResult(new TransferWindowCloseResult(TransferWindowCloseStatus.Dismissed, false));
 
     public void Start(Action<ConnectionProfile>? opened = null)
     {

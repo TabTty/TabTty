@@ -1,5 +1,11 @@
 # 実装と検証の状況
 
+[Rust端末とタブ閉鎖の計画 #16](https://github.com/TabTty/TabTty/issues/16)は、ローカルの `codex/16-complete-rust-terminal` ブランチで実装中。変更前のソース、依存関係の固定ファイル、生成済みUnicodeデータをコミット `61aa1865c1cc083d09cf91eb9747cc0a9340ed69` に保存した。SDKのバージョンと依存バイナリのハッシュはローカルの `artifacts/issue-16-baseline` に記録している。
+
+- [UTF-8の統合基準 #17](https://github.com/TabTty/TabTty/issues/17)では、保存済みTelnetプロファイル、日本語の送受信、Rustでの受信処理、WPF表示、Raw/Text記録、切断後の表示保持を確認した。このケースでのC#への切替とフォールバックは0件だった。
+- [転送ウィンドウ終了 #33](https://github.com/TabTty/TabTty/issues/33)では、ループバックSSH/SFTPとWPFで、重複要求の合流、閉鎖の取消し、警告が表示される前に閉じられた場合の結果保持を確認した。転送ウィンドウを閉じた後も、実際のI/Oが完了するまでその所有権を保持する。
+- [解釈規則の共有 #18](https://github.com/TabTty/TabTty/issues/18)と[単一タブの閉鎖 #34](https://github.com/TabTty/TabTty/issues/34)は実装中。操作全体のリソース予約・結果の引き渡しと、現在の明示的な単一タブ経路を越える閉鎖の調整・障害検証が残っている。
+
 2026-11-16 の目標設計変更：[ADR 0007](../adr/0007-complete-terminal-processing-in-rust.md)により、[端末処理をRustで完結させる設計](native-terminal-core-ja-jp.md)へ移行する。C#への切替をなくす置換は未実装・未検証。以下のコードと測定結果は、C#への引継ぎを持つ現在の部分的なRust実装の記録であり、新設計の検証実績ではない。
 
 基準実装は 2026-11-11 に記録した。SFTP の実装と検証は 2026-11-14 に追加した。このディレクトリの契約が初期リリースの範囲を定義する。以下のマクロ実装は別途 Issue #3 の仕様に従う。Store 向けのパッケージ化は今後の作業。

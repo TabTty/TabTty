@@ -46,6 +46,22 @@ internal static partial class Program
                 CheckFileOperations().GetAwaiter().GetResult();
                 return 0;
             }
+            bool testTransferClose = args is ["--transfer-window-close", _];
+            if (args.SequenceEqual(["--native-utf8-baseline"]) || args.SequenceEqual(["--terminal-tab-close"]) || testTransferClose)
+            {
+                var integrationFrame = new DispatcherFrame();
+                Task run = application.Dispatcher.InvokeAsync(() => args[0] switch
+                {
+                    "--native-utf8-baseline" => TerminalReceivesWhilePresentationIsPaused(verifyNativeResidency: true),
+                    "--terminal-tab-close" => CheckTerminalTabClose(application, settingsDirectory),
+                    _ => CheckTransferWindowClose(settingsDirectory, int.Parse(args[1])),
+                }).Task.Unwrap();
+                _ = run.ContinueWith(_ => integrationFrame.Continue = false, TaskScheduler.Default);
+                Dispatcher.PushFrame(integrationFrame);
+                run.GetAwaiter().GetResult();
+                Console.WriteLine($"PASS {args[0]}");
+                return 0;
+            }
             if (args.SequenceEqual(["--ai-collaboration"]))
             {
                 RunAiCollaboration();
@@ -103,12 +119,15 @@ internal static partial class Program
             Dispatcher.PushFrame(presentationFrame);
             presentationTest.GetAwaiter().GetResult();
             Console.WriteLine("PASS TerminalReceivesWhilePresentationIsPaused");
-            var nativePresentationFrame = new DispatcherFrame();
-            Task nativePresentationTest = application.Dispatcher.InvokeAsync(() => TerminalReceivesWhilePresentationIsPaused(verifyNativeResidency: true)).Task.Unwrap();
-            _ = nativePresentationTest.ContinueWith(_ => nativePresentationFrame.Continue = false, TaskScheduler.Default);
-            Dispatcher.PushFrame(nativePresentationFrame);
-            nativePresentationTest.GetAwaiter().GetResult();
-            Console.WriteLine("PASS NativeTerminalReceivesWhilePresentationIsPaused");
+            if (NativeTerminalCore.Enabled)
+            {
+                var nativePresentationFrame = new DispatcherFrame();
+                Task nativePresentationTest = application.Dispatcher.InvokeAsync(() => TerminalReceivesWhilePresentationIsPaused(verifyNativeResidency: true)).Task.Unwrap();
+                _ = nativePresentationTest.ContinueWith(_ => nativePresentationFrame.Continue = false, TaskScheduler.Default);
+                Dispatcher.PushFrame(nativePresentationFrame);
+                nativePresentationTest.GetAwaiter().GetResult();
+                Console.WriteLine("PASS NativeTerminalReceivesWhilePresentationIsPaused");
+            }
             MainMenuOpensAndReusesManagementTabs(application);
             Console.WriteLine("PASS MainMenuOpensAndReusesManagementTabs");
             MainMenuAcceptsKeyboardCommands();
@@ -121,6 +140,12 @@ internal static partial class Program
             Dispatcher.PushFrame(closeFrame);
             closeTest.GetAwaiter().GetResult();
             Console.WriteLine("PASS DisconnectedTabsRespectSettingsAndBulkClose");
+            var tabCloseFrame = new DispatcherFrame();
+            Task tabCloseTest = application.Dispatcher.InvokeAsync(() => CheckTerminalTabClose(application, settingsDirectory)).Task.Unwrap();
+            _ = tabCloseTest.ContinueWith(_ => tabCloseFrame.Continue = false, TaskScheduler.Default);
+            Dispatcher.PushFrame(tabCloseFrame);
+            tabCloseTest.GetAwaiter().GetResult();
+            Console.WriteLine("PASS CheckTerminalTabClose");
             var broadcastFrame = new DispatcherFrame();
             Task broadcastTest = application.Dispatcher.InvokeAsync(() => BroadcastAndSplitViews(application, settingsDirectory)).Task.Unwrap();
             _ = broadcastTest.ContinueWith(_ => broadcastFrame.Continue = false, TaskScheduler.Default);
@@ -142,11 +167,16 @@ internal static partial class Program
                 int.TryParse(Environment.GetEnvironmentVariable("TABTTY_INTEROP_SSH_PORT"), out int sshPort))
             {
                 var transferFrame = new DispatcherFrame();
-                Task transferTest = application.Dispatcher.InvokeAsync(() => SftpBatchCopiesFolderTrees(sshPort, settingsDirectory)).Task.Unwrap();
+                Task transferTest = application.Dispatcher.InvokeAsync(async () =>
+                {
+                    await SftpBatchCopiesFolderTrees(sshPort, settingsDirectory);
+                    Console.WriteLine("PASS SftpBatchCopiesFolderTrees");
+                    await CheckTransferWindowClose(settingsDirectory, sshPort);
+                }).Task.Unwrap();
                 _ = transferTest.ContinueWith(_ => transferFrame.Continue = false, TaskScheduler.Default);
                 Dispatcher.PushFrame(transferFrame);
                 transferTest.GetAwaiter().GetResult();
-                Console.WriteLine("PASS SftpBatchCopiesFolderTrees");
+                Console.WriteLine("PASS CheckTransferWindowClose");
             }
             return 0;
         }
@@ -1043,6 +1073,8 @@ internal static partial class Program
 
     private static async Task TerminalReceivesWhilePresentationIsPaused(bool verifyNativeResidency)
     {
+        if (verifyNativeResidency && !NativeTerminalCore.Enabled)
+            throw new InvalidOperationException("The native UTF-8 baseline requires the Rust terminal core.");
         long initialHandoffs = Interlocked.Read(ref NativeTerminalCoreDiagnostics.ManagedHandoffs);
         long initialFallbacks = Interlocked.Read(ref NativeTerminalCoreDiagnostics.ManagedFallbackModels);
         long initialModels = Interlocked.Read(ref NativeTerminalCoreDiagnostics.CreatedModels);
@@ -1075,18 +1107,31 @@ internal static partial class Program
             string textLog = Directory.EnumerateFiles(directory, "*.log", SearchOption.AllDirectories).Single();
             string rawLog = Directory.EnumerateFiles(directory, "*.raw.tttylog", SearchOption.AllDirectories).Single();
 
-            await SendOutputAsync((verifyNativeResidency ? "\u001b]0;Presentation test\u0007\u001b[?2004h" : "") + "visible\r\n");
-            await WaitForLineAsync("visible");
+            if (verifyNativeResidency)
+            {
+                await WaitUntilAsync(() => terminal.InputSession is not null);
+                var connected = terminal.InputSession ?? throw new InvalidOperationException("The tab has no connected input session.");
+                await connected.SetLocalEchoAsync("off", deadline.Token);
+                await connected.SendTextAsync("入力", deadline.Token);
+                byte[] sent = new byte["入力"u8.Length];
+                await wire.ReadExactlyAsync(sent, deadline.Token);
+                if (!sent.AsSpan().SequenceEqual("入力"u8))
+                    throw new InvalidOperationException("The peer did not receive the expected UTF-8 input bytes.");
+            }
+
+            string visibleLine = verifyNativeResidency ? "visible 表示" : "visible";
+            await SendOutputAsync((verifyNativeResidency ? "\u001b]0;Presentation test\u0007\u001b[?2004h" : "") + visibleLine + "\r\n");
+            await WaitForLineAsync(visibleLine);
 
             SystemCommands.MinimizeWindow(host);
             await WaitUntilAsync(() => host.WindowState == WindowState.Minimized);
-            await CheckPausedAsync("minimizex\bd\r\n", "visible\r\nminimized\r\n");
+            await CheckPausedAsync("minimizex\bd\r\n", visibleLine + "\r\nminimized\r\n");
             SystemCommands.RestoreWindow(host);
             await WaitForLineAsync("minimized");
 
             tabs.SelectedItem = otherTab;
             host.UpdateLayout();
-            const string committedText = "visible\r\nminimized\r\nbackground\r\n";
+            string committedText = visibleLine + "\r\nminimized\r\nbackground\r\n";
             await CheckPausedAsync("\u001b[32mbackground\u001b[0m\r\n", committedText);
             tabs.SelectedItem = sessionTab;
             await WaitForLineAsync("background");
@@ -1102,7 +1147,7 @@ internal static partial class Program
             if (!recorded.AsSpan().SequenceEqual(received.ToArray()))
                 throw new InvalidOperationException("The raw log did not retain all received bytes.");
 
-            if (verifyNativeResidency && NativeTerminalCore.Enabled)
+            if (verifyNativeResidency)
             {
                 if (Interlocked.Read(ref NativeTerminalCoreDiagnostics.ManagedHandoffs) != initialHandoffs ||
                     Interlocked.Read(ref NativeTerminalCoreDiagnostics.ManagedFallbackModels) != initialFallbacks ||
@@ -1118,7 +1163,7 @@ internal static partial class Program
             {
                 destination.Show();
                 await WaitForLineAsync("final line");
-                foreach (string line in new[] { "visible", "minimized", "background", "final line" })
+                foreach (string line in new[] { visibleLine, "minimized", "background", "final line" })
                     if (surface.Snapshot?.Contains(line) != true)
                         throw new InvalidOperationException("The restored terminal lost retained output: " + line);
             }
@@ -1128,7 +1173,7 @@ internal static partial class Program
             {
                 // Keep the original DSR acknowledgement test. The separate native
                 // case acknowledges through Raw, because DSR deliberately hands off.
-                byte[] payload = Encoding.ASCII.GetBytes(output + (verifyNativeResidency ? "" : "\u001b[5n"));
+                byte[] payload = Encoding.UTF8.GetBytes(output + (verifyNativeResidency ? "" : "\u001b[5n"));
                 received.Write(payload);
                 await wire.WriteAsync(payload, deadline.Token);
                 if (verifyNativeResidency)
@@ -1162,7 +1207,15 @@ internal static partial class Program
                     throw new InvalidOperationException("The hidden terminal display was updated while receiving output.");
             }
 
-            Task WaitForLineAsync(string line) => WaitUntilAsync(() => surface.Snapshot?.Contains(line) == true);
+            async Task WaitForLineAsync(string line)
+            {
+                try { await WaitUntilAsync(() => surface.Snapshot?.Contains(line) == true); }
+                catch (OperationCanceledException exception)
+                {
+                    string rows = string.Join(" | ", surface.Snapshot?.Take(6) ?? []);
+                    throw new InvalidOperationException($"Expected terminal row '{line}'. Visible={surface.IsPresentationActive}, status={terminal.ConnectionStatus}, rows={rows}", exception);
+                }
+            }
 
             async Task WaitUntilAsync(Func<bool> condition)
             {

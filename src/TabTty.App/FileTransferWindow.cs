@@ -12,6 +12,13 @@ using static TabTty.App.App;
 
 namespace TabTty.App;
 
+internal enum TransferWindowCloseStatus { Dismissed, ReportFailed, DismissalRejected }
+
+internal readonly record struct TransferWindowCloseResult(TransferWindowCloseStatus Status, bool ProviderPending)
+{
+    public bool Dismissed => Status == TransferWindowCloseStatus.Dismissed;
+}
+
 internal sealed class FileTransferWindow : Window
 {
     private readonly TerminalSession session;
@@ -31,6 +38,8 @@ internal sealed class FileTransferWindow : Window
     private FileOperations? operations;
     private Task work = Task.CompletedTask;
     private bool disconnected, closing, closed;
+    private bool dismissalApproved;
+    private Task<TransferWindowCloseResult>? closeRequest;
     private bool omittedResults;
     private int resultCharacters;
     private long lastProgress;
@@ -83,11 +92,12 @@ internal sealed class FileTransferWindow : Window
         panes.Children.Add(right);
         layout.Children.Add(panes);
         Content = layout;
-        Loaded += (_, _) => { if (client is null && !closing) _ = InitializeAsync(); };
+        Loaded += (_, _) => { if (client is null && !closing && !disconnected) _ = InitializeAsync(); };
         UpdateActions();
     }
 
     public bool HasActiveOperation => ownership.IsBusy;
+    internal long OperationRevision => ownership.Revision;
 
     public bool OwnsSession(TerminalSession value) => ReferenceEquals(session, value);
 
@@ -491,41 +501,91 @@ internal sealed class FileTransferWindow : Window
         UpdateActions();
     }
 
-    public async Task CloseWithTerminalAsync()
+    public Task<TransferWindowCloseResult> CloseWithTerminalAsync() =>
+        closeRequest ??= CloseAfterReviewAsync();
+
+    private async Task<TransferWindowCloseResult> CloseAfterReviewAsync()
     {
-        if (closed || closing) return;
+        if (closed) return new(TransferWindowCloseStatus.Dismissed, ownership.IsBusy);
         closing = true;
-        ConnectionEnded();
-        try { await work.WaitAsync(TimeSpan.FromSeconds(2)); }
-        catch (TimeoutException) { }
-        if (!closed) Close();
+        // Publish the shared request before cancellation, modal reporting, or Close can reenter.
+        await System.Windows.Threading.Dispatcher.Yield();
+        try
+        {
+            ConnectionEnded();
+            var idle = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void CheckOwnership() { if (!ownership.IsBusy) idle.TrySetResult(); }
+            ownership.Changed += CheckOwnership;
+            Task cleanup = Task.WhenAll(work, idle.Task);
+            bool uncertain = false;
+            try
+            {
+                CheckOwnership();
+                await cleanup.WaitAsync(TimeSpan.FromSeconds(2));
+            }
+            catch (TimeoutException) { uncertain = !work.IsCompletedSuccessfully; }
+            catch (Exception) when (cleanup.IsFaulted || cleanup.IsCanceled) { uncertain = true; }
+            finally
+            {
+                ownership.Changed -= CheckOwnership;
+                // After the visual deadline the original provider still owns its work.
+                idle.TrySetResult();
+                _ = cleanup.ContinueWith(static task => _ = task.Exception, CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            }
+
+            var unresolved = operations?.UnresolvedForClose() ?? [];
+            if (uncertain || ownership.IsBusy || ownership.NeedsRefresh || unresolved.Length != 0)
+            {
+                string details = string.Join("\n", unresolved.Select(entry => $"{Text(entry.Reason)}  {entry.Path}"));
+                try
+                {
+                    Window report = ThemedMessageBox.Create(this,
+                        Text("SftpUnknownOutcome") + (details.Length == 0 ? "" : "\n" + details),
+                        Title, MessageBoxButton.OK, MessageBoxImage.Warning, MessageBoxResult.OK, _ => { });
+                    bool presented = false;
+                    report.ContentRendered += (_, _) => presented = true;
+                    ((App)Application.Current).Modal(report.ShowDialog);
+                    if (!presented) return ReportFailed();
+                }
+                catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception)
+                {
+                    return ReportFailed();
+                }
+            }
+
+            dismissalApproved = true;
+            try { Close(); }
+            catch (InvalidOperationException) when (!closed) { }
+            return new(closed ? TransferWindowCloseStatus.Dismissed : TransferWindowCloseStatus.DismissalRejected,
+                ownership.IsBusy);
+        }
+        finally
+        {
+            if (!closed)
+            {
+                dismissalApproved = closing = false;
+                closeRequest = null;
+                UpdateActions();
+            }
+        }
     }
 
-    private async Task CloseAfterReviewAsync()
+    private TransferWindowCloseResult ReportFailed()
     {
-        if (closed || closing) return;
-        closing = true;
-        ConnectionEnded();
-        try { await work.WaitAsync(TimeSpan.FromSeconds(2)); }
-        catch (TimeoutException) { }
-        if (closed) return;
-        var unresolved = operations?.Results.Where(entry =>
-            entry.Reason is "TransferTemporaryRemains" or "SftpUnknownOutcome").Take(10).ToArray() ?? [];
-        if (ownership.IsBusy || ownership.NeedsRefresh || unresolved.Length != 0)
-        {
-            string details = string.Join("\n", unresolved.Select(entry => $"{Text(entry.Reason)}  {entry.Path}"));
-            ThemedMessageBox.Show(this, Text("SftpUnknownOutcome") + (details.Length == 0 ? "" : "\n" + details),
-                Title, MessageBoxButton.OK, MessageBoxImage.Warning, MessageBoxResult.OK);
-        }
-        if (!closed) Close();
+        status.Text = Text("SftpUnknownOutcome");
+        return new(TransferWindowCloseStatus.ReportFailed, ownership.IsBusy);
     }
 
     protected override void OnClosing(CancelEventArgs e)
     {
         base.OnClosing(e);
-        if (e.Cancel || closing || !HasActiveOperation) return;
+        if (e.Cancel || dismissalApproved) return;
+        if (closing) { e.Cancel = true; return; }
+        if (!HasActiveOperation && !ownership.NeedsRefresh && work.IsCompletedSuccessfully &&
+            (operations?.UnresolvedForClose().Length ?? 0) == 0) return;
         e.Cancel = true;
-        if (Confirm(Text("TransferCloseBusy"))) Dispatcher.BeginInvoke(() => _ = CloseAfterReviewAsync());
+        if (!HasActiveOperation || Confirm(Text("TransferCloseBusy"))) _ = CloseWithTerminalAsync();
     }
 
     protected override void OnClosed(EventArgs e)
