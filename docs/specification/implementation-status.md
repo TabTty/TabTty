@@ -61,6 +61,23 @@ at 1,047,139 payload bytes/s. All Raw logs matched their input and no session
 disconnected. Local p95 was 157.016 ms and Stop p95 was 5.767 ms. This probe
 missed the local target and is distinct from the 30-minute acceptance runs.
 
+Commit `c2291df` passed the Windows Release build, 34 Rust tests, 80 Core
+tests, and 27 WPF checks. The WPF background receive workload used one
+through six saved Telnet profiles, 5000 retained rows per profile, and all
+three log formats. File digests matched the independent fixture payloads.
+The maximum across the six runs was 678,215,680 bytes private memory and
+758,874,112 bytes working set. Sampling covered visible seeding, unselected
+and minimized reception, EOF and log drain, and restored output.
+
+The 30-minute equal-distribution SSH run on `c2291df` passed both response
+targets over 600 interactions. Local p95 was 19.741 ms, maximum 161.254 ms,
+and Stop p95 was 1.104 ms. All 20 Raw logs matched the expected cycle. The
+one-busy run on that commit completed its 600 samples and matched the
+cycle, but every history request on the receiving session returned busy.
+New archive rows could evict an entire lazy indexing slice between requests.
+The Rust model now catches up with the index during reception after the first
+history request. The regression test exceeds the original per-request slice.
+
 At commit `801f96f`, the self-contained Windows x64 package passed both MCP
 bridge integration checks. The package SHA-256 was
 `6B2DC4928BCC613E3614609241A96222CC4AFF7832C83F2A8B5AFD39C26DF78D`.

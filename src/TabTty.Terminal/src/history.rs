@@ -378,19 +378,13 @@ impl Model {
         if archive.bases != bases {
             return Err(1);
         }
-        let mut prior = indexed
-            .checked_sub(1)
-            .map(|i| after(&self.history[i], &self.unicode));
-        for row in self.history.iter_mut().skip(indexed).take(BUILD_ROWS) {
-            let before = row.bytes();
-            prior = Some(normalize(row, prior, &self.unicode));
-            self.history_bytes = self.history_bytes - before + row.bytes();
-            archive.append(row.logical_id, whole(row, bases));
-        }
+        self.index_archived_rows(BUILD_ROWS);
+        let archive = self.history_index.as_mut().unwrap();
         if archive.count() < self.history.len() {
             self.update_accounting();
             return Err(BUSY);
         }
+        let mut prior = self.history.back().map(|row| after(row, &self.unicode));
         archive.page.clear();
         let page = self
             .parked
@@ -407,6 +401,26 @@ impl Model {
         let count = self.history.len() + page.len();
         self.update_accounting();
         Ok(count)
+    }
+
+    pub(super) fn index_archived_rows(&mut self, maximum: usize) {
+        let archive = match &mut self.history_index {
+            Some(archive) => archive,
+            None => return,
+        };
+        let indexed = archive.count();
+        if indexed == self.history.len() {
+            return;
+        }
+        let mut prior = indexed
+            .checked_sub(1)
+            .map(|i| after(&self.history[i], &self.unicode));
+        for row in self.history.iter_mut().skip(indexed).take(maximum) {
+            let before = row.bytes();
+            prior = Some(normalize(row, prior, &self.unicode));
+            self.history_bytes = self.history_bytes - before + row.bytes();
+            archive.append(row.logical_id, whole(row, archive.bases));
+        }
     }
 
     fn normal_rows(&self) -> std::collections::vec_deque::Iter<'_, Row> {
@@ -484,5 +498,28 @@ impl Model {
             return Err(1);
         }
         Ok(fragment(row, archive.bases, from, to))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn observation_can_catch_up_when_output_evicts_a_full_build_slice() {
+        let mut model = Model::new(80, 24, 5000, 1);
+        for _ in 0..5000 {
+            model.feed(0, b"initial\r\n", 0).unwrap();
+        }
+        let bases = [257, 263];
+        assert_eq!(model.prepare_history(bases, true), Err(BUSY));
+        for _ in 0..2400 {
+            model.feed(0, b"streaming\r\n", 0).unwrap();
+        }
+        assert_eq!(model.prepare_history(bases, true), Ok(5000));
+        for _ in 0..2400 {
+            model.feed(0, b"continued\r\n", 0).unwrap();
+        }
+        assert_eq!(model.prepare_history(bases, false), Ok(5000));
     }
 }

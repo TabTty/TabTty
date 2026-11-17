@@ -727,6 +727,7 @@ pub struct Model {
     decoder_workspace: u64,
     history: VecDeque<Row>,
     history_index: Option<history::Archive>,
+    archived_during_operation: usize,
     screen: VecDeque<Row>,
     spares: Vec<Row>,
     history_bytes: usize,
@@ -813,6 +814,7 @@ impl Model {
             decoder_workspace: 0,
             history: VecDeque::with_capacity(retained),
             history_index: None,
+            archived_during_operation: 0,
             screen,
             spares: Vec::with_capacity(2),
             history_bytes: 0,
@@ -1017,6 +1019,7 @@ impl Model {
     fn start_call(&mut self, flags: u32) -> Result<(), i32> {
         self.invalidate_prepared();
         self.content_stamp = self.content_stamp.checked_add(1).ok_or(RESOURCE)?;
+        self.archived_during_operation = 0;
         self.clear_effects();
         if self.failed {
             return Err(UNSUPPORTED);
@@ -1040,6 +1043,10 @@ impl Model {
             if code == UNSUPPORTED {
                 self.unsupported += 1;
             }
+        } else if self.archived_during_operation != 0 {
+            // Once history is requested, keep newly archived rows indexed and
+            // work through any backlog faster than live output adds to it.
+            self.index_archived_rows(self.archived_during_operation.saturating_mul(2));
         }
         self.update_accounting();
         result
@@ -1722,6 +1729,7 @@ impl Model {
                 self.history_pending_units += old.pending_units();
                 self.history_cell_capacity += old.cells.capacity() as u64;
                 self.history.push_back(old);
+                self.archived_during_operation += 1;
             }
             let mut row = self.new_row();
             row.erase(0, self.columns, self.style.erase(), self.content_stamp);
