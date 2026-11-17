@@ -78,6 +78,29 @@ New archive rows could evict an entire lazy indexing slice between requests.
 The Rust model now catches up with the index during reception after the first
 history request. The regression test exceeds the original per-request slice.
 
+Commit `40935e7` passed 35 Rust tests, 80 Core tests, 27 WPF checks, and both
+packaged MCP checks. An isolated loader check rejected a missing native
+library and a library with an older ABI. The packaged ZIP SHA-256 is
+`A87A9F9D7093850869A9A96191E931314849B5DD1809BD6EFEB406E285572AC7`.
+The repaired candidate accepted 12 history or search requests on the receiving
+session during the 12-second concentrated-load probe.
+
+The repaired 30-minute one-busy run passed with 600 interactions. Local p95
+was 20.612 ms, maximum 143.356 ms, and Stop p95 was 1.093 ms. The receiving
+session accepted 2,391 history or search requests. All 20 Raw files matched
+the assigned input and there were no disconnects. Measured payload throughput
+was 1,048,571 bytes/s.
+
+The equal-distribution rerun on `40935e7` also passed 600 interactions.
+Local p95 was 15.728 ms, maximum 142.737 ms, and Stop p95 was 0.326 ms.
+All 20 Raw files matched the assigned input, with no disconnects and
+1,048,446 measured payload bytes/s. Both reruns used the native DLL packaged
+in the verified ZIP. The background-memory rerun on the same candidate passed
+at every count from one through six tabs. Its maximum private memory was
+701,530,112 bytes and its maximum working set was 780,509,184 bytes.
+Fresh-machine deployment and interoperability with independent full-screen
+terminal applications remain unverified.
+
 At commit `801f96f`, the self-contained Windows x64 package passed both MCP
 bridge integration checks. The package SHA-256 was
 `6B2DC4928BCC613E3614609241A96222CC4AFF7832C83F2A8B5AFD39C26DF78D`.
