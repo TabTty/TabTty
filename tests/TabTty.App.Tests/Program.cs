@@ -29,6 +29,17 @@ internal static partial class Program
 #pragma warning restore WPF0001
         try
         {
+            if (args is ["--background-memory", var count, var memoryReport] &&
+                int.TryParse(count, out int receivers) && receivers is >= 1 and <= 6)
+            {
+                var memoryFrame = new DispatcherFrame();
+                Task run = application.Dispatcher.InvokeAsync(() =>
+                    BackgroundReceiveMemory(settingsDirectory, receivers, memoryReport)).Task.Unwrap();
+                _ = run.ContinueWith(_ => memoryFrame.Continue = false, TaskScheduler.Default);
+                Dispatcher.PushFrame(memoryFrame);
+                run.GetAwaiter().GetResult();
+                return 0;
+            }
             if (args is ["--architecture-workload", var port, var seconds, var report] &&
                 int.TryParse(port, out int fixturePort) && int.TryParse(seconds, out int duration) &&
                 duration is >= 3 and <= 1800)
@@ -119,7 +130,7 @@ internal static partial class Program
             Dispatcher.PushFrame(presentationFrame);
             presentationTest.GetAwaiter().GetResult();
             Console.WriteLine("PASS TerminalReceivesWhilePresentationIsPaused");
-            if (NativeTerminalCore.Enabled)
+
             {
                 var nativePresentationFrame = new DispatcherFrame();
                 Task nativePresentationTest = application.Dispatcher.InvokeAsync(() => TerminalReceivesWhilePresentationIsPaused(verifyNativeResidency: true)).Task.Unwrap();
@@ -1077,10 +1088,6 @@ internal static partial class Program
 
     private static async Task TerminalReceivesWhilePresentationIsPaused(bool verifyNativeResidency)
     {
-        if (verifyNativeResidency && !NativeTerminalCore.Enabled)
-            throw new InvalidOperationException("The native UTF-8 baseline requires the Rust terminal core.");
-        long initialHandoffs = Interlocked.Read(ref NativeTerminalCoreDiagnostics.ManagedHandoffs);
-        long initialFallbacks = Interlocked.Read(ref NativeTerminalCoreDiagnostics.ManagedFallbackModels);
         long initialModels = Interlocked.Read(ref NativeTerminalCoreDiagnostics.CreatedModels);
         long initialFedBytes = Interlocked.Read(ref NativeTerminalCoreDiagnostics.FedBytes);
         string directory = Directory.CreateTempSubdirectory("TabTty-presentation-test-").FullName;
@@ -1190,9 +1197,7 @@ internal static partial class Program
                     operations.Contains("入力", StringComparison.Ordinal) ||
                     operations.Contains("\u001b[5n", StringComparison.Ordinal))
                     throw new InvalidOperationException("The Terminal log did not preserve only committed local echo and display operations.");
-                if (Interlocked.Read(ref NativeTerminalCoreDiagnostics.ManagedHandoffs) != initialHandoffs ||
-                    Interlocked.Read(ref NativeTerminalCoreDiagnostics.ManagedFallbackModels) != initialFallbacks ||
-                    Interlocked.Read(ref NativeTerminalCoreDiagnostics.CreatedModels) - initialModels < 2 ||
+                if (Interlocked.Read(ref NativeTerminalCoreDiagnostics.CreatedModels) - initialModels < 2 ||
                     Interlocked.Read(ref NativeTerminalCoreDiagnostics.FedBytes) <= initialFedBytes)
                     throw new InvalidOperationException("The naturally sized terminal did not stay native through startup, minimize, restore, and tab switching.");
             }

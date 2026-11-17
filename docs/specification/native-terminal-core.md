@@ -2,9 +2,8 @@
 
 Architecture direction accepted on 2026-11-16 in
 [ADR 0007](../adr/0007-complete-terminal-processing-in-rust.md).
-This is the target design, not implemented behavior or new test evidence.
-The [current implementation](implementation-status.md) still has a partial
-Rust implementation and managed handoff. The recording-interface design is
+The [implementation status](implementation-status.md) records the implemented
+ownership boundary and the validation results. The recording-interface design is
 confirmed through Q5. Q6-Q8 confirm shared interpretation rules with separate
 admission and execution walks and their verification contract. The
 [closure design](tab-and-window-closure.md) records Q9's ownership scope,

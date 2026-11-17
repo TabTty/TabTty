@@ -1,96 +1,74 @@
-using System.Text;
-
 namespace TabTty.Core;
 
-// The session reducer owns the projections and changes their admission interval.
+// The session orders recording parts and owns their files. The two terminal
+// models stay active across intervals so neither has to reconstruct prior output.
 internal sealed class TerminalRecordings
 {
     private readonly TerminalOutput terminal;
     private readonly TerminalOutput? receiveOnly;
-    private readonly bool raw;
-    private readonly bool recordTerminal;
-    private readonly StringBuilder text = new();
-    private readonly StringBuilder operations = new();
+    private readonly bool raw, recordTerminal;
     private SessionRecording? part;
     private int interval;
-    private TerminalReceiveSource? alternateCr;
-    private readonly RecordedTextPosition position;
 
     public TerminalRecordings(TerminalOutput terminal, ConnectionProfile profile, SessionRecording initial, int retainedRows,
         (int Columns, int Rows) grid)
     {
         this.terminal = terminal;
-        terminal.NativeRecordingCallbacks = true;
-        position = new RecordedTextPosition(profile.AmbiguousWidth);
         raw = profile.RecordRaw;
         recordTerminal = profile.RecordTerminal;
-        if (profile.RecordTerminal)
-        {
-            terminal.DisplayOperation = (value, epoch, _) =>
-                {
-                    if (part is not null && epoch == interval)
-                        Append(RecordingFormat.Terminal, operations, value);
-                };
-        }
         if (profile.RecordText)
-        {
             receiveOnly = new TerminalOutput(grid.Columns, retainedRows, grid.Rows,
-                profile.ReceiveEncoding, profile.ReceiveSevenBitKana, profile.AmbiguousWidth, terminal.StateQuota)
-            {
-                NativeRecordingCallbacks = true,
-                ImportRecordingPosition = position.Import,
-                ImportAlternateCr = previous => alternateCr = previous,
-                RecordingColumn = () => position.Column,
-                DisplayOperation = ApplyAlternate,
-                LeavingAlternateScreen = FlushAlternateCr,
-                SourceCharacter = (character, epoch, source) =>
-                {
-                    if (alternateCr is { } previous &&
-                        (character.Value != '\n' || epoch != interval || source != previous))
-                        FlushAlternateCr();
-                },
-            };
+                profile.ReceiveEncoding, profile.ReceiveSevenBitKana, profile.AmbiguousWidth, terminal.StateQuota);
+        try { Start(initial); }
+        catch
+        {
+            ReleaseReceiveOnlyState();
+            throw;
         }
-
-        Start(initial);
     }
 
     public void Start(SessionRecording recording)
     {
         if (part is not null) throw new InvalidOperationException("A recording interval is already active.");
-        AdvanceInterval();
+        interval = checked(interval + 1);
         try
         {
-            if (recordTerminal) terminal.BeginRecording(text: false);
-            receiveOnly?.BeginRecording(text: true);
+            if (recordTerminal)
+                terminal.BeginRecording(false, interval, value => Write(RecordingFormat.Terminal, value), MarkRefused);
+            receiveOnly?.BeginRecording(true, interval, value => Write(RecordingFormat.Text, value), MarkRefused);
         }
         catch
         {
-            if (recordTerminal) terminal.EndRecording(text: false, abort: true);
-            receiveOnly?.EndRecording(text: true, abort: true);
+            EndBoth(abort: true);
             throw;
         }
         part = recording;
-        if (recordTerminal) terminal.NativeDisplayRecord = value => EnqueueNative(RecordingFormat.Terminal, value);
-        position.Reset();
-        if (receiveOnly is null) return;
-        receiveOnly.NativeTextRecord = value => EnqueueNative(RecordingFormat.Text, value);
-        receiveOnly.TextRecord = value => Append(RecordingFormat.Text, text, value);
     }
 
     public void Receive(TerminalReceiveSource source, byte[] payload, CancellationToken token = default)
     {
+        token.ThrowIfCancellationRequested();
         if (raw) part?.Enqueue(RecordingFormat.Raw, payload);
-        terminal.Receive(source, payload, token);
-        receiveOnly?.Receive(source, payload);
-        receiveOnly?.TakeReplies();
-        FlushBuffers();
+        if (!terminal.TryReceive(source, payload, token))
+        {
+            RefuseActiveRecording();
+            terminal.Receive(source, payload, token);
+        }
+        if (receiveOnly is null) return;
+        // Once display has committed, the other projection must see the same input.
+        if (!receiveOnly.TryReceive(source, payload))
+        {
+            RefuseActiveRecording();
+            receiveOnly.Receive(source, payload);
+        }
+        receiveOnly.TakeReplies();
     }
 
     public void Echo(ReadOnlySpan<byte> payload)
     {
+        if (terminal.TryEcho(payload)) return;
+        RefuseActiveRecording();
         terminal.EchoUtf8(payload);
-        FlushBuffers();
     }
 
     public void Resize(int columns, int rows)
@@ -99,148 +77,66 @@ internal sealed class TerminalRecordings
         using var receiveResize = receiveOnly?.PrepareNativeResize(columns, rows);
         terminal.Resize(columns, rows, displayResize);
         receiveOnly?.Resize(columns, rows, receiveResize);
-        FlushBuffers();
     }
 
     public void CompleteReceive()
     {
         try
         {
-            terminal.CompleteReceive();
-            receiveOnly?.CompleteReceive();
+            Complete(terminal);
+            if (receiveOnly is not null) Complete(receiveOnly);
         }
         finally
         {
             try { Cutoff(); }
-            finally { receiveOnly?.ReleaseNativeState(); }
+            finally { ReleaseReceiveOnlyState(); }
         }
+    }
+
+    private void Complete(TerminalOutput output)
+    {
+        if (output.TryCompleteReceive()) return;
+        RefuseActiveRecording();
+        output.CompleteReceive();
     }
 
     public void Cutoff()
     {
         if (part is null) return;
-        AdvanceInterval();
-        try
+        interval = checked(interval + 1);
+        try { EndBoth(abort: part.Failure is not null); }
+        catch (ResourceLimitException error)
         {
-            receiveOnly?.EndRecording(text: true, abort: false);
-            if (recordTerminal) terminal.EndRecording(text: false, abort: false);
-            FlushAlternateCr();
-            FlushBuffers();
+            part.MarkIncomplete(error.Message);
+            EndBoth(abort: true);
         }
-        catch (ResourceLimitException exception)
-        {
-            part?.MarkIncomplete(exception.Message);
-            EndWithoutFlush();
-        }
-        finally { ClearActive(); }
+        finally { part = null; }
     }
 
     public void Abort()
     {
-        if (part is not null)
-        {
-            AdvanceInterval();
-            try { EndWithoutFlush(); }
-            finally { ClearActive(); }
-        }
-        alternateCr = null;
-        text.Clear();
-        operations.Clear();
+        if (part is null) return;
+        interval = checked(interval + 1);
+        try { EndBoth(abort: true); }
+        finally { part = null; }
+    }
+
+    private void EndBoth(bool abort)
+    {
+        try { receiveOnly?.EndRecording(interval, abort); }
+        finally { terminal.EndRecording(interval, abort); }
     }
 
     public void ReleaseReceiveOnlyState() => receiveOnly?.ReleaseNativeState();
 
-    private void EndWithoutFlush()
-    {
-        receiveOnly?.EndRecording(text: true, abort: true);
-        if (recordTerminal) terminal.EndRecording(text: false, abort: true);
-    }
+    private void Write(RecordingFormat format, byte[] value) => part?.Enqueue(format, value);
 
-    private void ClearActive()
-    {
-        if (receiveOnly is not null)
-        {
-            receiveOnly.TextRecord = null;
-            receiveOnly.NativeTextRecord = null;
-        }
-        terminal.NativeDisplayRecord = null;
-        part = null;
-        alternateCr = null;
-        text.Clear();
-        operations.Clear();
-    }
+    private void MarkRefused() => part?.MarkIncomplete(new ResourceLimitException().Message);
 
-    private void AdvanceInterval()
+    private void RefuseActiveRecording()
     {
-        interval = checked(interval + 1);
-        terminal.RecordingInterval = interval;
-        if (receiveOnly is not null) receiveOnly.RecordingInterval = interval;
-    }
-
-    private void ApplyAlternate(string operation, int epoch, TerminalReceiveSource source)
-    {
-        if (!receiveOnly!.IsAlternateScreen || part is null) return;
-        if (alternateCr is { } previous)
-        {
-            alternateCr = null;
-            if (operation == "\n" && previous == source && epoch == interval)
-            {
-                Append(RecordingFormat.Text, text, "\r\n");
-                return;
-            }
-            Append(RecordingFormat.Text, text, "\n");
-        }
-        if (epoch != interval) return;
-        if (operation == "\r") alternateCr = source;
-        else if (operation is "\n" or "\t" || operation[0] >= ' ')
-            Append(RecordingFormat.Text, text, operation);
-    }
-
-    private void FlushAlternateCr()
-    {
-        if (alternateCr is null) return;
-        alternateCr = null;
-        Append(RecordingFormat.Text, text, "\n");
-    }
-
-    private void EnqueueNative(RecordingFormat format, byte[] value)
-    {
-        // Native output is already UTF-8; the asynchronous writer owns this array.
-        if (part is { Failure: null } recording) recording.Enqueue(format, value);
-    }
-
-    private void Append(RecordingFormat format, StringBuilder buffer, string value)
-    {
-        if (part?.Failure is not null) return;
-        if (format == RecordingFormat.Text) position.Append(value);
-        buffer.Append(value);
-        if (buffer.Length >= 4096) Flush(format, buffer);
-    }
-
-    private void FlushBuffers()
-    {
-        Flush(RecordingFormat.Text, text);
-        Flush(RecordingFormat.Terminal, operations);
-    }
-
-    private void Flush(RecordingFormat format, StringBuilder buffer)
-    {
-        if (buffer.Length == 0) return;
-        if (part is { } recording)
-        {
-            if (buffer.Length <= 4096)
-            {
-                Span<char> characters = stackalloc char[buffer.Length];
-                // Copy contiguous UTF-16 so surrogate pairs may cross StringBuilder chunks.
-                buffer.CopyTo(0, characters, characters.Length);
-                byte[] payload = new byte[Encoding.UTF8.GetByteCount(characters)];
-                Encoding.UTF8.GetBytes(characters, payload);
-                // The asynchronous writer owns this exact-sized array until it completes.
-                recording.Enqueue(format, payload);
-            }
-            else
-                recording.Enqueue(format, Encoding.UTF8.GetBytes(buffer.ToString()));
-        }
-        buffer.Clear();
+        if (part is null) throw new ResourceLimitException();
+        MarkRefused();
+        Abort();
     }
 }

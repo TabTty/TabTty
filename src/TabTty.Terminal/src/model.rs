@@ -1,23 +1,28 @@
 use crate::unicode::Unicode;
 use crate::{
-    account, CellView, CursorView, EditingView, Effects, ExportRow, ExportState, FormatView,
-    PageView, RowView, ScreenRowView, ScreenState, SnapshotView, SourceView, Stats, TabView,
-    LIVE_MODELS,
+    account, CellView, Effects, FormatView, ReceiveObservation, RowView, ScreenRowView,
+    ScreenState, SnapshotView, Stats, TabView, LIVE_MODELS,
 };
 #[cfg(windows)]
 use crate::{legacy_receive::Receiver, windows_icu};
+#[cfg(test)]
+use crate::{CursorView, EditingView, ExportRow, ExportState, PageView, SourceView};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 use std::mem::size_of;
+#[cfg(test)]
 use std::ptr;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 #[cfg(test)]
 #[path = "admission_tests.rs"]
 mod admission_tests;
+#[path = "history.rs"]
+mod history;
 #[path = "reflow.rs"]
 mod reflow;
+pub use history::{HistoryProof, HistoryRowView, HistorySlice};
 // Native identities are process-unique and disjoint from C#'s positive row IDs.
 static NEXT_ROW_ID: AtomicI64 = AtomicI64::new(-1);
 fn next_row_id() -> i64 {
@@ -26,6 +31,7 @@ fn next_row_id() -> i64 {
         .expect("Native terminal row identity space exhausted.")
 }
 const NULL: u16 = u16::MAX;
+const RECORDING_EFFECT_LIMIT: usize = 256 * 1024;
 pub const UNSUPPORTED: i32 = 2;
 pub const RESOURCE: i32 = 3;
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -33,6 +39,51 @@ struct Style {
     fg: u32,
     bg: u32,
     flags: u32,
+}
+
+struct RecordingBuffer {
+    bytes: Vec<u8>,
+    refused: bool,
+}
+
+impl RecordingBuffer {
+    fn new() -> Self {
+        Self {
+            bytes: Vec::new(),
+            refused: false,
+        }
+    }
+
+    fn clear(&mut self) {
+        self.bytes.clear();
+        self.refused = false;
+    }
+
+    fn append(&mut self, bytes: &[u8]) {
+        if self.refused {
+            return;
+        }
+        if bytes.len() > RECORDING_EFFECT_LIMIT - self.bytes.len() {
+            self.refuse();
+        } else {
+            self.bytes.extend_from_slice(bytes);
+        }
+    }
+
+    fn refuse(&mut self) {
+        self.bytes.clear();
+        self.refused = true;
+    }
+
+    fn scalar(&mut self, scalar: u32) {
+        let mut bytes = [0; 4];
+        self.append(
+            char::from_u32(scalar)
+                .unwrap()
+                .encode_utf8(&mut bytes)
+                .as_bytes(),
+        );
+    }
 }
 impl Style {
     fn erase(self) -> Self {
@@ -45,6 +96,7 @@ impl Style {
 impl CellView {
     fn blank(s: Style) -> Self {
         Self {
+            revision: 0,
             offset: 0,
             length: NULL,
             width: 0,
@@ -159,7 +211,7 @@ impl Row {
     fn format_units(&self) -> usize {
         self.formats.len() + self.formats.last().map_or(0, |mark| mark.column as usize)
     }
-    fn add_format(&mut self, column: usize) -> Result<(), i32> {
+    fn add_format(&mut self, column: usize, revision: i64) -> Result<(), i32> {
         let column = column as u32;
         let start = self.formats.partition_point(|mark| mark.column < column);
         let end = self.formats.partition_point(|mark| mark.column <= column);
@@ -169,6 +221,7 @@ impl Row {
         self.formats.insert(
             end,
             FormatView {
+                revision,
                 column,
                 scalar: 0xfeff,
             },
@@ -189,7 +242,7 @@ impl Row {
             &self.arena[c.offset as usize..c.offset as usize + c.length as usize]
         }
     }
-    fn clear_cells(&mut self, mut start: usize, mut end: usize) {
+    fn clear_cells(&mut self, mut start: usize, mut end: usize, revision: i64) {
         self.invalidate();
         self.tabs.retain(|&(a, b)| !(a < end && b > start));
         if start >= self.cells.len() || end <= start {
@@ -202,8 +255,19 @@ impl Row {
         if end < self.cells.len() && self.cells[end].width == -1 {
             end += 1;
         }
-        for c in &mut self.cells[start..end] {
-            *c = CellView::blank(Style::default());
+        for cell in &mut self.cells[start..end] {
+            if cell.width != 0 {
+                *cell = CellView {
+                    revision,
+                    ..CellView::blank(Style::default())
+                };
+            } else {
+                let revision = cell.revision;
+                *cell = CellView {
+                    revision,
+                    ..CellView::blank(Style::default())
+                };
+            }
         }
         while self
             .cells
@@ -231,6 +295,7 @@ impl Row {
         value: &[u16],
         width: usize,
         style: Style,
+        revision: i64,
     ) -> Result<(), i32> {
         if column < self.cells.len() {
             let old = self.cells[column];
@@ -246,7 +311,7 @@ impl Row {
                 return Ok(());
             }
         }
-        self.clear_cells(column, column + width);
+        self.clear_cells(column, column + width, revision);
         if self.arena.len() > self.cells.len().max(128) * 8 {
             self.compact_arena();
         }
@@ -260,6 +325,7 @@ impl Row {
         let offset = self.arena.len() as u32;
         self.arena.extend_from_slice(value);
         self.cells[column] = CellView {
+            revision,
             offset,
             length: value.len() as u16,
             width: width as i16,
@@ -275,22 +341,25 @@ impl Row {
         }
         Ok(())
     }
-    fn erase(&mut self, mut start: usize, mut end: usize, style: Style) {
+    fn erase(&mut self, mut start: usize, mut end: usize, style: Style, revision: i64) {
         if start < self.cells.len() && self.cells[start].width == -1 {
             start -= 1;
         }
         if end < self.cells.len() && self.cells[end].width == -1 {
             end += 1;
         }
-        self.clear_cells(start, end);
+        self.clear_cells(start, end, revision);
         self.formats
             .retain(|mark| !(start..end).contains(&(mark.column as usize)));
         if style != Style::default() {
             if self.cells.len() < end {
                 self.cells.resize(end, CellView::blank(Style::default()));
             }
-            for c in &mut self.cells[start..end] {
-                *c = CellView::blank(style);
+            for cell in &mut self.cells[start..end] {
+                *cell = CellView {
+                    revision: cell.revision,
+                    ..CellView::blank(style)
+                };
             }
         }
     }
@@ -301,10 +370,11 @@ impl Row {
         columns: usize,
         insert: bool,
         style: Style,
+        revision: i64,
     ) {
         if insert {
             if self.cells.get(start).map_or(false, |cell| cell.width == -1) {
-                self.clear_cells(start, start + 1);
+                self.clear_cells(start, start + 1, revision);
             }
             self.cells.resize(
                 self.cells.len().max(start) + count,
@@ -320,7 +390,7 @@ impl Row {
                 self.cells.truncate(columns);
             }
         } else {
-            self.clear_cells(start, start + count);
+            self.clear_cells(start, start + count, revision);
             if start < self.cells.len() {
                 let end = (start + count).min(self.cells.len());
                 self.cells.drain(start..end);
@@ -334,9 +404,13 @@ impl Row {
             }
         }
         self.tabs.clear();
+        for cell in self.cells.iter_mut().skip(start) {
+            cell.revision = revision;
+        }
         for mark in &mut self.formats {
             let column = mark.column as usize;
             if column >= start {
+                mark.revision = revision;
                 mark.column = if insert {
                     column + count
                 } else if column >= start + count {
@@ -380,10 +454,7 @@ impl Row {
         prefix: Option<usize>,
         pending_only: bool,
     ) -> Vec<u16> {
-        let mut end = self.cells.len();
-        while end > 0 && self.cells[end - 1].width == 0 {
-            end -= 1;
-        }
+        let mut end = self.text_end();
         if preserve_tabs {
             end = end.max(self.tabs.last().map_or(0, |t| t.1));
         }
@@ -435,6 +506,13 @@ impl Row {
             self.plain = self.serialize(false, None);
             self.dirty = false;
         }
+    }
+    fn text_end(&self) -> usize {
+        self.cells
+            .iter()
+            .rposition(|cell| cell.width != 0)
+            .map_or(0, |last| last + 1)
+            .max(self.formats.last().map_or(0, |mark| mark.column as usize))
     }
 }
 #[derive(Default)]
@@ -496,6 +574,7 @@ struct Page {
 }
 
 impl Page {
+    #[cfg(test)]
     fn view(&self, first: usize) -> PageView {
         PageView {
             first: first as u32,
@@ -647,6 +726,7 @@ pub struct Model {
     ambiguous: usize,
     decoder_workspace: u64,
     history: VecDeque<Row>,
+    history_index: Option<history::Archive>,
     screen: VecDeque<Row>,
     spares: Vec<Row>,
     history_bytes: usize,
@@ -692,8 +772,10 @@ pub struct Model {
     cursor_blink: bool,
     cursor_shape: u32,
     bells: u32,
-    terminal_log: Vec<u8>,
-    text_log: Vec<u8>,
+    terminal_log: RecordingBuffer,
+    text_log: RecordingBuffer,
+    observe: bool,
+    observations: Vec<ReceiveObservation>,
     replies: Vec<u8>,
     position: RecordedPosition,
     view_rows: Vec<RowView>,
@@ -706,10 +788,15 @@ pub struct Model {
     limit: u64,
     quota: u64,
     generation: u64,
+    content_stamp: i64,
     prepared: PreparedOperation,
+    #[cfg(test)]
     export_rows: Vec<ExportRow>,
+    #[cfg(test)]
     export_tabs: Vec<TabView>,
+    #[cfg(test)]
     export_sources: [SourceView; 3],
+    #[cfg(test)]
     export_editing: EditingView,
 }
 impl Model {
@@ -725,6 +812,7 @@ impl Model {
             ambiguous,
             decoder_workspace: 0,
             history: VecDeque::with_capacity(retained),
+            history_index: None,
             screen,
             spares: Vec::with_capacity(2),
             history_bytes: 0,
@@ -777,8 +865,10 @@ impl Model {
             cursor_blink: true,
             cursor_shape: 0,
             bells: 0,
-            terminal_log: Vec::with_capacity(8192),
-            text_log: Vec::with_capacity(8192),
+            terminal_log: RecordingBuffer::new(),
+            text_log: RecordingBuffer::new(),
+            observe: false,
+            observations: Vec::new(),
             replies: Vec::with_capacity(2048),
             position: RecordedPosition::default(),
             view_rows: Vec::new(),
@@ -791,10 +881,15 @@ impl Model {
             limit: u64::MAX,
             quota: 0,
             generation: 0,
+            content_stamp: 0,
             prepared: PreparedOperation::default(),
+            #[cfg(test)]
             export_rows: Vec::new(),
+            #[cfg(test)]
             export_tabs: Vec::new(),
+            #[cfg(test)]
             export_sources: [SourceView::empty(); 3],
+            #[cfg(test)]
             export_editing: EditingView {
                 margin_top: 0,
                 margin_bottom: 0,
@@ -839,13 +934,17 @@ impl Model {
                 .iter()
                 .map(|s| s.parameters.capacity() + s.last_graphic.capacity() * 4)
                 .sum::<usize>()
-            + self.terminal_log.capacity()
-            + self.text_log.capacity()
+            + self.terminal_log.bytes.capacity()
+            + self.text_log.bytes.capacity()
+            + self.observations.capacity() * size_of::<ReceiveObservation>()
             + self.replies.capacity()
             + self.view_rows.capacity() * size_of::<RowView>()
-            + self.export_rows.capacity() * size_of::<ExportRow>()
-            + self.export_tabs.capacity() * size_of::<TabView>()) as u64
+            + self.export_workspace()) as u64
             + self.decoder_workspace
+            + self
+                .history_index
+                .as_ref()
+                .map_or(0, |_| history::Archive::required(self.retained))
     }
 
     #[cfg(windows)]
@@ -858,6 +957,16 @@ impl Model {
         self.update_accounting();
         Ok(())
     }
+    fn export_workspace(&self) -> usize {
+        #[cfg(test)]
+        {
+            return self.export_rows.capacity() * size_of::<ExportRow>()
+                + self.export_tabs.capacity() * size_of::<TabView>();
+        }
+        #[cfg(not(test))]
+        0
+    }
+
     fn update_accounting(&mut self) {
         self.invalidate_prepared();
         let owned = self.owned();
@@ -886,28 +995,33 @@ impl Model {
     }
     pub fn effects(&self) -> Effects {
         Effects {
-            text: self.text_log.as_ptr(),
-            text_length: self.text_log.len() as u32,
+            text: self.text_log.bytes.as_ptr(),
+            text_length: self.text_log.bytes.len() as u32,
             reserved0: ((self.bracketed_paste as u32) << 4)
                 | ((self.application_cursor as u32) << 5)
                 | ((self.application_keypad as u32) << 6)
                 | ((self.parked.is_some() as u32) << 7)
                 | (self.bells << 8),
-            terminal: self.terminal_log.as_ptr(),
-            terminal_length: self.terminal_log.len() as u32,
+            terminal: self.terminal_log.bytes.as_ptr(),
+            terminal_length: self.terminal_log.bytes.len() as u32,
             reply_length: self.replies.len() as u32,
             replies: self.replies.as_ptr(),
             mouse_tracking: self.mouse_tracking | ((self.mouse_sgr as u32) << 31),
             mouse_generation: self.mouse_generation,
             layout_epoch: self.layout_epoch,
+            observations: self.observations.as_ptr(),
+            observation_count: self.observations.len() as u32,
+            recording_refused: (self.text_log.refused || self.terminal_log.refused) as u32,
         }
     }
     fn start_call(&mut self, flags: u32) -> Result<(), i32> {
         self.invalidate_prepared();
+        self.content_stamp = self.content_stamp.checked_add(1).ok_or(RESOURCE)?;
         self.clear_effects();
         if self.failed {
             return Err(UNSUPPORTED);
         }
+        self.observe = flags & 4 != 0;
         let flags = flags & 3;
         if let Some(prior) = self.logging {
             if prior != flags {
@@ -1101,6 +1215,9 @@ impl Model {
     fn resize_normal_height(&mut self, rows: usize) {
         let cursor = self.history.len() + self.cursor_row;
         let archived = (self.history.len() + self.screen.len()).saturating_sub(rows);
+        if archived != self.history.len() {
+            self.history_index = None;
+        }
         while self.history.len() < archived {
             let row = self.screen.pop_front().unwrap();
             self.history_bytes += row.bytes();
@@ -1149,10 +1266,12 @@ impl Model {
         self.text_log.clear();
         self.terminal_log.clear();
         self.replies.clear();
+        self.observations.clear();
         self.bells = 0;
     }
 
     fn apply_reflow(&mut self, mut planned: reflow::Reflow, columns: usize, rows: usize) {
+        self.history_index = None;
         let first = planned.rows.len().saturating_sub(rows);
         self.screen = planned.rows.split_off(first);
         self.history = planned.rows;
@@ -1176,7 +1295,11 @@ impl Model {
                 self.cluster_column = column;
             }
         }
-        self.text_log.extend(planned.text);
+        if planned.text.refused {
+            self.text_log.refuse();
+        } else {
+            self.text_log.append(&planned.text.bytes);
+        }
         self.position = planned.position;
         self.columns = columns;
         self.screen_rows = rows;
@@ -1261,16 +1384,16 @@ impl Model {
     }
     fn operation_scalar(&mut self, c: u32) {
         if self.record_unit && self.logging.unwrap_or(0) & 1 != 0 {
-            append_utf8(&mut self.terminal_log, c);
+            self.terminal_log.scalar(c);
         }
     }
     fn operation_bytes(&mut self, bytes: &[u8]) {
         if self.record_unit && self.logging.unwrap_or(0) & 1 != 0 {
-            self.terminal_log.extend_from_slice(bytes);
+            self.terminal_log.append(bytes);
         }
     }
     fn text_scalar(&mut self, scalar: u32) {
-        append_utf8(&mut self.text_log, scalar);
+        self.text_log.scalar(scalar);
         self.position.append(scalar, &self.unicode, self.ambiguous);
     }
 
@@ -1294,6 +1417,14 @@ impl Model {
     }
 
     fn apply(&mut self, source: &mut Source, c: u32, interval: u32) -> Result<(), i32> {
+        if self.observe && self.active_source < 2 {
+            let visible = source.escape == 0
+                || source.escape != 3 && source.escape != 4 && matches!(c, 9 | 10 | 13);
+            self.observations.push(ReceiveObservation {
+                scalar: c,
+                flags: self.active_source as u32 | ((visible as u32) << 1),
+            });
+        }
         if is_control(c) {
             source.last_was_graphic = false;
         }
@@ -1420,7 +1551,7 @@ impl Model {
             self.ensure_cursor();
             self.screen[self.cursor_row].excluded |= !self.record_unit;
             return self.screen[self.cursor_row]
-                .add_format(self.column + self.wrap_pending as usize);
+                .add_format(self.column + self.wrap_pending as usize, self.content_stamp);
         }
         if self.cluster_row != 0 && self.unicode.joins(&self.cluster, c) {
             if self.cluster.len() == 256 {
@@ -1461,11 +1592,18 @@ impl Model {
                 self.columns,
                 true,
                 self.style.erase(),
+                self.content_stamp,
             );
         }
         let mut text = [0u16; 2];
         let value = char::from_u32(c).unwrap().encode_utf16(&mut text);
-        self.screen[self.cursor_row].write(self.column, value, width, self.style)?;
+        self.screen[self.cursor_row].write(
+            self.column,
+            value,
+            width,
+            self.style,
+            self.content_stamp,
+        )?;
         self.after_cluster();
         Ok(())
     }
@@ -1479,6 +1617,7 @@ impl Model {
         self.screen[index].clear_cells(
             self.cluster_column,
             self.cluster_column + self.cluster_width,
+            self.content_stamp,
         );
         if self.cluster_column + width > self.columns {
             if self.auto_wrap {
@@ -1508,6 +1647,7 @@ impl Model {
             &text[..length],
             width,
             self.cluster_style,
+            self.content_stamp,
         )?;
         self.after_cluster();
         Ok(())
@@ -1584,7 +1724,7 @@ impl Model {
                 self.history.push_back(old);
             }
             let mut row = self.new_row();
-            row.erase(0, self.columns, self.style.erase());
+            row.erase(0, self.columns, self.style.erase(), self.content_stamp);
             self.screen.insert(if down { top } else { bottom }, row);
             self.retire();
         }
@@ -1606,6 +1746,9 @@ impl Model {
                 break;
             }
             let mut old = self.history.pop_front().unwrap();
+            if let Some(index) = &mut self.history_index {
+                index.remove_front(old.logical_id);
+            }
             self.history_bytes -= old.bytes();
             self.history_pending_units -= old.pending_units();
             self.history_cell_capacity -= old.cells.capacity() as u64;
@@ -1678,10 +1821,10 @@ impl Model {
         }
         if changed {
             if crlf {
-                self.text_log.push(13);
+                self.text_log.append(&[13]);
                 self.position.append(13, &self.unicode, self.ambiguous);
             }
-            self.text_log.push(10);
+            self.text_log.append(&[10]);
             self.position.append(10, &self.unicode, self.ambiguous);
         }
     }
@@ -1763,6 +1906,7 @@ impl Model {
     }
 
     fn clear_history(&mut self) {
+        self.history_index = None;
         self.history.clear();
         self.history_bytes = 0;
         self.history_pending_units = 0;
@@ -1788,6 +1932,12 @@ impl Model {
     }
 
     fn select_screen(&mut self, source: &mut Source, mode: u32, enable: bool) -> Result<(), i32> {
+        if enable && self.observe && self.active_source < 2 {
+            self.observations.push(ReceiveObservation {
+                scalar: 0,
+                flags: 4,
+            });
+        }
         if self.parked.is_some() == enable {
             return Ok(());
         }
@@ -2003,7 +2153,12 @@ impl Model {
                         1 => (0, self.column + 1),
                         _ => (0, self.columns),
                     };
-                    self.screen[self.cursor_row].erase(start, end, self.style.erase());
+                    self.screen[self.cursor_row].erase(
+                        start,
+                        end,
+                        self.style.erase(),
+                        self.content_stamp,
+                    );
                     self.operation_csi(&source.parameters, final_byte);
                     return Ok(());
                 }
@@ -2013,6 +2168,7 @@ impl Model {
                         self.column,
                         self.column + count.min(self.columns - self.column),
                         self.style.erase(),
+                        self.content_stamp,
                     );
                 }
                 b'@' | b'P' => {
@@ -2023,6 +2179,7 @@ impl Model {
                         self.columns,
                         final_byte == b'@',
                         self.style.erase(),
+                        self.content_stamp,
                     );
                 }
                 b'L' | b'M' => {
@@ -2092,7 +2249,7 @@ impl Model {
                         self.screen.push_back(row);
                     }
                     for row in &mut self.screen {
-                        row.erase(0, self.columns, self.style.erase());
+                        row.erase(0, self.columns, self.style.erase(), self.content_stamp);
                     }
                     self.operation_csi(&source.parameters, final_byte);
                     return Ok(());
@@ -2116,11 +2273,12 @@ impl Model {
                                     self.column + 1
                                 },
                                 self.style.erase(),
+                                self.content_stamp,
                             );
                         } else if (v[0] == 0 && index > self.cursor_row)
                             || (v[0] == 1 && index < self.cursor_row)
                         {
-                            row.erase(0, self.columns, self.style.erase());
+                            row.erase(0, self.columns, self.style.erase(), self.content_stamp);
                         }
                     }
                 }
@@ -2280,6 +2438,7 @@ impl Model {
             mouse_generation: self.mouse_generation,
         })
     }
+    #[cfg(test)]
     pub fn export(&mut self) -> Result<ExportState, i32> {
         #[cfg(windows)]
         if self.sources[0].legacy.is_some() {
@@ -2509,9 +2668,15 @@ impl Model {
             return Err(UNSUPPORTED);
         }
         let pending_replies = (flags >> 8) as usize;
-        if operation > 4 || source > 2 || flags & 0xfc != 0 || pending_replies > MAX_REPLIES {
+        let last_operation = if cfg!(test) { 4 } else { 3 };
+        if operation > last_operation
+            || source > 2
+            || flags & 0xf8 != 0
+            || pending_replies > MAX_REPLIES
+        {
             return Err(1);
         }
+        let observe = flags & 4 != 0;
         let flags = flags & 3;
         if operation <= 2 {
             if self.logging.map_or(false, |prior| prior != flags) {
@@ -2585,11 +2750,13 @@ impl Model {
                 0
             };
             let terminal_effect = if flags & 1 != 0 { bytes * 3 + 8192 } else { 0 };
-            // Use the managed engine's incremental log writer for large batches.
-            // No native mutation has occurred when this handoff is requested.
-            if text_effect + terminal_effect > 256 * 1024 {
-                return Err(UNSUPPORTED);
-            }
+            let recording = text_effect.min(RECORDING_EFFECT_LIMIT as u64)
+                + terminal_effect.min(RECORDING_EFFECT_LIMIT as u64);
+            let observations = if observe {
+                (2 * payload.len() as u64 + 64) * 32
+            } else {
+                0
+            };
             let row_growth = if operation <= 1 {
                 (bytes + self.screen_rows as u64 + row_moves + screen_changes + 1)
                     * (self.columns as u64 * 80 + size_of::<Row>() as u64 + 128)
@@ -2611,7 +2778,8 @@ impl Model {
                 + row_growth
                 + reflow_growth
                 + bytes * 8192
-                + (text_effect + terminal_effect) * 4
+                + recording * 4
+                + observations
                 + 128 * 1024
         } else {
             let row_list = self
@@ -2627,14 +2795,14 @@ impl Model {
                 .map(|r| (r.arena.len() + r.cells.len() + r.format_units()) as u64)
                 .sum::<u64>();
             let snapshot = owned + text * 4 + rows * size_of::<RowView>() as u64 * 2 + 128 * 1024;
+            #[cfg(test)]
             if operation == 4 {
                 let tabs = row_list.map(|r| r.tabs.len() as u64).sum::<u64>();
-                snapshot
+                return Ok(snapshot
                     + rows * size_of::<ExportRow>() as u64 * 2
-                    + tabs * size_of::<TabView>() as u64 * 2
-            } else {
-                snapshot
+                    + tabs * size_of::<TabView>() as u64 * 2);
             }
+            snapshot
         };
         Ok(required)
     }
@@ -2696,12 +2864,12 @@ fn view(r: &Row) -> RowView {
 fn submit(
     row: &mut Row,
     boundary: bool,
-    output: &mut Vec<u8>,
+    output: &mut RecordingBuffer,
     pos: &mut RecordedPosition,
     u: &Unicode,
     ambiguous: usize,
 ) -> bool {
-    if row.excluded {
+    if row.excluded || output.refused {
         return false;
     }
     if row.tabs.is_empty()
@@ -2727,7 +2895,10 @@ fn submit(
     };
     for c in char::decode_utf16(serialized.as_ref().unwrap_or(&revision).iter().copied()) {
         let scalar = c.unwrap_or(char::REPLACEMENT_CHARACTER) as u32;
-        append_utf8(output, scalar);
+        output.scalar(scalar);
+        if output.refused {
+            break;
+        }
         pos.append(scalar, u, ambiguous);
     }
     if !revision.is_empty() || boundary {
@@ -3426,15 +3597,6 @@ fn suppress_initial_bom(started: &mut bool, scalar: u32) -> bool {
     !std::mem::replace(started, true) && scalar == 0xfeff
 }
 
-fn append_utf8(output: &mut Vec<u8>, scalar: u32) {
-    let mut bytes = [0u8; 4];
-    output.extend_from_slice(
-        char::from_u32(scalar)
-            .unwrap_or(char::REPLACEMENT_CHARACTER)
-            .encode_utf8(&mut bytes)
-            .as_bytes(),
-    );
-}
 fn number(bytes: &[u8]) -> Option<usize> {
     let mut number = 0usize;
     for &b in bytes {

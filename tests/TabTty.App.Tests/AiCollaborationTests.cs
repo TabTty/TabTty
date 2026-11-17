@@ -45,7 +45,6 @@ internal static partial class Program
             await wire.ReadExactlyAsync(new byte[15], token);
             await ready.Task.WaitAsync(token);
             window.UpdateLayout();
-            long handoffs = NativeTerminalCoreDiagnostics.ManagedHandoffs;
             byte[] history = Encoding.UTF8.GetBytes(
                 "earlier あ\r\nsecond\r\n\u001b[?1049h\u001b[?2004hSCREEN\u001b[s\u001b[2;1H\u001b[31m\uFEFFあ\u001b[0m\u001b[u");
             await wire.WriteAsync(history, token);
@@ -74,7 +73,6 @@ internal static partial class Program
             Check(wideCell.GetProperty("column").GetInt32() == 1 && wideCell.GetProperty("width").GetInt32() == 2 &&
                 wideCell.GetProperty("text").GetString() == "\uFEFFあ" && wideCell.GetProperty("foreground").GetUInt32() == 0xCD0000,
                 "A clipped screen capture did not preserve the wide cell, format mark, or foreground.");
-            Check(NativeTerminalCoreDiagnostics.ManagedHandoffs == handoffs, "AI screen capture handed off the native terminal.");
             var old = await Call(owner, "read_history", new { session });
             Check(old.GetRawText().Contains("earlier", StringComparison.Ordinal) &&
                 !old.GetRawText().Contains("SCREEN", StringComparison.Ordinal), "Parked history used the wrong screen.");
@@ -181,7 +179,10 @@ internal static partial class Program
                     while (true)
                     {
                         var state = await tab.AiSession!.ObserveAiAsync((model, info) =>
-                            (info.IsAlternate, model.AiNormalRows.Last().GetText()), token);
+                        {
+                            using var history = model.GetHistoryRows();
+                            return (info.IsAlternate, history.Text(history.Length - 1));
+                        }, token);
                         if (!state.IsAlternate && state.Item2 == expected) return;
                         await Task.Delay(10, token);
                     }

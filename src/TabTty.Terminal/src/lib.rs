@@ -1,4 +1,4 @@
-//! Native terminal engine with transitional managed handoff for UTF-8 sessions.
+//! Native terminal engine and its Windows ABI.
 mod input;
 mod legacy_encode;
 #[cfg(windows)]
@@ -7,7 +7,7 @@ mod model;
 mod unicode;
 #[cfg(windows)]
 mod windows_icu;
-use model::Model;
+use model::{HistoryProof, HistoryRowView, HistorySlice, Model};
 use std::ffi::c_void;
 use std::mem::align_of;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -34,6 +34,7 @@ fn account(before: u64, after: u64) {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct CellView {
+    pub revision: i64,
     pub offset: u32,
     pub length: u16,
     pub width: i16,
@@ -108,6 +109,14 @@ pub struct Effects {
     pub mouse_tracking: u32,
     pub mouse_generation: i32,
     pub layout_epoch: i64,
+    pub observations: *const ReceiveObservation,
+    pub observation_count: u32,
+    pub recording_refused: u32,
+}
+#[repr(C)]
+pub struct ReceiveObservation {
+    pub scalar: u32,
+    pub flags: u32,
 }
 #[repr(C)]
 pub struct Stats {
@@ -128,9 +137,11 @@ pub struct TabView {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct FormatView {
+    pub revision: i64,
     pub column: u32,
     pub scalar: u32,
 }
+#[cfg(test)]
 #[repr(C)]
 pub struct ExportRow {
     pub view: RowView,
@@ -147,6 +158,7 @@ pub struct ExportRow {
     pub recorded_count: u32,
     pub excluded: u32,
 }
+#[cfg(test)]
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct SourceView {
@@ -163,6 +175,7 @@ pub struct SourceView {
     pub escape_interval: u32,
     pub previous_interval: u32,
 }
+#[cfg(test)]
 impl SourceView {
     const fn empty() -> Self {
         Self {
@@ -181,6 +194,7 @@ impl SourceView {
         }
     }
 }
+#[cfg(test)]
 #[repr(C)]
 pub struct ExportState {
     pub snapshot: SnapshotView,
@@ -210,6 +224,7 @@ pub struct ExportState {
     pub editing: *const EditingView,
 }
 
+#[cfg(test)]
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct EditingView {
@@ -229,6 +244,7 @@ pub struct EditingView {
     pub normal_return: CursorView,
 }
 
+#[cfg(test)]
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct PageView {
@@ -241,6 +257,7 @@ pub struct PageView {
     pub wrap: u32,
 }
 
+#[cfg(test)]
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct CursorView {
@@ -271,7 +288,7 @@ fn run<F: FnOnce() -> Result<(), i32>>(f: F) -> i32 {
 }
 #[no_mangle]
 pub extern "C" fn tc_abi_version() -> u32 {
-    8
+    10
 }
 
 #[no_mangle]
@@ -756,6 +773,129 @@ pub unsafe extern "C" fn tc_screen_row(
     })
 }
 #[no_mangle]
+pub unsafe extern "C" fn tc_history_required(handle: *mut c_void, out: *mut u64) -> i32 {
+    if !valid(out) {
+        return 1;
+    }
+    run(|| {
+        out.write(model(handle)?.history_required());
+        Ok(())
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tc_history_prepare(
+    handle: *mut c_void,
+    first_base: u64,
+    second_base: u64,
+    allow_build: u32,
+    out: *mut i32,
+) -> i32 {
+    if !valid(out) || allow_build > 1 {
+        return 1;
+    }
+    run(|| {
+        out.write(
+            model(handle)?.prepare_history([first_base, second_base], allow_build != 0)? as i32,
+        );
+        Ok(())
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tc_history_row(
+    handle: *mut c_void,
+    index: u32,
+    out: *mut HistoryRowView,
+) -> i32 {
+    if !valid(out) {
+        return 1;
+    }
+    run(|| {
+        out.write(model(handle)?.history_row_view(index as usize)?);
+        Ok(())
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tc_history_line(
+    handle: *mut c_void,
+    line: i64,
+    first: *mut i32,
+    last: *mut i32,
+) -> i32 {
+    if !valid(first) || !valid(last) {
+        return 1;
+    }
+    run(|| {
+        let bounds = model(handle)?.history_line(line)?;
+        first.write(bounds.map_or(-1, |pair| pair.0 as i32));
+        last.write(bounds.map_or(-1, |pair| pair.1 as i32));
+        Ok(())
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tc_history_aggregate(
+    handle: *mut c_void,
+    start: u32,
+    end: u32,
+    out: *mut HistoryProof,
+) -> i32 {
+    if !valid(out) {
+        return 1;
+    }
+    run(|| {
+        out.write(model(handle)?.history_aggregate(start as usize, end as usize)?);
+        Ok(())
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tc_history_fragment(
+    handle: *mut c_void,
+    index: u32,
+    from: u32,
+    to: u32,
+    out: *mut HistoryProof,
+) -> i32 {
+    if !valid(out) {
+        return 1;
+    }
+    run(|| {
+        out.write(model(handle)?.history_fragment(index as usize, from as usize, to as usize)?);
+        Ok(())
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tc_history_slice(
+    handle: *mut c_void,
+    index: u32,
+    from: u32,
+    to: u32,
+    kind: u32,
+    bytes: u32,
+    json: u32,
+    out: *mut HistorySlice,
+) -> i32 {
+    if !valid(out) {
+        return 1;
+    }
+    run(|| {
+        out.write(model(handle)?.history_slice(
+            index as usize,
+            from as usize,
+            to as usize,
+            kind,
+            bytes,
+            json,
+        )?);
+        Ok(())
+    })
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn tc_snapshot_copy_required(handle: *mut c_void, out: *mut u64) -> i32 {
     if !valid(out) {
         return 1;
@@ -775,19 +915,6 @@ pub unsafe extern "C" fn tc_snapshot(handle: *mut c_void, out: *mut SnapshotView
         let t = model(handle)?;
         t.admit(3, 0, &[], 0)?;
         out.write(t.snapshot()?);
-        Ok(())
-    })
-}
-#[no_mangle]
-pub unsafe extern "C" fn tc_export(handle: *mut c_void, out: *mut ExportState) -> i32 {
-    if !valid(out) {
-        return 1;
-    }
-    ptr::write_bytes(out, 0, 1);
-    run(|| {
-        let t = model(handle)?;
-        t.admit(4, 0, &[], 0)?;
-        out.write(t.export()?);
         Ok(())
     })
 }
@@ -840,10 +967,10 @@ mod tests {
     }
     #[test]
     fn abi() {
-        assert_eq!(size_of::<CellView>(), 20);
+        assert_eq!(size_of::<CellView>(), 32);
         assert_eq!(size_of::<RowView>(), 72);
         assert_eq!(size_of::<SnapshotView>(), 48);
-        assert_eq!(size_of::<Effects>(), 56);
+        assert_eq!(size_of::<Effects>(), 72);
         assert_eq!(size_of::<ScreenState>(), 48);
         assert_eq!(size_of::<ScreenRowView>(), 56);
         assert_eq!(size_of::<Stats>(), 56);
@@ -1059,16 +1186,18 @@ mod tests {
         }
     }
     #[test]
-    fn oversized_text_effect_hands_off_before_lf_or_flush() {
+    fn oversized_text_effect_refuses_recording_and_preserves_terminal_effects() {
         let mut t = Model::new(120, 40, 5000, 1);
         let payload = [b'x'; 1024];
-        for _ in 0..128 {
+        for _ in 0..384 {
             t.feed(0, &payload, 2).unwrap();
         }
-        let before = t.stats().feed_bytes;
-        assert_eq!(t.preflight(0, 0, b"\n", 2), Err(2));
-        assert_eq!(t.preflight(2, 0, &[], 2), Err(2));
-        assert_eq!(t.stats().feed_bytes, before);
+        let batch = b"\n\x1b[6n";
+        t.preflight(0, 0, batch, 2).unwrap();
+        t.feed(0, batch, 2).unwrap();
+        assert_eq!(t.effects().recording_refused, 1);
+        assert_eq!(t.effects().text_length, 0);
+        assert_ne!(t.effects().reply_length, 0);
         assert!(t.snapshot().unwrap().row_count > 1000);
         assert!(t.export().unwrap().row_count > 1000);
     }

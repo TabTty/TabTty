@@ -11,19 +11,20 @@ internal sealed class NativeTerminalExecutionException(Exception cause)
 internal static class NativeTerminalCoreDiagnostics
 {
     public static long FedBytes, EchoBytes, FeedBatches, SnapshotExports, UnsupportedErrors;
-    public static long CreatedModels, ClosedModels, ManagedFallbackModels, ManagedHandoffs;
+    public static long CreatedModels, ClosedModels;
     public static long NativePreflightElapsedTicks;
     public static long CompactSnapshotRows, MaterializedCellRows, MaterializedCells;
     public static long NativeFeedElapsedTicks, NativeSnapshotElapsedTicks, SnapshotMaterializationElapsedTicks, SnapshotMaterializationCount;
-    public static long LiveBytes => NativeTerminalCore.Enabled ? checked((long)NativeTerminalCore.Native.LiveBytes()) : 0;
-    public static long PeakBytes => NativeTerminalCore.Enabled ? checked((long)NativeTerminalCore.Native.PeakBytes()) : 0;
-    public static long LiveModels => NativeTerminalCore.Enabled ? checked((long)NativeTerminalCore.Native.LiveModels()) : 0;
+    public static long LiveBytes => checked((long)NativeTerminalCore.Native.LiveBytes());
+    public static long PeakBytes => checked((long)NativeTerminalCore.Native.PeakBytes());
+    public static long LiveModels => checked((long)NativeTerminalCore.Native.LiveModels());
 }
 
 internal sealed unsafe class NativeTerminalCore : IDisposable
 {
-    internal static readonly bool Enabled = !string.Equals(Environment.GetEnvironmentVariable("TABTTY_TERMINAL_CORE"),
-        "off", StringComparison.OrdinalIgnoreCase);
+    internal Action<TerminalReceiveSource, Rune, bool>? ReceiveObserver { get; set; }
+    internal Action? AlternateObserver { get; set; }
+    internal Action? RecordingRefused { get; set; }
     private readonly CoreHandle handle;
     private readonly ResourceQuota quota;
     private readonly ResourceReservation memory;
@@ -37,7 +38,6 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
     internal bool ApplicationCursorKeys { get; private set; }
     internal bool ApplicationKeypad { get; private set; }
     internal TerminalMouseMode MouseMode { get; private set; }
-    internal bool IsAlternateScreen { get; private set; }
     internal long LayoutEpoch { get; private set; }
 
     internal static int CheckUtf8Input(ReadOnlySpan<char> text)
@@ -144,11 +144,10 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
     internal NativeTerminalCore(int columns, int rows, int retainedRows, int ambiguousWidth, ResourceQuota quota,
         uint receivePage = 0, bool receiveSevenBitKana = false)
     {
-        if (sizeof(EffectsView) != 56 || sizeof(CellView) != 20 || sizeof(RowView) != 72 ||
-            sizeof(SnapshotView) != 48 || sizeof(TabView) != 8 || sizeof(ExportRow) != 152 ||
-            sizeof(SourceView) != 64 || sizeof(ExportState) != 168 || sizeof(EditingView) != 256 ||
+        if (sizeof(EffectsView) != 72 || sizeof(CellView) != 32 || sizeof(RowView) != 72 ||
+            sizeof(SnapshotView) != 48 || sizeof(HistoryProofView) != 48 || sizeof(HistoryRowView) != 40 ||
             sizeof(MouseInput) != 20 || sizeof(ScreenStateView) != 48 || sizeof(ScreenRowView) != 56 ||
-            Native.AbiVersion() != 8)
+            Native.AbiVersion() != 10)
             throw new InvalidOperationException("The native terminal ABI does not match this application.");
         this.quota = quota;
         // Admission precedes native allocation; unused temporary allowance is released
@@ -225,6 +224,7 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
         Action<byte[]>? textSink, Action<byte[]>? terminalSink, CancellationToken token = default,
         Action<byte[]>? replySink = null, Action? bell = null)
     {
+        if (operation <= 1 && (ReceiveObserver is not null || AlternateObserver is not null)) flags |= 4;
         if (payload.Length > 1024 * 1024) return false;
         ResourceReservation workspace;
         try { workspace = quota.Reserve(PreviewWorkspaceBytes + payload.Length); }
@@ -319,6 +319,86 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
             state.CursorRow, state.CursorColumn, (state.Flags & 1) != 0, (TerminalCursorShape)state.CursorShape,
             (state.Flags & 2) != 0, (state.Flags & 4) != 0, (state.Flags & 8) != 0,
             (state.Flags & 16) != 0, DecodeMouseMode(state.MouseTracking, state.MouseGeneration));
+    }
+
+    internal IHistoryRows ReadHistory(bool allowBuild)
+    {
+        Check(Native.HistoryRequired(handle, out ulong required), "history allowance");
+        try { memory.Resize(Math.Max(memory.Size, checked((long)required))); }
+        catch (ResourceLimitException) { throw new TerminalHistory.HistoryException("resource_limit"); }
+        try
+        {
+            Check(Native.SetLimit(handle, checked((ulong)memory.Size)), "history admission");
+            var bases = TerminalTextFingerprint.Bases;
+            int status = Native.HistoryPrepare(handle, bases.First, bases.Second, allowBuild ? 1U : 0U, out int length);
+            if (status == 6) throw new TerminalHistory.HistoryException("busy");
+            if (status == 5) throw new TerminalHistory.HistoryException("resource_limit");
+            Check(status, "history preparation");
+            return new NativeHistoryRows(handle, length);
+        }
+        finally { ReconcileMemoryCharge(); }
+    }
+
+    private sealed class NativeHistoryRows(CoreHandle handle, int length) : IHistoryRows
+    {
+        private readonly ResourceReservation copies = TerminalHistory.WorkQuota.Reserve(0);
+        public int Length { get; } = length;
+
+        public HistoryRow this[int index]
+        {
+            get
+            {
+                var row = View(index);
+                return new(row.LogicalId, row.Offset, row.ClusterOffset, row.Length, row.SoftWrap != 0);
+            }
+        }
+
+        public string Text(int index, int from = 0, int? to = null)
+        {
+            var row = View(index);
+            int size = (to ?? row.Length) - from;
+            if (from < 0 || size < 0 || size > row.Length - from)
+                throw new ArgumentOutOfRangeException(nameof(from));
+            if (size == 0) return string.Empty;
+            try { copies.Add(24 + size * 2L); }
+            catch (ResourceLimitException) { throw new TerminalHistory.HistoryException("resource_limit"); }
+            string result = new(row.Text, from, size);
+            GC.KeepAlive(handle);
+            return result;
+        }
+
+        public HistorySlice Slice(int index, int from, int to, HistorySliceKind kind, int bytes, int? json = null)
+        {
+            Check(Native.HistorySlice(handle, (uint)index, (uint)from, (uint)to, (uint)kind, (uint)bytes,
+                json is { } limit ? (uint)limit : uint.MaxValue, out var slice), "history slice");
+            return slice;
+        }
+
+        private HistoryRowView View(int index)
+        {
+            Check(Native.HistoryRow(handle, checked((uint)index), out var row), "history row");
+            return row;
+        }
+
+        public (int First, int Last)? Line(long id)
+        {
+            Check(Native.HistoryLine(handle, id, out int first, out int last), "history line");
+            return first < 0 ? null : (first, last);
+        }
+
+        public TerminalHistory.HistoryProof Aggregate(int start, int end)
+        {
+            Check(Native.HistoryAggregate(handle, (uint)start, (uint)end, out var proof), "history aggregate");
+            return proof.Value;
+        }
+
+        public TerminalHistory.HistoryProof Fragment(int index, int from, int to)
+        {
+            Check(Native.HistoryFragment(handle, (uint)index, (uint)from, (uint)to, out var proof), "history fragment");
+            return proof.Value;
+        }
+
+        public void Dispose() => copies.Dispose();
     }
 
     internal (long Id, long Revision) ReadScreenRow(int row, int first, int last, Action<TerminalCell> visit)
@@ -457,16 +537,6 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
         return true;
     }
 
-    internal void Export(Action<ExportState> import)
-    {
-        ObjectDisposedException.ThrowIf(disposed, this);
-        if (!TryPrepare(4, 0, [], 0)) throw new ResourceLimitException();
-        Check(Native.Export(handle, out ExportState state), "state export");
-        ReconcileMemoryCharge();
-        try { import(state); }
-        finally { GC.KeepAlive(handle); }
-    }
-
     private void ReconcileMemoryCharge()
     {
         long charged = checked((long)Native.QuotaBytes(handle));
@@ -481,15 +551,19 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
         ApplicationCursorKeys = (effects.ModeFlags & 32) != 0;
         ApplicationKeypad = (effects.ModeFlags & 64) != 0;
         MouseMode = DecodeMouseMode(effects.MouseTracking, effects.MouseGeneration);
-        IsAlternateScreen = (effects.ModeFlags & 128) != 0;
         LayoutEpoch = effects.LayoutEpoch;
         List<byte[]>? text;
         List<byte[]>? terminal;
         List<byte[]>? replies = null;
+        ReceiveObservation[] observations;
         try
         {
-            text = textSink is null ? null : CopyChunks(new ReadOnlySpan<byte>(effects.Text, checked((int)effects.TextLength)));
-            terminal = terminalSink is null ? null : CopyChunks(new ReadOnlySpan<byte>(effects.Terminal, checked((int)effects.TerminalLength)));
+            text = textSink is null || effects.RecordingRefused != 0 ? null :
+                CopyChunks(new ReadOnlySpan<byte>(effects.Text, checked((int)effects.TextLength)));
+            terminal = terminalSink is null || effects.RecordingRefused != 0 ? null :
+                CopyChunks(new ReadOnlySpan<byte>(effects.Terminal, checked((int)effects.TerminalLength)));
+            observations = effects.ObservationCount == 0 ? [] :
+                new ReadOnlySpan<ReceiveObservation>(effects.Observations, checked((int)effects.ObservationCount)).ToArray();
             if (replySink is not null && effects.ReplyLength != 0)
             {
                 replies = new List<byte[]>();
@@ -505,11 +579,18 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
             }
         }
         finally { GC.KeepAlive(handle); }
+        if (effects.RecordingRefused != 0) RecordingRefused?.Invoke();
         if (text is not null) foreach (byte[] chunk in text) textSink!(chunk);
         if (terminal is not null) foreach (byte[] chunk in terminal) terminalSink!(chunk);
         if (replies is not null) foreach (byte[] reply in replies) replySink!(reply);
         if (bell is not null)
             for (uint bells = effects.ModeFlags >> 8; bells != 0; bells--) bell();
+        foreach (var observation in observations)
+        {
+            if ((observation.Flags & 4) != 0) AlternateObserver?.Invoke();
+            else ReceiveObserver?.Invoke((observation.Flags & 1) == 0 ? TerminalReceiveSource.Data : TerminalReceiveSource.StandardError,
+                new Rune(checked((int)observation.Scalar)), (observation.Flags & 2) != 0);
+        }
     }
 
     private static List<byte[]>? CopyChunks(ReadOnlySpan<byte> bytes)
@@ -581,10 +662,18 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
         public uint MouseTracking;
         public int MouseGeneration;
         public long LayoutEpoch;
+        public ReceiveObservation* Observations;
+        public uint ObservationCount, RecordingRefused;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct ReceiveObservation
+    {
+        public uint Scalar, Flags;
     }
     [StructLayout(LayoutKind.Sequential)]
     internal struct CellView
     {
+        public long Revision;
         public uint Offset;
         public ushort Length;
         public short Width;
@@ -599,6 +688,23 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
         public char* CellText;
         public uint CellCount, TextLength, CellTextLength, SoftWrap;
     }
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct HistoryRowView
+    {
+        public long LogicalId, Offset, ClusterOffset;
+        public char* Text;
+        public int Length;
+        public uint SoftWrap;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct HistoryProofView
+    {
+        public ulong First, Second, FirstPower, SecondPower;
+        public long Length, Revision;
+        internal TerminalHistory.HistoryProof Value => new(new(First, Second, FirstPower, SecondPower, Length), Revision);
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     internal struct SnapshotView
     {
@@ -637,72 +743,10 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    internal struct TabView { public uint Start, End; }
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct ExportRow
-    {
-        public RowView View;
-        public TabView* Tabs;
-        public char* Submitted;
-        public long ContentRevision, LogicalClusterOffset, SubmittedRevision;
-        public uint TabCount, SubmittedLength;
-        public FormatView* Formats;
-        public uint FormatCount;
-        public TabView* Recorded;
-        public uint RecordedCount, Excluded;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
     internal struct FormatView
     {
+        public long Revision;
         public uint Column, Scalar;
-    }
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct SourceView
-    {
-        public byte* Pending;
-        public byte* Parameters;
-        public uint* LastGraphic;
-        public uint PendingCount, ParameterCount, LastGraphicCount, Flags, Escape, Reserved;
-        public uint PendingInterval, EscapeInterval, PreviousInterval;
-    }
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct ExportState
-    {
-        public SnapshotView Snapshot;
-        public ExportRow* Rows;
-        public SourceView* Sources;
-        public uint* Cluster;
-        public uint* RecordedCluster;
-        public long ClusterRow;
-        public uint ClusterCount, ClusterColumn, ClusterWidth, CursorRow;
-        public uint StyleForeground, StyleBackground, StyleFlags, ClusterForeground, ClusterBackground, ClusterFlags;
-        public uint ModeFlags, RecordedColumn, RecordedKnown, RecordedCount;
-        public uint RowCount, SourceCount, Reserved0, Reserved1;
-        public EditingView* Editing;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct EditingView
-    {
-        public uint MarginTop, MarginBottom;
-        public int PositionRow;
-        public uint PositionColumn, SavedRow, SavedColumn, SavedForeground, SavedBackground, SavedStyle, SavedFlags;
-        public fixed ulong TabStops[16];
-        public PageView Parked, Alternate;
-        public CursorView NormalReturn;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct PageView
-    {
-        public uint First, Count, Row, Column, Columns, Rows, Wrap;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct CursorView
-    {
-        public uint Row, Column, Foreground, Background, Style, Flags, Active;
     }
 
     internal static class Native
@@ -719,8 +763,6 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
         internal static extern int CreateRequired(int columns, int rows, int retained, int ambiguous, uint page, out ulong required);
         [DllImport(Library, EntryPoint = "tc_set_limit", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int SetLimit(CoreHandle handle, ulong allowance);
-        [DllImport(Library, EntryPoint = "tc_export", CallingConvention = CallingConvention.Cdecl)]
-        internal static extern int Export(CoreHandle handle, out ExportState state);
         [DllImport(Library, EntryPoint = "tc_abi_version", CallingConvention = CallingConvention.Cdecl)]
         internal static extern uint AbiVersion();
         [DllImport(Library, EntryPoint = "tc_encode_utf8", CallingConvention = CallingConvention.Cdecl)]
@@ -761,6 +803,21 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
         internal static extern int ResizeRequired(CoreHandle handle, int columns, int rows, out ulong required);
         [DllImport(Library, EntryPoint = "tc_snapshot", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Snapshot(CoreHandle handle, out SnapshotView snapshot);
+        [DllImport(Library, EntryPoint = "tc_history_required", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int HistoryRequired(CoreHandle handle, out ulong required);
+        [DllImport(Library, EntryPoint = "tc_history_prepare", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int HistoryPrepare(CoreHandle handle, ulong first, ulong second, uint allowBuild, out int length);
+        [DllImport(Library, EntryPoint = "tc_history_row", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int HistoryRow(CoreHandle handle, uint index, out HistoryRowView row);
+        [DllImport(Library, EntryPoint = "tc_history_line", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int HistoryLine(CoreHandle handle, long id, out int first, out int last);
+        [DllImport(Library, EntryPoint = "tc_history_aggregate", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int HistoryAggregate(CoreHandle handle, uint start, uint end, out HistoryProofView proof);
+        [DllImport(Library, EntryPoint = "tc_history_fragment", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int HistoryFragment(CoreHandle handle, uint index, uint from, uint to, out HistoryProofView proof);
+        [DllImport(Library, EntryPoint = "tc_history_slice", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int HistorySlice(CoreHandle handle, uint index, uint from, uint to, uint kind,
+            uint bytes, uint json, out HistorySlice slice);
         [DllImport(Library, EntryPoint = "tc_screen_state", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int ScreenState(CoreHandle handle, out ScreenStateView state);
         [DllImport(Library, EntryPoint = "tc_screen_row", CallingConvention = CallingConvention.Cdecl)]

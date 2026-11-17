@@ -148,7 +148,7 @@ internal static partial class Program
             while (tabs.Items.Contains(item)) await Task.Delay(15, deadline.Token);
             if (reviews != 2 || terminal.IsRunning || !host.IsVisible)
                 throw new InvalidOperationException("The accepted tab close did not complete once and preserve the other tab.");
-            if (NativeTerminalCore.Enabled && Interlocked.Read(ref NativeTerminalCoreDiagnostics.ClosedModels) <= closedBefore)
+            if (Interlocked.Read(ref NativeTerminalCoreDiagnostics.ClosedModels) <= closedBefore)
                 throw new InvalidOperationException("The visual close did not release the native terminal model.");
             if (!held.Contains("retained 界") || held.GetCells(0).IsEmpty)
                 throw new InvalidOperationException("The held snapshot lost its output after visual removal.");

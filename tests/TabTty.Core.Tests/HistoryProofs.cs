@@ -24,8 +24,9 @@ internal static class HistoryProofs
         Write(deep, "needle\r\n");
         for (int row = 1; row < bigLimit; row++) Write(deep, "filler\r\n");
         Warm(deep);
-        if (deep.GetHistoryRows().Length != bigLimit)
-            throw new InvalidOperationException("The fixture did not fill the retention boundary.");
+        using (var rows = deep.GetHistoryRows())
+            if (rows.Length != bigLimit)
+                throw new InvalidOperationException("The fixture did not fill the retention boundary.");
         var window = CaptureSearch(deep, null, "absent", default, Stopwatch.GetTimestamp());
         var scan = Scan(window, "absent", false, 4, default);
         var result = CompleteSearch(deep, default, window, scan, "absent", false, 4, 2, default);
@@ -85,7 +86,7 @@ internal static class HistoryProofs
     {
         for (int attempt = 0; ; attempt++)
         {
-            try { _ = model.GetHistoryRows(); return; }
+            try { using var rows = model.GetHistoryRows(); return; }
             catch (HistoryException error) when (error.Message == "busy" && attempt < 100) { }
         }
     }

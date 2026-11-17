@@ -1,7 +1,26 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace TabTty.Core;
+
+internal readonly record struct HistoryRow(long LogicalId, long LogicalOffset, long LogicalClusterOffset,
+    int Length, bool SoftWrapToNext);
+
+internal enum HistorySliceKind : uint { Prefix, Suffix, Overlap }
+[StructLayout(LayoutKind.Sequential)]
+internal readonly record struct HistorySlice(int Start, int End, int Bytes, int Json, int Clusters);
+
+internal interface IHistoryRows : IDisposable
+{
+    int Length { get; }
+    HistoryRow this[int index] { get; }
+    string Text(int index, int from = 0, int? to = null);
+    HistorySlice Slice(int index, int from, int to, HistorySliceKind kind, int bytes, int? json = null);
+    (int First, int Last)? Line(long id);
+    TerminalHistory.HistoryProof Aggregate(int start, int end);
+    TerminalHistory.HistoryProof Fragment(int index, int from, int to);
+}
 
 internal static class TerminalHistory
 {
@@ -38,7 +57,7 @@ internal static class TerminalHistory
     internal static HistoryPage Read(TerminalOutput model, AiTerminalState state, Span? requested,
         Point? position, int rowLimit, int byteLimit, int outputBudget, CancellationToken token)
     {
-        var history = model.GetHistoryRows(trackClusters: true);
+        using var history = model.GetHistoryRows();
         if (history.Length == 0)
         {
             if (requested is not null) throw new HistoryException("range_evicted");
@@ -46,8 +65,8 @@ internal static class TerminalHistory
         }
         if (requested is null)
         {
-            var range = Tail(history, history.Length - 1, history[^1].GetText().Length, rowLimit, byteLimit, token);
-            if (range.Start == range.End && history[^1].GetText().Length != 0)
+            var range = Tail(history, history.Length - 1, history[^1].Length, rowLimit, byteLimit, token);
+            if (range.Start == range.End && history[^1].Length != 0)
                 throw new HistoryException("resource_limit");
             return BuildHistoryPage(history, state, range, range.Start, rowLimit, byteLimit, outputBudget, token);
         }
@@ -60,14 +79,14 @@ internal static class TerminalHistory
         try
         {
             long started = Stopwatch.GetTimestamp();
-            var rows = model.GetHistoryRows(allowBuild: false);
+            using var rows = model.GetHistoryRows(allowBuild: false);
             foreach (var range in ranges) Verify(rows, range, token, started);
             return null;
         }
         catch (HistoryException error) { return error.Message; }
     }
 
-    private static HistoryPage BuildHistoryPage(RetainedHistoryRows rows, AiTerminalState state, Span range, Point start,
+    private static HistoryPage BuildHistoryPage(IHistoryRows rows, AiTerminalState state, Span range, Point start,
         int rowLimit, int byteLimit, int outputBudget, CancellationToken token)
     {
         var (first, offset) = Find(rows, start, false);
@@ -79,34 +98,24 @@ internal static class TerminalHistory
         {
             token.ThrowIfCancellationRequested();
             var row = rows[index];
-            string text = row.GetText();
-            int from = index == first ? offset : 0, to = index == last ? end : text.Length;
+            int from = index == first ? offset : 0, to = index == last ? end : row.Length;
             if (fragments.Count == rowLimit || serialized + 640 > outputBudget)
             {
                 next = At(row, from);
                 break;
             }
-            int cut = from;
-            while (cut < to)
-            {
-                int length = Unicode17.NextGraphemeLength(text.AsSpan(cut, to - cut));
-                int count = Encoding.UTF8.GetByteCount(text.AsSpan(cut, length));
-                int json = MirroredTextCost(text.AsSpan(cut, length));
-                if (bytes + count > byteLimit || serialized + json + 640 > outputBudget)
-                {
-                    if (cut == from && fragments.Count == 0) throw new HistoryException("resource_limit");
-                    break;
-                }
-                bytes += count;
-                serialized += json;
-                cut += length;
-            }
-            bool endOfLine = cut == text.Length && (index < last && !row.SoftWrapToNext ||
+            var slice = rows.Slice(index, from, to, HistorySliceKind.Prefix, byteLimit - bytes, outputBudget - serialized - 640);
+            int cut = slice.End;
+            if (cut == from && to != from && fragments.Count == 0) throw new HistoryException("resource_limit");
+            bytes += slice.Bytes;
+            serialized += slice.Json;
+            bool endOfLine = cut == row.Length && (index < last && !row.SoftWrapToNext ||
                 index == last && range.EndBoundary);
             if (cut != from || to == from)
-                fragments.Add(new Fragment(row.LogicalId, row.LogicalClusterOffset + TerminalRow.CountClusters(text.AsSpan(0, from)),
+                fragments.Add(new Fragment(row.LogicalId, row.LogicalClusterOffset +
+                    rows.Slice(index, 0, from, HistorySliceKind.Prefix, int.MaxValue).Clusters,
                     row.LogicalOffset + from,
-                    text[from..cut], endOfLine, row.LogicalOffset + from > 0, cut < text.Length || row.SoftWrapToNext,
+                    rows.Text(index, from, cut), endOfLine, row.LogicalOffset + from > 0, cut < row.Length || row.SoftWrapToNext,
                     rows[0].LogicalId == row.LogicalId && rows[0].LogicalOffset > 0,
                     index == rows.Length - 1 && row.SoftWrapToNext));
             serialized += 640;
@@ -115,40 +124,32 @@ internal static class TerminalHistory
         var (startRow, startOffset) = Find(rows, range.Start, false);
         Span? earlier = startOffset > 0 || startRow > 0
             ? Tail(rows, startOffset == 0 ? startRow - 1 : startRow,
-                startOffset == 0 ? rows[startRow - 1].GetText().Length : startOffset, rowLimit, byteLimit, token) : null;
+                startOffset == 0 ? rows[startRow - 1].Length : startOffset, rowLimit, byteLimit, token) : null;
         return new HistoryPage(state, fragments.ToArray(), range, earlier, next);
     }
 
-    private static Span Tail(RetainedHistoryRows rows, int last, int end, int rowLimit, int byteLimit, CancellationToken token)
+    private static Span Tail(IHistoryRows rows, int last, int end, int rowLimit, int byteLimit, CancellationToken token)
     {
         int first = last, offset = end, bytes = 0;
         for (int index = last; index >= 0 && last - index < rowLimit; index--)
         {
             token.ThrowIfCancellationRequested();
-            var text = rows[index].GetText();
-            int limit = index == last ? end : text.Length;
-            int count = Encoding.UTF8.GetByteCount(text.AsSpan(0, limit));
-            if (bytes + count <= byteLimit)
+            int limit = index == last ? end : rows[index].Length;
+            var slice = rows.Slice(index, 0, limit, HistorySliceKind.Suffix, byteLimit - bytes);
+            if (slice.Start == 0)
             {
-                (first, offset, bytes) = (index, 0, bytes + count);
+                (first, offset, bytes) = (index, 0, bytes + slice.Bytes);
                 continue;
             }
-            int start = 0;
-            while (start < limit && bytes + count > byteLimit)
-            {
-                int length = Unicode17.NextGraphemeLength(text.AsSpan(start, limit - start));
-                count -= Encoding.UTF8.GetByteCount(text.AsSpan(start, length));
-                start += length;
-            }
-            if (start < limit) (first, offset) = (index, start);
+            if (slice.Start < limit) (first, offset) = (index, slice.Start);
             break;
         }
         return MakeSpan(rows, At(rows[first], offset), At(rows[last], end), rowLimit, byteLimit, token);
     }
 
-    private static Point At(TerminalRow row, int offset) => new(row.LogicalId, row.LogicalOffset + offset);
+    private static Point At(HistoryRow row, int offset) => new(row.LogicalId, row.LogicalOffset + offset);
 
-    private static (int Index, int Offset) Find(RetainedHistoryRows rows, Point point, bool end)
+    private static (int Index, int Offset) Find(IHistoryRows rows, Point point, bool end)
     {
         if (rows.Line(point.Line) is not { } bounds) throw new HistoryException("range_evicted");
         if (point.Offset < rows[bounds.First].LogicalOffset) throw new HistoryException("range_evicted");
@@ -157,37 +158,37 @@ internal static class TerminalHistory
         {
             int middle = (low + high) / 2;
             var row = rows[middle];
-            long stop = row.LogicalOffset + row.GetText().Length;
+            long stop = row.LogicalOffset + row.Length;
             if (stop < point.Offset || !end && stop == point.Offset) low = middle + 1;
             else high = middle;
         }
         var found = rows[low];
         long length = point.Offset - found.LogicalOffset;
-        if (length < 0 || length > found.GetText().Length) throw new HistoryException("range_changed");
+        if (length < 0 || length > found.Length) throw new HistoryException("range_changed");
         return (low, (int)length);
     }
 
-    private static Span MakeSpan(RetainedHistoryRows rows, Point start, Point end, int rowLimit, int byteLimit,
+    private static Span MakeSpan(IHistoryRows rows, Point start, Point end, int rowLimit, int byteLimit,
         CancellationToken token, long searchStarted = 0)
     {
         var (last, offset) = Find(rows, end, true);
-        bool boundary = last + 1 < rows.Length && offset == rows[last].GetText().Length && !rows[last].SoftWrapToNext;
+        bool boundary = last + 1 < rows.Length && offset == rows[last].Length && !rows[last].SoftWrapToNext;
         return new(start, end, Proof(rows, start, end, token, searchStarted), boundary, rowLimit, byteLimit);
     }
 
-    private static void Verify(RetainedHistoryRows rows, Span range, CancellationToken token, long searchStarted = 0)
+    private static void Verify(IHistoryRows rows, Span range, CancellationToken token, long searchStarted = 0)
     {
         if (range.EndBoundary)
         {
             var (last, offset) = Find(rows, range.End, true);
-            if (last + 1 == rows.Length || rows[last].SoftWrapToNext || offset != rows[last].GetText().Length)
+            if (last + 1 == rows.Length || rows[last].SoftWrapToNext || offset != rows[last].Length)
                 throw new HistoryException("range_changed");
         }
         if (range.Proof != Proof(rows, range.Start, range.End, token, searchStarted))
             throw new HistoryException("range_changed");
     }
 
-    private static HistoryProof Proof(RetainedHistoryRows rows, Point start, Point end, CancellationToken token,
+    private static HistoryProof Proof(IHistoryRows rows, Point start, Point end, CancellationToken token,
         long searchStarted = 0)
     {
         token.ThrowIfCancellationRequested();
@@ -197,19 +198,12 @@ internal static class TerminalHistory
         var (last, to) = Find(rows, end, true);
         if (first > last && start == end) return HistoryProof.Empty;
         if (first > last || first == last && from > to) throw new HistoryException("range_changed");
-        if (first == last) return FragmentProof(rows[first], from, to, false);
-        return FragmentProof(rows[first], from, rows[first].GetText().Length, !rows[first].SoftWrapToNext)
+        if (first == last) return rows.Fragment(first, from, to);
+        var leading = rows.Fragment(first, from, rows[first].Length);
+        if (!rows[first].SoftWrapToNext) leading = leading.Append(new(TerminalTextFingerprint.LineBreak, 0));
+        return leading
             .Append(rows.Aggregate(first + 1, last))
-            .Append(FragmentProof(rows[last], 0, to, false));
-
-        static HistoryProof FragmentProof(TerminalRow row, int from, int to, bool boundary)
-        {
-            string text = row.GetText();
-            var content = from == 0 && to == text.Length ? row.TextFingerprint() :
-                TerminalTextFingerprint.FromText(text.AsSpan(from, to - from));
-            if (boundary) content = content.Append(TerminalTextFingerprint.LineBreak);
-            return new(content, row.ContentRevision(from, to));
-        }
+            .Append(rows.Fragment(last, 0, to));
     }
 
 
@@ -221,9 +215,9 @@ internal static class TerminalHistory
 
     internal static SearchWindow CaptureSearch(TerminalOutput model, SearchCursor? cursor, string query, CancellationToken token, long started)
     {
-        var rows = model.GetHistoryRows();
+        using var rows = model.GetHistoryRows();
         Point start = cursor?.Position ?? At(rows[0], 0);
-        Point end = cursor?.End ?? At(rows[^1], rows[^1].GetText().Length);
+        Point end = cursor?.End ?? At(rows[^1], rows[^1].Length);
         if (cursor is not null && Proof(rows, start, end, token, started) != cursor.RemainingProof)
             throw new HistoryException("range_changed");
         var (first, offset) = Find(rows, start, false);
@@ -237,25 +231,18 @@ internal static class TerminalHistory
         {
             token.ThrowIfCancellationRequested();
             if (index > first && Stopwatch.GetElapsedTime(started).TotalMilliseconds >= 20) break;
-            TerminalRow row = rows[index];
-            string text = row.GetText();
-            int from = index == first ? offset : 0, to = index == last ? endOffset : text.Length;
-            int cut = from;
-            while (cut < to)
-            {
-                int length = Unicode17.NextGraphemeLength(text.AsSpan(cut, to - cut));
-                int size = Encoding.UTF8.GetByteCount(text.AsSpan(cut, length));
-                if (size > 256 * KiB - bytes) break;
-                bytes += size;
-                cut += length;
-            }
+            var row = rows[index];
+            int from = index == first ? offset : 0, to = index == last ? endOffset : row.Length;
+            var slice = rows.Slice(index, from, to, HistorySliceKind.Prefix, 256 * KiB - bytes);
+            int cut = slice.End;
+            bytes += slice.Bytes;
             if (cut == from && cut != to) break;
             if (!open)
             {
                 partStart = At(row, from);
                 open = true;
             }
-            partText.Append(text.AsSpan(from, cut - from));
+            partText.Append(rows.Text(index, from, cut));
             covered = At(row, cut);
             progress = cut < to ? covered : index == last ? end : At(rows[index + 1], 0);
             if (cut == to && (!row.SoftWrapToNext || index == last))
@@ -273,13 +260,12 @@ internal static class TerminalHistory
             while (index <= last && rows[index].LogicalId == partStart.Line &&
                 partText.Length - owned < query.Length - 1)
             {
-                TerminalRow row = rows[index];
-                string text = row.GetText();
-                int available = index == last ? endOffset : text.Length;
-                int begin = at;
-                while (at < available && partText.Length - owned + at - begin < query.Length - 1)
-                    at += Unicode17.NextGraphemeLength(text.AsSpan(at, available - at));
-                partText.Append(text.AsSpan(begin, at - begin));
+                var row = rows[index];
+                int available = index == last ? endOffset : row.Length;
+                var slice = rows.Slice(index, at, available, HistorySliceKind.Overlap,
+                    query.Length - 1 - (partText.Length - owned));
+                partText.Append(rows.Text(index, at, slice.End));
+                at = slice.End;
                 covered = At(row, at);
                 if (!row.SoftWrapToNext) break;
                 index++;
@@ -328,7 +314,7 @@ internal static class TerminalHistory
     internal static SearchPage CompleteSearch(TerminalOutput model, AiTerminalState state, SearchWindow window,
         ScanResult result, string query, bool caseSensitive, int limit, int context, CancellationToken token)
     {
-        var rows = model.GetHistoryRows(allowBuild: false);
+        using var rows = model.GetHistoryRows(allowBuild: false);
         if (window.Dependency is { } dependency) Verify(rows, dependency, token);
         if (Proof(rows, window.Start, window.End, token) != window.Remaining)
             throw new HistoryException("range_changed");
@@ -341,7 +327,7 @@ internal static class TerminalHistory
             for (int i = 0; i < context && right + 1 < rows.Length; i++)
                 right = rows.Line(rows[right + 1].LogicalId)!.Value.Last;
             return new SearchMatch(match.Text, match.Position, MakeSpan(rows, At(rows[left], 0),
-                At(rows[right], rows[right].GetText().Length), 200, 64 * KiB, token));
+                At(rows[right], rows[right].Length), 200, 64 * KiB, token));
         }).ToArray();
         Span? scanned = result.Progress == window.Start ? null :
             MakeSpan(rows, window.Start, result.Progress, 200, 64 * KiB, token);
@@ -367,4 +353,5 @@ internal static class TerminalHistory
         }
         return size;
     }
+
 }

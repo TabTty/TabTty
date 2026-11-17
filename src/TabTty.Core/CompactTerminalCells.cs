@@ -8,17 +8,21 @@ internal sealed class CompactTerminalCells
 {
     private readonly ResourceReservation memory;
     private readonly long expandedCharge;
-    private NativeTerminalCore.CellView[]? compact;
+    private Cell[]? compact;
     private string? arena;
     private TerminalCell[]? expanded;
     private int expandedCount;
+    private readonly record struct Cell(uint Offset, ushort Length, short Width, uint Foreground, uint Background, uint Flags);
 
     internal CompactTerminalCells(ReadOnlySpan<NativeTerminalCore.CellView> cells,
         ReadOnlySpan<char> text, ResourceReservation admittedCopies)
     {
+        var packed = new Cell[cells.Length];
         long stringBytes = 0;
-        foreach (NativeTerminalCore.CellView cell in cells)
+        for (int index = 0; index < cells.Length; index++)
         {
+            var cell = cells[index];
+            packed[index] = new(cell.Offset, cell.Length, cell.Width, cell.Foreground, cell.Background, cell.Flags);
             if (cell.Width < 0 || cell.Length == ushort.MaxValue) continue;
             int offset = checked((int)cell.Offset);
             if (offset > text.Length || cell.Length > text.Length - offset)
@@ -27,14 +31,14 @@ internal sealed class CompactTerminalCells
                 stringBytes += 24L + cell.Length * 2L;
         }
         expandedCharge = cells.Length * 64L + stringBytes;
-        // The quota uses the same conservative 64-byte cell-slot contract as the
-        // managed reducer; the owned compact array itself occupies 20 bytes/cell.
+        // The compact UI cells omit the native history revision. The quota
+        // retains a conservative allowance for owned and expanded cell storage.
         // Reserve the eventual expansion here as well, before publishing the snapshot.
         // Rendering only releases quota; it cannot reject a new allocation reservation.
         memory = admittedCopies.Separate(80L + cells.Length * 64L + 24L + text.Length * 2L + expandedCharge);
         try
         {
-            compact = cells.ToArray();
+            compact = packed;
             arena = new string(text);
         }
         catch { memory.Dispose(); throw; }
@@ -53,13 +57,13 @@ internal sealed class CompactTerminalCells
         lock (this)
         {
             if (expanded is not null) return expanded.AsMemory(0, expandedCount);
-            NativeTerminalCore.CellView[] source = compact!;
+            Cell[] source = compact!;
             string text = arena!;
             var result = new TerminalCell[source.Length];
             int destination = 0, textOffset = 0;
             for (int column = 0; column < source.Length; column++)
             {
-                NativeTerminalCore.CellView cell = source[column];
+                Cell cell = source[column];
                 if (cell.Width < 0) continue;
                 string value;
                 if (cell.Length == ushort.MaxValue) value = " ";

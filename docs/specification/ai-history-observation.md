@@ -3,7 +3,8 @@
 Implementation allocation update, 2026-11-16: follow the
 [complete Rust terminal design](native-terminal-core.md) for the authoritative
 model and terminal-side observation work. The accepted preparation/publication
-contract below remains binding. This new allocation is not implemented.
+contract below remains binding. See the [implementation status](implementation-status.md)
+for the current allocation and validation.
 
 Status: design accepted and ready for implementation, 2026-11-14. Architecture
 Q12-Q20, including the final shared-understanding review, are accepted. This

@@ -6,7 +6,7 @@ pub(super) struct Reflow {
     pub column: usize,
     pub cluster: Option<(i64, usize)>,
     pub position: RecordedPosition,
-    pub text: Vec<u8>,
+    pub(super) text: RecordingBuffer,
 }
 
 struct Builder<'a> {
@@ -31,7 +31,7 @@ impl<'a> Builder<'a> {
                 column: 0,
                 cluster: None,
                 position: model.position.clone(),
-                text: Vec::new(),
+                text: RecordingBuffer::new(),
             },
             placed: 0,
             current: Row::new(0, 0),
@@ -41,11 +41,13 @@ impl<'a> Builder<'a> {
         }
     }
 
-    fn start_line(&mut self, first: &Row) {
+    fn start_line(&mut self, first: &Row, starts_retained_buffer: bool) {
         self.current = Row::new(first.id, self.columns);
-        self.current.logical_id = first.logical_id;
-        self.current.logical_offset = first.logical_offset;
-        self.current.logical_cluster_offset = first.logical_cluster_offset;
+        if starts_retained_buffer {
+            self.current.logical_id = first.logical_id;
+            self.current.logical_offset = first.logical_offset;
+            self.current.logical_cluster_offset = first.logical_cluster_offset;
+        }
         self.current.revision = first.revision + 1;
         self.current.excluded = first.excluded;
     }
@@ -99,9 +101,6 @@ impl<'a> Builder<'a> {
                     &self.model.unicode,
                     self.model.ambiguous,
                 );
-                if self.result.text.len() > 256 * 1024 {
-                    return Err(5);
-                }
             }
         }
         Ok(())
@@ -155,11 +154,8 @@ impl<'a> Builder<'a> {
                 self.result.column = self.next + old_column.saturating_sub(column);
                 mapped = true;
             }
-            while marks
-                .next_if(|mark| mark.column as usize <= column)
-                .is_some()
-            {
-                self.current.add_format(self.next)?;
+            while let Some(mark) = marks.next_if(|mark| mark.column as usize <= column) {
+                self.current.add_format(self.next, mark.revision)?;
             }
             if let Some(&(start, end)) = tabs.next_if(|tab| tab.0 <= column) {
                 if start == column && self.next + end - start <= self.columns {
@@ -170,11 +166,23 @@ impl<'a> Builder<'a> {
                 self.result.cluster = Some((self.current.id, self.next));
             }
             if cell.width > 0 {
-                self.current
-                    .write(self.next, row.text(cell), width, cell.style())?;
-            } else if cell.style() != Style::default() {
-                self.current
-                    .erase(self.next, self.next + width, cell.style());
+                self.current.write(
+                    self.next,
+                    row.text(cell),
+                    width,
+                    cell.style(),
+                    cell.revision,
+                )?;
+            } else if cell.style() != Style::default() || cell.revision != 0 {
+                if self.current.cells.len() <= self.next {
+                    self.current
+                        .cells
+                        .resize(self.next + 1, CellView::blank(Style::default()));
+                }
+                self.current.cells[self.next] = CellView::blank(cell.style());
+            }
+            if let Some(target) = self.current.cells.get_mut(self.next) {
+                target.revision = cell.revision;
             }
             self.record_span(width, is_recorded(column));
             self.next += width;
@@ -183,7 +191,7 @@ impl<'a> Builder<'a> {
         for mark in marks {
             let column =
                 (self.next + (mark.column as usize).saturating_sub(position)).min(self.columns);
-            self.current.add_format(column)?;
+            self.current.add_format(column, mark.revision)?;
         }
         for &(start, end) in tabs {
             if start >= position && self.next + end - position <= self.columns {
@@ -215,7 +223,7 @@ pub(super) fn normal(
     let mut rows = model.history.iter().chain(screen).enumerate().peekable();
     while let Some((index, source)) = rows.next() {
         if first {
-            build.start_line(source);
+            build.start_line(source, index == 0);
         }
         let cursor = (index == active).then_some(column + wrap as usize);
         build.copy_row(source, cursor)?;

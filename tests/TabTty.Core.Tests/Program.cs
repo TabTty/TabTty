@@ -102,6 +102,8 @@ try
     Console.WriteLine("PASS MissingComPortFailsTheSavedConnectionAttempt");
     await JisTransmissionUsesIcuDesignations();
     Console.WriteLine("PASS JisTransmissionUsesIcuDesignations");
+    await EveryTerminalEncodingUsesTheSavedProfile();
+    Console.WriteLine("PASS EveryTerminalEncodingUsesTheSavedProfile");
     FragmentedTelnetCommandsStayOutOfTerminalData();
     Console.WriteLine("PASS FragmentedTelnetCommandsStayOutOfTerminalData");
     await SavedProfileConnectsAndExchangesTerminalData();
@@ -1054,7 +1056,6 @@ static async Task RecordingFormatsProjectTheSameSessionIndependently()
 
 static async Task RecordingResumeDoesNotBackfillSplitUnits()
 {
-    long handoffs = Interlocked.Read(ref NativeTerminalCoreDiagnostics.ManagedHandoffs);
     using var folder = new TemporaryDirectory();
     using var listener = new TcpListener(IPAddress.Loopback, 0);
     using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -1081,13 +1082,10 @@ static async Task RecordingResumeDoesNotBackfillSplitUnits()
         [0x82, 13, 10, 66]);
     ExpectBytes(await File.ReadAllBytesAsync(Directory.GetFiles(directory, "*-p002.log").Single()), [66]);
     ExpectBytes(await File.ReadAllBytesAsync(Directory.GetFiles(directory, "*-p002.term.tttylog").Single()), [13, 10, 66]);
-    if (Interlocked.Read(ref NativeTerminalCoreDiagnostics.ManagedHandoffs) != handoffs)
-        throw new InvalidOperationException("Changing recording intervals transferred the terminal out of Rust.");
 }
 
 static async Task ResizeKeepsTextRecordingBoundaries()
 {
-    long handoffs = Interlocked.Read(ref NativeTerminalCoreDiagnostics.ManagedHandoffs);
     using var folder = new TemporaryDirectory();
     using var listener = new TcpListener(IPAddress.Loopback, 0);
     using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -1110,14 +1108,48 @@ static async Task ResizeKeepsTextRecordingBoundaries()
     while (await session.ReadOutputAsync(deadline.Token) is not null) { }
     string log = Directory.GetFiles(Path.Combine(folder.Path, "Logs"), "*.log").Single();
     ExpectBytes(await File.ReadAllBytesAsync(log, deadline.Token), "ABCDEFGHIJKL\r\nabc\r\ntail"u8.ToArray());
-    if (Interlocked.Read(ref NativeTerminalCoreDiagnostics.ManagedHandoffs) != handoffs)
-        throw new InvalidOperationException("Resizing the recorded terminal transferred it out of Rust.");
+}
+
+static async Task EveryTerminalEncodingUsesTheSavedProfile()
+{
+    using var folder = new TemporaryDirectory();
+    using var listener = new TcpListener(IPAddress.Loopback, 0);
+    using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    var token = deadline.Token;
+    listener.Start();
+    int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+    foreach (string encoding in TerminalEncodings.Identifiers)
+    {
+        string path = Path.Combine(folder.Path, encoding + ".ttty");
+        var profile = ConnectionProfile.CreateTelnet(encoding, "127.0.0.1", port,
+            receiveEncoding: encoding, transmitEncoding: encoding);
+        await profile.SaveNewAsync(path, token);
+        var accepted = listener.AcceptTcpClientAsync(token);
+        await using var session = await TerminalSession.ConnectAsync(path, token, defaultRetainedRows: 100);
+        using var peer = await accepted;
+        try
+        {
+            var stream = peer.GetStream();
+            await stream.ReadExactlyAsync(new byte[15], token);
+            await stream.WriteAsync("ready\u001b[6n\r\nreceived"u8.ToArray(), token);
+            while (!(await session.ReadOutputAsync(token))!.Contains("received")) { }
+            byte[] reply = new byte[6];
+            await stream.ReadExactlyAsync(reply, token);
+            if (!reply.AsSpan().SequenceEqual("\u001b[1;6R"u8))
+                throw new InvalidOperationException("Wrong cursor reply for " + encoding + ".");
+            await session.SendTextAsync("AZ", token);
+            byte[] sent = new byte[2];
+            await stream.ReadExactlyAsync(sent, token);
+            if (!sent.AsSpan().SequenceEqual("AZ"u8))
+                throw new InvalidOperationException("Wrong ASCII transmission for " + encoding + ".");
+        }
+        finally { await session.ReleaseRetainedOutputAsync(); }
+    }
 }
 
 static async Task FailedRecordingCannotStopTheSessionOrItsReplacementPart()
 {
     const string failure = "Controlled recording write failure.";
-    long handoffs = NativeTerminalCoreDiagnostics.ManagedHandoffs;
     using var folder = new TemporaryDirectory();
     using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
     var profile = ConnectionProfile.CreateTelnet("Failure", "127.0.0.1", 23,
@@ -1152,8 +1184,6 @@ static async Task FailedRecordingCannotStopTheSessionOrItsReplacementPart()
         ExpectBytes(await File.ReadAllBytesAsync(Directory.GetFiles(logs, "*-p002." + extension).Single()),
             "after\r\n"u8.ToArray());
     }
-    if (NativeTerminalCoreDiagnostics.ManagedHandoffs != handoffs)
-        throw new InvalidOperationException("Recording failure handed off the native terminal.");
 }
 
 static async Task TextTabsUseTheSerializedLogicalColumn()

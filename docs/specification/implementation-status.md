@@ -29,12 +29,12 @@ toolchain is .NET SDK 10.0.404, Rust/Cargo 1.63.0, and MSVC on Windows x64.
   conversion from Rust. Windows ICU supplies the JIS designations and
   repertoires. The former IN/OUT choices remain readable profile fields.
   See the [codec decision](../drafts/terminal-codec-consultation.md).
-- Rust now frames legacy receive units and carries incomplete units, kana shifts,
-  and recording eligibility independently for DATA and stderr. The production
-  legacy sessions still select the managed VT interpreter. A direct native
-  model test receives JIS and verifies that rejected preflight leaves the
-  live ICU converter, retained output, and outgoing effects unchanged.
-- The native UTF-8 path implements cursor, scrolling, tabs, key and mouse input,
+- Production sessions use one Rust VT implementation for all 47 encodings.
+  Saved-profile Telnet tests exercise each identity with independent expected
+  output and terminal replies. DATA and stderr own independent decoder state.
+  A JIS test also verifies that a rejected batch leaves the live ICU decoder
+  and its pending character intact.
+- The Rust terminal implements cursor, scrolling, tabs, key and mouse input,
   alternate screens, resize, and recording intervals. Display and receive-only
   Text resize plans are both prepared before either geometry changes. Core
   fixtures cover split units across recording intervals, reflowed text, and a
@@ -44,17 +44,22 @@ toolchain is .NET SDK 10.0.404, Rust/Cargo 1.63.0, and MSVC on Windows x64.
   continues receiving. The session refuses to report a failed pause as
   successful. The controlled failure test checks actual logs for both parts
   and verifies that an old writer cannot stop the replacement part.
-- AI screen capture reads the requested region from the active Rust screen
-  without exporting retained history. The WPF Telnet fixture checks a clipped
-  wide cell, its format mark, and foreground. AI history and search still
-  use managed terminal state. That transition retains an unchanged screen's
-  observation revision.
-- UTF-8 creation and native snapshot requests report an explicit resource
+- AI screen and history read the active and retained Rust terminal state.
+  Rust owns UTF-16 anchors, UTF-8/serialized slice bounds, Unicode cluster
+  boundaries, and range content and revision proofs. The .NET literal
+  comparison preserves .NET Ordinal and OrdinalIgnoreCase semantics.
+  The WPF Telnet fixture checks parked history, clipped wide cells, and
+  rejection of a staged search result after an edit-and-restore.
+- Terminal creation and snapshot requests report an explicit resource
   failure when their ownership cannot be admitted. The tests check that
   refusal leaves quota accounting and existing native state intact.
-- Legacy VT execution, retained-history observation and search, removal of
-  managed handoffs, and native-only deployment and workload acceptance remain
-  open under #16.
+- The production managed parser, state handoff, and engine selector were
+  removed. Deployment and workload acceptance are tracked under #16.
+
+A 30-second native-only probe with 20 SSH sessions sampled ten interactions
+at 1,047,139 payload bytes/s. All Raw logs matched their input and no session
+disconnected. Local p95 was 157.016 ms and Stop p95 was 5.767 ms. This probe
+missed the local target and is distinct from the 30-minute acceptance runs.
 
 At commit `801f96f`, the self-contained Windows x64 package passed both MCP
 bridge integration checks. The package SHA-256 was
@@ -65,10 +70,9 @@ was 267.8503 ms. It missed the local responsiveness target. The run used the
 partial implementation and does not satisfy the native-only acceptance gates.
 
 Target-design update, 2026-11-16: [ADR 0007](../adr/0007-complete-terminal-processing-in-rust.md)
-requires [complete Rust terminal processing](native-terminal-core.md) without
-managed fallback. That replacement is not implemented or validated. The code
-and measurements below describe the existing partial Rust implementation and
-its C# handoff; they are historical evidence, not proof of the new design.
+requires [complete Rust terminal processing](native-terminal-core.md). The
+implementation and acceptance evidence above applies to the current migration.
+The older measurements below describe their respective historical candidates.
 
 Baseline implementation recorded on 2026-11-11. SFTP implementation and
 validation were added on 2026-11-14.

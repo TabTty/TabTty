@@ -9,6 +9,7 @@ internal readonly record struct TerminalTextFingerprint(ulong First, ulong Secon
 {
     private static readonly ulong firstBase = NewBase();
     private static readonly ulong secondBase = NewBase();
+    internal static (ulong First, ulong Second) Bases => (firstBase, secondBase);
     internal static readonly TerminalTextFingerprint Empty = new(0, 0, 1, 1, 0);
     internal static readonly TerminalTextFingerprint LineBreak = FromText("\n");
 

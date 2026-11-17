@@ -3,8 +3,8 @@
 Implementation allocation update, 2026-11-16: the
 [complete Rust terminal design](native-terminal-core.md) implements the
 behavior below without managed fallback, including all supported encodings
-and input modes. That target has not been implemented; this update changes
-ownership, not the accepted terminal behavior or excluded extensions.
+and input modes. See the [implementation status](implementation-status.md)
+for current validation.
 
 Specification baseline, 2026-11-10. Completes the reference-based choices under
 Q103/Q117-Q128/Q144-Q145/Q149-Q154. Tera Term 5.7.1 is the behavior reference;
