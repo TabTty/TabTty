@@ -776,7 +776,9 @@ internal sealed partial class MainWindow : Window
             ("SettingsMaintenance", () => form.AddActionRow(() =>
             {
                 form.AddAction("RegisterFileType", RegisterFileType);
+                form.AddAction("ProfileTrustReset", () => app.Profiles.ResetTrust(form.OwnerWindow));
                 form.AddAction("MacroManageTrust", () => form.TabOwner?.ManageMacroTrust());
+                form.AddAction("MacroTrustReset", () => ResetMacroTrust(form.OwnerWindow));
                 form.AddAction("RecoverStores", () =>
                 {
                     if (form.TabOwner is { } host) app.ShowStoreRecovery(host);
@@ -1133,7 +1135,7 @@ internal sealed partial class MainWindow : Window
             Closing += (_, args) => { if (form.IsBusy) args.Cancel = true; };
         }
 
-        public void AddAction(string key, Action action) => form.AddAction(key, action);
+        public Button AddAction(string key, Action action) => form.AddAction(key, action);
         public void AddField(string key, Control control) => form.AddField(key, control);
         public void AddPrompt(string caption, Control control) => form.AddPrompt(caption, control);
         public void AddNotice(string key) => form.AddNotice(key);

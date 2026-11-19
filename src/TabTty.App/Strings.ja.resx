@@ -577,4 +577,20 @@ AI アプリは個別の確認なしでキーや複数行のコマンドを入�
   <data name="CreateVault" xml:space="preserve"><value>vault の作成・初期化</value></data>
   <data name="VaultAlreadyExists" xml:space="preserve"><value>選択した vault はすでに存在し、空ではありません。</value></data>
   <data name="VaultRescueCopyExplanation" xml:space="preserve"><value>保持している認証済みの vault を別のファイルにコピーしますか？ 選択中のファイルは変更されません。</value></data>
+  <data name="ProfileTrustReview" xml:space="preserve"><value>接続プロファイルの確認</value></data>
+  <data name="ProfileConnectOnce" xml:space="preserve"><value>今回だけ接続</value></data>
+  <data name="ProfileRegisterAndConnect" xml:space="preserve"><value>登録して接続</value></data>
+  <data name="ProfileTrustAndConnect" xml:space="preserve"><value>この版を信頼して接続</value></data>
+  <data name="ProfileTrustVersionChanged" xml:space="preserve"><value>保存されている版は、以前に信頼した版と異なります。</value></data>
+  <data name="ProfileLogNetworkShare" xml:space="preserve"><value>ログの保存先はネットワーク共有です。</value></data>
+  <data name="ProfileReadSource" xml:space="preserve"><value>プロファイルファイルを読み取る</value></data>
+  <data name="ProfileReadSourceNotice" xml:space="preserve"><value>このファイルを読み取ると、ネットワークやリダイレクト先にアクセスする可能性があります。この操作でファイルを読み取りますか？</value></data>
+  <data name="ProfileRegisterTrustNotice" xml:space="preserve"><value>新規登録すると、登録するファイルのその版を信頼します。</value></data>
+  <data name="ProfileTrustReset" xml:space="preserve"><value>接続プロファイルの信頼を一括リセット</value></data>
+  <data name="ProfileTrustResetConfirm" xml:space="preserve"><value>この PC で記憶した、登録済みと未登録のすべての接続プロファイルの信頼を消去しますか？</value></data>
+  <data name="ProfileTrustWriteFailed" xml:space="preserve"><value>プロファイルの信頼の変更を確認できませんでした。操作をやり直してください。</value></data>
+  <data name="MacroTrustReset" xml:space="preserve"><value>マクロの信頼を一括リセット</value></data>
+  <data name="MacroTrustResetConfirm" xml:space="preserve"><value>この PC で記憶したマクロの許可と拒否をすべて消去しますか？</value></data>
+  <data name="MacroTrustResetFailed" xml:space="preserve"><value>マクロの信頼のリセットを確認できませんでした。操作をやり直してください。</value></data>
+  <data name="RecordingDestinationChanged" xml:space="preserve"><value>確認したログ保存先が変わりました。</value></data>
 </root>

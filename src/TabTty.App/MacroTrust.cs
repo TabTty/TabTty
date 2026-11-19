@@ -43,7 +43,8 @@ internal readonly record struct MacroTrustKey(string SourceDigest, string Finger
 // out-of-process removal cannot be hidden by an in-memory decision.
 internal static class MacroTrust
 {
-    private const string Prefix = "TabTty/MacroTrust/v2/";
+    private static string Prefix = "TabTty/MacroTrust/v2/";
+    internal static void UseTestStore() => Prefix = $"TabTty/Tests/{Guid.NewGuid():N}/MacroTrust/v2/";
     private const uint Generic = 1, LocalMachine = 2;
     private const int NotFound = 1168, RecordSize = 66;
     internal static long Revision { get; private set; }
@@ -125,6 +126,14 @@ internal static class MacroTrust
             if (error != NotFound) throw new Win32Exception(error);
         }
         Revision++;
+    }
+
+    internal static void Reset()
+    {
+        // Invalidate pending answers even if a partial removal needs a retry.
+        Revision++;
+        foreach (Entry entry in List()) Forget(entry.Fingerprint);
+        if (List().Count != 0) throw new IOException("Macro trust decisions could not be cleared.");
     }
 
     private static Entry Decode(Credential value, string fingerprint)

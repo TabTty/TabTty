@@ -227,7 +227,8 @@ internal static partial class Program
         var dialogTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(30) };
         dialogTimer.Tick += (_, _) =>
         {
-            var dialog = host.OwnedWindows.Cast<Window>().FirstOrDefault(window => window.IsVisible);
+            var dialog = host.OwnedWindows.Cast<Window>().FirstOrDefault(window =>
+                window.IsVisible && window.Title == host.Title);
             if (dialog is null) return;
             var answer = FindControls<Button>(dialog).Single(button => Equals(button.Content, App.Text(accept ? "Yes" : "No")));
             reviews++;

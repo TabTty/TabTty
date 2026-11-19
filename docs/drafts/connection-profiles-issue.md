@@ -1,5 +1,7 @@
 # Specify connection profiles and session lifecycle
 
+> The [profile trust specification](../specification/profile-trust.md) supersedes the historical rules below for trusting a profile on activation and registering it on open.
+
 > The 2026-11-10 baseline was consolidated in the [persistence and windows contract](../specification/persistence-and-windows.md). See [implementation status](../specification/implementation-status.md) for validation evidence.
 
 Working issue-body draft. Confirmed requirements are agreed; remaining choices

@@ -1,5 +1,7 @@
 # Profile management and credential references
 
+> The [profile trust specification](../specification/profile-trust.md) supersedes the historical Q112 activation decision and the registration behavior described below.
+
 > Consolidated on 2026-11-10: [implementation readiness and completed contracts](../specification/implementation-readiness.md). Accepted product decisions below remain binding; historical lists of unfinished technical design are superseded by those contracts. Implementation and runtime verification have not begun.
 
 Status: Q109-Q113 accepted with user amendments on 2026-11-08. The reply's

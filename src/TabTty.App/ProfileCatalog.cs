@@ -9,7 +9,7 @@ using static TabTty.App.App;
 
 namespace TabTty.App;
 
-internal sealed class ProfileCatalog(App app, Action<string, string, string?>? issueProfiles = null,
+internal sealed partial class ProfileCatalog(App app, Action<string, string, string?>? issueProfiles = null,
     Action<string>? validateProfileStage = null)
 {
     private readonly Dictionary<string, string> names = new(StringComparer.Ordinal);
@@ -69,17 +69,7 @@ internal sealed class ProfileCatalog(App app, Action<string, string, string?>? i
                 JsonArray registrations = state["registrations"]!.AsArray();
                 var registration = registrations.OfType<JsonObject>()
                     .FirstOrDefault(item => item["path"]?.GetValue<string>() == location);
-                if (registration is null)
-                {
-                    if (registrations.Count >= 10_000) throw new IOException(Text("LocalStateInvalid"));
-                    registration = new JsonObject
-                    {
-                        ["registrationId"] = Guid.NewGuid(), ["path"] = location, ["displayPath"] = path,
-                        ["favorite"] = false, ["lastUsed"] = null,
-                    };
-                    registrations.Add(registration);
-                }
-                if (used) registration["lastUsed"] = DateTimeOffset.UtcNow;
+                if (used && registration is not null) registration["lastUsed"] = DateTimeOffset.UtcNow;
             });
             stateErrorShown = false;
         }
@@ -134,6 +124,7 @@ internal sealed class ProfileCatalog(App app, Action<string, string, string?>? i
                 MaxHeight = 180, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
             var selectedActions = new List<Button>();
             int version = 0;
+            form.AddNotice("ProfileRegisterTrustNotice");
             form.AddActionRow(() => form.AddAsyncAction("RegisterProfile", RegisterAsync));
             form.AddColumns(() => form.AddGroup("Profiles", () =>
             {
@@ -189,9 +180,11 @@ internal sealed class ProfileCatalog(App app, Action<string, string, string?>? i
             {
                 var dialog = new OpenFileDialog { Filter = Filter };
                 if (app.Modal(() => dialog.ShowDialog(form.OwnerWindow)) != true) return;
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-                ConnectionProfile profile = await ConnectionProfile.LoadAsync(dialog.FileName, timeout.Token);
-                await RememberAsync(dialog.FileName, profile, used: false);
+                long reset = trustReset;
+                ConnectionProfile profile;
+                try { profile = await LoadForUseAsync(form.OwnerWindow, dialog.FileName, CancellationToken.None); }
+                catch (SshInteractionCancelledException) { return; }
+                await RegisterSavedAsync(dialog.FileName, profile, reset);
                 Reload();
             }
 
@@ -204,7 +197,7 @@ internal sealed class ProfileCatalog(App app, Action<string, string, string?>? i
                 try
                 {
                     ProfileRecycling.Recycle(form.OwnerWindow, item.Path);
-                    ChangeSelected(remove: true);
+                    ChangeSelected(remove: true, item);
                 }
                 catch (Exception exception) when (IsFileProblem(exception)) { MainWindow.ShowError(form.OwnerWindow, exception); }
             }
@@ -212,9 +205,10 @@ internal sealed class ProfileCatalog(App app, Action<string, string, string?>? i
             Task EditSelectedAsync(bool duplicate) => list.SelectedItem is Registration item && form.TabOwner is { } host
                 ? EditAsync(host, item.Path, duplicate) : Task.CompletedTask;
 
-            void ChangeSelected(bool remove)
+            void ChangeSelected(bool remove, Registration? selected = null)
             {
-                if (list.SelectedItem is not Registration selected) return;
+                selected ??= list.SelectedItem as Registration;
+                if (selected is null) return;
                 try
                 {
                     LocalState.Change(state =>
@@ -222,9 +216,14 @@ internal sealed class ProfileCatalog(App app, Action<string, string, string?>? i
                         JsonArray registrations = state["registrations"]!.AsArray();
                         var target = registrations.OfType<JsonObject>().Single(item =>
                             item["registrationId"]?.GetValue<Guid>() == selected.Id);
-                        if (remove) registrations.Remove(target);
+                        if (remove)
+                        {
+                            registrations.Remove(target);
+                            (state[TrustKey] as JsonObject)?.Remove(selected.Path);
+                        }
                         else target["favorite"] = !selected.Favorite;
                     });
+                    if (remove) removals[selected.Path] = removals.GetValueOrDefault(selected.Path) + 1;
                     Reload();
                 }
                 catch (Exception exception) when (IsFileProblem(exception)) { MainWindow.ShowError(form.OwnerWindow, exception); }
@@ -305,6 +304,8 @@ internal sealed class ProfileCatalog(App app, Action<string, string, string?>? i
         var editor = new ProfileEditor(form, profile, app, creating, fromExplorer);
         string? attemptedPath = path;
         FilePublicationResult? pendingPublication = null;
+        long registrationReset = trustReset;
+        (TrustState State, string Version)? editorAdvance = null;
         form.DescribeUnresolvedPublication = () =>
             pendingPublication is { } publication ? JsonStoreRecovery.DescribeFailure(publication) : null;
         form.AddActionRow(() => form.AddAsyncAction("RecheckFilePublication", async () =>
@@ -326,13 +327,19 @@ internal sealed class ProfileCatalog(App app, Action<string, string, string?>? i
             }
             pendingPublication = null;
             editor.UseSavedRevision(committed);
+            profile = committed;
             if (path is null)
             {
                 path = attemptedPath;
                 savedAs?.Invoke(path);
-                await RememberAsync(path, committed, used: false);
+                await RegisterSavedAsync(path, committed, registrationReset);
             }
-            else names[path] = committed.DisplayName;
+            else
+            {
+                if (editorAdvance is { } advance) AdvanceEditorTrust(path, advance.State, advance.Version, committed);
+                names[path] = committed.DisplayName;
+            }
+            editorAdvance = null;
             ProfileSaved?.Invoke();
             JsonStoreRecovery.ShowRetainedStages(app, form, VerifiedFilePublication.GetRetainedStagePaths(attemptedPath));
         }));
@@ -347,16 +354,22 @@ internal sealed class ProfileCatalog(App app, Action<string, string, string?>? i
                 if (!string.Equals(attemptedPath, destination, StringComparison.OrdinalIgnoreCase))
                     pendingPublication = null;
                 attemptedPath = destination;
+                registrationReset = trustReset;
                 await ObserveSaveAsync(draft.BeginSaveNew(destination, issueProfiles, validateProfileStage));
                 editor.UseSavedRevision(draft);
+                profile = draft;
                 path = destination;
                 savedAs?.Invoke(path);
-                await RememberAsync(path, draft, used: false);
+                await RegisterSavedAsync(path, draft, registrationReset);
             }
             else
             {
+                editorAdvance = fromExplorer ? null : (ReadTrust(path), VersionFor(path, profile, null));
                 await ObserveSaveAsync(draft.BeginSaveEdit(issueProfiles, validateProfileStage));
                 editor.UseSavedRevision(draft);
+                if (editorAdvance is { } advance) AdvanceEditorTrust(path, advance.State, advance.Version, draft);
+                editorAdvance = null;
+                profile = draft;
                 names[path] = draft.DisplayName;
             }
             ProfileSaved?.Invoke();

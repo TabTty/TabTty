@@ -14,7 +14,7 @@ namespace TabTty.App;
 internal static class JsonStoreRecovery
 {
     internal sealed record Store(string Name, string Path, Action<string> Validate, Action Reload, Func<byte[]> Defaults,
-        Func<string, Adoption>? PrepareAdoption = null);
+        Func<string, Adoption>? PrepareAdoption = null, Func<byte[], byte[]>? SanitizeBackup = null);
 
     internal sealed record Adoption(IDisposable? Reservation, Action Apply);
 
@@ -58,7 +58,7 @@ internal static class JsonStoreRecovery
             if (app.Modal(() => picker.ShowDialog(form.OwnerWindow)) != true) return;
             byte[]? original = await Task.Run(() => FileDigest(store.Path));
             if (!form.IsLoaded || !Confirm(store)) return;
-            await RunAsync(store, validate => Restore(store.Path, picker.FileName, original, validate));
+            await RunAsync(store, validate => Restore(store.Path, picker.FileName, original, validate, store.SanitizeBackup));
         });
         form.AddAsyncAction("RecreateStore", async () =>
         {
@@ -102,14 +102,15 @@ internal static class JsonStoreRecovery
     public static void Restore(string path, string backup, Action<string> validate) =>
         Restore(path, backup, FileDigest(path), validate);
 
-    private static void Restore(string path, string backup, byte[]? original, Action<string> validate)
+    private static void Restore(string path, string backup, byte[]? original, Action<string> validate,
+        Func<byte[], byte[]>? sanitize = null)
     {
         using var input = File.OpenRead(backup);
         if (input.Length is <= 0 or > 16 * 1024 * 1024) throw new InvalidDataException(Text("StoreRecoveryInvalid"));
         byte[] bytes = new byte[(int)input.Length];
         input.ReadExactly(bytes);
         if (input.ReadByte() >= 0) throw new InvalidDataException(Text("StoreRecoveryInvalid"));
-        Commit(path, bytes, original, recovery: true, validate);
+        Commit(path, sanitize?.Invoke(bytes) ?? bytes, original, recovery: true, validate);
     }
 
     public static void Save(string path, byte[] bytes, byte[]? original, Action<string> validate) =>

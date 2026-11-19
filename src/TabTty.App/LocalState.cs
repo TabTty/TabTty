@@ -7,11 +7,13 @@ namespace TabTty.App;
 
 internal static class LocalState
 {
-    public static string DirectoryPath { get; } = Path.Combine(
+    public static string DirectoryPath { get; private set; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TabTty");
-    private static readonly string StatePath = Path.Combine(DirectoryPath, "state.json");
+    private static string StatePath => Path.Combine(DirectoryPath, "state.json");
     private static bool temporaryDefaults;
     private static byte[]? verifiedBytes;
+
+    internal static void UseTestDirectory(string path) => DirectoryPath = path;
 
     public static bool Initialize()
     {
@@ -28,9 +30,21 @@ internal static class LocalState
 
     public static JsonStoreRecovery.Store RecoveryStore() => new(App.Text("LocalStateStore"), StatePath,
         path => _ = ReadSnapshot(path), () => temporaryDefaults = false,
-        () => JsonSerializer.SerializeToUtf8Bytes(Defaults()));
+        () => JsonSerializer.SerializeToUtf8Bytes(Defaults()), SanitizeBackup: bytes =>
+        {
+            JsonObject state = Parse(bytes).State;
+            state.Remove("profileTrust");
+            return JsonSerializer.SerializeToUtf8Bytes(state);
+        });
 
     public static JsonObject Read() => ReadSnapshot().State;
+
+    public static JsonObject ReadForProfileTrust()
+    {
+        if (VerifiedFilePublication.HasPendingPublication(StatePath))
+            throw new IOException(App.Text("StoreSaveUnverified"));
+        return ReadSnapshot().State;
+    }
 
     public static void Change(Action<JsonObject> update)
     {
@@ -91,6 +105,17 @@ internal static class LocalState
                 item["favorite"]?.GetValue<bool>() is not { } || !item.ContainsKey("lastUsed") ||
                 (item["lastUsed"] is not null && item["lastUsed"]?.GetValue<DateTimeOffset>() is not { Offset.Ticks: 0 }))
                 throw new InvalidDataException(App.Text("LocalStateInvalid"));
+        }
+        if (state.ContainsKey("profileTrust"))
+        {
+            if (state["profileTrust"] is not JsonObject trust)
+                throw new InvalidDataException(App.Text("LocalStateInvalid"));
+            foreach (var (location, version) in trust)
+                if (!OrdinaryWindowsPath.IsValid(location) || !Path.IsPathFullyQualified(location) ||
+                    version is not JsonValue value || !value.TryGetValue<string>(out string? stamp) ||
+                    stamp is not { Length: 66 } || stamp[1] != ':' ||
+                    !stamp.Skip(2).All(char.IsAsciiHexDigit))
+                    throw new InvalidDataException(App.Text("LocalStateInvalid"));
         }
         return (state, bytes);
     }

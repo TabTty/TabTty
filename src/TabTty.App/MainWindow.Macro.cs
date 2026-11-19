@@ -157,6 +157,15 @@ internal sealed partial class MainWindow
         MaxHeight = 180, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
     };
 
+    private void ResetMacroTrust(Window owner)
+    {
+        if (app.Modal(() => ThemedMessageBox.Show(owner, Text("MacroTrustResetConfirm"), Text("MacroTrustReset"),
+            MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No)) != MessageBoxResult.Yes) return;
+        try { MacroTrust.Reset(); }
+        catch (Exception error) when (error is IOException or Win32Exception or UnauthorizedAccessException)
+        { ShowError(owner, new IOException(Text("MacroTrustResetFailed"), error)); }
+    }
+
     private void ShowMacroLaunchError(string detail) =>
         app.Modal(() => ThemedMessageBox.Show(this, detail, Text("RunMacro"), icon: MessageBoxImage.Error));
 

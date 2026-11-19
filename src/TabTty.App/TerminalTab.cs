@@ -255,9 +255,10 @@ internal sealed partial class TerminalTab : UserControl
                 }, DispatcherPriority.Loaded, token).Task;
             using (var startup = CancellationTokenSource.CreateLinkedTokenSource(stop.Token, attempt))
             {
-                session = Macro is { } run
-                    ? await TerminalSession.ConnectMacroAsync(path, run, startup.Token, interaction, Opened, retention, Viewport)
-                    : await TerminalSession.ConnectAsync(path, startup.Token, interaction, Opened, retention, Viewport);
+                Window? owner = MacroWindow ?? Window.GetWindow(this);
+                var (profile, recordingDestination) = await app.Profiles.AdmitAsync(owner, path, Macro?.BaseName, startup.Token);
+                session = await TerminalSession.ConnectReviewedAsync(path, profile, Macro, startup.Token, interaction,
+                    Opened, retention, Viewport, recordingDestination);
             }
             session.Bell += () =>
             {
@@ -766,7 +767,9 @@ internal sealed partial class TerminalTab : UserControl
 
     private void UpdateStatusText()
     {
-        string text = error is null ? Text(statusKey) : $"{Text(statusKey)} — {error}";
+        string? detail = error == RecordingDestinationChangedException.Description
+            ? Text("RecordingDestinationChanged") : error;
+        string text = detail is null ? Text(statusKey) : $"{Text(statusKey)} — {detail}";
         if (session is { } active)
         {
             if (active.IsTelnet) text = $"{Text("TelnetUnencrypted")}   {text}";

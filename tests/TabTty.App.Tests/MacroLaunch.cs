@@ -127,6 +127,16 @@ internal static partial class Program
             await DecideMacroRequest(app, window, remote, null);
             await request;
             CheckMacroLaunch(window.TerminalTabs.Count() == tabs, "Cancelling the network read created a tab.");
+            MacroTrust.Save(block, MacroTrustDecision.Block);
+            MacroTrust.Reset();
+            CheckMacroLaunch(MacroTrust.Read(allow) is null && MacroTrust.Read(block) is null &&
+                MacroTrust.List().Count == 0, "Reset did not erase both kinds of macro decision.");
+            request = window.OpenExternalMacroAsync(launch);
+            await DecideMacroRequest(app, window, original, "[0] \"ok\"");
+            await request;
+            request = window.OpenExternalMacroAsync(empty);
+            await DecideMacroRequest(app, window, original, "[0] \"\"");
+            await request;
         }
         finally
         {

@@ -109,16 +109,22 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
         Func<CancellationToken, Task<(int Columns, int Rows)>>? viewport = null) =>
         ConnectCoreAsync(path, token, ssh, opened, defaultRetainedRows, viewport, macro);
 
+    internal static Task<TerminalSession> ConnectReviewedAsync(string path, ConnectionProfile profile, MacroRun? macro,
+        CancellationToken token, SshInteraction ssh, Action<ConnectionProfile> opened, int defaultRetainedRows,
+        Func<CancellationToken, Task<(int Columns, int Rows)>> viewport, RecordingDestination? destination) =>
+        ConnectCoreAsync(path, token, ssh, opened, defaultRetainedRows, viewport, macro, profile, destination);
+
     private static async Task<TerminalSession> ConnectCoreAsync(string path, CancellationToken cancellationToken,
         SshInteraction? ssh, Action<ConnectionProfile>? opened, int defaultRetainedRows,
-        Func<CancellationToken, Task<(int Columns, int Rows)>>? viewport, MacroRun? macro)
+        Func<CancellationToken, Task<(int Columns, int Rows)>>? viewport, MacroRun? macro,
+        ConnectionProfile? reviewed = null, RecordingDestination? destination = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(defaultRetainedRows, 100);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(defaultRetainedRows, 100_000);
         using var loadDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         loadDeadline.CancelAfter(TimeSpan.FromSeconds(30));
         ConnectionProfile profile;
-        try { profile = await ConnectionProfile.LoadAsync(path, loadDeadline.Token).ConfigureAwait(false); }
+        try { profile = reviewed ?? await ConnectionProfile.LoadAsync(path, loadDeadline.Token).ConfigureAwait(false); }
         catch (Exception error) when (macro is not null && !cancellationToken.IsCancellationRequested &&
             error is IOException or UnauthorizedAccessException or ArgumentException or InvalidDataException or
                 System.Text.Json.JsonException or OperationCanceledException)
@@ -127,7 +133,7 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
         opened?.Invoke(profile);
         if (profile.Type == "ssh" && ssh is null)
             throw new InvalidOperationException("SSH requires host verification and authentication interaction.");
-        var (recording, recordingPart) = await RecordingLifecycle.PrepareInitialAsync(path, profile, macro, cancellationToken)
+        var (recording, recordingPart) = await RecordingLifecycle.PrepareInitialAsync(path, profile, macro, cancellationToken, destination)
             .ConfigureAwait(false);
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

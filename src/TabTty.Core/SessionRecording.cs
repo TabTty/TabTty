@@ -30,9 +30,7 @@ internal sealed class SessionRecording
     private readonly TaskCompletionSource incomplete = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TimeProvider clock;
     private readonly Func<int, RecordingFormat, IRecordingFile> openFile;
-
-    private SessionRecording(string stem, int part, RecordingFormat[] formats)
-        : this(part, formats, TimeProvider.System, (number, format) => OpenFile(stem, number, format)) { }
+    private readonly RecordingDestination? destination;
 
     internal SessionRecording(RecordingFormat[] formats, TimeProvider clock, Func<RecordingFormat, IRecordingFile> open)
         : this(formats, clock, (_, format) => open(format)) { }
@@ -41,11 +39,12 @@ internal sealed class SessionRecording
         : this(1, formats, clock, open) { }
 
     private SessionRecording(int part, RecordingFormat[] formats, TimeProvider clock,
-        Func<int, RecordingFormat, IRecordingFile> open)
+        Func<int, RecordingFormat, IRecordingFile> open, RecordingDestination? destination = null)
     {
         this.formats = formats;
         this.clock = clock;
         openFile = open;
+        this.destination = destination;
         PartNumber = part;
         var streams = new Dictionary<RecordingFormat, IRecordingFile>();
         try
@@ -90,9 +89,11 @@ internal sealed class SessionRecording
 
     public string? Failure => Volatile.Read(ref failure);
     public static SessionRecording Open(string profilePath, ConnectionProfile profile, string? nameOverride = null,
-        int part = 1, string? runSuffix = null, DateTimeOffset? capturedStart = null)
+        int part = 1, string? runSuffix = null, DateTimeOffset? capturedStart = null,
+        RecordingDestination? destination = null)
     {
-        string path = OrdinaryWindowsPath.Resolve(profile.LogDirectory, Path.GetDirectoryName(Path.GetFullPath(profilePath))!);
+        string path = destination?.Verify() ?? OrdinaryWindowsPath.Resolve(profile.LogDirectory,
+            Path.GetDirectoryName(Path.GetFullPath(profilePath))!);
 
         Directory.CreateDirectory(path);
         char[] invalid = Path.GetInvalidFileNameChars();
@@ -109,10 +110,15 @@ internal sealed class SessionRecording
         if (profile.RecordTerminal) formats.Add(RecordingFormat.Terminal);
         string stem = $"{label}-{timestamp}-{runSuffix ?? Guid.NewGuid().ToString("N")}";
         if (OrdinaryWindowsPath.IsReservedFileName(stem)) stem = "_" + stem;
-        return new SessionRecording(Path.Combine(path, stem), part, formats.ToArray());
+        string fullStem = Path.Combine(path, stem);
+        return new SessionRecording(part, formats.ToArray(), TimeProvider.System, (number, format) =>
+        {
+            destination?.Verify();
+            return OpenFile(fullStem, number, format);
+        }, destination);
     }
 
-    public SessionRecording OpenPart(int part) => new(part, formats, clock, openFile);
+    public SessionRecording OpenPart(int part) => new(part, formats, clock, openFile, destination);
 
     public void Enqueue(RecordingFormat format, byte[] payload)
     {
@@ -202,11 +208,17 @@ internal sealed class SessionRecording
     private async Task WriteAsync(Dictionary<RecordingFormat, IRecordingFile> streams)
     {
         var batches = streams.Keys.ToDictionary(format => format, _ => new WriteBatch());
+        long lastDestinationCheck = clock.GetTimestamp();
         try
         {
             while (await queue.Reader.WaitToReadAsync(abandon.Token).ConfigureAwait(false))
             {
                 bool flush = await StageBatchAsync(batches).ConfigureAwait(false);
+                if (destination is not null && clock.GetElapsedTime(lastDestinationCheck) >= TimeSpan.FromSeconds(1))
+                {
+                    destination.Verify();
+                    lastDestinationCheck = clock.GetTimestamp();
+                }
                 foreach (var (format, batch) in batches)
                 {
                     if (batch.Buffers.Count == 0) continue;

@@ -35,6 +35,10 @@ internal static partial class Program
             }
         }
         string settingsDirectory = Directory.CreateTempSubdirectory("TabTty-settings-test-").FullName;
+        LocalState.UseTestDirectory(settingsDirectory);
+        MacroTrust.UseTestStore();
+        if (args is not ["--profile-trust"])
+            AcceptFixtureProfileReviews();
         string settingsPath = Path.Combine(settingsDirectory, "settings.json");
         var settingsFixture = args is ["--file-editors"] ? new FilePublicationFixture() : null;
         var profileFixture = args is ["--file-editors"] ? new FilePublicationFixture() : null;
@@ -136,7 +140,7 @@ internal static partial class Program
                 CheckFileOperations(settingsDirectory).GetAwaiter().GetResult();
                 return 0;
             }
-            if (args is ["--native-utf8-baseline" or "--terminal-tab-close" or "--broadcast-splits" or "--macro-launch"] or
+            if (args is ["--native-utf8-baseline" or "--terminal-tab-close" or "--broadcast-splits" or "--macro-launch" or "--profile-trust"] or
                 ["--transfer-window-close" or "--fullscreen-vim" or "--overload-controls" or "--sftp-batch", _])
             {
                 var integrationFrame = new DispatcherFrame();
@@ -146,6 +150,7 @@ internal static partial class Program
                     "--terminal-tab-close" => CheckTerminalClosure(application, settingsDirectory),
                     "--broadcast-splits" => BroadcastAndSplitViews(application, settingsDirectory),
                     "--macro-launch" => MacroLaunchAndDialog(application, settingsDirectory),
+                    "--profile-trust" => CheckProfileTrustAsync(application, settingsDirectory),
                     "--fullscreen-vim" => CheckFullScreenApplicationAsync(application, settingsDirectory, args[1]),
                     "--overload-controls" => CheckOverloadControlsAsync(application, settingsDirectory, args[1]),
                     "--sftp-batch" => SftpBatchCopiesFolderTrees(int.Parse(args[1]), settingsDirectory),

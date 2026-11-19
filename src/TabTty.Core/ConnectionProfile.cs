@@ -163,6 +163,27 @@ public sealed class ConnectionProfile
         finally { ApplicationResources.FilePreparations.Release(); }
     }
 
+    internal string TrustVersion => "1:" + Convert.ToHexString(
+        System.Security.Cryptography.SHA256.HashData(sourceBytes ??
+            throw new InvalidOperationException("Profile has no verified file revision.")));
+
+    internal static async Task<ConnectionProfile?> TryLoadLocalAsync(string path, CancellationToken token)
+    {
+        string source = OpeningPath(path);
+        await ApplicationResources.FilePreparations.WaitAsync(token).ConfigureAwait(false);
+        try
+        {
+            return await Task.Run(async () =>
+            {
+                using var handle = LocalMacroFile.TryOpen(source);
+                if (handle is null) return null;
+                await using var stream = new FileStream(handle, FileAccess.Read);
+                return ParseProfile(source, await ReadBytesAsync(stream, token).ConfigureAwait(false));
+            }, token).ConfigureAwait(false);
+        }
+        finally { ApplicationResources.FilePreparations.Release(); }
+    }
+
     private static async Task<ConnectionProfile> LoadPreparedAsync(string path, CancellationToken cancellationToken)
     {
         string source = OpeningPath(path);
@@ -193,6 +214,11 @@ public sealed class ConnectionProfile
     {
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read,
             bufferSize: 8192, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        return await ReadBytesAsync(stream, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<byte[]> ReadBytesAsync(FileStream stream, CancellationToken cancellationToken)
+    {
         byte[] bytes = new byte[MaximumBytes + 1];
         int length = await stream.ReadAtLeastAsync(bytes, bytes.Length, false, cancellationToken)
             .ConfigureAwait(false);
