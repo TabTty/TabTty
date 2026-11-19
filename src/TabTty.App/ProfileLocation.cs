@@ -1,5 +1,6 @@
 using System.IO;
 using System.Runtime.InteropServices;
+using TabTty.Core;
 
 namespace TabTty.App;
 
@@ -7,8 +8,7 @@ internal static class ProfileLocation
 {
     public static string Normalize(string path)
     {
-        string full = Path.GetFullPath(path);
-        if (full.Contains('*') || full.Contains('?')) return full;
+        string full = OrdinaryWindowsPath.Resolve(path);
         string root = Path.GetPathRoot(full)!;
         string normalized = root.ToUpperInvariant();
         // Resolve each component at its opening location, retaining any link in the path.

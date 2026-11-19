@@ -7,23 +7,62 @@ internal readonly record struct TerminalInput(TerminalInputKind Kind, string Tex
 
 public sealed partial class TerminalSession
 {
-    internal bool AcceptsInput => (!ended || macro is not null) && !disconnected && !IsMacroOwned && !HasAiInputOwner;
+    internal bool AcceptsInput => SendDirectionAvailable && !IsMacroOwned && !HasAiInputOwner;
 
-    internal sealed class PreparedInput(ResourceReservation unit, ResourceReservation memory,
-        Func<CancellationToken, Task<bool>> send, int? mouseGeneration = null) : IDisposable
+    private sealed class PasteAdmission(Task<bool> commit)
     {
+        internal TaskCompletionSource<bool> Ready { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal Task<bool> Commit { get; } = commit;
+        internal Func<bool>? CheckCommit { get; set; }
+    }
+
+    internal sealed class PreparedInput(ResourceReservation unit, IDisposable memory,
+        Func<CancellationToken, Task<bool>> send, int? mouseGeneration = null, Task<bool>? pasteReady = null,
+        Func<bool>? canCommit = null) : IDisposable
+    {
+        private readonly object gate = new();
+        private bool sending, disposeRequested;
         public int? MouseGeneration => mouseGeneration;
         public bool Started { get; private set; }
+        internal Task<bool>? PasteReady => pasteReady;
+        internal bool CanCommitPaste => canCommit?.Invoke() == true;
 
         public Task<bool> SendAsync(CancellationToken token)
         {
             token.ThrowIfCancellationRequested();
-            if (Started) throw new InvalidOperationException("This terminal input has already been submitted.");
-            Started = true;
-            return send(token);
+            lock (gate)
+            {
+                ObjectDisposedException.ThrowIf(disposeRequested, this);
+                if (Started) throw new InvalidOperationException("This terminal input has already been submitted.");
+                Started = sending = true;
+            }
+            return SendOwnedAsync(token);
+        }
+
+        private async Task<bool> SendOwnedAsync(CancellationToken token)
+        {
+            try { return await send(token).ConfigureAwait(false); }
+            finally
+            {
+                lock (gate)
+                {
+                    sending = false;
+                    if (disposeRequested) Release();
+                }
+            }
         }
 
         public void Dispose()
+        {
+            lock (gate)
+            {
+                if (disposeRequested) return;
+                disposeRequested = true;
+                if (!sending) Release();
+            }
+        }
+
+        private void Release()
         {
             memory.Dispose();
             unit.Dispose();
@@ -74,33 +113,53 @@ public sealed partial class TerminalSession
                     TerminalInputKind.Key or TerminalInputKind.Mouse => 64,
                     _ => prepared.payload.LongLength,
                 };
-                memory.Resize(prepared.echo.LongLength + bound * (protocol is null ? 1 : 3));
+                memory.Resize(prepared.echo.LongLength + bound * (!IsTelnet ? 1 : 3));
                 return new PreparedInput(unit, memory, async cancellation =>
                 {
-                    await state.WaitAsync(cancellation).ConfigureAwait(false);
+                    await manualInputOrder.WaitAsync(cancellation).ConfigureAwait(false);
                     try
                     {
-                        EnsureConnected();
-                        EnsureManualInput();
-                        if (pasteActive) throw new InvalidOperationException("A paste is in progress.");
                         var (payload, echo) = prepared;
-                        if (mouseGeneration is { } generation)
+                        bool localEcho;
+                        ValueTask<TransportSendResult> submission;
+                        await state.WaitAsync(cancellation).ConfigureAwait(false);
+                        try
                         {
-                            byte[] report = terminal.EncodeBroadcastMouse(input.Mouse with { Generation = generation });
-                            if (report.Length == 0) return false;
-                            payload = report;
+                            EnsureConnected();
+                            EnsureManualInput();
+                            if (pasteActive) throw new InvalidOperationException("A paste is in progress.");
+                            if (mouseGeneration is { } generation)
+                            {
+                                byte[] report = terminal.EncodeBroadcastMouse(input.Mouse with { Generation = generation });
+                                if (report.Length == 0) return false;
+                                payload = report;
+                            }
+                            else if (input.Kind == TerminalInputKind.Key)
+                            {
+                                (payload, echo) = EncodeOperation(input);
+                            }
+                            memory.Resize(echo.LongLength + payload.LongLength * (!IsTelnet ? 1 : 3));
+                            localEcho = echo.Length > 0 && LocalEcho;
+                            submission = transport.SubmitPreparedAsync(EncodeInput(payload), cancellation);
                         }
-                        else if (input.Kind == TerminalInputKind.Key)
+                        finally { state.Release(); }
+                        var result = await submission.ConfigureAwait(false);
+                        if (localEcho)
                         {
-                            (payload, echo) = EncodeOperation(input);
+                            await state.WaitAsync().ConfigureAwait(false);
+                            try
+                            {
+                                if (!terminalReleased)
+                                    await ProcessBatchAsync(() => Echo(echo.AsSpan(0, ConfirmedInputEchoLength(result, payload, echo,
+                                        input.Kind == TerminalInputKind.Text ? input.Text : null, input.Alt))),
+                                        CancellationToken.None).ConfigureAwait(false);
+                            }
+                            finally { state.Release(); }
                         }
-                        memory.Resize(echo.LongLength + payload.LongLength * (protocol is null ? 1 : 3));
-                        await wire.WriteAsync(EncodeInput(payload), cancellation).ConfigureAwait(false);
-                        if (echo.Length > 0 && LocalEcho)
-                            await ProcessBatchAsync(() => Echo(echo), CancellationToken.None).ConfigureAwait(false);
+                        if (result.Error is { } error) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(error);
                         return true;
                     }
-                    finally { state.Release(); }
+                    finally { manualInputOrder.Release(); }
                 }, mouseGeneration);
             }
             finally { state.Release(); }
@@ -137,25 +196,32 @@ public sealed partial class TerminalSession
     }
 
     internal async Task<PreparedInput> PreparePasteAsync(TerminalPaste paste, int characterDelay, int lineDelay,
-        CancellationToken token, CancellationToken lifetime, IProgress<int>? progress)
+        CancellationToken token, CancellationToken lifetime, IProgress<int>? progress, Task<bool> commit)
     {
         var unit = inputUnits.Reserve(1);
-        ResourceReservation? memory = null;
+        IDisposable? memory = null;
         try
         {
-            memory = inputBytes.Reserve(PasteReservationSize);
+            memory = ReservePasteWork(paste);
             await state.WaitAsync(token).ConfigureAwait(false);
             try
             {
                 EnsureConnected();
                 EnsureManualInput();
                 if (pasteActive) throw new InvalidOperationException("A paste is in progress.");
-                _ = EncodeText(paste.Text);
             }
             finally { state.Release(); }
-            return new PreparedInput(unit, memory,
-                stop => SendReservedPasteAsync(paste, characterDelay, lineDelay, stop, lifetime, progress,
-                    preflightComplete: true));
+            await Task.Run(() => PreflightPasteText(paste, characterDelay, lineDelay, token), token).ConfigureAwait(false);
+            var admission = new PasteAdmission(commit);
+            return new PreparedInput(unit, memory, async stop =>
+            {
+                try
+                {
+                    return await SendReservedPasteAsync(paste, characterDelay, lineDelay, stop, lifetime, progress,
+                        preflightComplete: true, admission: admission).ConfigureAwait(false);
+                }
+                finally { admission.Ready.TrySetResult(false); }
+            }, pasteReady: admission.Ready.Task, canCommit: () => admission.CheckCommit?.Invoke() == true);
         }
         catch
         {

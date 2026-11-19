@@ -37,6 +37,17 @@ internal sealed class AiInputLease : IDisposable
         }
     }
 
+    internal ValueTask<T> StartWrite<T>(AiInputAttempt attempt, Func<ValueTask<T>> write)
+    {
+        lock (gate)
+        {
+            if (IsRevoked) throw new AiInputRejectedException("control_required");
+            attempt.Cancellation.ThrowIfCancellationRequested();
+            attempt.MarkAdmitted();
+            return write();
+        }
+    }
+
     public void Dispose()
     {
         Revoke();
@@ -106,11 +117,11 @@ public sealed partial class TerminalSession
     {
         if (ai is null)
         {
-            await wire.WriteAsync(bytes, deadline).ConfigureAwait(false);
+            await transport.WriteAsync(bytes, deadline).ConfigureAwait(false);
             return;
         }
         CheckAiInput(ai);
-        await ai.Lease.StartWrite(ai, () => wire.WriteAsync(bytes, deadline)).ConfigureAwait(false);
+        await ai.Lease.StartWrite(ai, () => transport.WriteAsync(bytes, deadline)).ConfigureAwait(false);
         ai.CompleteWrite();
     }
 
@@ -118,7 +129,7 @@ public sealed partial class TerminalSession
         bool framePaste, AiInputAttempt attempt, CancellationToken lifetime)
     {
         using var unit = inputUnits.Reserve(1);
-        using var memory = inputBytes.Reserve(PasteReservationSize);
+        using var memory = ReservePasteWork(paste);
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(attempt.Lease.Token, attempt.Cancellation);
         return await SendReservedPasteAsync(paste, characterDelay, lineDelay, stop.Token, lifetime, null,
             ai: attempt, framePaste: framePaste).ConfigureAwait(false);
@@ -128,17 +139,22 @@ public sealed partial class TerminalSession
         AiInputAttempt attempt, CancellationToken lifetime)
     {
         using var unit = inputUnits.Reserve(1);
+        using var memory = inputBytes.Reserve(0);
         using var pending = CancellationTokenSource.CreateLinkedTokenSource(attempt.Lease.Token, attempt.Cancellation, lifetime);
+        TerminalMouseInput report = default;
+        TerminalMouseMode mode = default;
+        byte[] echo, payload;
+        bool localEcho;
+        ValueTask<TransportSendResult> submission;
         await state.WaitAsync(pending.Token).ConfigureAwait(false);
+        using var deadline = PasteWriteDeadline(lifetime);
         try
         {
             CheckAiInput(attempt);
             if (pasteActive) throw new AiInputRejectedException("busy");
-            TerminalMouseInput report = default;
-            byte[] payload;
-            byte[] echo;
             if (mouse is { } mouseAction)
             {
+                mode = terminal.MouseMode;
                 report = GetAiMouseReport(attempt.Lease, mouseAction);
                 byte[] bytes = terminal.EncodeMouse(report);
                 if (bytes.Length == 0) throw new AiInputRejectedException("unsupported_action");
@@ -146,17 +162,29 @@ public sealed partial class TerminalSession
                 echo = [];
             }
             else (payload, echo) = EncodeOperation(input);
-            using var memory = inputBytes.Reserve(echo.LongLength + payload.LongLength * (protocol is null ? 1 : 3));
-            using var deadline = PasteWriteDeadline(lifetime);
-            await WriteInputAsync(EncodeInput(payload), deadline.Token, attempt).ConfigureAwait(false);
-            if (echo.Length != 0 && LocalEcho)
-                await ProcessBatchAsync(() => Echo(echo), CancellationToken.None).ConfigureAwait(false);
+            memory.Resize(echo.LongLength + payload.LongLength * (!IsTelnet ? 1 : 3));
+            localEcho = echo.Length != 0 && LocalEcho;
+            submission = attempt.Lease.StartWrite(attempt, () =>
+                transport.SubmitPreparedAsync(EncodeInput(payload), deadline.Token));
+        }
+        finally { state.Release(); }
+        var result = await submission.ConfigureAwait(false);
+        int echoLength = ConfirmedInputEchoLength(result, payload, echo,
+            input.Kind == TerminalInputKind.Text ? input.Text : null, input.Alt);
+        if (result.Error is null || echoLength != 0) attempt.CompleteWrite();
+        await state.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (localEcho && !terminalReleased)
+                await ProcessBatchAsync(() => Echo(echo.AsSpan(0, echoLength)), CancellationToken.None).ConfigureAwait(false);
+            if (result.Error is { } error) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(error);
             if (mouse is not { } action) return null;
-            int limit = terminal.MouseMode.SgrCoordinates ? int.MaxValue : 223;
+            int limit = mode.SgrCoordinates ? int.MaxValue : 223;
             var effective = (Math.Min(action.Row, limit), Math.Min(action.Column, limit));
+            if (terminalReleased || terminal.MouseMode.Generation != mode.Generation) return effective;
             report = report with { Row = effective.Item1 - 1, Column = effective.Item2 - 1 };
             var presses = attempt.Lease.Presses;
-            if (action.Action == "press" && terminal.MouseMode.Tracking != 9) presses.Add(report.Button, report);
+            if (action.Action == "press" && mode.Tracking != 9) presses.Add(report.Button, report);
             if (action.Action == "release") presses.Remove(report.Button);
             if (action.Action == "move")
                 foreach (int button in presses.Keys.ToArray())
@@ -186,18 +214,21 @@ public sealed partial class TerminalSession
         {
             if (lease.Presses.Count == 0) return;
             using var deadline = PasteWriteDeadline(CancellationToken.None);
+            Task submission;
             await state.WaitAsync(deadline.Token).ConfigureAwait(false);
             try
             {
                 if (disconnected || ended) return;
+                var releases = new List<byte[]>();
                 foreach (TerminalMouseInput press in lease.Presses.Values)
                 {
                     byte[] release = terminal.EncodeMouse(press with { Release = true, Motion = false });
-                    if (release.Length != 0)
-                        await wire.WriteAsync(EncodeInput(release), deadline.Token).ConfigureAwait(false);
+                    if (release.Length != 0) releases.Add(EncodeInput(release));
                 }
+                submission = transport.WriteBatchAsync(releases, deadline.Token);
             }
             finally { state.Release(); }
+            await submission.ConfigureAwait(false);
         }
         finally
         {

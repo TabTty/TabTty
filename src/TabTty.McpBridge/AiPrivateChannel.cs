@@ -15,7 +15,10 @@ internal sealed class AiPrivateChannel(PipeStream pipe, SafeProcessHandle peer, 
     private readonly Channel<Frame> outbound = Channel.CreateBounded<Frame>(20);
     private sealed record Frame(byte[] Bytes, IDisposable? Memory);
     private const int MaxQueued = 8 * 1024 * 1024;
-    private int queued, stopping;
+    // Includes three 256-scalar strings even when JSON escapes every UTF-16 code unit.
+    internal const int MaxControlFrame = 16 * 1024;
+    private int queued;
+    private readonly object stopGate = new();
     private Task? cancellation;
     private long lastHeartbeat = Stopwatch.GetTimestamp();
     internal CancellationToken Token => lifetime.Token;
@@ -63,7 +66,7 @@ internal sealed class AiPrivateChannel(PipeStream pipe, SafeProcessHandle peer, 
     // A successful enqueue transfers the reservation to the writer.
     internal bool TrySend(byte[] frame, bool priority = false, IDisposable? memory = null)
     {
-        if (!Token.IsCancellationRequested && frame.Length <= AiFrames.MaxFrame)
+        if (frame.Length <= (priority ? MaxControlFrame : AiFrames.MaxFrame))
         {
             int total = Interlocked.Add(ref queued, frame.Length);
             int limit = priority ? MaxQueued : MaxQueued - 512 * 1024;
@@ -91,10 +94,15 @@ internal sealed class AiPrivateChannel(PipeStream pipe, SafeProcessHandle peer, 
 
     internal void Stop()
     {
-        if (Interlocked.Exchange(ref stopping, 1) != 0) return;
-        cancellation = lifetime.CancelAsync();
-        outbound.Writer.TryComplete();
-        pipe.Dispose();
+        lock (stopGate)
+        {
+            if (cancellation is not null) return;
+            // Revocation can arrive from the GUI after the peer has disconnected.
+            // Close admissions before the writer drains its last owned frames.
+            outbound.Writer.TryComplete();
+            cancellation = lifetime.CancelAsync();
+            pipe.Dispose();
+        }
     }
 
     private async Task ReadAsync(Func<JsonElement, Task> receive)

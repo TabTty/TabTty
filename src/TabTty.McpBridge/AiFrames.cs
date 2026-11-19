@@ -11,6 +11,7 @@ internal static class AiFrames
 {
     internal const int MaxFrame = 2 * 1024 * 1024;
     internal const int MaxResult = 1024 * 1024;
+    private const int MaxJsonTokens = 65_536;
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     internal static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -30,6 +31,15 @@ internal static class AiFrames
 
     internal static JsonElement Parse(ReadOnlyMemory<byte> bytes)
     {
+        // A short numeric value or an empty container costs far more in the DOM
+        // than on the wire. Check dense frames before allocating document metadata.
+        if (bytes.Length > MaxJsonTokens)
+        {
+            var reader = new Utf8JsonReader(bytes.Span, new JsonReaderOptions { MaxDepth = 32 });
+            int tokens = 0;
+            while (reader.Read())
+                if (++tokens > MaxJsonTokens) throw new JsonException();
+        }
         _ = StrictUtf8.GetCharCount(bytes.Span);
         using var document = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 32 });
         if (document.RootElement.ValueKind != JsonValueKind.Object) throw new JsonException();

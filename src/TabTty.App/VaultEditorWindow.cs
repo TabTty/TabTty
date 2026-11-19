@@ -14,6 +14,7 @@ internal sealed class VaultEditorWindow : Window
     public VaultEditorWindow(VaultFileController file, Action<FormView> build)
     {
         this.file = file;
+        Icon = WindowIcons.Vault;
         Width = 940;
         Height = 720;
         MinWidth = 520;
@@ -22,7 +23,7 @@ internal sealed class VaultEditorWindow : Window
         SetResourceReference(BackgroundProperty, "WindowBackground");
         SetResourceReference(ForegroundProperty, "WindowForeground");
         Content = form;
-        form.SetPageTitle("VaultEntries");
+        form.SetPageTitle("ManageVault");
         build(form);
         UpdateLabels();
     }
@@ -44,6 +45,6 @@ internal sealed class VaultEditorWindow : Window
     protected override void OnClosing(CancelEventArgs e)
     {
         base.OnClosing(e);
-        if (file.IsBusy && !archived) e.Cancel = true;
+        if (file.IsBusy && !archived && !file.CanDismissMasterChange(this)) e.Cancel = true;
     }
 }

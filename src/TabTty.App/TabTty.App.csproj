@@ -13,12 +13,13 @@
     <ApplicationIcon>Assets/TabTty.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
-    <Resource Include="$(ApplicationIcon)" />
+    <Resource Include="$(ApplicationIcon);Assets/tttykey.ico" />
     <None Update="Assets/tttym.ico;Assets/tttykey.ico;Assets/tttylog.ico"
           CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <ProjectReference Include="../TabTty.Core/TabTty.Core.csproj" />
     <Compile Include="../TabTty.McpBridge/AiPipe.cs" Link="AiPipe.cs" />
     <Compile Include="../TabTty.McpBridge/AiFrames.cs" Link="AiFrames.cs" />
     <Compile Include="../TabTty.McpBridge/AiPrivateChannel.cs" Link="AiPrivateChannel.cs" />
+    <Compile Include="../TabTty.McpBridge/AiRateLimit.cs" Link="AiRateLimit.cs" />
   </ItemGroup>
 </Project>

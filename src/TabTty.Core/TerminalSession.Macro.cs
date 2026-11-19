@@ -36,7 +36,7 @@ public sealed partial class TerminalSession
         try
         {
             using var unit = inputUnits.Reserve(1);
-            using var payloadMemory = inputBytes.Reserve(PasteReservationSize);
+            using var payloadMemory = inputBytes.Reserve(1024 * 1024 + 64 * 1024);
             await state.WaitAsync(token).ConfigureAwait(false);
             try
             {
@@ -66,7 +66,7 @@ public sealed partial class TerminalSession
                     {
                         wireBytes = EncodeInput(chunk);
                         mayHaveSent = true;
-                        await wire.WriteAsync(wireBytes, deadline.Token).ConfigureAwait(false);
+                        await transport.WriteAsync(wireBytes, deadline.Token).ConfigureAwait(false);
                         if (!secret && LocalEcho)
                         {
                             byte[] echo = new byte[StrictUtf8.GetByteCount(characters.AsSpan(offset, count))];
@@ -98,6 +98,6 @@ public sealed partial class TerminalSession
     }
 
     internal Task WaitForMacroPeerCloseAsync(CancellationToken token) =>
-        macro is null ? Task.CompletedTask : wire is SshSessionWire ssh ? ssh.PeerClosed.WaitAsync(token) :
+        macro is null ? Task.CompletedTask : transport.IsSsh ? transport.PeerClosed.WaitAsync(token) :
             Task.Delay(Timeout.Infinite, token);
 }

@@ -1,4 +1,4 @@
-use super::{Model, Row, Unicode};
+use super::{Model, Row};
 use std::collections::HashMap;
 use std::mem::size_of;
 
@@ -78,37 +78,18 @@ pub struct HistorySlice {
     pub clusters: u32,
 }
 
-// Each boundary is a UTF-16 offset between complete Unicode clusters.
-fn clusters(text: &[u16], unicode: &Unicode, mut visit: impl FnMut(usize, usize, u32) -> bool) {
-    if text.iter().all(|unit| (0x20..=0x7e).contains(unit)) {
-        for index in 0..text.len() {
-            if !visit(index, index + 1, 1) {
-                break;
-            }
-        }
-        return;
-    }
-    let mut scalars = [0; 256];
-    let (mut length, mut start, mut end, mut bytes) = (0, 0, 0, 0);
-    for character in char::decode_utf16(text.iter().copied()) {
-        let character = character.unwrap_or(char::REPLACEMENT_CHARACTER);
-        let scalar = character as u32;
-        if length != 0 && !unicode.joins(&scalars[..length], scalar) {
-            if !visit(start, end, bytes) {
-                return;
-            }
-            length = 0;
-            start = end;
-            bytes = 0;
-        }
-        scalars[length] = scalar;
-        length += 1;
-        end += character.len_utf16();
-        bytes += character.len_utf8() as u32;
-    }
-    if end > start {
-        visit(start, end, bytes);
-    }
+// Visit the part of each stored unit within the requested UTF-16 range.
+fn clusters(row: &Row, from: usize, to: usize, mut visit: impl FnMut(usize, usize, u32) -> bool) {
+    row.spans(|start, end| {
+        if start >= to { return false; }
+        if end <= from { return true; }
+        let start = start.max(from);
+        let end = end.min(to);
+        let bytes = char::decode_utf16(row.plain[start..end].iter().copied())
+            .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER).len_utf8() as u32)
+            .sum();
+        visit(start - from, end - from, bytes)
+    });
 }
 
 fn json_cost(text: &[u16]) -> u32 {
@@ -221,21 +202,21 @@ impl Archive {
 
 type Prior = (i64, i64, i64, bool);
 
-fn normalize(row: &mut Row, prior: Option<Prior>, unicode: &Unicode) -> Prior {
+fn normalize(row: &mut Row, prior: Option<Prior>) -> Prior {
     if let Some((line, offset, cluster, wrap)) = prior {
         row.logical_id = if wrap { line } else { row.id };
         row.logical_offset = if wrap { offset } else { 0 };
         row.logical_cluster_offset = if wrap { cluster } else { 0 };
     }
     row.refresh_plain();
-    after(row, unicode)
+    after(row)
 }
 
-fn after(row: &Row, unicode: &Unicode) -> Prior {
+fn after(row: &Row) -> Prior {
     (
         row.logical_id,
         row.logical_offset + row.plain.len() as i64,
-        row.logical_cluster_offset + unicode.count_utf16(&row.plain) as i64,
+        row.logical_cluster_offset + row.span_count() as i64,
         row.soft,
     )
 }
@@ -299,7 +280,7 @@ impl Model {
         };
         match kind {
             0 => {
-                clusters(text, &self.unicode, |start, end, size| {
+                clusters(row, from, to, |start, end, size| {
                     let serialized = if json == u32::MAX {
                         0
                     } else {
@@ -324,7 +305,7 @@ impl Model {
                 result.bytes = total;
                 result.end = to as u32;
                 if total > bytes {
-                    clusters(text, &self.unicode, |_, end, size| {
+                    clusters(row, from, to, |_, end, size| {
                         result.bytes -= size;
                         result.start = (from + end) as u32;
                         result.bytes > bytes
@@ -332,7 +313,7 @@ impl Model {
                 }
             }
             2 => {
-                clusters(text, &self.unicode, |start, end, _| {
+                clusters(row, from, to, |start, end, _| {
                     if start >= bytes as usize {
                         return false;
                     }
@@ -384,14 +365,14 @@ impl Model {
             self.update_accounting();
             return Err(BUSY);
         }
-        let mut prior = self.history.back().map(|row| after(row, &self.unicode));
+        let mut prior = self.history.back().map(|row| after(row));
         archive.page.clear();
         let page = self
             .parked
             .as_mut()
             .map_or(&mut self.screen, |parked| &mut parked.screen);
         for (index, row) in page.iter_mut().enumerate() {
-            prior = Some(normalize(row, prior, &self.unicode));
+            prior = Some(normalize(row, prior));
             archive
                 .page
                 .entry(row.logical_id)
@@ -414,10 +395,10 @@ impl Model {
         }
         let mut prior = indexed
             .checked_sub(1)
-            .map(|i| after(&self.history[i], &self.unicode));
+            .map(|i| after(&self.history[i]));
         for row in self.history.iter_mut().skip(indexed).take(maximum) {
             let before = row.bytes();
-            prior = Some(normalize(row, prior, &self.unicode));
+            prior = Some(normalize(row, prior));
             self.history_bytes = self.history_bytes - before + row.bytes();
             archive.append(row.logical_id, whole(row, archive.bases));
         }

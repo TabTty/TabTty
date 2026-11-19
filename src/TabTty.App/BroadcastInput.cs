@@ -38,7 +38,7 @@ internal sealed class BroadcastInput(App app)
 
     internal sealed record Target(TerminalTab Tab, TerminalSession Session, CancellationToken Lifetime)
     {
-        public bool Ready => Tab.InputSession == Session;
+        public bool Ready => !Lifetime.IsCancellationRequested && Tab.InputSession == Session;
     }
 
 
@@ -207,26 +207,48 @@ internal sealed class BroadcastInput(App app)
                 origin: sourceLifetime);
     }
 
-    public async Task<PasteOutcome> PasteAsync(MainWindow host, TerminalTab source, TerminalPaste text,
-        Func<PastePreview, CancellationToken, Task<PasteDecision?>> preview, PasteDecision? pacing = null)
+    public Task<PasteOutcome> PasteAsync(MainWindow host, TerminalTab source, TerminalPaste text,
+        Func<PastePreview, CancellationToken, Task<PasteDecision?>> preview, PasteDecision? pacing = null,
+        CancellationToken origin = default) =>
+        RunPasteAsync(host, source, text, null, (_, request, token) => preview(request, token), pacing, origin);
+
+    internal Task<PasteOutcome> PasteFromClipboardAsync(MainWindow host, TerminalTab source,
+        Func<CancellationToken, Task<TerminalPaste?>> capture,
+        Func<TerminalPaste, PastePreview, CancellationToken, Task<PasteDecision?>> preview, CancellationToken origin) =>
+        RunPasteAsync(host, source, null, capture, preview, null, origin);
+
+    private async Task<PasteOutcome> RunPasteAsync(MainWindow host, TerminalTab source, TerminalPaste? supplied,
+        Func<CancellationToken, Task<TerminalPaste?>>? capture,
+        Func<TerminalPaste, PastePreview, CancellationToken, Task<PasteDecision?>> preview,
+        PasteDecision? pacing, CancellationToken origin)
     {
         if (Active(host) is not { } mode) return PasteOutcome.Inactive;
         if (mode.Locked || mode.Waiting != 0 || source.InputSession is null) return PasteOutcome.Stopped;
         Target[] targets = Recipients(mode);
         if (targets.Length == 0) return PasteOutcome.Stopped;
+        using var sharedSource = supplied?.HoldSource();
         var operation = new Operation(source, source.InputLifetime, targets);
         mode.Paste = operation;
         mode.Progress = Text("Pasting");
-        using var stop = CancellationTokenSource.CreateLinkedTokenSource(operation.Stop.Token, operation.SourceLifetime, mode.Stop.Token);
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(operation.Stop.Token, operation.SourceLifetime,
+            mode.Stop.Token, origin);
         try
         {
+            // Admission is synchronous. Preview and the broadcast status can
+            // wait behind input that has already reached the dispatcher.
+            await Dispatcher.Yield(DispatcherPriority.Background);
+            stop.Token.ThrowIfCancellationRequested();
             Refresh();
+            using var captured = capture is null ? null : await capture(stop.Token);
+            TerminalPaste? text = supplied ?? captured;
+            if (text is null) return PasteOutcome.Stopped;
+            stop.Token.ThrowIfCancellationRequested();
             var defaults = app.PasteDefaults;
             var delays = pacing ?? new PasteDecision(defaults.Character, defaults.Line, defaults.Remember);
-            if (text.HasNewline)
+            if (text.RequiresConfirmation)
             {
-                Task<PasteDecision?> answer = preview(new PastePreview(
-                    Array.AsReadOnly(targets.Select(target => target.Tab.TabCaption).ToArray()), defaults), stop.Token);
+                Task<PasteDecision?> answer = preview(text, new PastePreview(
+                    Array.AsReadOnly(targets.Select(target => TerminalTab.BroadcastTargetLabel(target.Session)).ToArray()), defaults), stop.Token);
                 try
                 {
                     if (await answer.WaitAsync(stop.Token) is not { } decision) return PasteOutcome.Stopped;
@@ -234,7 +256,7 @@ internal sealed class BroadcastInput(App app)
                 }
                 catch (OperationCanceledException) when (stop.IsCancellationRequested)
                 {
-                    _ = ObservePreviewAsync(answer);
+                    _ = ObservePreviewAsync(answer, text.HoldSource());
                     return PasteOutcome.Stopped;
                 }
                 stop.Token.ThrowIfCancellationRequested();
@@ -245,21 +267,23 @@ internal sealed class BroadcastInput(App app)
             }
             stop.Token.ThrowIfCancellationRequested();
             var amounts = new Dictionary<Target, int>();
+            int characters = text.CharacterCount;
             var timer = new DispatcherTimer(DispatcherPriority.Background, app.Dispatcher) { Interval = TimeSpan.FromMilliseconds(150) };
             timer.Tick += (_, _) =>
             {
                 if (mode.Paste != operation) return;
                 mode.Progress = (stop.IsCancellationRequested ? Text("BroadcastCleanupPending") + "\n" : "") +
-                    string.Join("\n", targets.Select(target => $"{target.Tab.TabCaption} — {amounts.GetValueOrDefault(target)}/{text.CharacterCount}"));
+                    string.Join("\n", targets.Select(target => $"{target.Tab.TabCaption} — {amounts.GetValueOrDefault(target)}/{characters}"));
                 Refresh();
             };
             timer.Start();
             try
             {
+                var commit = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
                 bool sent = await DispatchAsync(mode, targets, async (target, token) =>
                     await target.Session.PreparePasteAsync(text, delays.Character, delays.Line, token, target.Lifetime,
-                        new Progress<int>(value => { if (mode.Paste == operation) amounts[target] = value; })),
-                    softStop: stop.Token);
+                        new Progress<int>(value => { if (mode.Paste == operation) amounts[target] = value; }), commit.Task),
+                    softStop: stop.Token, commitPaste: commit);
                 return sent ? PasteOutcome.Submitted : PasteOutcome.Stopped;
             }
             finally { timer.Stop(); }
@@ -278,8 +302,9 @@ internal sealed class BroadcastInput(App app)
         }
     }
 
-    private static async Task ObservePreviewAsync(Task preview)
+    private static async Task ObservePreviewAsync(Task preview, IDisposable source)
     {
+        using var retainedSource = source;
         try { await preview.ConfigureAwait(false); }
         catch (Exception) when (preview.IsFaulted || preview.IsCanceled) { }
     }
@@ -451,7 +476,7 @@ internal sealed class BroadcastInput(App app)
         Func<Target, CancellationToken, Task<TerminalSession.PreparedInput?>> prepare,
         Action<Target, int?>? delivered = null, CancellationToken softStop = default, CancellationToken origin = default,
         Func<bool>? skip = null, Func<Target, bool>? include = null,
-        Action? after = null)
+        Action? after = null, TaskCompletionSource<bool>? commitPaste = null)
     {
         if (mode.Waiting >= 256)
         {
@@ -466,12 +491,12 @@ internal sealed class BroadcastInput(App app)
         try
         {
             using var admission = CancellationTokenSource.CreateLinkedTokenSource(mode.Stop.Token, softStop, origin);
-            await mode.Queue.WaitAsync(admission.Token);
+            using var preflight = CancellationTokenSource.CreateLinkedTokenSource(admission.Token);
+            preflight.CancelAfter(TimeSpan.FromSeconds(30));
+            await mode.Queue.WaitAsync(preflight.Token);
             entered = true;
             if (skip?.Invoke() == true) return false;
             if (include is not null) targets = targets.Where(include).ToArray();
-            using var preflight = CancellationTokenSource.CreateLinkedTokenSource(admission.Token);
-            preflight.CancelAfter(TimeSpan.FromSeconds(30));
             foreach (var target in targets)
             {
                 failed = target;
@@ -486,14 +511,17 @@ internal sealed class BroadcastInput(App app)
                 if (!target.Ready) throw new IOException(Text("Disconnected"));
             }
             if (skip?.Invoke() == true) return false;
-            if (softStop.CanBeCanceled)
+            preflight.Token.ThrowIfCancellationRequested();
+            if (commitPaste is not null)
             {
-                await Task.WhenAll(prepared.Select(async pair =>
+                var sending = Task.WhenAll(prepared.Select(async pair =>
                 {
                     try
                     {
-                        submitted.Add(pair.Key);
-                        await pair.Value.SendAsync(admission.Token);
+                        // Let every target reserve its ordered start before granting any sends.
+                        Task<bool> send = pair.Value.SendAsync(admission.Token);
+                        if (await pair.Value.PasteReady! && await commitPaste.Task) submitted.Add(pair.Key);
+                        await send;
                         pair.Key.Tab.RefreshInputOutput();
                     }
                     catch (Exception exception) when (IsInputError(exception))
@@ -506,6 +534,31 @@ internal sealed class BroadcastInput(App app)
                         }
                     }
                 }));
+                try
+                {
+                    foreach (var (target, request) in prepared)
+                    {
+                        failed = target;
+                        if (await Task.WhenAny(request.PasteReady!, sending).WaitAsync(preflight.Token) == sending &&
+                            !request.PasteReady!.IsCompleted)
+                            await sending;
+                        if (!await request.PasteReady!.WaitAsync(preflight.Token) || !target.Ready)
+                            throw new IOException(Text("Disconnected"));
+                    }
+                    preflight.Token.ThrowIfCancellationRequested();
+                    foreach (var (target, request) in prepared)
+                    {
+                        failed = target;
+                        if (!target.Ready) throw new IOException(Text("Disconnected"));
+                        if (!request.CanCommitPaste) throw new IOException(Text("PasteTargetChanged"));
+                    }
+                    commitPaste.SetResult(true);
+                }
+                finally
+                {
+                    commitPaste.TrySetResult(false);
+                    await sending;
+                }
             }
             else
             {

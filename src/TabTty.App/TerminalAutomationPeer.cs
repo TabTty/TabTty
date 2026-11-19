@@ -324,14 +324,10 @@ internal sealed class TerminalAutomationPeer : FrameworkElementAutomationPeer, I
                 while (last < text.Length && char.IsWhiteSpace(text[last]) == white) last++;
                 return (first, last);
             }
-            int start = 0;
-            while (start < text.Length)
-            {
-                int next = start + TerminalText.NextCharacterLength(text.AsSpan(start));
-                if (next > point) return (start, next);
-                start = next;
-            }
-            return (text.Length, text.Length);
+            var (row, offset) = peer.document.Point(point);
+            var (start, spanEnd) = peer.document.View!.StoredSpanAt(row, offset);
+            int absolute = peer.document.Offset(row, start);
+            return spanEnd == start ? (absolute, absolute + 1) : (absolute, peer.document.Offset(row, spanEnd));
         }
 
         private int MovePoint(string text, ref int point, TextUnit unit, int count)

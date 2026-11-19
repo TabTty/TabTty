@@ -1,68 +1,208 @@
+using System.Windows;
 using TabTty.Core;
+using static TabTty.App.App;
 
 namespace TabTty.App;
 
-internal sealed class VaultUnlockInteraction
+internal sealed class VaultUnlockInteraction(Action? onIdle = null, Action<CredentialVault>? adopt = null)
 {
+    private const int MaximumConsumers = 256;
     private readonly object gate = new();
     private Interaction? pending;
+    private int admittedConsumers;
+
+    internal readonly record struct UnlockStatus(Guid? OperationId, int Consumers, bool Retiring);
+    internal UnlockStatus Status
+    {
+        get { lock (gate) return new(pending?.Id, admittedConsumers, pending?.Retiring == true); }
+    }
 
     private sealed class Interaction
     {
+        public readonly Guid Id = Guid.NewGuid();
         public readonly TaskCompletionSource<CredentialVault?> Completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public readonly CancellationTokenSource Lifetime = new();
-        public int Waiters;
+        public readonly List<Consumer> Consumers = [];
+        public UnlockHosts? Hosts;
+        public bool Retiring;
+        public bool AcceptingResult;
+    }
+
+    internal sealed class UnlockHosts(Func<Window?> select)
+    {
+        internal Window? Current => select();
+        internal event Action? Changed;
+        internal void NotifyChanged() => Changed?.Invoke();
+    }
+
+    private sealed class Consumer(Window? host, CancellationToken token)
+    {
+        internal Window? Host { get; } = host;
+        internal CancellationToken Token { get; } = token;
+    }
+
+    internal sealed class Interest(Task<CredentialVault?> result, CancellationTokenSource lifetime) : IDisposable
+    {
+        private int disposed;
+
+        internal Task<CredentialVault?> ObserveAsync(CancellationToken observation = default) =>
+            result.WaitAsync(observation);
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref disposed, 1) != 0) return;
+            lifetime.Cancel();
+            _ = result.ContinueWith(task =>
+            {
+                _ = task.Exception;
+                lifetime.Dispose();
+            }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        }
     }
 
     public bool IsPending
     {
-        get { lock (gate) return pending is not null; }
+        get { lock (gate) return pending is not null || admittedConsumers != 0; }
     }
 
     public Task<CredentialVault?> WaitAsync(Func<Task<CredentialVault?>> start, CancellationToken token = default) =>
-        WaitAsync(_ => start(), token);
+        WaitAsync(null, (_, _) => start(), token);
 
-    public Task<CredentialVault?> WaitAsync(Func<CancellationToken, Task<CredentialVault?>> start, CancellationToken token = default)
+    public async Task<CredentialVault?> WaitAsync(Window? host,
+        Func<UnlockHosts, CancellationToken, Task<CredentialVault?>> start, CancellationToken token = default)
     {
-        token.ThrowIfCancellationRequested();
-        Interaction interaction;
-        bool initiate;
-        lock (gate)
+        using var hostLifetime = CancellationTokenSource.CreateLinkedTokenSource(token);
+        if (host is not null) host.Closed += StopInterest;
+        try
         {
-            initiate = pending is null;
-            interaction = pending ??= new Interaction();
-            interaction.Waiters++;
+            using var interest = Admit(host, start, hostLifetime.Token);
+            return await interest.ObserveAsync().ConfigureAwait(true);
         }
-        if (initiate) _ = CompleteAsync(interaction, start);
-        return AwaitAsync(interaction, token);
+        catch (OperationCanceledException) when (!token.IsCancellationRequested && hostLifetime.IsCancellationRequested)
+        {
+            return null;
+        }
+        finally
+        {
+            if (host is not null) host.Closed -= StopInterest;
+        }
+
+        void StopInterest(object? sender, EventArgs args) => hostLifetime.Cancel();
     }
 
-    private async Task<CredentialVault?> AwaitAsync(Interaction interaction, CancellationToken token)
+    internal Interest Admit(Window? host, Func<UnlockHosts, CancellationToken, Task<CredentialVault?>> start,
+        CancellationToken stop = default)
     {
-        try { return await interaction.Completion.Task.WaitAsync(token); }
+        stop.ThrowIfCancellationRequested();
+        var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
+        lock (gate)
+        {
+            if (admittedConsumers >= MaximumConsumers)
+            {
+                lifetime.Dispose();
+                throw new InvalidOperationException(Text("VaultBusy"));
+            }
+            admittedConsumers++;
+        }
+        return new(WaitOwnedAsync(new Consumer(host, lifetime.Token), start, lifetime.Token), lifetime);
+    }
+
+    private async Task<CredentialVault?> WaitOwnedAsync(Consumer consumer,
+        Func<UnlockHosts, CancellationToken, Task<CredentialVault?>> start, CancellationToken token)
+    {
+        Interaction? joined = null;
+        try
+        {
+            while (joined is null)
+            {
+                bool initiate = false;
+                Task? retirement = null;
+                lock (gate)
+                {
+                    token.ThrowIfCancellationRequested();
+                    if (pending is { Retiring: true } previous) retirement = previous.Completion.Task;
+                    else
+                    {
+                        initiate = pending is null;
+                        joined = pending ??= new Interaction();
+                        joined.Consumers.Add(consumer);
+                    }
+                }
+
+                if (retirement is not null)
+                {
+                    try { await retirement.WaitAsync(token); }
+                    catch (Exception) when (!token.IsCancellationRequested) { }
+                }
+                else if (initiate) _ = CompleteAsync(joined!, start);
+                else joined!.Hosts?.NotifyChanged();
+            }
+            return await joined.Completion.Task.WaitAsync(token);
+        }
         finally
         {
             lock (gate)
             {
-                if (--interaction.Waiters == 0 && !interaction.Completion.Task.IsCompleted)
-                    interaction.Lifetime.Cancel();
+                admittedConsumers--;
+                if (joined is not null)
+                {
+                    joined.Consumers.Remove(consumer);
+                    if (joined.Consumers.Count == 0 && !joined.AcceptingResult && !joined.Completion.Task.IsCompleted)
+                    {
+                        joined.Retiring = true;
+                        _ = joined.Lifetime.CancelAsync();
+                    }
+                }
             }
+            joined?.Hosts?.NotifyChanged();
+            if (!IsPending) onIdle?.Invoke();
         }
     }
 
-    private async Task CompleteAsync(Interaction interaction, Func<CancellationToken, Task<CredentialVault?>> start)
+    private Window? SelectHost(Interaction interaction)
+    {
+        Window?[] hosts;
+        lock (gate) hosts = interaction.Consumers.Where(consumer => !consumer.Token.IsCancellationRequested)
+            .Select(consumer => consumer.Host).ToArray();
+        return hosts.FirstOrDefault(host => host?.IsVisible == true);
+    }
+
+    private async Task CompleteAsync(Interaction interaction,
+        Func<UnlockHosts, CancellationToken, Task<CredentialVault?>> start)
     {
         CredentialVault? result = null;
         Exception? failure = null;
-        try { result = await start(interaction.Lifetime.Token); }
-        catch (OperationCanceledException) { }
+        interaction.Hosts = new(() => SelectHost(interaction));
+        try { result = await start(interaction.Hosts, interaction.Lifetime.Token); }
+        catch (OperationCanceledException) when (interaction.Lifetime.IsCancellationRequested) { }
         catch (Exception exception) { failure = exception; }
+        if (result is not null)
+        {
+            lock (gate)
+                interaction.AcceptingResult = !interaction.Retiring &&
+                    interaction.Consumers.Any(consumer => !consumer.Token.IsCancellationRequested);
+            if (interaction.AcceptingResult)
+            {
+                try { adopt?.Invoke(result); }
+                catch (Exception exception) { failure = exception; }
+            }
+            if (!interaction.AcceptingResult || failure is not null)
+            {
+                result.Dispose();
+                result = null;
+            }
+        }
         lock (gate)
         {
             if (failure is null) interaction.Completion.SetResult(result);
-            else interaction.Completion.SetException(failure);
+            else
+            {
+                interaction.Completion.SetException(failure);
+                _ = interaction.Completion.Task.Exception;
+            }
             pending = null;
             interaction.Lifetime.Dispose();
         }
+        if (!IsPending) onIdle?.Invoke();
     }
 }

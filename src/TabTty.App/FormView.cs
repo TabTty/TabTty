@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Windows;
 using System.Windows.Automation;
+using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
@@ -20,6 +21,7 @@ internal sealed class FormView : DockPanel
     private readonly List<EditField> edits = [];
     private Func<bool>? savesSection;
     private bool tracksEdits;
+    private TextBlock? busyStatus;
 
     public FormView(bool modal = false)
     {
@@ -43,8 +45,22 @@ internal sealed class FormView : DockPanel
     public Window OwnerWindow => (Window?)TabOwner ?? Window.GetWindow(this) ??
         throw new InvalidOperationException("The form is not hosted.");
     public bool IsBusy { get; private set; }
+    internal Func<bool>? CanDismissBusyView { private get; set; }
+    internal bool BlocksClose => IsBusy && CanDismissBusyView?.Invoke() != true;
+    internal Func<string?>? DescribeUnresolvedPublication { private get; set; }
+    internal string? UnresolvedPublication => DescribeUnresolvedPublication?.Invoke();
     public bool HasUnsavedChanges => tracksEdits && edits.Any(edit => edit.IsChanged());
     public event Action<bool>? Completed;
+
+    internal void ShowFileOperationStatus()
+    {
+        var status = new TextBlock { Visibility = Visibility.Collapsed, TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 8) };
+        AutomationProperties.SetLiveSetting(status, AutomationLiveSetting.Polite);
+        SetText("FileOperationPending", value => status.Text = value);
+        fields.Children.Add(status);
+        busyStatus = status;
+    }
 
     public void SetPageTitle(string key)
     {
@@ -67,11 +83,15 @@ internal sealed class FormView : DockPanel
         if (CanClose(confirmDiscard)) Cancel();
     }
 
-    public bool CanClose(Func<bool> confirmDiscard) => !IsBusy && (!HasUnsavedChanges || confirmDiscard());
+    public bool CanClose(Func<bool> confirmDiscard) =>
+        !BlocksClose && (!HasUnsavedChanges && UnresolvedPublication is null || confirmDiscard());
+
+    internal string ClosePrompt(string key) =>
+        UnresolvedPublication is { } details ? $"{Text(key)}\n\n{details}" : Text(key);
 
     private void Cancel()
     {
-        if (!IsBusy) Completed?.Invoke(false);
+        if (!BlocksClose) Completed?.Invoke(false);
     }
 
     public StackPanel AddSection(Action<StackPanel> build, Func<bool>? savesFields = null)
@@ -210,6 +230,13 @@ internal sealed class FormView : DockPanel
         SetText(key, value => label.Text = value);
         (section ?? fields).Children.Add(label);
         (section ?? fields).Children.Add(choices);
+    }
+
+    public void AddNotice(string key)
+    {
+        var notice = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 6) };
+        SetText(key, value => notice.Text = value);
+        (section ?? fields).Children.Add(notice);
     }
 
     public void UpdateLabels()
@@ -362,7 +389,11 @@ internal sealed class FormView : DockPanel
         if (IsBusy) return;
         IsBusy = true;
         IsEnabled = false;
-        try { await action(); }
+        try
+        {
+            SetBusyStatus(Visibility.Visible);
+            await action();
+        }
         catch (Exception exception) when (ProfileCatalog.IsFileProblem(exception) ||
             exception is OperationCanceledException or CryptographicException or DllNotFoundException or EntryPointNotFoundException)
         {
@@ -372,7 +403,15 @@ internal sealed class FormView : DockPanel
         {
             IsBusy = false;
             IsEnabled = true;
+            SetBusyStatus(Visibility.Collapsed);
         }
+    }
+
+    private void SetBusyStatus(Visibility visibility)
+    {
+        if (busyStatus is not { } status) return;
+        status.Visibility = visibility;
+        UIElementAutomationPeer.FromElement(status)?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
     }
 
     private void SetText(string key, Action<string> apply) => AddLocalizedUpdate(() => apply(Text(key)));

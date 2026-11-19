@@ -64,9 +64,9 @@ internal sealed class TerminalRecordings
         receiveOnly.TakeReplies();
     }
 
-    public void Echo(ReadOnlySpan<byte> payload)
+    public void Echo(ReadOnlySpan<byte> payload, ResourceReservation? prepaid)
     {
-        if (terminal.TryEcho(payload)) return;
+        if (terminal.TryEcho(payload, prepaid)) return;
         RefuseActiveRecording();
         terminal.EchoUtf8(payload);
     }
@@ -79,17 +79,29 @@ internal sealed class TerminalRecordings
         receiveOnly?.Resize(columns, rows, receiveResize);
     }
 
-    public void CompleteReceive()
+    public void CompleteReceive(bool keepInterval = false)
     {
         try
         {
             Complete(terminal);
-            if (receiveOnly is not null) Complete(receiveOnly);
+            if (receiveOnly is not null)
+            {
+                Complete(receiveOnly);
+                if (keepInterval)
+                {
+                    try { receiveOnly.FlushText(); }
+                    catch (ResourceLimitException) { RefuseActiveRecording(); }
+                }
+            }
         }
         finally
         {
-            try { Cutoff(); }
-            finally { ReleaseReceiveOnlyState(); }
+            if (keepInterval) part?.FlushReceived();
+            else
+            {
+                try { Cutoff(); }
+                finally { ReleaseReceiveOnlyState(); }
+            }
         }
     }
 

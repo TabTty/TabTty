@@ -9,6 +9,9 @@ using TabTty.Core;
 
 internal static partial class Program
 {
+    private sealed record TabSwitchTiming(int Sample, double DelayBeforeSubmissionMs, double DispatchWaitMs,
+        double SelectionMs, double LayoutMs, double TotalMs, double GcPauseMs);
+
     private static async Task ArchitectureWorkload(App app, string directory, int port, int duration, string report)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(duration + 150));
@@ -23,9 +26,12 @@ internal static partial class Program
         int transfers = 0, pastes = 0, stops = 0;
         var latencies = new List<double>();
         var samplesByKind = new[] { new List<double>(), new List<double>(), new List<double>() };
+        var tabSwitchTiming = new List<TabSwitchTiming>();
         var stopLatencies = new List<double>();
         TimeSpan gcAtStart = default, gcDuringMeasurement = default;
-        long peakState = 0, peakAi = 0, peakLogs = 0, peakPrivate = 0;
+        long peakState = 0, peakAi = 0, peakLogs = 0, peakReceive = 0, peakPrivate = 0, peakWorkingSet = 0;
+        TimeSpan cpuStart = default, cpuElapsed = default;
+        using var process = Process.GetCurrentProcess();
         var transferTask = Task.CompletedTask;
         var broadcastTask = Task.CompletedTask;
         var observeTask = Task.CompletedTask;
@@ -45,8 +51,16 @@ internal static partial class Program
         string? failureMessage = null;
         var rawLogs = new List<(string File, long Bytes, bool CycleMatches)>();
         int textLogs = 0, terminalLogs = 0;
+        long textBytes = 0, terminalBytes = 0, transferBytes = 0;
+        bool menuCheckAvailable = true;
         try
         {
+            try { RequireDesktopInput(); }
+            catch (DesktopInputUnavailableException exception)
+            {
+                menuCheckAvailable = false;
+                Console.WriteLine($"NOT RUN workload menu interaction: {exception.Message}");
+            }
             foreach (var window in windows) { window.Width = 1250; window.Height = 830; window.Show(); }
             for (int i = 0; i < 20; i++)
             {
@@ -67,7 +81,8 @@ internal static partial class Program
                 await ready.Task.WaitAsync(token);
             }
 
-            var transferSession = tabs[18].InputSession!;
+            int transferIndex = Environment.GetEnvironmentVariable("TABTTY_ARCH_DISTRIBUTION") == "one-busy" ? 10 : 18;
+            var transferSession = tabs[transferIndex].InputSession!;
             using var sftp = await transferSession.OpenFileTransferAsync(token);
             var owner = new FileOperationOwnership();
             var files = new TransferFiles(sftp, transferSession.FileTransferWait, owner);
@@ -86,88 +101,142 @@ internal static partial class Program
             // Start the fixture producers only once the windows and all streams are ready.
             await tabs[19].InputSession!.SendTextAsync("START", token);
             await Task.Delay(TimeSpan.FromSeconds(35), token);
-            peers.Add(app.Ai.Attach("synthetic history peer A")!);
-            peers.Add(app.Ai.Attach("synthetic history peer B")!);
+            peers.Add(app.Ai.Attach("synthetic history peer A", "history host", 1)!);
+            peers.Add(app.Ai.Attach("synthetic history peer B", "history host", 1)!);
             for (int i = 0; i < peers.Count; i++)
                 if (app.Ai.Share(tabs[10 + i], peers[i]) is { } failure)
                     throw new InvalidOperationException(failure);
             app.Broadcast.Start(windows[0]);
             app.Broadcast.SetAll(windows[0], false);
             foreach (var target in tabs.Skip(1).Take(2)) app.Broadcast.Select(windows[0], target, true);
+            var historyCommands = tabs.Skip(10).Take(peers.Count).Select(tab =>
+            {
+                string session = tab.AiSharing!.Id;
+                return new[]
+                {
+                    JsonSerializer.SerializeToElement(new { session, max_rows = 12 }),
+                    JsonSerializer.SerializeToElement(new { session, query = "code=0123", limit = 4 }),
+                };
+            }).ToArray();
+            // Finish configuring the fixture window before injecting its first input.
+            await Dispatcher.Yield(DispatcherPriority.ContextIdle);
             rawBefore = RecordedBytes();
 
             gcAtStart = GC.GetTotalPauseDuration();
+            cpuStart = process.TotalProcessorTime;
             watch.Start();
-            transferTask = TransferLoop();
-            broadcastTask = BroadcastLoop();
-            observeTask = Task.WhenAll(ObserveLoop(0), ObserveLoop(1));
-            for (int sample = 0; sample < duration / 3; sample++)
-            {
-                double due = sample * 3;
-                await Task.Delay(TimeSpan.FromSeconds(Math.Max(0, due - watch.Elapsed.TotalSeconds)), token);
-                if (disconnects.Count != 0)
-                    throw new InvalidOperationException(disconnects[0]);
-                if (transferTask.IsFaulted || broadcastTask.IsFaulted || observeTask.IsFaulted)
-                    await (transferTask.IsFaulted ? transferTask : broadcastTask.IsFaulted ? broadcastTask : observeTask);
-                long stamp = Stopwatch.GetTimestamp();
-                var window = windows[sample % 2];
-                await app.Dispatcher.InvokeAsync(() =>
-                {
-                    if (sample % 3 == 0)
-                    {
-                        var strip = (TabControl)window.FindName("tabs");
-                        strip.SelectedIndex = (strip.SelectedIndex + 1) % strip.Items.Count;
-                        window.UpdateLayout();
-                    }
-                    else if (sample % 3 == 1)
-                    {
-                        var button = (Button)window.FindName("menuButton");
-                        button.RaiseEvent(new System.Windows.RoutedEventArgs(Button.ClickEvent, button));
-                        window.UpdateLayout();
-                    }
-                    else
-                    {
-                        _ = tabs[19].InputSession!.SendTextAsync("sample", token).ContinueWith(
-                            task => _ = task.Exception, TaskContinuationOptions.OnlyOnFaulted);
-                    }
-                }, DispatcherPriority.Input, token).Task;
-                if (sample % 3 == 1)
-                {
-                    await app.Dispatcher.InvokeAsync(() =>
-                    {
-                        var menu = (Menu)window.FindName("mainMenu");
-                        if (!menu.IsVisible || !ReferenceEquals(System.Windows.PresentationSource.FromVisual(menu),
-                            System.Windows.PresentationSource.FromVisual(window)))
-                            throw new InvalidOperationException("The application menu did not open in its window.");
-                    }, DispatcherPriority.Loaded, token).Task;
-                }
-                if (sample % 3 == 1)
-                {
-                    await app.Dispatcher.InvokeAsync(() =>
-                    {
-                        var button = (Button)window.FindName("menuButton");
-                        button.RaiseEvent(new System.Windows.RoutedEventArgs(Button.ClickEvent, button));
-                    }, DispatcherPriority.Input, token).Task;
-                }
-                double latency = Math.Max(Stopwatch.GetElapsedTime(stamp).TotalMilliseconds,
-                    (watch.Elapsed.TotalSeconds - due) * 1000);
-                latencies.Add(latency);
-                samplesByKind[sample % 3].Add(latency);
-                peakState = Math.Max(peakState, ApplicationResources.TerminalState.Used);
-                peakAi = Math.Max(peakAi, TerminalHistory.WorkQuota.Used);
-                peakLogs = Math.Max(peakLogs, ApplicationResources.LogPayload.Used);
-                using var process = Process.GetCurrentProcess();
-                peakPrivate = Math.Max(peakPrivate, process.PrivateMemorySize64);
-            }
+            Task sampleInteractions = Task.Run(MeasureInteractionsAsync, token);
+            transferTask = app.Dispatcher.InvokeAsync(TransferLoop, DispatcherPriority.Background, token).Task.Unwrap();
+            broadcastTask = app.Dispatcher.InvokeAsync(BroadcastLoop, DispatcherPriority.Background, token).Task.Unwrap();
+            observeTask = Task.WhenAll(
+                app.Dispatcher.InvokeAsync(() => ObserveLoop(0), DispatcherPriority.Background, token).Task.Unwrap(),
+                app.Dispatcher.InvokeAsync(() => ObserveLoop(1), DispatcherPriority.Background, token).Task.Unwrap());
+            await sampleInteractions;
+            if (disconnects.Count != 0) throw new InvalidOperationException(disconnects[0]);
+            if (transferTask.IsFaulted || broadcastTask.IsFaulted || observeTask.IsFaulted)
+                await (transferTask.IsFaulted ? transferTask : broadcastTask.IsFaulted ? broadcastTask : observeTask);
             await Task.Delay(TimeSpan.FromSeconds(Math.Max(0, duration - watch.Elapsed.TotalSeconds)), token);
             payloadBytes = RecordedBytes() - rawBefore;
             actualSeconds = watch.Elapsed.TotalSeconds;
             gcDuringMeasurement = GC.GetTotalPauseDuration() - gcAtStart;
+            process.Refresh();
+            cpuElapsed = process.TotalProcessorTime - cpuStart;
             end.Cancel();
             await Task.WhenAll(transferTask, broadcastTask, observeTask);
             if (transfers == 0 || pastes == 0 || stops == 0 || reads[0] == 0 || reads[1] == 0)
                 throw new InvalidOperationException("The three operation paths were not all exercised.");
             measured = true;
+
+            async Task MeasureInteractionsAsync()
+            {
+                for (int sample = 0; sample < duration / 3; sample++)
+                {
+                    double due = sample * 3000;
+                    double remaining;
+                    while ((remaining = due - watch.Elapsed.TotalMilliseconds) > 0)
+                        await Task.Delay(TimeSpan.FromMilliseconds(Math.Max(1, remaining)), token).ConfigureAwait(false);
+                    double submittedAt = watch.Elapsed.TotalMilliseconds;
+                    double callbackAt = 0, selectionAt = 0, layoutAt = 0;
+                    TerminalSurface? surface = null;
+                    TerminalSnapshot? previousViewport = null;
+                    TaskCompletionSource<double>? paint = sample % 3 == 0
+                        ? new(TaskCreationOptions.RunContinuationsAsynchronously) : null;
+                    TimeSpan gcBefore = GC.GetTotalPauseDuration();
+                    var window = windows[sample % 2];
+                    if (sample % 3 == 1 && !menuCheckAvailable) continue;
+                    await app.Dispatcher.InvokeAsync(() =>
+                    {
+                        if (sample % 3 == 0)
+                        {
+                            callbackAt = watch.Elapsed.TotalMilliseconds;
+                            var strip = (TabControl)window.FindName("tabs");
+                            int next = (strip.SelectedIndex + 1) % strip.Items.Count;
+                            var tab = (TerminalTab)((TabItem)strip.Items[next]).Content;
+                            surface = FindControls<TerminalSurface>(tab).Single();
+                            if (tab.HasPendingFrame) previousViewport = surface.Snapshot;
+                            surface.ViewportRendered += OnViewportPaint;
+                            strip.SelectedIndex = next;
+                            selectionAt = watch.Elapsed.TotalMilliseconds;
+                            window.UpdateLayout();
+                            layoutAt = watch.Elapsed.TotalMilliseconds;
+                        }
+                        else if (sample % 3 == 1)
+                        {
+                            var button = (Button)window.FindName("menuButton");
+                            button.RaiseEvent(new System.Windows.RoutedEventArgs(Button.ClickEvent, button));
+                            window.UpdateLayout();
+                        }
+                        else
+                        {
+                            _ = tabs[19].InputSession!.SendTextAsync("sample", token).ContinueWith(
+                                task => _ = task.Exception, TaskContinuationOptions.OnlyOnFaulted);
+                        }
+                    }, DispatcherPriority.Input, token).Task.ConfigureAwait(false);
+                    double? viewportAt = paint is null ? null : await paint.Task.WaitAsync(token).ConfigureAwait(false);
+                    if (sample % 3 == 1)
+                    {
+                        await app.Dispatcher.InvokeAsync(() =>
+                        {
+                            var menu = (Menu)window.FindName("mainMenu");
+                            if (!menu.IsVisible || !ReferenceEquals(System.Windows.PresentationSource.FromVisual(menu),
+                                System.Windows.PresentationSource.FromVisual(window)))
+                                throw new InvalidOperationException("The application menu did not open in its window.");
+                        }, DispatcherPriority.Loaded, token).Task.ConfigureAwait(false);
+                    }
+                    if (sample % 3 == 1)
+                    {
+                        await app.Dispatcher.InvokeAsync(() =>
+                        {
+                            var button = (Button)window.FindName("menuButton");
+                            button.RaiseEvent(new System.Windows.RoutedEventArgs(Button.ClickEvent, button));
+                        }, DispatcherPriority.Input, token).Task.ConfigureAwait(false);
+                    }
+                    double latency = (viewportAt ?? watch.Elapsed.TotalMilliseconds) - due;
+                    if (sample % 3 == 0)
+                        tabSwitchTiming.Add(new(sample, submittedAt - due, callbackAt - submittedAt,
+                            selectionAt - callbackAt, layoutAt - selectionAt, latency,
+                            (GC.GetTotalPauseDuration() - gcBefore).TotalMilliseconds));
+                    latencies.Add(latency);
+                    samplesByKind[sample % 3].Add(latency);
+                    peakState = Math.Max(peakState, ApplicationResources.TerminalState.Used);
+                    peakAi = Math.Max(peakAi, TerminalHistory.WorkQuota.Used);
+                    peakLogs = Math.Max(peakLogs, ApplicationResources.LogPayload.Used);
+                    peakReceive = Math.Max(peakReceive, ApplicationResources.Receive.Used);
+                    process.Refresh();
+                    peakPrivate = Math.Max(peakPrivate, process.PrivateMemorySize64);
+                    peakWorkingSet = Math.Max(peakWorkingSet, process.WorkingSet64);
+                    if ((sample + 1) % 100 == 0)
+                        Console.WriteLine($"Measured {sample + 1} scheduled interactions.");
+
+                    void OnViewportPaint()
+                    {
+                        if (!surface!.IsPresentationActive || !surface.IsCurrentSnapshotRendered ||
+                            ReferenceEquals(previousViewport, surface.Snapshot)) return;
+                        surface.ViewportRendered -= OnViewportPaint;
+                        paint!.SetResult(watch.Elapsed.TotalMilliseconds);
+                    }
+                }
+            }
 
             async Task TransferLoop()
             {
@@ -185,6 +254,7 @@ internal static partial class Program
                             await File.ReadAllBytesAsync(Path.Combine(downloadsPath, "payload.bin"), token))) != expectedDigest)
                             throw new InvalidDataException("The concurrent payload differed.");
                         transfers++;
+                        transferBytes += 2L * fixture.Length;
                         // Remove through the operation interface before the next upload.
                         string removed = await RequireAdmission(operations.Delete(remote, [item], Approve));
                         if (removed != "TransferFinished" && !token.IsCancellationRequested)
@@ -198,7 +268,7 @@ internal static partial class Program
             {
                 token.ThrowIfCancellationRequested();
                 return operation ?? throw new InvalidOperationException(
-                    $"SFTP mutation refused (open={sftp.IsOpen}, pending={owner.IsBusy}, refresh={owner.NeedsRefresh}). {tabs[18].ConnectionStatus}");
+                    $"SFTP mutation refused (open={sftp.IsOpen}, pending={owner.IsBusy}, refresh={owner.NeedsRefresh}). {tabs[transferIndex].ConnectionStatus}");
             }
             static ValueTask<TransferChoice> Approve(TransferQuestion question)
                 => ValueTask.FromResult(TransferChoice.Overwrite);
@@ -232,14 +302,11 @@ internal static partial class Program
             async Task ObserveLoop(int index)
             {
                 var peer = peers[index];
-                string session = tabs[10 + index].AiSharing!.Id;
                 try
                 {
                     for (int iteration = 0; !token.IsCancellationRequested; iteration++)
                     {
-                        var request = iteration % 2 == 0
-                            ? JsonSerializer.SerializeToElement(new { session, max_rows = 12 })
-                            : JsonSerializer.SerializeToElement(new { session, query = "code=0123", limit = 4 });
+                        var request = historyCommands[index][iteration % 2];
                         var lap = await app.Ai.CallAsync(peer, iteration % 2 == 0 ? "tabtty_read_history" : "tabtty_search_history", request, token);
                         await app.Ai.CommitReplyAsync(peer, lap, (body, admitted) =>
                         {
@@ -263,6 +330,8 @@ internal static partial class Program
             {
                 actualSeconds = watch.Elapsed.TotalSeconds;
                 payloadBytes = RecordedBytes() - rawBefore;
+                process.Refresh();
+                cpuElapsed = process.TotalProcessorTime - cpuStart;
             }
             throw;
         }
@@ -278,8 +347,12 @@ internal static partial class Program
                 Environment.GetEnvironmentVariable("TABTTY_ARCH_CYCLE") is { } cyclePath)
             {
                 var logs = new DirectoryInfo(Path.Combine(directory, "Logs"));
-                textLogs = logs.GetFiles("*.log").Length;
-                terminalLogs = logs.GetFiles("*.term.tttylog").Length;
+                var textFiles = logs.GetFiles("*.log");
+                var terminalFiles = logs.GetFiles("*.term.tttylog");
+                textLogs = textFiles.Length;
+                terminalLogs = terminalFiles.Length;
+                textBytes = textFiles.Sum(file => file.Length);
+                terminalBytes = terminalFiles.Sum(file => file.Length);
                 byte[] cycleData = await File.ReadAllBytesAsync(cyclePath);
                 foreach (var file in logs.GetFiles("*.raw.tttylog"))
                     rawLogs.Add((file.Name, file.Length, await MatchesCycleAsync(file, cycleData)));
@@ -302,16 +375,19 @@ internal static partial class Program
                     tabSwitchP95Ms = Percentile(samplesByKind[0]),
                     tabSwitchMaxMs = samplesByKind[0].LastOrDefault(),
                     tabSwitchOver100Ms = samplesByKind[0].Count(sample => sample > 100),
-                    menuP95Ms = Percentile(samplesByKind[1]),
+                    tabSwitchTiming,
+                    menuCheckAvailable,
+                    menuP95Ms = menuCheckAvailable ? Percentile(samplesByKind[1]) : (double?)null,
                     inputP95Ms = Percentile(samplesByKind[2]),
-                    localTargetPassed = latencies.Count > 0 && p95 <= 100,
+                    localTargetPassed = menuCheckAvailable ? latencies.Count > 0 && p95 <= 100 : (bool?)null,
                     stopTargetPassed = stopLatencies.Count > 0 && stopP95 <= 250,
                     failureMessage, disconnects,
                     transfers, pastes, stops, acceptedReads = reads.Take(2), declinedReads = reads.Skip(2),
                     observationErrors,
-                    peakState, peakAi, peakLogs, peakPrivate,
+                    peakState, peakAi, peakLogs, peakReceive, peakPrivate, peakWorkingSet,
+                    appCpuSeconds = cpuElapsed.TotalSeconds, transferBytes,
                     rawLogs = rawLogs.Select(file => new { file.File, file.Bytes, file.CycleMatches }),
-                    textLogs, terminalLogs,
+                    textLogs, terminalLogs, textBytes, terminalBytes,
                     os = System.Runtime.InteropServices.RuntimeInformation.OSDescription,
                     processors = Environment.ProcessorCount,
                     packageSha256 = Hash(typeof(App).Assembly.Location),

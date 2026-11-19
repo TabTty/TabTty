@@ -130,10 +130,12 @@
   <data name="NoSearchMatch" xml:space="preserve"><value>一致する文字列がありません</value></data>
   <data name="SearchNormalScreen" xml:space="preserve"><value>検索は通常画面で利用できます。</value></data>
   <data name="Vault" xml:space="preserve"><value>認証情報 vault</value></data>
-  <data name="VaultFiles" xml:space="preserve"><value>TabTty 認証情報の金庫</value></data>
+  <data name="VaultFiles" xml:space="preserve"><value>TabTty 認証情報 vault</value></data>
   <data name="UnlockVault" xml:space="preserve"><value>vault のロックを解除</value></data>
   <data name="ManageVault" xml:space="preserve"><value>vault の管理</value></data>
   <data name="InitializeVault" xml:space="preserve"><value>vault のマスターパスワードを設定</value></data>
+  <data name="CreateMissingVaultDescription" xml:space="preserve"><value>選択した場所に新しい暗号化 vault を作成します。</value></data>
+  <data name="InitializeEmptyVaultDescription" xml:space="preserve"><value>選択した空ファイルを新しい暗号化 vault として初期化します。</value></data>
   <data name="VaultPath" xml:space="preserve"><value>認証情報 vault のパス</value></data>
   <data name="BrowseVaultPath" xml:space="preserve"><value>vault のパスを参照…</value></data>
   <data name="InvalidVaultPath" xml:space="preserve"><value>.tttykey ファイルの絶対パスを指定してください。</value></data>
@@ -142,9 +144,9 @@
   <data name="ArchiveVault" xml:space="preserve"><value>vault を退避して作り直す…</value></data>
   <data name="ArchiveVaultConfirm" xml:space="preserve"><value>現在の vault を同じフォルダーの別ファイルに移動しますか？ 新しい vault を作成した後、プロファイルで認証情報を選び直してください。</value></data>
   <data name="VaultArchived" xml:space="preserve"><value>次のパスに vault を退避しました。解除または管理を選ぶと、新しいマスターパスワードを設定できます。</value></data>
-  <data name="VaultFileMissing" xml:space="preserve"><value>設定されたパスに vault ファイルはありません。解除または管理を選ぶと初期設定できます。</value></data>
+  <data name="VaultFileMissing" xml:space="preserve"><value>vault が存在しないか、空です。vault の管理画面で作成・初期化を選択してください。</value></data>
   <data name="AddVaultPassword" xml:space="preserve"><value>パスワードを追加</value></data>
-  <data name="VaultEntries" xml:space="preserve"><value>金庫の項目</value></data>
+  <data name="VaultEntries" xml:space="preserve"><value>vault の項目</value></data>
   <data name="VaultEntryList" xml:space="preserve"><value>保存済みの認証情報</value></data>
   <data name="VaultFileOperations" xml:space="preserve"><value>vault ファイル</value></data>
   <data name="VaultEntriesLocked" xml:space="preserve"><value>vault はロックされています。</value></data>
@@ -159,18 +161,30 @@
   <data name="MasterPasswordLength" xml:space="preserve"><value>マスターパスワードは {0}～{1} 文字で入力してください。</value></data>
   <data name="ConfirmMaster" xml:space="preserve"><value>マスターパスワードを再入力</value></data>
   <data name="MasterMismatch" xml:space="preserve"><value>パスワードが一致しません。</value></data>
-  <data name="VaultAuthenticationFailed" xml:space="preserve"><value>金庫を認証できませんでした。</value></data>
+  <data name="VaultAuthenticationFailed" xml:space="preserve"><value>vault を認証できませんでした。</value></data>
+  <data name="VaultCredentialKindMismatch" xml:space="preserve"><value>資格情報の参照の種類が一致しません。</value></data>
   <data name="VaultCryptoUnavailable" xml:space="preserve"><value>OpenSSL ランタイムを利用できません。</value></data>
-  <data name="VaultAlreadyOpen" xml:space="preserve"><value>今回の起動では、すでに金庫を解錠しています。</value></data>
-  <data name="VaultStateInvalid" xml:space="preserve"><value>金庫の選択設定が無効です。</value></data>
+  <data name="VaultAlreadyOpen" xml:space="preserve"><value>今回の起動では、すでに vault のロックが解除されています。</value></data>
+  <data name="VaultStateInvalid" xml:space="preserve"><value>vault の選択設定が無効です。</value></data>
   <data name="CloseDialog" xml:space="preserve"><value>閉じる</value></data>
   <data name="NewSsh" xml:space="preserve"><value>新規SSHプロファイル</value></data>
   <data name="SshUsername" xml:space="preserve"><value>SSHユーザー名</value></data>
   <data name="SshPasswordSource" xml:space="preserve"><value>SSH認証</value></data>
   <data name="AskAtConnect" xml:space="preserve"><value>接続時に入力</value></data>
   <data name="SelectSavedPassword" xml:space="preserve"><value>保存済みパスワードを選択</value></data>
+  <data name="SshSavedPasswordDestinationNotice" xml:space="preserve"><value>SSH ホスト鍵はサーバーの身元を確認します。パスワード認証では、プロファイルに指定されたサーバーへ、そのアカウントでの認証用に保存済みパスワードを自動送信します。TabTty の外でファイルを書き換えると、次回の接続で別の信頼済みサーバーや別のアカウントに送られる場合があります。</value></data>
   <data name="SshDestination" xml:space="preserve"><value>SSH接続先</value></data>
+  <data name="SshServerQuestions" xml:space="preserve"><value>以下は SSH サーバー {0} からの質問です。回答はこのサーバーに送信されます。TabTty の vault のマスターパスワードは入力しないでください。</value></data>
+  <data name="SendSshAnswers" xml:space="preserve"><value>サーバーに回答を送信</value></data>
+  <data name="VerifyHostFingerprint" xml:space="preserve"><value>鍵を承認する前に、サーバーの管理者から別の経路で入手したフィンガープリントと照合してください。</value></data>
+  <data name="TelnetPrivacyNotice" xml:space="preserve"><value>Telnet ではパスワード、コマンド、端末出力が平文で送られ、通信を傍受できる相手に読み取られます。</value></data>
+  <data name="TelnetUnencrypted" xml:space="preserve"><value>Telnet（暗号化なし）</value></data>
+  <data name="ReconnectDestinationChanged" xml:space="preserve"><value>接続先が変わりました</value></data>
+  <data name="ReconnectDestinationDetails" xml:space="preserve"><value>「{0}」が別の接続先に再接続しました。&#10;&#10;変更前：{1}&#10;変更後：{2}</value></data>
   <data name="NewHostKey" xml:space="preserve"><value>新しいSSHホスト鍵</value></data>
+  <data name="AdditionalHostKey" xml:space="preserve"><value>登録済みの SSH 接続先から別の形式の鍵が提示されました</value></data>
+  <data name="ApprovedHostKeys" xml:space="preserve"><value>この接続先で承認済みの鍵</value></data>
+  <data name="AddHostKey" xml:space="preserve"><value>鍵を追加して接続</value></data>
   <data name="ChangedHostKey" xml:space="preserve"><value>SSHホスト鍵が変更されました</value></data>
   <data name="HostKeyType" xml:space="preserve"><value>ホスト鍵の種類</value></data>
   <data name="PreviousFingerprint" xml:space="preserve"><value>保存済みのフィンガープリント</value></data>
@@ -240,10 +254,10 @@
   <data name="Reconnect" xml:space="preserve"><value>再接続</value></data>
   <data name="RegisterFileType" xml:space="preserve"><value>TabTty のファイル形式を Windows に登録</value></data>
   <data name="ProfileFileType" xml:space="preserve"><value>TabTty 接続プロファイル</value></data>
-  <data name="FileAssociationDescription" xml:space="preserve"><value>TabTty の接続プロファイルを開き、プロファイルや資格情報保管庫を編集します。</value></data>
-  <data name="VaultEditorNeedsExistingFile" xml:space="preserve"><value>空でない既存の資格情報保管庫を指定してください。</value></data>
-  <data name="SelectedVaultStale" xml:space="preserve"><value>選択中の資格情報保管庫が変更されました。開き直すには TabTty を再起動してください。</value></data>
-  <data name="EditorVaultStale" xml:space="preserve"><value>資格情報保管庫が変更されました。このウィンドウを閉じてファイルを開き直してください。</value></data>
+  <data name="FileAssociationDescription" xml:space="preserve"><value>TabTty の接続プロファイルを開き、プロファイルや認証情報 vault を編集します。</value></data>
+  <data name="VaultEditorNeedsExistingFile" xml:space="preserve"><value>空でない既存の認証情報 vault を指定してください。</value></data>
+  <data name="SelectedVaultStale" xml:space="preserve"><value>選択中の認証情報 vault が変更されました。開き直すには TabTty を再起動してください。</value></data>
+  <data name="EditorVaultStale" xml:space="preserve"><value>認証情報 vault が変更されました。このウィンドウを閉じてファイルを開き直してください。</value></data>
   <data name="AssociationRegistered" xml:space="preserve"><value>.ttty、.tttym、.tttykey、.tttylog のアイコンを Windows に登録しました。.ttty または .tttym をダブルクリックで開くには、Windows で TabTty を既定のアプリに設定してください。</value></data>
   <data name="AssociationNeedsExecutable" xml:space="preserve"><value>ファイル形式を登録する前に、使用する場所に配置した TabTty.exe を起動してください。</value></data>
   <data name="ImportPrivateKey" xml:space="preserve"><value>秘密鍵を取り込む…</value></data>
@@ -261,8 +275,9 @@
   <data name="SourceKeyPassphrase" xml:space="preserve"><value>取り込み元の鍵のパスフレーズ</value></data>
   <data name="InputQueueFull" xml:space="preserve"><value>端末入力の待ち行列が上限に達しました。</value></data>
   <data name="ClosingConnection" xml:space="preserve"><value>接続を終了しています</value></data>
+  <data name="RecordingCleanupCapacity" xml:space="preserve"><value>以前の録画ファイルの解放が続いています。この録画の完了を引き続きお待ちください。</value></data>
   <data name="CleanupPending" xml:space="preserve"><value>終了処理を待機中</value></data>
-  <data name="CleanupPendingExplanation" xml:space="preserve"><value>通信またはログの終了処理が続いています。待機を続けるか、未保存ログが失われる可能性を了承して閉じます。</value></data>
+  <data name="CleanupPendingExplanation" xml:space="preserve"><value>ログの終了処理が続いています。待機を続けるか、未保存ログが失われる可能性を了承して閉じます。</value></data>
   <data name="ContinueWaiting" xml:space="preserve"><value>待機を続ける</value></data>
   <data name="CloseWithLoss" xml:space="preserve"><value>未保存分を破棄して閉じる</value></data>
   <data name="CredentialDetails" xml:space="preserve"><value>認証情報の詳細</value></data>
@@ -274,8 +289,8 @@
   <data name="KnownCredentialReferences" xml:space="preserve"><value>参照している登録済みプロファイル</value></data>
   <data name="ReferenceScanScope" xml:space="preserve"><value>読み取れる登録済みプロファイルを確認しました。ほかのプロファイルファイルから参照されている可能性もあります。</value></data>
   <data name="ReferenceScanUnavailable" xml:space="preserve"><value>登録済みプロファイル {0} 件を確認できませんでした。</value></data>
-  <data name="RestoreVault" xml:space="preserve"><value>金庫のバックアップを復元</value></data>
-  <data name="RestoreVaultWarning" xml:space="preserve"><value>同じ金庫のバックアップで現在の内容を置き換えますか。現在の暗号化ファイルは復旧用コピーとして保持します。続いてバックアップのマスターパスワードを入力してください。古いバックアップは、それぞれのパスワードで引き続き開くことができます。</value></data>
+  <data name="RestoreVault" xml:space="preserve"><value>vault のバックアップを復元</value></data>
+  <data name="RestoreVaultWarning" xml:space="preserve"><value>同じ vault のバックアップで現在の内容を置き換えますか。現在の暗号化ファイルは復旧用コピーとして保持します。続いてバックアップのマスターパスワードを入力してください。古いバックアップは、それぞれのパスワードで引き続き開くことができます。</value></data>
   <data name="WaitSeconds" xml:space="preserve"><value>接続待ち時間（秒）</value></data>
   <data name="InitiateBinary" xml:space="preserve"><value>Telnet BINARY ネゴシエーションを開始</value></data>
   <data name="SshLiveness" xml:space="preserve"><value>SSH 生存確認を有効にする</value></data>
@@ -290,10 +305,11 @@
   <data name="Inherit" xml:space="preserve"><value>アプリ設定を使用</value></data>
   <data name="Override" xml:space="preserve"><value>このプロファイルで指定</value></data>
   <data name="LogDirectory" xml:space="preserve"><value>ログ保存先（プロファイル基準の相対パスまたは絶対パス）</value></data>
+  <data name="NetworkLogDestinationNotice" xml:space="preserve"><value>記録が有効な場合、端末への接続前にログ保存先を開きます。保存先がネットワーク共有の場合、Windows がその共有先で認証を行うことがあり、セッションのログもそこに保存されます。相対パスの基準はプロファイルのあるフォルダーです。</value></data>
   <data name="ClearPrivateKey" xml:space="preserve"><value>選択した秘密鍵を解除</value></data>
   <data name="MissingHighlightSet" xml:space="preserve"><value>強調セットが見つかりません</value></data>
   <data name="RecycleProfile" xml:space="preserve"><value>プロファイルファイルを削除…</value></data>
-  <data name="RecycleProfileConfirm" xml:space="preserve"><value>このプロファイルファイルをごみ箱へ移動しますか。金庫内の認証情報と接続中のセッションは保持されます。</value></data>
+  <data name="RecycleProfileConfirm" xml:space="preserve"><value>このプロファイルファイルをごみ箱へ移動しますか。vault 内の認証情報と接続中のセッションは保持されます。</value></data>
   <data name="RecycleProfileFailed" xml:space="preserve"><value>プロファイルをごみ箱へ移動できませんでした。保存場所と利用可能な状態を確認してください。</value></data>
   <data name="RecoverStores" xml:space="preserve"><value>アプリの保存ファイルを復旧…</value></data>
   <data name="RecoveryStore" xml:space="preserve"><value>復旧するファイル</value></data>
@@ -302,7 +318,17 @@
   <data name="StoreRecoveryWarning" xml:space="preserve"><value>このアプリの保存ファイルを置き換えますか。現在の内容は重複しない名前の復旧用コピーとして保持します。ホスト鍵の保存ファイルを再作成すると、保存済みの信頼情報が削除され、ホスト鍵の再確認が必要になります。ほかのファイルを再作成すると、その設定・強調定義・プロファイル登録情報がリセットされます。</value></data>
   <data name="StoreRecoveryInvalid" xml:space="preserve"><value>保存ファイルの形式が不正か、対応サイズを超えています。</value></data>
   <data name="StoreChanged" xml:space="preserve"><value>ファイルが TabTty の外部で変更されました。保存前に読み直してください。</value></data>
-  <data name="StoreSaveUnverified" xml:space="preserve"><value>保存結果を確認できませんでした。候補ファイルと復旧用ファイルを保持しました。再度保存する前に読み直すか復旧してください。</value></data>
+  <data name="RecheckFilePublication" xml:space="preserve"><value>前回の保存を再確認</value></data>
+  <data name="NoFilePublicationToRecheck" xml:space="preserve"><value>確認待ちの保存はありません。</value></data>
+  <data name="StoreSaveUnverified" xml:space="preserve"><value>保存結果を確認できませんでした。次に保存する前に、保存結果を再確認するか、明示的に復元してください。</value></data>
+  <data name="FileOperationPending" xml:space="preserve"><value>ファイルを処理しています…</value></data>
+  <data name="PublishedImageMissing" xml:space="preserve"><value>ファイルがありません</value></data>
+  <data name="PublishedImageCandidate" xml:space="preserve"><value>保存候補の内容を確認済み</value></data>
+  <data name="PublishedImageOriginal" xml:space="preserve"><value>元の内容を確認済み</value></data>
+  <data name="PublishedImageOther" xml:space="preserve"><value>異なる内容が見つかりました</value></data>
+  <data name="PublishedImageUnavailable" xml:space="preserve"><value>ファイルの内容を確認できません</value></data>
+  <data name="PublicationCleanupFailed" xml:space="preserve"><value>準備したファイルを削除できませんでした。</value></data>
+  <data name="PublicationRetainedStages" xml:space="preserve"><value>ファイル操作の一時ファイルが残っています。以下のパスを確認してください。</value></data>
   <data name="StoreSaveFailed" xml:space="preserve"><value>ファイルを保存できませんでした。以前のファイルを保持しています。</value></data>
   <data name="RecoveryFileFilter" xml:space="preserve"><value>JSON (*.json;*.bak)|*.json;*.bak|すべてのファイル (*.*)|*.*</value></data>
   <data name="UseTemporaryState" xml:space="preserve"><value>ローカル状態ファイルを開けませんでした。読み取り専用の一時的な既定値を使用しますか。保存を再開するには、設定画面から保存ファイルを復旧してください。</value></data>
@@ -378,8 +404,10 @@
   <data name="SftpServerError" xml:space="preserve"><value>ファイル操作に失敗しました。</value></data>
   <data name="SftpUnknownOutcome" xml:space="preserve"><value>操作結果を確認できませんでした。再試行前に一覧を更新してください。</value></data>
   <data name="SftpInvalidName" xml:space="preserve"><value>この操作では、この名前または項目の種類を使用できません。</value></data>
-  <data name="SftpCannotReplace" xml:space="preserve"><value>サーバーが安全な上書きに対応していません。</value></data>
+  <data name="SftpCannotReplace" xml:space="preserve"><value>転送先が安全な上書きに対応していません。</value></data>
   <data name="SftpSourceChanged" xml:space="preserve"><value>処理中に転送元が変更されました。</value></data>
+  <data name="SftpDownloadOrigin" xml:space="preserve"><value>Windows のインターネットゾーン情報を保存できませんでした。NTFS など、名前付きストリームに対応する保存先を選んでください。</value></data>
+  <data name="SftpDownloadPermissions" xml:space="preserve"><value>この保存先では、ファイルやフォルダーへのアクセスを現在の Windows ユーザーだけに制限できません。NTFS など、Windows のアクセス権に対応する保存先を選んでください。</value></data>
   <data name="BroadcastInput" xml:space="preserve"><value>同時送信</value></data>
   <data name="BroadcastAcrossWindows" xml:space="preserve"><value>全ウィンドウでの同時送信を許可</value></data>
   <data name="BroadcastStart" xml:space="preserve"><value>同時送信を開始</value></data>
@@ -399,6 +427,7 @@
   <data name="BroadcastFailedTarget" xml:space="preserve"><value>失敗</value></data>
   <data name="BroadcastSubmitted" xml:space="preserve"><value>送信済み、または到達未確認</value></data>
   <data name="BroadcastNotSent" xml:space="preserve"><value>未送信</value></data>
+  <data name="PasteTargetChanged" xml:space="preserve"><value>貼り付けの準備中に対象端末の状態が変わりました。</value></data>
   <data name="BroadcastMoveBusy" xml:space="preserve"><value>別ウィンドウへ移動するには、進行中の同時送信操作の完了を待つか、操作を停止してください。</value></data>
   <data name="TabGroups" xml:space="preserve"><value>タブグループ</value></data>
   <data name="TerminalPanes" xml:space="preserve"><value>端末ペイン</value></data>
@@ -419,6 +448,30 @@
   <data name="SplitGroupBusy" xml:space="preserve"><value>このグループを解除する前に、タブの処理が完了するまでお待ちください。</value></data>
   <data name="WindowGroupName" xml:space="preserve"><value>ウィンドウ {0} · {1}</value></data>
   <data name="RunMacro" xml:space="preserve"><value>マクロを実行</value></data>
+  <data name="MacroReview" xml:space="preserve"><value>マクロの実行を確認</value></data>
+  <data name="MacroTrustNotice" xml:space="preserve"><value>マクロは保存済みプロファイルで接続し、コマンドや保存パスワードを送信できます。許可を記憶すると、同じ内容と引数での外部起動にも適用されます。ファイルの場所によって、相対パスで参照するプロファイルが変わる場合があります。</value></data>
+  <data name="MacroElevatedNotice" xml:space="preserve"><value>このマクロは管理者権限で実行されます。保存済みプロファイルで接続し、コマンドや保存パスワードを送信できます。今回の管理者権限での実行を意図している場合だけ許可してください。</value></data>
+  <data name="MacroReadRemote" xml:space="preserve"><value>マクロファイルを開く</value></data>
+  <data name="MacroReadRemoteNotice" xml:space="preserve"><value>このファイルの読み込みで、ネットワーク共有への接続やファイルのダウンロードが発生する場合があります。今回読み込む場合は続行してください。</value></data>
+  <data name="MacroReadSource" xml:space="preserve"><value>ファイルを読み込む</value></data>
+  <data name="MacroSourceDigest" xml:space="preserve"><value>ファイルの SHA-256</value></data>
+  <data name="MacroInspectSource" xml:space="preserve"><value>マクロの内容を確認</value></data>
+  <data name="MacroRunOnce" xml:space="preserve"><value>今回だけ実行</value></data>
+  <data name="MacroAlwaysAllow" xml:space="preserve"><value>この引数で常に許可</value></data>
+  <data name="MacroAlwaysBlock" xml:space="preserve"><value>この引数で常に拒否</value></data>
+  <data name="MacroTrustChanged" xml:space="preserve"><value>記憶された判断が変更されました。現在の判断を確認するには、マクロを開き直してください。</value></data>
+  <data name="MacroTrustUnavailable" xml:space="preserve"><value>Windows 資格情報マネージャーのマクロ実行設定を読み取り、または更新できませんでした。</value></data>
+  <data name="MacroManageTrust" xml:space="preserve"><value>マクロの許可・拒否を管理…</value></data>
+  <data name="MacroTrustEmpty" xml:space="preserve"><value>記憶されたマクロの許可・拒否はありません。</value></data>
+  <data name="MacroPairFingerprint" xml:space="preserve"><value>内容と引数の指紋</value></data>
+  <data name="MacroFindArguments" xml:space="preserve"><value>引数で探す…</value></data>
+  <data name="MacroForgetDecision" xml:space="preserve"><value>判断を取り消す</value></data>
+  <data name="MacroTrustAllowed" xml:space="preserve"><value>許可</value></data>
+  <data name="MacroTrustBlocked" xml:space="preserve"><value>拒否</value></data>
+  <data name="MacroTrustInvalid" xml:space="preserve"><value>無効な記録</value></data>
+  <data name="MacroTrustNoMatch" xml:space="preserve"><value>この引数の組み合わせについて、記憶された判断はありません。</value></data>
+  <data name="MacroSourceFile" xml:space="preserve"><value>マクロファイル</value></data>
+  <data name="MacroNoArguments" xml:space="preserve"><value>引数なし</value></data>
   <data name="MacroFiles" xml:space="preserve"><value>TabTty マクロ (*.tttym)|*.tttym</value></data>
   <data name="MacroArguments" xml:space="preserve"><value>引数</value></data>
   <data name="MacroArgument" xml:space="preserve"><value>引数</value></data>
@@ -472,6 +525,30 @@
   <data name="AiTakeControl" xml:space="preserve"><value>AI操作を中断して引き継ぐ</value></data>
   <data name="AiGiveControl" xml:space="preserve"><value>AIに操作を任せる</value></data>
   <data name="AiShareOutput" xml:space="preserve"><value>AIと出力を共有</value></data>
+  <data name="AiLauncherProcess" xml:space="preserve"><value>ブリッジを起動したプログラム（PID {1}）　{0}</value></data>
+  <data name="AiSshTarget" xml:space="preserve"><value>SSH アカウントと接続先：{0}</value></data>
+  <data name="AiTelnetTarget" xml:space="preserve"><value>Telnet 接続先：{0}</value></data>
+  <data name="AiSerialTarget" xml:space="preserve"><value>シリアルポート：{0}</value></data>
+  <data name="AiHandoffMessage" xml:space="preserve"><value>AI 連携先からのメッセージ：{0}</value></data>
+  <data name="AiConfirmShare" xml:space="preserve"><value>「{0}」の出力を連携先 {1} と共有しますか。
+{3}
+{2}
+
+起動元のプログラムと AI アプリの照合コードを確認してください。この接続を共用するプログラムやチャットは同じ権限を使えます。
+
+AI アプリは現在の画面と保持されている端末履歴を読み取り、検索できます。全画面アプリの背後にある通常画面、共有開始前の履歴、共有を終了していた間の出力も、残っていれば対象です。ブリッジはこの PC で動作します。AI アプリの設定によっては、内容が保存されたり外部のモデルに送られたりします。
+
+以後の読み取りを止めるには「AIとの共有を終了」を選びます。再び共有すると、その時点で残っている履歴を連携先が読めます。</value></data>
+  <data name="AiConfirmControl" xml:space="preserve"><value>「{0}」の端末操作を連携先 {1} に許可しますか。
+{3}
+{2}
+
+起動元のプログラムと AI アプリの照合コードを確認してください。この接続を共用するプログラムやチャットは同じ権限を使えます。
+
+AI アプリは個別の確認なしでキーや複数行のコマンドを入力し、この端末で利用できる接続先の権限で操作できます。操作を引き継ぐと AI からの新しい入力は止まり、出力の共有は続きます。パスワードやワンタイムコードを入力する前に「AIとの共有を終了」を選んでください。</value></data>
+  <data name="AiConfirmSwitch" xml:space="preserve"><value>続行すると、このタブと連携先 {0} との共有は終了します。</value></data>
+  <data name="AiUnattendedConsent" xml:space="preserve"><value>Windows をロックしたとき、ユーザーを切り替えたとき、リモート デスクトップを切断したときも、この権限は続きます。</value></data>
+  <data name="AiConsentExpired" xml:space="preserve"><value>端末または共有権限が変わりました。現在のタブと連携先を確認してから、もう一度許可してください。</value></data>
   <data name="AiEndSharing" xml:space="preserve"><value>AIとの共有を終了</value></data>
   <data name="AiSetup" xml:space="preserve"><value>AI協業の接続設定</value></data>
   <data name="AiCleanupPending" xml:space="preserve"><value>端末入力の後処理が続いています。接続を切断できます。</value></data>
@@ -489,4 +566,15 @@
   <data name="AiSetupConfiguration" xml:space="preserve"><value>MCP 設定</value></data>
   <data name="AiSetupHelp" xml:space="preserve"><value>Goose では、下記の実行ファイルと引数を標準入出力（stdio）の拡張に登録します。LM Studio では、下記の JSON を MCP 設定に追加します。先に TabTty を起動し、連携先を接続してから照合コードを確認してください。オフラインで使う場合は、AI アプリ、実行環境、モデルを事前に用意してください。</value></data>
   <data name="BroadcastCleanupPending" xml:space="preserve"><value>同時送信の後始末を実行中です。</value></data>
+  <data name="MaxPasteSourceBytes" xml:space="preserve"><value>貼り付け本文の上限（バイト）</value></data>
+  <data name="InvalidPasteSourceMaximum" xml:space="preserve"><value>1 以上の整数をバイト単位で入力してください。</value></data>
+  <data name="PasteSourceTooLarge" xml:space="preserve"><value>クリップボードの本文が貼り付け上限を超えています。</value></data>
+  <data name="PasteClipboardUnavailable" xml:space="preserve"><value>クリップボードの本文を読み取れませんでした。</value></data>
+  <data name="PastePreviewPageLabel" xml:space="preserve"><value>ページ</value></data>
+  <data name="PastePreviousPage" xml:space="preserve"><value>前のページ</value></data>
+  <data name="PasteNextPage" xml:space="preserve"><value>次のページ</value></data>
+  <data name="PastePreviewPage" xml:space="preserve"><value>{0} / {1} ページ</value></data>
+  <data name="CreateVault" xml:space="preserve"><value>vault の作成・初期化</value></data>
+  <data name="VaultAlreadyExists" xml:space="preserve"><value>選択した vault はすでに存在し、空ではありません。</value></data>
+  <data name="VaultRescueCopyExplanation" xml:space="preserve"><value>保持している認証済みの vault を別のファイルにコピーしますか？ 選択中のファイルは変更されません。</value></data>
 </root>

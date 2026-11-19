@@ -34,11 +34,52 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
     private bool disposed, completed;
     // One source preview, its fixed parameter buffer and bounded parser stack.
     private const int PreviewWorkspaceBytes = 16 * 1024;
-    internal bool BracketedPaste { get; private set; }
+    private volatile bool bracketedPaste;
+    internal bool BracketedPaste => bracketedPaste;
     internal bool ApplicationCursorKeys { get; private set; }
     internal bool ApplicationKeypad { get; private set; }
     internal TerminalMouseMode MouseMode { get; private set; }
     internal long LayoutEpoch { get; private set; }
+
+    internal static (int Graphemes, int Lines) AnalyzePaste(ReadOnlySpan<char> text)
+    {
+        fixed (char* input = text)
+        {
+            int result = Native.AnalyzePaste(input, (uint)text.Length, out uint graphemes, out uint lines);
+            if (result == 1)
+                throw new ArgumentException("Paste contains invalid Unicode or a disallowed control character.", nameof(text));
+            Check(result, "paste analysis");
+            return (checked((int)graphemes), checked((int)lines));
+        }
+    }
+
+    internal static (int Length, int Completed, int Delay) NextPasteChunk(ReadOnlySpan<char> text,
+        int characterDelay, int lineDelay, ref uint context)
+    {
+        uint* output = stackalloc uint[4];
+        fixed (char* input = text)
+        {
+            Check(Native.PasteChunk(input, (uint)text.Length, context, checked((uint)characterDelay),
+                checked((uint)lineDelay), output), "paste chunk");
+        }
+        if (output[0] == 0 || output[0] > text.Length)
+            throw new InvalidDataException("The native input plan returned invalid chunk bounds.");
+        context = output[3];
+        return (checked((int)output[0]), checked((int)output[1]), checked((int)output[2]));
+    }
+
+    internal static bool HasDrawingMark(Rune scalar) => Native.DrawingMark((uint)scalar.Value) != 0;
+
+    internal static int NextGraphemeLength(ReadOnlySpan<char> text)
+    {
+        fixed (char* input = text)
+        {
+            int result = Native.NextGrapheme(input, (uint)text.Length, out uint length);
+            if (result == 1) throw new ArgumentException("Invalid Unicode text.", nameof(text));
+            Check(result, "grapheme boundary");
+            return checked((int)length);
+        }
+    }
 
     internal static int CheckUtf8Input(ReadOnlySpan<char> text)
     {
@@ -144,10 +185,10 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
     internal NativeTerminalCore(int columns, int rows, int retainedRows, int ambiguousWidth, ResourceQuota quota,
         uint receivePage = 0, bool receiveSevenBitKana = false)
     {
-        if (sizeof(EffectsView) != 72 || sizeof(CellView) != 32 || sizeof(RowView) != 72 ||
+        if (sizeof(EffectsView) != 72 || sizeof(CellView) != 32 || sizeof(RowView) != 88 ||
             sizeof(SnapshotView) != 48 || sizeof(HistoryProofView) != 48 || sizeof(HistoryRowView) != 40 ||
             sizeof(MouseInput) != 20 || sizeof(ScreenStateView) != 48 || sizeof(ScreenRowView) != 56 ||
-            Native.AbiVersion() != 10)
+            Native.AbiVersion() != 11)
             throw new InvalidOperationException("The native terminal ABI does not match this application.");
         this.quota = quota;
         // Admission precedes native allocation; unused temporary allowance is released
@@ -174,17 +215,35 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
 
     internal bool TryFeed(uint source, ReadOnlySpan<byte> payload, uint flags,
         Action<byte[]>? textSink, Action<byte[]>? terminalSink, CancellationToken token = default,
-        Action<byte[]>? replySink = null, int pendingReplies = 0, Action? bell = null)
+        Action<byte[]>? replySink = null, int pendingReplies = 0, Action? bell = null, ResourceReservation? prepaid = null)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
-        if (completed) throw new InvalidOperationException("Terminal reception has ended.");
+        if (completed && source != 2) throw new InvalidOperationException("Terminal reception has ended.");
         if (payload.IsEmpty) return true;
         if (!TryRunEffects(0, source, payload, flags | (checked((uint)pendingReplies) << 8),
-            textSink, terminalSink, token, replySink, bell)) return false;
+            textSink, terminalSink, token, replySink, bell, prepaid)) return false;
         Interlocked.Increment(ref NativeTerminalCoreDiagnostics.FeedBatches);
         if (source == 2) Interlocked.Add(ref NativeTerminalCoreDiagnostics.EchoBytes, payload.Length);
         else Interlocked.Add(ref NativeTerminalCoreDiagnostics.FedBytes, payload.Length);
         return true;
+    }
+
+    internal ResourceReservation ReserveEcho(ReadOnlySpan<byte> payload, uint flags, int pendingReplies)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        var reservation = quota.Reserve(PreviewWorkspaceBytes + payload.Length);
+        try
+        {
+            if (ReceiveObserver is not null || AlternateObserver is not null) flags |= 4;
+            if (!TryPrepare(0, 2, payload, flags | (checked((uint)pendingReplies) << 8)))
+                throw new ResourceLimitException();
+            long used = checked((long)Native.QuotaBytes(handle));
+            using var growth = memory.Separate(checked(memory.Size - used));
+            Check(Native.SetLimit(handle, checked((ulong)used)), "echo preflight release");
+            reservation.Absorb(growth);
+            return reservation;
+        }
+        catch { reservation.Dispose(); throw; }
     }
 
     internal void BeginRecording(uint flags, int epoch)
@@ -222,22 +281,28 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
 
     private bool TryRunEffects(uint operation, uint source, ReadOnlySpan<byte> payload, uint flags,
         Action<byte[]>? textSink, Action<byte[]>? terminalSink, CancellationToken token = default,
-        Action<byte[]>? replySink = null, Action? bell = null)
+        Action<byte[]>? replySink = null, Action? bell = null, ResourceReservation? prepaid = null)
     {
         if (operation <= 1 && (ReceiveObserver is not null || AlternateObserver is not null)) flags |= 4;
         if (payload.Length > 1024 * 1024) return false;
         ResourceReservation workspace;
-        try { workspace = quota.Reserve(PreviewWorkspaceBytes + payload.Length); }
+        int workspaceBytes = PreviewWorkspaceBytes + payload.Length;
+        try
+        {
+            workspace = prepaid is not null && prepaid.Size >= workspaceBytes
+                ? prepaid.Separate(workspaceBytes) : quota.Reserve(workspaceBytes);
+        }
         catch (ResourceLimitException) { return false; }
         using (workspace)
         {
             Span<byte> input = payload.Length <= 1024 ? stackalloc byte[payload.Length] : new byte[payload.Length];
             payload.CopyTo(input);
-            if (!TryPrepare(operation, source, input, flags)) return false;
+            if (prepaid is { Size: > 0 }) memory.Absorb(prepaid);
             try
             {
                 try
                 {
+                    if (!TryPrepare(operation, source, input, flags)) return false;
                     token.ThrowIfCancellationRequested();
                     EffectsView effects;
                     if (operation == 0)
@@ -505,18 +570,52 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
     private static TerminalSnapshot.Row MaterializeRow(RowView row, ResourceReservation admittedCopies)
     {
         int textLength = checked((int)row.TextLength);
-        ResourceReservation textMemory = admittedCopies.Separate(textLength == 0 ? 0 : 24L + textLength * 2L);
+        var nativeCells = new ReadOnlySpan<CellView>(row.Cells, checked((int)row.CellCount));
+        var formats = new ReadOnlySpan<FormatView>(row.Formats, checked((int)row.FormatCount));
+        int spanCapacity = 0;
+        foreach (var cell in nativeCells)
+        {
+            if (cell.Width > 0 && cell.Length > 1)
+            {
+                int columns = formats.IsEmpty ? nativeCells.Length : Math.Max(nativeCells.Length, checked((int)formats[^1].Column));
+                spanCapacity = checked(columns + formats.Length);
+                break;
+            }
+        }
+        long textBytes = textLength == 0 ? 0 : 24L + textLength * 2L;
+        long spanBytes = spanCapacity == 0 ? 0 : 24L + spanCapacity * 4L;
+        ResourceReservation textMemory = admittedCopies.Separate(textBytes + spanBytes);
         try
         {
             string displayText = new(row.Text, 0, textLength);
-            CompactTerminalCells? cells = row.CellCount == 0 ? null : new(
-                new ReadOnlySpan<CellView>(row.Cells, checked((int)row.CellCount)),
+            int[]? spanEnds = null;
+            int spanCount = 0;
+            if (spanCapacity != 0)
+            {
+                spanEnds = new int[spanCapacity];
+                int offset = 0, format = 0;
+                for (int column = 0; offset < textLength; column++)
+                {
+                    while (format < formats.Length && formats[format].Column == column)
+                    {
+                        spanEnds[spanCount++] = ++offset;
+                        format++;
+                    }
+                    if (offset == textLength) break;
+                    int length = column >= nativeCells.Length || nativeCells[column].Width == 0
+                        ? 1 : nativeCells[column].Width < 0 ? 0 : nativeCells[column].Length;
+                    if (length != 0) spanEnds[spanCount++] = offset += length;
+                }
+                if (offset != textLength) throw new InvalidDataException("Invalid native text span bounds.");
+            }
+            CompactTerminalCells? cells = row.CellCount == 0 ? null : new(nativeCells,
                 new ReadOnlySpan<char>(row.CellText, checked((int)row.CellTextLength)), admittedCopies);
             return new TerminalSnapshot.Row(row.Id, row.LogicalId, row.LogicalOffset, displayText,
-                row.SoftWrap != 0, default, textMemory, null, row.DisplayRevision, cells);
+                row.SoftWrap != 0, default, textMemory, null, row.DisplayRevision, cells, spanEnds, spanCount);
         }
         catch { textMemory.Dispose(); throw; }
     }
+
     internal static uint? Color(uint encoded) => (encoded & 0x01000000U) == 0 ? null : encoded & 0xFFFFFFU;
     private bool TryPrepare(uint operation, uint source, ReadOnlySpan<byte> payload, uint flags)
     {
@@ -547,7 +646,7 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
     private void PublishEffects(EffectsView effects, Action<byte[]>? textSink, Action<byte[]>? terminalSink,
         Action<byte[]>? replySink, Action? bell)
     {
-        BracketedPaste = (effects.ModeFlags & 16) != 0;
+        bracketedPaste = (effects.ModeFlags & 16) != 0;
         ApplicationCursorKeys = (effects.ModeFlags & 32) != 0;
         ApplicationKeypad = (effects.ModeFlags & 64) != 0;
         MouseMode = DecodeMouseMode(effects.MouseTracking, effects.MouseGeneration);
@@ -686,7 +785,8 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
         public CellView* Cells;
         public char* Text;
         public char* CellText;
-        public uint CellCount, TextLength, CellTextLength, SoftWrap;
+        public FormatView* Formats;
+        public uint FormatCount, CellCount, TextLength, CellTextLength, SoftWrap;
     }
     [StructLayout(LayoutKind.Sequential)]
     internal struct HistoryRowView
@@ -752,6 +852,15 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
     internal static class Native
     {
         private const string Library = "tabtty_terminal";
+        [DllImport(Library, EntryPoint = "tc_analyze_paste", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int AnalyzePaste(char* input, uint count, out uint graphemes, out uint lines);
+        [DllImport(Library, EntryPoint = "tc_paste_chunk", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int PasteChunk(char* text, uint length, uint context,
+            uint characterDelay, uint lineDelay, uint* output);
+        [DllImport(Library, EntryPoint = "tc_drawing_mark", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint DrawingMark(uint scalar);
+        [DllImport(Library, EntryPoint = "tc_next_grapheme", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int NextGrapheme(char* input, uint count, out uint consumed);
         [DllImport(Library, EntryPoint = "tc_encode_key", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int EncodeKey(uint key, uint modifiers, uint modes, byte* output, out uint written);
         [DllImport(Library, EntryPoint = "tc_encode_mouse", CallingConvention = CallingConvention.Cdecl)]

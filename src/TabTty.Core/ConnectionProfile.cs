@@ -69,13 +69,7 @@ public sealed class ConnectionProfile
 
     public void ValidateEditorSettings()
     {
-        string path = LogDirectory;
-        if (path.IndexOf('\0') >= 0 || path.StartsWith("\\\\?\\", StringComparison.Ordinal) ||
-            path.StartsWith("\\\\.\\", StringComparison.Ordinal) ||
-            (Path.IsPathRooted(path) && !Path.IsPathFullyQualified(path)) ||
-            path.AsSpan(Path.IsPathFullyQualified(path) && path.Length > 1 && path[1] == ':' ? 2 : 0).Contains(':'))
-            throw new InvalidDataException("The log directory must be an ordinary relative or absolute Windows path.");
-        _ = Path.GetFullPath(path, Path.GetDirectoryName(sourcePath ?? Path.Combine(Environment.CurrentDirectory, "profile.ttty"))!);
+        _ = OrdinaryWindowsPath.Resolve(LogDirectory, sourcePath is null ? Environment.CurrentDirectory : Path.GetDirectoryName(sourcePath)!);
     }
 
     public ConnectionProfile Edit(string json)
@@ -173,6 +167,11 @@ public sealed class ConnectionProfile
     {
         string source = OpeningPath(path);
         byte[] bytes = await ReadBytesAsync(source, cancellationToken).ConfigureAwait(false);
+        return ParseProfile(source, bytes);
+    }
+
+    private static ConnectionProfile ParseProfile(string source, byte[] bytes)
+    {
         int start = bytes.AsSpan().StartsWith(Encoding.UTF8.Preamble) ? 3 : 0;
         try
         {
@@ -206,86 +205,77 @@ public sealed class ConnectionProfile
     }
 
     public Task SaveNewAsync(string path, CancellationToken cancellationToken = default) =>
-        SaveAsync(OpeningPath(path), null, cancellationToken);
+        SaveWithCompatibilityAsync(OpeningPath(path), null, cancellationToken);
 
-    private static string OpeningPath(string path)
-    {
-        if (path.Length > 32760 || path.Contains('\0') || path.StartsWith(@"\\?\", StringComparison.Ordinal) ||
-            path.StartsWith(@"\\.\", StringComparison.Ordinal) ||
-            (Path.IsPathRooted(path) && !Path.IsPathFullyQualified(path)) ||
-            path.AsSpan(path.Length > 1 && path[1] == ':' && char.IsAsciiLetter(path[0]) ? 2 : 0).Contains(':'))
-            throw new InvalidDataException("Use an ordinary relative, DOS or UNC profile path.");
-        string full = Path.GetFullPath(path);
-        if (full.Length > 32760) throw new InvalidDataException("The profile path exceeds its size limit.");
-        return full;
-    }
+    internal ProfileSaveOperation BeginSaveNew(string path, Action<string, string, string?>? issue = null,
+        Action<string>? validateStage = null) =>
+        BeginSave(OpeningPath(path), null, CancellationToken.None, issue, validateStage);
+
+    private static string OpeningPath(string path) => OrdinaryWindowsPath.Resolve(path);
 
     public Task SaveEditAsync(CancellationToken cancellationToken = default)
     {
         if (sourcePath is null || sourceBytes is null)
             throw new InvalidOperationException("Load a saved profile before editing it.");
-        return SaveAsync(sourcePath, sourceBytes, cancellationToken);
+        return SaveWithCompatibilityAsync(sourcePath, sourceBytes, cancellationToken);
     }
 
-    private async Task SaveAsync(string destination, byte[]? original, CancellationToken cancellationToken)
+    internal ProfileSaveOperation BeginSaveEdit(Action<string, string, string?>? issue = null, Action<string>? validateStage = null)
+    {
+        if (sourcePath is null || sourceBytes is null)
+            throw new InvalidOperationException("Load a saved profile before editing it.");
+        return BeginSave(sourcePath, sourceBytes, CancellationToken.None, issue, validateStage);
+    }
+
+    private async Task SaveWithCompatibilityAsync(string destination, byte[]? original, CancellationToken cancellationToken) =>
+        await BeginSave(destination, original, cancellationToken).ObserveAsync().ConfigureAwait(false);
+
+    private ProfileSaveOperation BeginSave(string destination, byte[]? original, CancellationToken cancellationToken,
+        Action<string, string, string?>? issue = null, Action<string>? validateStage = null)
     {
         ValidateEditorSettings();
-        string directory = Path.GetDirectoryName(destination)!;
-        string candidate = Path.Combine(directory, $".tabtty-{Guid.NewGuid():N}.tmp");
-        bool ownsCandidate = false;
         byte[] serialized = JsonSerializer.SerializeToUtf8Bytes(document, SaveOptions);
         if (serialized.Length > MaximumBytes) throw new InvalidDataException("Connection profile exceeds 1 MiB.");
-        cancellationToken.ThrowIfCancellationRequested();
-        if (original is null) Directory.CreateDirectory(directory);
-
-        try
-        {
-            await using (var stream = new FileStream(candidate, FileMode.CreateNew, FileAccess.Write, FileShare.None,
-                bufferSize: 8192, FileOptions.Asynchronous))
+        var request = new FilePublicationRequest(destination, serialized,
+            original is null ? null : System.Security.Cryptography.SHA256.HashData(original),
+            original is null ? null : destination + ".bak", MaximumBytes,
+            Validate: prepared =>
             {
-                ownsCandidate = true;
-                await stream.WriteAsync(serialized, cancellationToken).ConfigureAwait(false);
-                stream.Flush(flushToDisk: true);
-            }
-
-            cancellationToken.ThrowIfCancellationRequested();
-            if (original is null) File.Move(candidate, destination, overwrite: false);
-            else
-            {
-                byte[] effective = await ReadBytesAsync(destination, cancellationToken).ConfigureAwait(false);
-                if (!effective.AsSpan().SequenceEqual(original))
-                    throw new IOException("The saved profile changed outside the editor. Reopen it before saving.");
-                cancellationToken.ThrowIfCancellationRequested();
-                IOException? replacementError = null;
-                try { File.Replace(candidate, destination, destination + ".bak"); }
-                catch (IOException exception) { replacementError = exception; }
-                catch (UnauthorizedAccessException exception)
-                { replacementError = new IOException("Profile replacement failed.", exception); }
-                try { effective = await ReadBytesAsync(destination, CancellationToken.None).ConfigureAwait(false); }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-                {
-                    ownsCandidate = false;
-                    throw new IOException("The profile save could not be verified.", exception);
-                }
-                if (!effective.AsSpan().SequenceEqual(serialized))
-                {
-                    if (replacementError is not null && effective.AsSpan().SequenceEqual(original)) throw replacementError;
-                    ownsCandidate = false;
-                    throw new IOException("Profile replacement conflicted with another file change.");
-                }
-            }
-            ownsCandidate = false;
-            sourcePath = destination;
-            sourceBytes = serialized;
-        }
-        finally
-        {
-            if (ownsCandidate)
-            {
-                File.Delete(candidate);
-            }
-        }
+                _ = ParseProfile(destination, ReadBytesAsync(prepared, cancellationToken).GetAwaiter().GetResult());
+                validateStage?.Invoke(prepared);
+            }, CreateDirectory: original is null, Issue: issue);
+        var admitted = VerifiedFilePublication.Begin(request, cancellationToken);
+        return new(admitted, AdoptSaveAsync(admitted, destination, serialized));
     }
+
+    private async Task AdoptSaveAsync(FilePublicationOperation admitted, string destination, byte[] serialized)
+    {
+        var operation = await admitted.ObserveAsync().ConfigureAwait(false);
+        if (operation.Status != FilePublicationStatus.Verified)
+            throw new FilePublicationException(operation.Status == FilePublicationStatus.Unchanged
+                ? "The profile save did not change the destination."
+                : "The profile save or original backup could not be verified.", operation);
+        sourcePath = destination;
+        sourceBytes = serialized;
+    }
+
+    internal sealed class ProfileSaveOperation(FilePublicationOperation admitted, Task adopted)
+    {
+        internal Guid Id => admitted.Id;
+        internal Task ObserveAsync(CancellationToken observation = default) => adopted.WaitAsync(observation);
+    }
+
+    internal static Task<ConnectionProfile?> ReconcileSaveAsync(string path, Guid? operationId = null) => Task.Run(() =>
+    {
+        ConnectionProfile? committed = null;
+        var outcome = VerifiedFilePublication.Reconcile(OpeningPath(path), validated =>
+        {
+            committed = ParseProfile(validated, ReadBytesAsync(validated, CancellationToken.None).GetAwaiter().GetResult());
+        }, operationId);
+        if (outcome is { Status: not FilePublicationStatus.Verified })
+            throw new FilePublicationException("The profile save or original backup could not be verified.", outcome);
+        return committed;
+    });
 
     private static ConnectionProfile Validate(JsonElement root)
     {

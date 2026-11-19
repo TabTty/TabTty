@@ -57,7 +57,7 @@ impl<'a> Builder<'a> {
         self.current.refresh_plain();
         let next_offset = self.current.logical_offset + self.current.plain.len() as i64;
         let next_cluster_offset = self.current.logical_cluster_offset
-            + self.model.unicode.count_utf16(&self.current.plain) as i64;
+            + self.current.span_count() as i64;
         if (!self.reported.is_empty() && !self.unreported)
             || (empty_boundary && self.current.plain.is_empty())
         {

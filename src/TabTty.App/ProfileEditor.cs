@@ -119,6 +119,7 @@ internal sealed class ProfileEditor
             Boolean(logging, "text", "RecordText");
             Boolean(logging, "terminal", "RecordTerminal");
             String(logging, "directory", "LogDirectory");
+            form.AddNotice("NetworkLogDestinationNotice");
         }
         var validation = new TextBox { IsReadOnly = true, TextWrapping = System.Windows.TextWrapping.Wrap,
             Visibility = System.Windows.Visibility.Collapsed, MaxHeight = 120,
@@ -217,7 +218,11 @@ internal sealed class ProfileEditor
             if (blank) connection["host"] = "";
             String(connection, "host", "Host");
             Number(connection, "port", "Port");
-            if (profile.Type == "telnet") Boolean(connection, "initiateBinary", "InitiateBinary");
+            if (profile.Type == "telnet")
+            {
+                form.AddNotice("TelnetPrivacyNotice");
+                Boolean(connection, "initiateBinary", "InitiateBinary");
+            }
             else
             {
                 if (blank) connection["username"] = "";
@@ -236,6 +241,7 @@ internal sealed class ProfileEditor
                 apply.Add(() => auth["methods"] = new JsonArray(choices.Select(box => (string)box.SelectedValue)
                     .Where(method => method.Length != 0).Select(method => (JsonNode?)JsonValue.Create(method)).ToArray()));
                 Credential(auth, "password", "SelectSavedPassword", app);
+                form.AddNotice("SshSavedPasswordDestinationNotice");
                 Credential(auth, "privateKey", "SelectPrivateKey", app);
                 var live = connection["liveness"]!.AsObject();
                 var enabled = Boolean(live, "enabled", "SshLiveness");
@@ -320,8 +326,8 @@ internal sealed class ProfileEditor
                 auth[kind] = new JsonObject { ["vaultId"] = reference.VaultId, ["entryId"] = reference.EntryId, ["kind"] = reference.Kind };
                 value.Text = name;
             }
-            if (kind == "password") await app.Vault.ChoosePasswordAsync(form.OwnerWindow, Chosen, allowInitialize: !fromExplorer);
-            else await app.Vault.ChoosePrivateKeyAsync(form.OwnerWindow, Chosen, allowInitialize: !fromExplorer);
+            if (kind == "password") await app.Vault.ChoosePasswordAsync(form.OwnerWindow, Chosen);
+            else await app.Vault.ChoosePrivateKeyAsync(form.OwnerWindow, Chosen);
         });
         form.AddAction(kind == "password" ? "AskAtConnect" : "ClearPrivateKey", () =>
         {

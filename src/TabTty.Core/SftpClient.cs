@@ -8,7 +8,7 @@ public enum SftpFailure
 {
     ChannelRefused, SubsystemRefused, Version, Disconnected, Capacity, Timeout,
     InvalidReply, Missing, Permission, Unsupported, ServerError, UnknownOutcome,
-    InvalidName, CannotReplace, SourceChanged,
+    InvalidName, CannotReplace, SourceChanged, DownloadOrigin, DownloadPermissions,
 }
 
 public sealed class SftpException(SftpFailure failure, Exception? inner = null) : IOException(failure.ToString(), inner)
@@ -17,7 +17,14 @@ public sealed class SftpException(SftpFailure failure, Exception? inner = null) 
 }
 
 public enum TransferKind { Unknown, File, Directory, Link }
-public sealed record TransferAttributes(TransferKind Kind, long? Size, DateTimeOffset? Modified, DateTimeOffset? Accessed = null);
+public sealed record TransferAttributes(TransferKind Kind, long? Size, DateTimeOffset? Modified, DateTimeOffset? Accessed = null)
+{
+    internal (ulong Volume, Guid File)? LocalIdentity { get; init; }
+
+    internal static bool SameOverwriteTarget(TransferAttributes? approved, TransferAttributes? current) =>
+        approved?.Kind == current?.Kind && approved?.Size == current?.Size &&
+        approved?.Modified == current?.Modified && approved?.LocalIdentity == current?.LocalIdentity;
+}
 public sealed record SftpEntry(byte[] Name, TransferAttributes Attributes);
 
 public sealed class SftpClient : IDisposable
@@ -30,15 +37,19 @@ public sealed class SftpClient : IDisposable
     private readonly SemaphoreSlim fileRequests = new(8);
     private readonly SemaphoreSlim controlRequests = new(2);
     private readonly ConcurrentDictionary<uint, PendingRequest> pending = new();
-    private readonly CancellationTokenSource readerStop = new();
+    private readonly TaskCompletionSource<byte[]> version = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly byte[] framePrefix = new byte[4];
+    private byte[]? frameBody;
+    private int prefixLength, bodyLength;
+    private PendingRequest? frameRequest;
     private readonly TimeSpan wait;
     private readonly TerminalEncoding codec;
-    private byte[] chunk = [];
-    private int chunkOffset;
     private int nextId;
     private int stopped;
     public bool CanReplace { get; private set; }
     public bool IsOpen => Volatile.Read(ref stopped) == 0 && channel.IsUsable;
+
+    internal static ResourceReservation ReserveProviderStorage(int bytes) => SshSessionWire.ReserveTransferStorage(bytes);
 
     internal SftpClient(SshSessionWire.TransferChannel channel, string encoding, TimeSpan wait)
     {
@@ -53,7 +64,7 @@ public sealed class SftpClient : IDisposable
         request.Byte(1);
         request.Number(3);
         await WriteFrameAsync(request.Memory, token).ConfigureAwait(false);
-        var reply = new SshReader(await ReadFrameAsync(token).ConfigureAwait(false));
+        var reply = new SshReader(await version.Task.WaitAsync(token).ConfigureAwait(false));
         reply.Expect(2);
         if (reply.Number() != 3) throw new SftpException(SftpFailure.Version);
         while (reply.Length != 0)
@@ -61,7 +72,6 @@ public sealed class SftpClient : IDisposable
             bool rename = reply.String().SequenceEqual("posix-rename@openssh.com"u8);
             if (reply.String().SequenceEqual("1"u8) && rename) CanReplace = true;
         }
-        _ = ReceiveRepliesAsync();
     }
 
     public string DecodeName(ReadOnlySpan<byte> name)
@@ -73,12 +83,12 @@ public sealed class SftpClient : IDisposable
     public string DisplayPath(byte[] path) => string.Join('/', Split(path).Select(component =>
     {
         try { return DisplayName(component); }
-        catch (SftpException) { return Convert.ToHexString(component); }
+        catch (SftpException error) when (error.Failure == SftpFailure.InvalidName) { return DisplayBytes(component); }
     }));
 
-    public string DisplayName(byte[] name) => string.Concat(DecodeName(name).Select(character =>
-        char.IsControl(character) || char.GetUnicodeCategory(character) == System.Globalization.UnicodeCategory.Format
-            ? $"\\u{(int)character:X4}" : character.ToString()));
+    public string DisplayName(byte[] name) => PermissionDisplay.Literal(DecodeName(name));
+
+    internal static string DisplayBytes(byte[] bytes) => $"<bytes:{Convert.ToHexString(bytes)}>";
 
     public byte[] EncodePath(string path)
     {
@@ -158,6 +168,7 @@ public sealed class SftpClient : IDisposable
     {
         byte[] handle = Handle(await RequestAsync(11, writer => writer.String(path), 102, token).ConfigureAwait(false));
         var entries = new List<SftpEntry>();
+        int receivedEntries = 0;
         long bytes = 0;
         try
         {
@@ -167,12 +178,14 @@ public sealed class SftpClient : IDisposable
                 if (reply is null) break;
                 SftpEntry[] page = Names(reply);
                 if (page.Length == 0) throw InvalidReply();
+                receivedEntries += page.Length;
+                if (receivedEntries > MaxEntries) throw new SftpException(SftpFailure.Capacity);
                 foreach (SftpEntry entry in page)
                 {
                     if (entry.Name.AsSpan().SequenceEqual("."u8) || entry.Name.AsSpan().SequenceEqual(".."u8)) continue;
                     if (!ValidComponent(entry.Name, navigation: false)) throw InvalidReply();
                     bytes += entry.Name.Length + 128;
-                    if (entries.Count == MaxEntries || bytes > 16 * 1024 * 1024)
+                    if (bytes > 16 * 1024 * 1024)
                         throw new SftpException(SftpFailure.Capacity);
                     entries.Add(entry);
                 }
@@ -187,7 +200,9 @@ public sealed class SftpClient : IDisposable
         {
             request.String(path);
             request.Number(write ? 2u | 8u | 32u : 1u);
-            request.Number(0);
+            // Supply owner read/write permissions at exclusive creation, before any upload bytes.
+            request.Number(write ? 4u : 0u); // SSH_FILEXFER_ATTR_PERMISSIONS
+            if (write) request.Number((uint)(UnixFileMode.UserRead | UnixFileMode.UserWrite));
         }, 102, token).ConfigureAwait(false));
 
     public async Task<TransferAttributes> GetAttributesAsync(byte[] handle, CancellationToken token) =>
@@ -242,7 +257,8 @@ public sealed class SftpClient : IDisposable
     public Task CreateDirectoryAsync(byte[] path, CancellationToken token) => RequestAsync(14, writer =>
     {
         writer.String(path);
-        writer.Number(0);
+        writer.Number(4); // SSH_FILEXFER_ATTR_PERMISSIONS
+        writer.Number(0x1c0); // 0700, owner read/write/search
     }, 101, token, mutation: true);
 
     public Task RemoveAsync(byte[] path, bool directory, CancellationToken token) =>
@@ -305,6 +321,11 @@ public sealed class SftpClient : IDisposable
             if (result != expected || expected == 101) throw InvalidReply();
             return frame[5..];
         }
+        catch (SshFrameSubmissionUncertainException error)
+        {
+            Dispose();
+            throw new SftpException(mutation ? SftpFailure.UnknownOutcome : SftpFailure.Disconnected, error);
+        }
         catch (OperationCanceledException error) when (deadline.IsCancellationRequested)
         {
             Dispose();
@@ -332,30 +353,70 @@ public sealed class SftpClient : IDisposable
         }
     }
 
-    private async Task ReceiveRepliesAsync()
+    // The channel's ordered delivery worker is the only caller. A callback
+    // adopts its bytes immediately and never waits for another packet or I/O.
+    internal ValueTask ConsumeAsync(ReadOnlyMemory<byte> data)
     {
-        SftpException? failure = null;
-        try
+        ReadOnlySpan<byte> bytes = data.Span;
+        while (!bytes.IsEmpty)
         {
-            while (IsOpen)
+            if (frameBody is null)
             {
-                byte[] frame = await ReadFrameAsync(readerStop.Token, routeReply: true).ConfigureAwait(false);
-                uint id = BinaryPrimitives.ReadUInt32BigEndian(frame.AsSpan(1));
-                if (!pending.TryGetValue(id, out PendingRequest? request) || !request.Reply.TrySetResult(frame))
-                    throw InvalidReply();
+                prefixLength += CopyPrefix(ref bytes, framePrefix.AsSpan(prefixLength));
+                if (prefixLength < framePrefix.Length) break;
+                uint length = BinaryPrimitives.ReadUInt32BigEndian(framePrefix);
+                if (length is < 5 or > MaxFrame) throw InvalidReply();
+                frameBody = new byte[length];
+            }
+            if (bodyLength < 5)
+            {
+                bodyLength += CopyPrefix(ref bytes, frameBody.AsSpan(bodyLength, 5 - bodyLength));
+                if (bodyLength < 5) break;
+                if (!version.Task.IsCompleted)
+                {
+                    if (frameBody[0] != 2) throw InvalidReply();
+                }
+                else
+                {
+                    uint id = BinaryPrimitives.ReadUInt32BigEndian(frameBody.AsSpan(1));
+                    if (!pending.TryGetValue(id, out frameRequest) ||
+                        (frameBody[0] == 103 && frameBody.Length > BlockSize + 9) ||
+                        (frameRequest.FileData && frameBody[0] != 103 && frameBody.Length > 4096))
+                        throw InvalidReply();
+                }
+            }
+            int added = CopyPrefix(ref bytes, frameBody.AsSpan(bodyLength));
+            bodyLength += added;
+            if (added != 0) frameRequest?.Progress(wait);
+            if (bodyLength == frameBody.Length)
+            {
+                bool delivered = frameRequest is { } request
+                    ? request.Reply.TrySetResult(frameBody)
+                    : version.TrySetResult(frameBody);
+                if (!delivered) throw InvalidReply();
+                frameBody = null;
+                frameRequest = null;
+                prefixLength = bodyLength = 0;
             }
         }
-        catch (OperationCanceledException) when (readerStop.IsCancellationRequested) { }
-        catch (OperationCanceledException error) { failure = new SftpException(SftpFailure.Disconnected, error); }
-        catch (SftpException error) { failure = error; }
-        catch (Exception error) when (error is IOException or InvalidDataException or System.Threading.Channels.ChannelClosedException)
-        { failure = new SftpException(SftpFailure.InvalidReply, error); }
-        finally
-        {
-            Dispose();
-            foreach (PendingRequest request in pending.Values)
-                request.Reply.TrySetException(failure ?? new SftpException(SftpFailure.Disconnected));
-        }
+        return ValueTask.CompletedTask;
+    }
+
+    internal void CompleteInput(SftpException failure)
+    {
+        frameBody = null;
+        frameRequest = null;
+        Dispose();
+        if (version.TrySetException(failure)) _ = version.Task.Exception;
+        foreach (PendingRequest request in pending.Values) request.Reply.TrySetException(failure);
+    }
+
+    private static int CopyPrefix(ref ReadOnlySpan<byte> bytes, Span<byte> destination)
+    {
+        int count = Math.Min(bytes.Length, destination.Length);
+        bytes[..count].CopyTo(destination);
+        bytes = bytes[count..];
+        return count;
     }
 
     private Task WriteFrameAsync(ReadOnlyMemory<byte> request, CancellationToken token)
@@ -364,47 +425,6 @@ public sealed class SftpClient : IDisposable
         BinaryPrimitives.WriteUInt32BigEndian(frame, (uint)request.Length);
         request.CopyTo(frame.AsMemory(4));
         return channel.WriteAsync(frame, token);
-    }
-
-    private async Task<byte[]> ReadFrameAsync(CancellationToken token, bool routeReply = false)
-    {
-        byte[] prefix = new byte[4];
-        await FillAsync(prefix, token).ConfigureAwait(false);
-        uint length = BinaryPrimitives.ReadUInt32BigEndian(prefix);
-        if (length is < 5 or > MaxFrame) throw InvalidReply();
-        byte[] body = new byte[length];
-        if (routeReply)
-        {
-            await FillAsync(body.AsMemory(0, 5), token).ConfigureAwait(false);
-            uint id = BinaryPrimitives.ReadUInt32BigEndian(body.AsSpan(1));
-            if (!pending.TryGetValue(id, out PendingRequest? request)) throw InvalidReply();
-            if (body[0] == 103 && length > BlockSize + 9) throw InvalidReply();
-            if (request.FileData && body[0] != 103 && length > 4096) throw InvalidReply();
-            await FillAsync(body.AsMemory(5), token, request).ConfigureAwait(false);
-        }
-        else await FillAsync(body, token).ConfigureAwait(false);
-        return body;
-    }
-
-    private async Task FillAsync(Memory<byte> output, CancellationToken token, PendingRequest? request = null)
-    {
-        while (!output.IsEmpty)
-        {
-            if (chunkOffset == chunk.Length)
-            {
-                if (!await channel.Input.WaitToReadAsync(token).ConfigureAwait(false))
-                    throw new SftpException(SftpFailure.Disconnected);
-                if (!channel.Input.TryRead(out byte[]? next)) continue;
-                chunk = next;
-                chunkOffset = 0;
-            }
-            int count = Math.Min(output.Length, chunk.Length - chunkOffset);
-            chunk.AsMemory(chunkOffset, count).CopyTo(output);
-            chunkOffset += count;
-            output = output[count..];
-            request?.Progress(wait);
-            await channel.ReturnCreditAsync(count).ConfigureAwait(false);
-        }
     }
 
     private SftpEntry[] Names(byte[] data)
@@ -486,7 +506,6 @@ public sealed class SftpClient : IDisposable
     public void Dispose()
     {
         if (Interlocked.Exchange(ref stopped, 1) != 0) return;
-        readerStop.Cancel();
         channel.Close();
     }
 

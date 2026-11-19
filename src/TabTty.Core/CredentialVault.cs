@@ -1,43 +1,67 @@
 using System.Security.AccessControl;
 using System.Security.Cryptography;
-using System.Security.Principal;
 
 namespace TabTty.Core;
+
+internal enum VaultInitializationStep { ParkOriginal, InstallCandidate, RestoreOriginal }
 
 public sealed class CredentialVault : IDisposable
 {
     private static readonly SemaphoreSlim DerivationWorker = new(1);
+    private static readonly ResourceQuota OperationCapacity = new(256, message: "Too many vault operations are pending.",
+        collectOnPressure: false);
+    private static readonly ResourceQuota DerivationCapacity = new(32, message: "Too many vault derivations are pending.",
+        collectOnPressure: false);
+    private static readonly ResourceQuota SecretInputs = new(8 * 1024 * 1024,
+        message: "The vault input budget was exhausted.", collectOnPressure: false);
     private readonly object gate = new();
     private readonly string path;
     private byte[] root;
     private byte[] encrypted;
     private byte[] digest;
+    internal sealed record ManagementSnapshot(long Revision, IReadOnlyList<VaultEntryInfo> Entries);
+    private ManagementSnapshot metadata;
     private bool disposed;
     private bool stale;
-    private byte[]? unresolvedRoot;
+    private sealed record PendingPublication(byte[] Image, byte[] Digest, ManagementSnapshot Metadata, byte[]? Root,
+        ResourceReservation Result)
+    {
+        internal Guid Operation { get; set; }
+    }
+    private PendingPublication? unresolvedPublication;
 
-    private CredentialVault(string path, Guid id, byte[] root, byte[] encrypted)
+    private CredentialVault(string path, Guid id, byte[] root, byte[] encrypted, IReadOnlyList<VaultEntryInfo> entries)
     {
         this.path = path;
         this.root = root;
         this.encrypted = encrypted;
+        metadata = new(0, entries);
         digest = SHA256.HashData(encrypted);
         Id = id;
     }
 
     public Guid Id { get; }
+    internal long Revision => ReadCommittedMetadata().Revision;
+    internal ManagementSnapshot ReadCommittedMetadata() => Volatile.Read(ref metadata);
     internal bool IsStale => Volatile.Read(ref stale);
+    internal bool HasUnverifiedPublication => Volatile.Read(ref unresolvedPublication) is not null;
+    internal FilePublicationResult? InitializationResult { get; private set; }
 
     public static Task<CredentialVault> CreateAsync(string path, ReadOnlyMemory<char> master,
-        CancellationToken cancellationToken = default) => CreateAsync(path, master, replaceEmpty: false, cancellationToken);
+        CancellationToken cancellationToken = default) => CreateAsync(path, master, emptyOriginal: null, cancellationToken);
 
     internal static Task<CredentialVault> InitializeEmptyAsync(string path, ReadOnlyMemory<char> master,
-        CancellationToken cancellationToken = default) => CreateAsync(path, master, replaceEmpty: true, cancellationToken);
+        VaultFileEvidence evidence, CancellationToken cancellationToken = default,
+        Action<VaultInitializationStep, string, string>? move = null, Action<string>? validateStage = null) =>
+        evidence.Length == 0 ? CreateAsync(path, master, evidence, cancellationToken, move, validateStage) :
+            throw new IOException("The credential vault is no longer an empty file.");
 
-    private static Task<CredentialVault> CreateAsync(string path, ReadOnlyMemory<char> master, bool replaceEmpty,
-        CancellationToken cancellationToken) =>
+    private static Task<CredentialVault> CreateAsync(string path, ReadOnlyMemory<char> master, VaultFileEvidence? emptyOriginal,
+        CancellationToken cancellationToken, Action<VaultInitializationStep, string, string>? move = null,
+        Action<string>? validateStage = null) =>
         WithMasterAsync(master, (password, token) =>
         {
+            using var result = VaultPublicationCapacity.Results.Reserve(1);
             string destination = Path.GetFullPath(path);
             byte[] root = new byte[32];
             try
@@ -46,8 +70,10 @@ public sealed class CredentialVault : IDisposable
                 OpenSsl.Fill(root);
                 byte[] wrapper = VaultContainer.Wrap(id, password, root);
                 byte[] encrypted = VaultContainer.Encrypt(wrapper, root, VaultPayload.Empty(id));
-                CommitNew(destination, encrypted, token, replaceEmpty);
-                return new CredentialVault(destination, id, root, encrypted);
+                var generation = new CredentialVault(destination, id, root, encrypted, []);
+                generation.InitializationResult = CommitNew(destination, encrypted, token, emptyOriginal,
+                    move: move, validateStage: validateStage);
+                return generation;
             }
             catch
             {
@@ -60,19 +86,39 @@ public sealed class CredentialVault : IDisposable
         CancellationToken cancellationToken = default) =>
         WithMasterAsync(master, (password, token) => Unlock(Path.GetFullPath(path), password, token), cancellationToken);
 
-    private static CredentialVault Unlock(string path, byte[] password, CancellationToken token)
+    internal static Task<CredentialVault> UnlockBoundAsync(string path, ReadOnlyMemory<char> master,
+        VaultFileEvidence evidence, CancellationToken token) =>
+        WithMasterAsync(master, (password, lifetime) => Unlock(Path.GetFullPath(path), password, lifetime, evidence), token);
+
+    internal static Task<CredentialVault?> ReconcileLockedPublicationAsync(string path, ReadOnlyMemory<char> master,
+        CancellationToken token = default) => WithMasterAsync(master, (password, lifetime) =>
     {
-        byte[] encrypted = ReadFile(path);
+        CredentialVault? adopted = null;
+        using var writer = LockWriter(path);
+        var result = VerifiedFilePublication.Reconcile(path, verified =>
+            adopted = Unlock(verified, password, lifetime, reinspection: true));
+        if (result is { Status: not FilePublicationStatus.Verified })
+            throw new FilePublicationException("The credential vault publication or preservation could not be verified.", result);
+        return adopted;
+    }, token);
+
+    private static CredentialVault Unlock(string path, byte[] password, CancellationToken token,
+        VaultFileEvidence? expected = null, bool reinspection = false)
+    {
+        if (!reinspection && VerifiedFilePublication.HasPendingPublication(path))
+            throw new IOException("The credential vault has an unresolved publication.");
+        byte[] encrypted = ReadFile(path, confirmed: expected);
         Guid id = VaultContainer.Validate(encrypted);
         byte[] root = new byte[32];
         try
         {
             VaultContainer.Unwrap(encrypted, password, root);
             byte[] plaintext = VaultContainer.Decrypt(encrypted, root);
-            try { VaultPayload.Read(plaintext, id, null, out _, out _); }
+            IReadOnlyList<VaultEntryInfo> entries;
+            try { entries = ReadEntries(plaintext, id); }
             finally { CryptographicOperations.ZeroMemory(plaintext); }
             token.ThrowIfCancellationRequested();
-            return new CredentialVault(path, id, root, encrypted);
+            return new CredentialVault(path, id, root, encrypted, entries);
         }
         catch
         {
@@ -81,22 +127,63 @@ public sealed class CredentialVault : IDisposable
         }
     }
 
+    internal sealed record RestoreBasis(string Target, string Backup, VaultFileEvidence? Original,
+        VaultFileEvidence BackupImage, long? Revision);
+
+    internal static RestoreBasis PrepareRestore(string target, string backup, CredentialVault? owner)
+    {
+        target = Path.GetFullPath(target);
+        backup = Path.GetFullPath(backup);
+        if (string.Equals(target, backup, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Choose a separate encrypted backup.", nameof(backup));
+        if (owner is not null && !string.Equals(target, owner.path, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("The selected vault and reviewed destination differ.");
+        VaultFileEvidence? original = owner is null ? InspectFile(target) : owner.InspectFileForManagement();
+        VaultFileEvidence source = InspectFile(backup) ?? throw new FileNotFoundException("The encrypted backup is unavailable.", backup);
+        if (original is not null && original.Volume == source.Volume && original.Index == source.Index)
+            throw new ArgumentException("Choose a separate encrypted backup.", nameof(backup));
+        return new(target, backup, original, source, owner?.Revision);
+    }
+
     public static Task<CredentialVault> RecoverAsync(string destination, string backup, ReadOnlyMemory<char> master,
         CancellationToken cancellationToken = default) =>
+        RestoreFileAsync(destination, backup, master, null, null, cancellationToken);
+
+    internal static Task<CredentialVault> RestoreFileAsync(RestoreBasis request, ReadOnlyMemory<char> master,
+        CredentialVault? owner, CancellationToken token = default, Action<string, string, string?>? issue = null) =>
+        RestoreFileAsync(request.Target, request.Backup, master, owner, request, token, issue);
+
+    private static Task<CredentialVault> RestoreFileAsync(string destination, string backup, ReadOnlyMemory<char> master,
+        CredentialVault? owner, RestoreBasis? consent, CancellationToken cancellationToken, Action<string, string, string?>? issue = null) =>
         WithMasterAsync(master, (password, token) =>
         {
-            string target = Path.GetFullPath(destination);
-            string source = Path.GetFullPath(backup);
-            if (source.Equals(target, StringComparison.OrdinalIgnoreCase))
-                throw new ArgumentException("Choose a separate encrypted backup.", nameof(backup));
-
-            byte[]? original = ReadRecoveryTarget(target);
-            Guid? expectedId = original is null ? null : ReadVaultId(original);
-            using CredentialVault verified = Unlock(source, password, token);
-            if (expectedId is { } id && verified.Id != id)
+            var basis = consent ?? PrepareRestore(destination, backup, owner);
+            byte[]? original = ReadRecoveryTarget(basis.Target, basis.Original);
+            if ((basis.Original is null) != (original is null))
+                throw new IOException("The vault changed after the restore review.");
+            Guid? expected = owner?.Id ?? (original is null ? null : ReadVaultId(original));
+            using CredentialVault verified = Unlock(basis.Backup, password, token, basis.BackupImage);
+            if (expected is { } id && verified.Id != id)
                 throw new InvalidDataException("The backup belongs to another credential vault.");
-            return RecoverVerified(target, original, verified, token);
+            verified.CheckCurrent();
+            if (owner is null) return RecoverVerified(basis.Target, original, verified, token, issue);
+
+            lock (owner.gate)
+            {
+                owner.CheckCurrent();
+                owner.RequireRevision(basis.Revision);
+                byte[] replacement = verified.root.ToArray();
+                try
+                {
+                    owner.Commit(verified.encrypted, verified.metadata.Entries, token, RecoveryPath(basis.Target), issue,
+                        replacement: replacement);
+                }
+                finally { owner.ClearUnownedRoot(replacement); }
+            }
+            return owner;
         }, cancellationToken);
+
+    private static string RecoveryPath(string target) => target + $".recovery-{Guid.NewGuid():N}.tttykey";
 
     private static Guid? ReadVaultId(byte[] bytes)
     {
@@ -108,50 +195,37 @@ public sealed class CredentialVault : IDisposable
     }
 
     private static CredentialVault RecoverVerified(string path, byte[]? original, CredentialVault verified,
-        CancellationToken token)
+        CancellationToken token, Action<string, string, string?>? issue = null)
     {
-        verified.CheckCurrent();
-        if (original is null) CommitNew(path, verified.encrypted, token);
-        else
+        using var resultSlot = VaultPublicationCapacity.Results.Reserve(1);
+        var generation = new CredentialVault(path, verified.Id, verified.root.ToArray(), verified.encrypted, verified.metadata.Entries);
+        try
         {
-            string recovery = path + $".recovery-{Guid.NewGuid():N}.tttykey";
-            string temporary = WriteCandidate(path, verified.encrypted, token);
-            bool preserveCandidate = false;
-            try
+            if (original is null) CommitNew(path, verified.encrypted, token, issue: issue);
+            else
             {
                 using var writer = LockWriter(path);
-                if (ReadRecoveryTarget(path) is not { } actual || !actual.AsSpan().SequenceEqual(original))
-                {
-                    preserveCandidate = true;
-                    throw new IOException("The credential vault changed before recovery.");
-                }
-                token.ThrowIfCancellationRequested();
-                Exception? error = null;
-                try { File.Replace(temporary, path, recovery); }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { error = exception; }
-                preserveCandidate = true;
-                byte[]? installed = ReadRecoveryTarget(path);
-                if (installed is not null && installed.AsSpan().SequenceEqual(verified.encrypted) &&
-                    ReadRecoveryTarget(recovery) is { } preserved && preserved.AsSpan().SequenceEqual(original))
-                    preserveCandidate = false;
-                else if (error is not null && installed is not null && installed.AsSpan().SequenceEqual(original))
-                {
-                    preserveCandidate = false;
-                    throw new IOException("Credential vault recovery failed.", error);
-                }
-                else throw new IOException("Credential vault recovery could not be verified.", error);
+                string recovery = RecoveryPath(path);
+                FilePublicationResult result = VerifiedFilePublication.Publish(path, verified.encrypted,
+                    SHA256.HashData(original), recovery, MaximumVaultBytes, token, candidate => OpenPrivate(candidate),
+                    recovery: true, issue: issue);
+                if (result.Status != FilePublicationStatus.Verified)
+                    throw new FilePublicationException("Credential vault recovery or original preservation could not be verified.", result);
             }
-            finally { if (!preserveCandidate) DeleteOwnedCandidate(temporary); }
+            return generation;
         }
-        return new CredentialVault(path, verified.Id, verified.root.ToArray(), verified.encrypted);
+        catch
+        {
+            generation.Dispose();
+            throw;
+        }
     }
 
-    public Task<IReadOnlyList<VaultEntryInfo>> ListEntriesAsync(CancellationToken cancellationToken = default) =>
-        UseAsync((plaintext, token) =>
-        {
-            token.ThrowIfCancellationRequested();
-            return VaultPayload.Read(plaintext, Id, null, out _, out _);
-        }, cancellationToken);
+    public async Task<IReadOnlyList<VaultEntryInfo>> ListEntriesAsync(CancellationToken cancellationToken = default) =>
+        (await ReadMetadataAsync(cancellationToken).ConfigureAwait(false)).Entries;
+
+    internal Task<(long Revision, IReadOnlyList<VaultEntryInfo> Entries)> ReadMetadataAsync(CancellationToken token = default) =>
+        RunAsync(_ => (metadata.Revision, metadata.Entries), token);
 
     public Task<VaultSecret> GetPasswordAsync(Guid vaultId, Guid entryId, CancellationToken cancellationToken = default) =>
         GetSecretAsync(vaultId, entryId, "password", cancellationToken);
@@ -179,117 +253,178 @@ public sealed class CredentialVault : IDisposable
     }
 
     public Task<Guid> AddPasswordAsync(string name, string? username, ReadOnlyMemory<byte> password,
-        CancellationToken cancellationToken = default) => UseAsync((plaintext, token) =>
+        CancellationToken cancellationToken = default) => AddPasswordAsync(name, username, password, null, cancellationToken);
+
+    internal Task<Guid> AddPasswordAsync(string name, string? username, ReadOnlyMemory<byte> password,
+        long? expectedRevision, CancellationToken cancellationToken = default) =>
+        WithSecretInputAsync(password, owned => UseAsync((plaintext, token) =>
         {
+        RequireRevision(expectedRevision);
             Guid id = OpenSsl.NewId();
             byte[] payload = VaultPayload.AddEntry(plaintext, Id, new VaultEntryInfo(id, name, username),
-                password.Span);
-            try { Commit(VaultContainer.Encrypt(encrypted, root, payload), token); }
+                owned.GetValueOrDefault().Span);
+            try { CommitEntries(payload, token); }
             finally { CryptographicOperations.ZeroMemory(payload); }
             return id;
-        }, cancellationToken);
+        }, cancellationToken));
+
+    internal sealed class PrivateKeySource(byte[] image, ResourceReservation ownership) : IDisposable
+    {
+        internal ReadOnlyMemory<byte> Image { get; } = image;
+        public void Dispose()
+        {
+            CryptographicOperations.ZeroMemory(image);
+            ownership.Dispose();
+        }
+    }
+
+    internal static PrivateKeySource ReadPrivateKeySource(string source)
+    {
+        using var stream = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read);
+        long length = stream.Length;
+        if (length is <= 0 or > 1024 * 1024)
+            throw new InvalidDataException("The private key file exceeds its supported size.");
+        var ownership = SecretInputs.Reserve(length);
+        try
+        {
+            byte[] image = new byte[(int)length];
+            try
+            {
+                stream.ReadExactly(image);
+                if (stream.ReadByte() >= 0) throw new IOException("The private key file changed while being read.");
+                return new(image, ownership);
+            }
+            catch
+            {
+                CryptographicOperations.ZeroMemory(image);
+                throw;
+            }
+        }
+        catch
+        {
+            ownership.Dispose();
+            throw;
+        }
+    }
 
     public async Task<Guid> ImportPrivateKeyAsync(string name, string source, CancellationToken cancellationToken = default,
         ReadOnlyMemory<byte>? passphrase = null)
     {
+        using var acquired = await Task.Run(() => ReadPrivateKeySource(source), cancellationToken).ConfigureAwait(false);
+        return await ImportPrivateKeySourceAsync(name, acquired, passphrase, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    internal Task<Guid> ImportPrivateKeySourceAsync(string name, PrivateKeySource source,
+        ReadOnlyMemory<byte>? passphrase = null, long? expectedRevision = null, CancellationToken cancellationToken = default) =>
+        WithSecretInputAsync(passphrase, owned => ImportOwnedAsync(name, source, owned, expectedRevision, cancellationToken));
+
+    private async Task<Guid> ImportOwnedAsync(string name, PrivateKeySource source,
+        ReadOnlyMemory<byte>? passphrase, long? expectedRevision, CancellationToken cancellationToken)
+    {
+        using var request = DerivationCapacity.Reserve(1);
         await DerivationWorker.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             return await UseAsync((plaintext, token) =>
             {
-                byte[] fileBytes = new byte[1024 * 1024 + 1];
-                byte[]? pkcs8 = null;
+                RequireRevision(expectedRevision);
+                using SshPrivateKey key = SshPrivateKey.Import(source.Image.Span, passphrase);
+                token.ThrowIfCancellationRequested();
+                byte[] pkcs8 = key.ExportPkcs8();
                 try
                 {
-                    using (FileStream file = File.OpenRead(source))
-                    {
-                        int length = file.ReadAtLeast(fileBytes, fileBytes.Length, throwOnEndOfStream: false);
-                        using SshPrivateKey key = SshPrivateKey.Import(fileBytes.AsSpan(0, length), passphrase);
-                        pkcs8 = key.ExportPkcs8();
-                        Guid id = OpenSsl.NewId();
-                        var entry = new VaultEntryInfo(id, name, null, "privateKey", key.Algorithm, key.Fingerprint);
-                        byte[] payload = VaultPayload.AddEntry(plaintext, Id, entry, pkcs8);
-                        try { Commit(VaultContainer.Encrypt(encrypted, root, payload), token); }
-                        finally { CryptographicOperations.ZeroMemory(payload); }
-                        return id;
-                    }
+                    Guid id = OpenSsl.NewId();
+                    var entry = new VaultEntryInfo(id, name, null, "privateKey", key.Algorithm, key.Fingerprint);
+                    byte[] payload = VaultPayload.AddEntry(plaintext, Id, entry, pkcs8);
+                    try { CommitEntries(payload, token); }
+                    finally { CryptographicOperations.ZeroMemory(payload); }
+                    return id;
                 }
-                finally
-                {
-                    CryptographicOperations.ZeroMemory(fileBytes);
-                    if (pkcs8 is not null) CryptographicOperations.ZeroMemory(pkcs8);
-                }
+                finally { CryptographicOperations.ZeroMemory(pkcs8); }
             }, cancellationToken).ConfigureAwait(false);
         }
         finally { DerivationWorker.Release(); }
     }
 
     public Task BackupAsync(string destination, CancellationToken cancellationToken = default) =>
-        RunAsync(token =>
-        {
-            CommitNew(Path.GetFullPath(destination), encrypted, token);
-            return true;
-        }, cancellationToken);
+        BackupCoreAsync(destination, rescue: false, cancellationToken);
 
-    public Task UpdateEntryAsync(Guid entryId, string name, string? username, ReadOnlyMemory<byte>? password = null,
-        CancellationToken cancellationToken = default) => UseAsync((plaintext, token) =>
-        {
-            byte[] updated = VaultPayload.UpdateEntry(plaintext, Id, entryId, name, username,
-                password.GetValueOrDefault().Span, password.HasValue);
-            try { Commit(VaultContainer.Encrypt(encrypted, root, updated), token); }
-            finally { CryptographicOperations.ZeroMemory(updated); }
-            return true;
-        }, cancellationToken);
+    internal Task BackupRetainedGenerationAsync(string destination, CancellationToken cancellationToken = default) =>
+        BackupCoreAsync(destination, rescue: true, cancellationToken);
 
-    public Task DeleteEntryAsync(Guid entryId, CancellationToken cancellationToken = default) =>
-        UseAsync((plaintext, token) =>
-        {
-            byte[] updated = VaultPayload.DeleteEntry(plaintext, Id, entryId);
-            try { Commit(VaultContainer.Encrypt(encrypted, root, updated), token); }
-            finally { CryptographicOperations.ZeroMemory(updated); }
-            return true;
-        }, cancellationToken);
-
-    public async Task RestoreAsync(string backup, ReadOnlyMemory<char> master, CancellationToken cancellationToken = default)
+    private Task BackupCoreAsync(string destination, bool rescue, CancellationToken token) => Task.Run(() =>
     {
-        if (Path.GetFullPath(backup).Equals(path, StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException("Choose a separate encrypted backup.", nameof(backup));
-        using CredentialVault candidate = await UnlockAsync(backup, master, cancellationToken).ConfigureAwait(false);
-        if (candidate.Id != Id) throw new InvalidDataException("The backup belongs to another credential vault.");
-        byte[] replacement;
-        byte[] snapshot;
-        lock (candidate.gate)
+        lock (gate)
         {
-            candidate.CheckCurrent();
-            replacement = candidate.root.ToArray();
-            snapshot = candidate.encrypted;
+            ObjectDisposedException.ThrowIf(disposed, this);
+            if (!rescue) CheckCurrent();
+            string target = Path.GetFullPath(destination);
+            if (target.Equals(path, StringComparison.OrdinalIgnoreCase))
+                throw new IOException("Choose a separate encrypted backup destination.");
+            CommitNew(target, encrypted, token);
         }
-        try
+    }, token);
+
+    internal VaultFileEvidence? InspectFileForManagement()
+    {
+        lock (gate)
         {
-            await RunAsync(token =>
+            CheckCurrent();
+            VaultFileEvidence? result = InspectFile(path);
+            if (result?.Digest != Convert.ToHexString(digest))
             {
-                string recovery = path + $".recovery-{Guid.NewGuid():N}.tttykey";
-                CommitNew(recovery, encrypted, token);
-                try
-                {
-                    Commit(snapshot, token);
-                    CryptographicOperations.ZeroMemory(root);
-                    root = replacement;
-                    replacement = [];
-                }
-                catch when (stale)
-                {
-                    unresolvedRoot = replacement;
-                    replacement = [];
-                    throw;
-                }
-                return true;
-            }, cancellationToken).ConfigureAwait(false);
+                stale = true;
+                throw new CredentialVaultStaleException("The credential vault changed before review.");
+            }
+            return result;
         }
-        finally { CryptographicOperations.ZeroMemory(replacement); }
     }
 
+    internal static VaultFileEvidence? InspectFile(string path) => VaultFileEvidence.Read(path, MaximumVaultBytes);
+
+    public Task UpdateEntryAsync(Guid entryId, string name, string? username, ReadOnlyMemory<byte>? password = null,
+        CancellationToken cancellationToken = default) =>
+        UpdateEntryAsync(entryId, name, username, password, null, cancellationToken);
+
+    internal Task UpdateEntryAsync(Guid entryId, string name, string? username, ReadOnlyMemory<byte>? password,
+        long? expectedRevision, CancellationToken cancellationToken = default) =>
+        WithSecretInputAsync(password, owned => UseAsync((plaintext, token) =>
+        {
+            RequireRevision(expectedRevision);
+            byte[] updated = VaultPayload.UpdateEntry(plaintext, Id, entryId, name, username,
+                owned.GetValueOrDefault().Span, owned.HasValue);
+            try { CommitEntries(updated, token); }
+            finally { CryptographicOperations.ZeroMemory(updated); }
+            return true;
+        }, cancellationToken));
+
+    public Task DeleteEntryAsync(Guid entryId, CancellationToken cancellationToken = default) =>
+        DeleteEntryAsync(entryId, null, cancellationToken);
+
+    internal Task DeleteEntryAsync(Guid entryId, long? expectedRevision, CancellationToken cancellationToken = default) =>
+        UseAsync((plaintext, token) =>
+        {
+            RequireRevision(expectedRevision);
+            byte[] updated = VaultPayload.DeleteEntry(plaintext, Id, entryId);
+            try { CommitEntries(updated, token); }
+            finally { CryptographicOperations.ZeroMemory(updated); }
+            return true;
+        }, cancellationToken);
+
+    private void RequireRevision(long? expected)
+    {
+        if (expected is { } basis && Revision != basis)
+            throw new InvalidOperationException("The reviewed vault revision changed before the operation.");
+    }
+
+    public Task RestoreAsync(string backup, ReadOnlyMemory<char> master, CancellationToken cancellationToken = default) =>
+        RestoreFileAsync(path, backup, master, this, null, cancellationToken);
+
     public Task ChangeMasterPasswordAsync(ReadOnlyMemory<char> master, CancellationToken cancellationToken = default) =>
+        ChangeMasterPasswordAsync(master, null, cancellationToken);
+
+    internal Task ChangeMasterPasswordAsync(ReadOnlyMemory<char> master, Action<string, string, string?>? issue,
+        CancellationToken cancellationToken = default, Action<string>? validateStaged = null, Action<byte[]>? fillRoot = null) =>
         WithMasterAsync(master, (password, token) =>
         {
             lock (gate)
@@ -299,23 +434,17 @@ public sealed class CredentialVault : IDisposable
                 byte[] replacement = new byte[32];
                 try
                 {
-                    OpenSsl.Fill(replacement);
+                    if (fillRoot is null) OpenSsl.Fill(replacement);
+                    else fillRoot(replacement);
+                    token.ThrowIfCancellationRequested();
                     byte[] wrapper = VaultContainer.Wrap(Id, password, replacement);
-                    Commit(VaultContainer.Encrypt(wrapper, replacement, plaintext), token);
-                    CryptographicOperations.ZeroMemory(root);
-                    root = replacement;
-                    replacement = [];
-                }
-                catch when (stale)
-                {
-                    unresolvedRoot = replacement;
-                    replacement = [];
-                    throw;
+                    Commit(VaultContainer.Encrypt(wrapper, replacement, plaintext), metadata.Entries, token,
+                        issue: issue, replacement: replacement, validateStaged: validateStaged);
                 }
                 finally
                 {
                     CryptographicOperations.ZeroMemory(plaintext);
-                    CryptographicOperations.ZeroMemory(replacement);
+                    ClearUnownedRoot(replacement);
                 }
                 return true;
             }
@@ -328,7 +457,12 @@ public sealed class CredentialVault : IDisposable
             if (disposed) return;
             disposed = true;
             CryptographicOperations.ZeroMemory(root);
-            if (unresolvedRoot is not null) CryptographicOperations.ZeroMemory(unresolvedRoot);
+            if (unresolvedPublication?.Root is { } replacement) CryptographicOperations.ZeroMemory(replacement);
+            unresolvedPublication?.Result.Dispose();
+            Volatile.Write(ref unresolvedPublication, null);
+            encrypted = [];
+            digest = [];
+            Volatile.Write(ref metadata, new(metadata.Revision, []));
         }
     }
 
@@ -340,21 +474,39 @@ public sealed class CredentialVault : IDisposable
             finally { CryptographicOperations.ZeroMemory(plaintext); }
         }, token);
 
-    private Task<T> RunAsync<T>(Func<CancellationToken, T> action, CancellationToken token) => Task.Run(() =>
+    private static async Task<T> WithSecretInputAsync<T>(ReadOnlyMemory<byte>? input,
+        Func<ReadOnlyMemory<byte>?, Task<T>> operation)
     {
-        lock (gate)
+        if (input is not { } supplied) return await operation(null).ConfigureAwait(false);
+        using var memory = SecretInputs.Reserve(supplied.Length);
+        byte[] owned = supplied.ToArray();
+        try { return await operation(owned).ConfigureAwait(false); }
+        finally { CryptographicOperations.ZeroMemory(owned); }
+    }
+
+    private async Task<T> RunAsync<T>(Func<CancellationToken, T> action, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        using var admission = OperationCapacity.Reserve(1);
+        return await Task.Run(() =>
         {
-            token.ThrowIfCancellationRequested();
-            CheckCurrent();
-            return action(token);
-        }
-    }, token);
+            lock (gate)
+            {
+                token.ThrowIfCancellationRequested();
+                CheckCurrent();
+                return action(token);
+            }
+        }, token).ConfigureAwait(false);
+    }
 
     private static async Task<T> WithMasterAsync<T>(ReadOnlyMemory<char> master,
         Func<byte[], CancellationToken, T> operation, CancellationToken token)
     {
         if (master.Length > VaultContainer.MaximumMasterInputLength)
             throw new ArgumentOutOfRangeException(nameof(master), VaultContainer.MasterLengthMessage);
+        token.ThrowIfCancellationRequested();
+        using var admission = DerivationCapacity.Reserve(1);
+        using var memory = SecretInputs.Reserve(checked(master.Length * 16L + 128));
         char[] input = master.ToArray();
         try
         {
@@ -377,6 +529,8 @@ public sealed class CredentialVault : IDisposable
     private void CheckCurrent()
     {
         ObjectDisposedException.ThrowIf(disposed, this);
+        if (unresolvedPublication is not null || VerifiedFilePublication.IsUnresolved(path))
+            throw new IOException("The credential vault publication must be verified before new use.");
         if (stale) throw new CredentialVaultStaleException("The credential vault changed. Restart TabTty to open it again.");
         try
         {
@@ -390,130 +544,326 @@ public sealed class CredentialVault : IDisposable
         throw new CredentialVaultStaleException("The credential vault changed or became unavailable. Restart TabTty to open it again.");
     }
 
-    private void Commit(byte[] candidate, CancellationToken token)
+    private const int MaximumVaultBytes = VaultContainer.HeaderSize + VaultContainer.TagSize + VaultContainer.MaxPayload;
+
+    internal async Task<bool> ReconcilePublicationAsync() =>
+        (await ReconcilePublicationResultAsync().ConfigureAwait(false))?.Status == FilePublicationStatus.Verified;
+
+    internal Task<FilePublicationResult?> ReconcilePublicationResultAsync() => Task.Run(() =>
     {
-        string temporary = WriteCandidate(path, candidate, token);
-        bool preserveCandidate = false;
-        byte[] expected = SHA256.HashData(candidate);
+        lock (gate)
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            if (unresolvedPublication is not { } pending) return null;
+            using var writer = LockWriter(path);
+            var result = VerifiedFilePublication.Reconcile(path, verifiedPath =>
+            {
+                if (stale) throw new CredentialVaultStaleException("The credential vault changed independently.");
+                byte[] plaintext = VaultContainer.Decrypt(pending.Image, pending.Root ?? root);
+                try { VaultPayload.Read(plaintext, Id, null, out _, out _); }
+                finally { CryptographicOperations.ZeroMemory(plaintext); }
+
+                Adopt(pending);
+                Volatile.Write(ref unresolvedPublication, null);
+                pending.Result.Dispose();
+            }, pending.Operation);
+            if (result is { Status: FilePublicationStatus.Unchanged, EvidenceRetired: true })
+            {
+                Volatile.Write(ref unresolvedPublication, null);
+                if (pending.Root is { } discarded) ClearUnownedRoot(discarded);
+                pending.Result.Dispose();
+            }
+            return result;
+        }
+    });
+
+    private static IReadOnlyList<VaultEntryInfo> ReadEntries(byte[] plaintext, Guid id)
+    {
+        const long entryCharge = 256;
+        var charge = VaultPublicationCapacity.Metadata.Reserve(256 + 2L * plaintext.Length +
+            entryCharge * VaultPayload.MaxEntries);
         try
         {
-            using var writer = LockWriter(path);
-            CheckCurrent();
-            token.ThrowIfCancellationRequested();
-            IOException? replacementError = null;
-            try { File.Replace(temporary, path, path + ".bak"); }
-            catch (IOException exception) { replacementError = exception; }
-            catch (UnauthorizedAccessException exception)
-            {
-                replacementError = new IOException("Credential vault replacement failed.", exception);
-            }
-            byte[] actual;
-            try { actual = SHA256.HashData(ReadFile(path)); }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-            {
-                preserveCandidate = stale = true;
-                throw new IOException("Credential vault replacement could not be verified.", exception);
-            }
-            if (actual.AsSpan().SequenceEqual(expected))
-            {
-                encrypted = candidate;
-                digest = expected;
-                return;
-            }
-            if (actual.AsSpan().SequenceEqual(digest) && replacementError is not null) throw replacementError;
-            preserveCandidate = stale = true;
-            throw new IOException("Credential vault replacement conflicted with another file change.");
+            var parsed = VaultPayload.Read(plaintext, id, null, out _, out _);
+            long bytes = 256 + parsed.Sum(entry => entryCharge + 2L * (entry.Name.Length +
+                (entry.Username?.Length ?? 0) + entry.Kind.Length + (entry.PublicType?.Length ?? 0) +
+                (entry.Fingerprint?.Length ?? 0)));
+            charge.Resize(bytes);
+            return new VaultMetadata(parsed, charge);
         }
-        finally
+        catch
         {
-            if (!preserveCandidate) DeleteOwnedCandidate(temporary);
+            charge.Dispose();
+            throw;
         }
     }
 
-    private static void CommitNew(string path, byte[] candidate, CancellationToken token, bool replaceEmpty = false)
+    private void CommitEntries(byte[] plaintext, CancellationToken token) =>
+        Commit(VaultContainer.Encrypt(encrypted, root, plaintext), ReadEntries(plaintext, Id), token);
+
+    private void ClearUnownedRoot(byte[] replacement)
     {
-        string temporary = WriteCandidate(path, candidate, token);
-        string? parked = null;
-        bool installed = false;
+        if (!ReferenceEquals(replacement, root) && !ReferenceEquals(replacement, unresolvedPublication?.Root))
+            CryptographicOperations.ZeroMemory(replacement);
+    }
+
+    private void Adopt(PendingPublication candidate)
+    {
+        if (candidate.Root is { } replacement)
+        {
+            CryptographicOperations.ZeroMemory(root);
+            root = replacement;
+        }
+        encrypted = candidate.Image;
+        digest = candidate.Digest;
+        Volatile.Write(ref metadata, candidate.Metadata);
+    }
+
+    private void Commit(byte[] candidate, IReadOnlyList<VaultEntryInfo> candidateEntries, CancellationToken token,
+        string? recovery = null, Action<string, string, string?>? issue = null, byte[]? replacement = null,
+        Action<string>? validateStaged = null)
+    {
+        var proposal = new ManagementSnapshot(checked(Revision + 1), candidateEntries);
+        var candidateDigest = SHA256.HashData(candidate);
+        var resultSlot = VaultPublicationCapacity.Results.Reserve(1);
         try
         {
+            var prepared = new PendingPublication(candidate, candidateDigest, proposal, replacement, resultSlot);
             using var writer = LockWriter(path);
-            token.ThrowIfCancellationRequested();
-            if (replaceEmpty)
+            CheckCurrent();
+            FilePublicationResult result;
+            try
             {
-                var target = new FileInfo(path);
-                if (target.Length != 0 || target.Attributes.HasFlag(FileAttributes.ReparsePoint))
-                    throw new IOException("The credential vault is no longer an empty file.");
-                string aside = Path.Combine(target.DirectoryName!, $".tabtty-empty-{Guid.NewGuid():N}.tmp");
-                File.Move(path, aside, overwrite: false);
-                parked = aside;
-                var moved = new FileInfo(aside);
-                if (moved.Length != 0 || moved.Attributes.HasFlag(FileAttributes.ReparsePoint))
-                    throw new IOException("The credential vault changed during initialization.");
+                result = VerifiedFilePublication.Publish(path, candidate, digest, recovery ?? path + ".bak",
+                    MaximumVaultBytes, token, candidatePath => OpenPrivate(candidatePath), validate: validateStaged,
+                    recovery: recovery is not null, issue: issue);
             }
-            token.ThrowIfCancellationRequested();
-            File.Move(temporary, path, overwrite: false);
-            installed = true;
-            if (!ReadFile(path).AsSpan().SequenceEqual(candidate))
-                throw new IOException("The new credential vault could not be verified.");
+            catch (FilePublicationException error)
+            {
+                Retain(error.Result);
+                throw;
+            }
+            if (result.Status == FilePublicationStatus.Verified)
+            {
+                Adopt(prepared);
+                return;
+            }
+            if (VerifiedFilePublication.IsUnresolved(path)) Retain(result);
+            else if (result.Status != FilePublicationStatus.Unchanged) stale = true;
+            throw new FilePublicationException(result.Status == FilePublicationStatus.Unchanged
+                ? "Credential vault replacement did not change the destination."
+                : "Credential vault replacement or original preservation could not be verified.", result);
+
+            void Retain(FilePublicationResult outcome)
+            {
+                prepared.Operation = outcome.OperationId;
+                Volatile.Write(ref unresolvedPublication, prepared);
+            }
         }
         finally
         {
-            DeleteOwnedCandidate(temporary);
-            if (parked is not null)
+            if (!ReferenceEquals(unresolvedPublication?.Result, resultSlot)) resultSlot.Dispose();
+        }
+    }
+
+    private static FilePublicationResult CommitNew(string path, byte[] candidate, CancellationToken token,
+        VaultFileEvidence? emptyOriginal = null, Action<string, string, string?>? issue = null,
+        Action<VaultInitializationStep, string, string>? move = null, Action<string>? validateStage = null)
+    {
+        if (emptyOriginal is null)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            using var writer = LockWriter(path);
+            FilePublicationResult result = VerifiedFilePublication.Publish(path, candidate, null, null,
+                MaximumVaultBytes, token, staged => OpenPrivate(staged), issue: issue);
+            if (result.Status != FilePublicationStatus.Verified)
+                throw new FilePublicationException("The new credential vault could not be verified.", result);
+            return result;
+        }
+        string directory = Path.GetDirectoryName(path)!;
+        Guid operationId = Guid.NewGuid();
+        string temporary = Path.Combine(directory, $".tabtty-{operationId:N}.tmp");
+        string aside = Path.Combine(directory, $".tabtty-empty-{operationId:N}.tmp");
+        byte[] candidateDigest = SHA256.HashData(candidate);
+        using var emptyWriter = LockWriter(path);
+        using var reservation = VerifiedFilePublication.ReserveNamespace([path, temporary, aside], candidate.LongLength);
+        string targetName = FileObjectIdentity.NamespaceKeys(path)[0];
+        var original = new FileObjectIdentity(emptyOriginal.Volume, emptyOriginal.Index);
+        byte[] originalDigest = Convert.FromHexString(emptyOriginal.Digest);
+        FileObjectIdentity? prepared = null;
+        bool parkingIssued = false;
+        Exception? mutationError = null;
+        try
+        {
+            token.ThrowIfCancellationRequested();
+            if (InspectFile(path) != emptyOriginal)
+                throw new IOException("The credential vault is no longer the confirmed empty file.");
+            using (FileStream file = OpenPrivate(temporary))
             {
-                if (installed) DeleteOwnedCandidate(parked);
-                else
+                prepared = FileObjectIdentity.Read(file.SafeFileHandle);
+                VerifiedFilePublication.RegisterPreparedFile(reservation, prepared.Value);
+                file.Write(candidate);
+                file.Flush(flushToDisk: true);
+            }
+            validateStage?.Invoke(temporary);
+            var expectedStage = new VaultFileEvidence(candidate.LongLength, prepared.Value.Volume,
+                prepared.Value.Index, Convert.ToHexString(candidateDigest));
+            if (InspectFile(temporary) != expectedStage)
+                throw new IOException("The prepared initialization file changed before publication.");
+            token.ThrowIfCancellationRequested();
+            if (InspectFile(path) != emptyOriginal)
+                throw new IOException("The credential vault is no longer the confirmed empty file.");
+            parkingIssued = true;
+            Move(VaultInitializationStep.ParkOriginal, path, aside);
+            if (InspectFile(aside) != emptyOriginal)
+                throw new IOException("The credential vault changed during initialization.");
+            token.ThrowIfCancellationRequested();
+            Move(VaultInitializationStep.InstallCandidate, temporary, path);
+        }
+        catch (Exception error) when (IsInitializationFailure(error))
+        {
+            mutationError = error;
+            if (!parkingIssued) throw;
+        }
+        finally
+        {
+            if (!parkingIssued && prepared is { } file)
+            {
+                try { FileObjectIdentity.DeleteIfSame(temporary, file); }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
                 {
-                    // A competing writer may already have installed a vault. Keep the parked file in that case.
-                    try { File.Move(parked, path, overwrite: false); }
-                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+                    throw new FilePublicationException("The unissued initialization candidate could not be removed.",
+                        InspectOutcome(retainUnresolved: true, cleanupError: error));
                 }
             }
         }
+
+        var observed = InspectOutcome();
+        if (observed.Status == FilePublicationStatus.Verified)
+        {
+            try { FileObjectIdentity.DeleteIfSame(aside, original, expectedLength: 0); }
+            catch (Exception error) when (IsInitializationFailure(error))
+            {
+                VerifiedFilePublication.RetainParkedEmptyFile(reservation, operationId, path, aside, original);
+                return observed with { CleanupError = error };
+            }
+            return observed;
+        }
+
+        // A synchronous move has returned, and the original can be put back
+        // only while the destination is proven absent.
+        if (observed.Target == FileImageStatus.Missing && observed.Preservation == FileImageStatus.Original)
+        {
+            try { Move(VaultInitializationStep.RestoreOriginal, aside, path); }
+            catch (Exception error) when (IsInitializationFailure(error)) { mutationError = error; }
+            observed = InspectOutcome();
+        }
+        if (observed.Target == FileImageStatus.Original && observed.Preservation == FileImageStatus.Missing &&
+            observed.Candidate is FileImageStatus.Candidate or FileImageStatus.Missing)
+        {
+            try { FileObjectIdentity.DeleteIfSame(temporary, prepared!.Value); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                throw new FilePublicationException("The original empty vault was preserved and cleanup failed.",
+                    InspectOutcome(retainUnresolved: true, cleanupError: error));
+            }
+            observed = InspectOutcome();
+            if (observed.Target == FileImageStatus.Original && observed.Preservation == FileImageStatus.Missing &&
+                observed.Candidate == FileImageStatus.Missing)
+            {
+                if (mutationError is OperationCanceledException stopped) throw stopped;
+                throw new FilePublicationException("The original empty vault was preserved.",
+                    observed with { Status = FilePublicationStatus.Unchanged });
+            }
+        }
+        throw new FilePublicationException("The original empty vault requires further inspection.",
+            InspectOutcome(retainUnresolved: true));
+
+        FilePublicationResult InspectOutcome(bool retainUnresolved = false, Exception? cleanupError = null) =>
+            VerifiedFilePublication.InspectGuardedPublication(reservation, operationId, path, aside,
+                temporary, candidateDigest, originalDigest, targetName, prepared!.Value, original, MaximumVaultBytes,
+                mutationError, retainUnresolved, beforeIssue: !parkingIssued, cleanupError: cleanupError);
+
+        void Move(VaultInitializationStep step, string source, string target)
+        {
+            if (move is null) File.Move(source, target, overwrite: false);
+            else move(step, source, target);
+        }
     }
 
+    private static bool IsInitializationFailure(Exception error) =>
+        error is IOException or UnauthorizedAccessException or InvalidDataException or OperationCanceledException;
+
     internal static string? ArchiveFile(string path)
+    {
+        var evidence = InspectFile(path);
+        return evidence is null ? null : ArchiveFile(path, evidence);
+    }
+
+    internal static string ArchiveFile(string path, VaultFileEvidence evidence, Action<string, string>? move = null)
     {
         string full = Path.GetFullPath(path);
         string directory = Path.GetDirectoryName(full)!;
         string name = Path.GetFileNameWithoutExtension(full);
         if (name.Length > 180) name = "vault";
-        string archived = Path.Combine(directory, $"{name}.archived-{Guid.NewGuid():N}.tttykey");
+        Guid operationId = Guid.NewGuid();
+        string archived = Path.Combine(directory, $"{name}.archived-{operationId:N}.tttykey");
+        using var writer = LockWriter(full);
+        using var reservation = VerifiedFilePublication.ReserveNamespace([full, archived], evidence.Length);
+        if (InspectFile(full) != evidence)
+            throw new IOException("The credential vault changed after confirmation.");
+
+        Exception? error = null;
         try
         {
-            using var writer = LockWriter(full);
-            FileAttributes attributes = File.GetAttributes(full);
-            if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
-                throw new IOException("The credential vault must be an ordinary file.");
-            File.Move(full, archived, overwrite: false);
-            return archived;
+            if (move is null) File.Move(full, archived, overwrite: false);
+            else move(full, archived);
         }
-        catch (FileNotFoundException) { return null; }
-        catch (DirectoryNotFoundException) { return null; }
+        catch (Exception problem) when (problem is IOException or UnauthorizedAccessException) { error = problem; }
+        var archive = new VerifiedFilePublication.FileArchiveEvidence(operationId, full, archived, evidence);
+        var (source, destination) = InspectArchive(archive);
+        if (source == FileImageStatus.Missing && destination == FileImageStatus.Original) return archived;
+        if (source != FileImageStatus.Original || destination != FileImageStatus.Missing)
+            VerifiedFilePublication.RetainUnresolvedArchive(reservation, archive);
+        throw ArchiveFailure(archive, source, destination, error);
     }
 
-    private static string WriteCandidate(string path, byte[] bytes, CancellationToken token)
+    internal static string? ReconcileArchive(string path)
     {
-        string directory = Path.GetDirectoryName(path)!;
-        Directory.CreateDirectory(directory);
-        string temporary = Path.Combine(directory, $".tabtty-{Guid.NewGuid():N}.tmp");
-        bool owns = false;
+        var pending = VerifiedFilePublication.GetUnresolvedArchive(path);
+        if (pending is null) return null;
+        using var writer = LockWriter(pending.Source);
+        using var reservation = VerifiedFilePublication.ReserveArchiveReinspection(pending);
+        if (VerifiedFilePublication.GetUnresolvedArchive(path) != pending)
+            throw new IOException("The vault archive awaiting inspection has changed.");
+        var (source, destination) = InspectArchive(pending);
+        if (source != FileImageStatus.Missing || destination != FileImageStatus.Original)
+            throw ArchiveFailure(pending, source, destination, error: null);
+        VerifiedFilePublication.RetireArchive(pending);
+        return pending.Destination;
+    }
+
+    private static (FileImageStatus Source, FileImageStatus Destination) InspectArchive(VerifiedFilePublication.FileArchiveEvidence pending) =>
+        (Inspect(pending.Source, pending.Image), Inspect(pending.Destination, pending.Image));
+
+    private static FileImageStatus Inspect(string path, VaultFileEvidence expected)
+    {
         try
         {
-            using FileStream file = OpenPrivate(temporary);
-            owns = true;
-            token.ThrowIfCancellationRequested();
-            file.Write(bytes);
-            file.Flush(flushToDisk: true);
-            return temporary;
+            var current = InspectFile(path);
+            if (current is null) return FileImageStatus.Missing;
+            return current == expected ? FileImageStatus.Original : FileImageStatus.Other;
         }
-        catch
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException)
         {
-            if (owns) DeleteOwnedCandidate(temporary);
-            throw;
+            return FileImageStatus.Unavailable;
         }
     }
+
+    private static IOException ArchiveFailure(VerifiedFilePublication.FileArchiveEvidence pending, FileImageStatus source,
+        FileImageStatus destination, Exception? error) =>
+        new($"The vault archive could not be verified. Source {source}: {pending.Source}. " +
+            $"Destination {destination}: {pending.Destination}.", error);
 
     private static FileStream LockWriter(string path)
     {
@@ -526,15 +876,7 @@ public sealed class CredentialVault : IDisposable
     private static FileStream OpenPrivate(string path, FileOptions options = FileOptions.None)
     {
         if (OperatingSystem.IsWindows())
-        {
-            using WindowsIdentity identity = WindowsIdentity.GetCurrent();
-            var security = new FileSecurity();
-            security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
-            security.AddAccessRule(new FileSystemAccessRule(identity.User!, FileSystemRights.FullControl,
-                AccessControlType.Allow));
-            return new FileInfo(path).Create(FileMode.CreateNew, FileSystemRights.FullControl,
-                FileShare.None, 4096, options, security);
-        }
+            return PrivateWindowsFile.Create(path, FileSystemRights.FullControl, FileShare.None, 4096, options);
 
         return new FileStream(path, new FileStreamOptions
         {
@@ -546,15 +888,18 @@ public sealed class CredentialVault : IDisposable
         });
     }
 
-    private static byte[]? ReadRecoveryTarget(string path)
+    private static byte[]? ReadRecoveryTarget(string path, VaultFileEvidence? confirmed)
     {
-        try { return ReadFile(path, allowTruncated: true); }
+        try { return ReadFile(path, allowTruncated: true, confirmed: confirmed); }
         catch (FileNotFoundException) { return null; }
         catch (DirectoryNotFoundException) { return null; }
     }
 
-    private static byte[] ReadFile(string path, bool allowTruncated = false)
+    private static byte[] ReadFile(string path, bool allowTruncated = false, VaultFileEvidence? confirmed = null)
     {
+        if (confirmed is not null &&
+            (File.GetAttributes(path) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
+            throw new IOException("The credential vault changed during the unlock review.");
         using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         long length = file.Length;
         if ((!allowTruncated && length < VaultContainer.HeaderSize + VaultContainer.TagSize) ||
@@ -563,12 +908,14 @@ public sealed class CredentialVault : IDisposable
         byte[] bytes = new byte[(int)length];
         file.ReadExactly(bytes);
         if (file.ReadByte() >= 0) throw new InvalidDataException("Invalid credential vault file size.");
+        if (confirmed is not null)
+        {
+            var identity = FileObjectIdentity.Read(file.SafeFileHandle);
+            if (confirmed != new VaultFileEvidence(length, identity.Volume, identity.Index,
+                Convert.ToHexString(SHA256.HashData(bytes))))
+                throw new IOException("The credential vault changed during the unlock review.");
+        }
         return bytes;
     }
 
-    private static void DeleteOwnedCandidate(string path)
-    {
-        try { File.Delete(path); }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
-    }
 }

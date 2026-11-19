@@ -58,13 +58,7 @@ internal sealed partial class MacroRun : IDisposable
 
     public MacroRun(MacroProgram program, IReadOnlyList<string> args, IMacroHost host, TimeProvider? time = null)
     {
-        if (args.Count > 64 || args.Any(a => a.Length > 4096) || args.Sum(a => (long)a.Length) > 16384)
-            throw new MacroSourceException("ArgumentLimit", new(1, 1));
-        foreach (string argument in args)
-        {
-            try { MacroLimits.Unicode(argument); }
-            catch (MacroError) { throw new MacroSourceException("InvalidArgument", new(1, 1)); }
-        }
+        MacroLimits.ValidateArguments(args);
         if (!MacroLimits.Runs.Wait(0)) throw new MacroSourceException("RunLimit", new(1, 1));
         try { initialMemory = memory.Reserve(MacroLimits.ReserveBytes + program.Source.Length * 4L + program.NodeCount * 64L); }
         catch { MacroLimits.Runs.Release(); throw new MacroSourceException("MemoryLimit", new(1, 1)); }

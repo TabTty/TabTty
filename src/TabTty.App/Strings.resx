@@ -134,6 +134,8 @@
   <data name="UnlockVault" xml:space="preserve"><value>Unlock vault</value></data>
   <data name="ManageVault" xml:space="preserve"><value>Manage vault</value></data>
   <data name="InitializeVault" xml:space="preserve"><value>Set vault master password</value></data>
+  <data name="CreateMissingVaultDescription" xml:space="preserve"><value>Create a new encrypted vault at the selected path.</value></data>
+  <data name="InitializeEmptyVaultDescription" xml:space="preserve"><value>Initialize the selected empty file as a new encrypted vault.</value></data>
   <data name="VaultPath" xml:space="preserve"><value>Credential vault path</value></data>
   <data name="BrowseVaultPath" xml:space="preserve"><value>Browse for vault path…</value></data>
   <data name="InvalidVaultPath" xml:space="preserve"><value>Enter an absolute path to a .tttykey file.</value></data>
@@ -142,7 +144,7 @@
   <data name="ArchiveVault" xml:space="preserve"><value>Archive vault and start over…</value></data>
   <data name="ArchiveVaultConfirm" xml:space="preserve"><value>Move the current vault to a new file in the same folder? Existing credential references will need to be selected again after you create a new vault.</value></data>
   <data name="VaultArchived" xml:space="preserve"><value>The vault was moved to the path below. Unlock or manage the vault to set a new master password.</value></data>
-  <data name="VaultFileMissing" xml:space="preserve"><value>There is no vault file at the configured path. Unlock or manage the vault to initialize it.</value></data>
+  <data name="VaultFileMissing" xml:space="preserve"><value>The vault is missing or empty. Choose Create or initialize vault in vault management.</value></data>
   <data name="AddVaultPassword" xml:space="preserve"><value>Add password</value></data>
   <data name="VaultEntries" xml:space="preserve"><value>Vault entries</value></data>
   <data name="VaultEntryList" xml:space="preserve"><value>Saved credentials</value></data>
@@ -160,6 +162,7 @@
   <data name="ConfirmMaster" xml:space="preserve"><value>Repeat master password</value></data>
   <data name="MasterMismatch" xml:space="preserve"><value>The passwords do not match.</value></data>
   <data name="VaultAuthenticationFailed" xml:space="preserve"><value>The vault could not be authenticated.</value></data>
+  <data name="VaultCredentialKindMismatch" xml:space="preserve"><value>The credential reference has a different kind.</value></data>
   <data name="VaultCryptoUnavailable" xml:space="preserve"><value>The OpenSSL runtime is unavailable.</value></data>
   <data name="VaultAlreadyOpen" xml:space="preserve"><value>A vault is already unlocked for this application run.</value></data>
   <data name="VaultStateInvalid" xml:space="preserve"><value>The vault selection settings are invalid.</value></data>
@@ -169,8 +172,19 @@
   <data name="SshPasswordSource" xml:space="preserve"><value>SSH authentication</value></data>
   <data name="AskAtConnect" xml:space="preserve"><value>Ask at connection</value></data>
   <data name="SelectSavedPassword" xml:space="preserve"><value>Choose saved password</value></data>
+  <data name="SshSavedPasswordDestinationNotice" xml:space="preserve"><value>The SSH host key identifies the server. For password authentication, TabTty automatically sends this password to the server for the account named in the profile. An edit outside TabTty can redirect the password to another trusted server or account on the next connection.</value></data>
   <data name="SshDestination" xml:space="preserve"><value>SSH destination</value></data>
+  <data name="SshServerQuestions" xml:space="preserve"><value>The SSH server at {0} supplies these questions and receives your answers. Never enter your TabTty vault master password here.</value></data>
+  <data name="SendSshAnswers" xml:space="preserve"><value>Send answers to server</value></data>
+  <data name="VerifyHostFingerprint" xml:space="preserve"><value>Before accepting this key, compare its fingerprint with one obtained independently from the server administrator.</value></data>
+  <data name="TelnetPrivacyNotice" xml:space="preserve"><value>Telnet sends passwords, commands and output in clear text. Anyone able to monitor the connection can read them.</value></data>
+  <data name="TelnetUnencrypted" xml:space="preserve"><value>Telnet (unencrypted)</value></data>
+  <data name="ReconnectDestinationChanged" xml:space="preserve"><value>Connection destination changed</value></data>
+  <data name="ReconnectDestinationDetails" xml:space="preserve"><value>{0} reconnected to a different destination.&#10;&#10;Previous: {1}&#10;Current: {2}</value></data>
   <data name="NewHostKey" xml:space="preserve"><value>New SSH host key</value></data>
+  <data name="AdditionalHostKey" xml:space="preserve"><value>Known SSH host presented a new key type</value></data>
+  <data name="ApprovedHostKeys" xml:space="preserve"><value>Previously approved keys for this destination</value></data>
+  <data name="AddHostKey" xml:space="preserve"><value>Add key and connect</value></data>
   <data name="ChangedHostKey" xml:space="preserve"><value>SSH host key changed</value></data>
   <data name="HostKeyType" xml:space="preserve"><value>Host key type</value></data>
   <data name="PreviousFingerprint" xml:space="preserve"><value>Previous fingerprint</value></data>
@@ -261,8 +275,9 @@
   <data name="SourceKeyPassphrase" xml:space="preserve"><value>Source key passphrase</value></data>
   <data name="InputQueueFull" xml:space="preserve"><value>The terminal input queue reached its limit.</value></data>
   <data name="ClosingConnection" xml:space="preserve"><value>Closing connection</value></data>
+  <data name="RecordingCleanupCapacity" xml:space="preserve"><value>The application is still releasing earlier recording files. Continue waiting for this recording.</value></data>
   <data name="CleanupPending" xml:space="preserve"><value>Cleanup pending</value></data>
-  <data name="CleanupPendingExplanation" xml:space="preserve"><value>Transport or recording cleanup is still pending. Continue waiting, or close while accepting possible loss of pending log data.</value></data>
+  <data name="CleanupPendingExplanation" xml:space="preserve"><value>Recording cleanup is still pending. Continue waiting, or close while accepting possible loss of pending log data.</value></data>
   <data name="ContinueWaiting" xml:space="preserve"><value>Continue waiting</value></data>
   <data name="CloseWithLoss" xml:space="preserve"><value>Close with data loss</value></data>
   <data name="CredentialDetails" xml:space="preserve"><value>Credential details</value></data>
@@ -290,6 +305,7 @@
   <data name="Inherit" xml:space="preserve"><value>Use application setting</value></data>
   <data name="Override" xml:space="preserve"><value>Override for this profile</value></data>
   <data name="LogDirectory" xml:space="preserve"><value>Log directory (relative to profile or absolute)</value></data>
+  <data name="NetworkLogDestinationNotice" xml:space="preserve"><value>With recording enabled, TabTty opens the log folder before connecting. If the folder is on a network share, Windows may authenticate to that share and the share can receive the session logs. Relative paths start in the profile’s folder.</value></data>
   <data name="ClearPrivateKey" xml:space="preserve"><value>Clear selected private key</value></data>
   <data name="MissingHighlightSet" xml:space="preserve"><value>Unavailable highlight set</value></data>
   <data name="RecycleProfile" xml:space="preserve"><value>Delete profile file…</value></data>
@@ -302,7 +318,17 @@
   <data name="StoreRecoveryWarning" xml:space="preserve"><value>Replace this application file? Its current contents will be preserved in a uniquely named recovery copy. Recreating the host-key store removes saved host trust and requires host verification again. Recreating another store resets its saved settings, rules or registrations.</value></data>
   <data name="StoreRecoveryInvalid" xml:space="preserve"><value>The application file is invalid or exceeds its supported size.</value></data>
   <data name="StoreChanged" xml:space="preserve"><value>The file changed outside TabTty. Reload it before saving.</value></data>
-  <data name="StoreSaveUnverified" xml:space="preserve"><value>The save outcome could not be verified. Candidate and recovery files were preserved. Reload or recover the file before writing again.</value></data>
+  <data name="RecheckFilePublication" xml:space="preserve"><value>Recheck previous save</value></data>
+  <data name="NoFilePublicationToRecheck" xml:space="preserve"><value>There is no previous save awaiting verification.</value></data>
+  <data name="StoreSaveUnverified" xml:space="preserve"><value>The save outcome could not be verified. Recheck the save or use explicit recovery before writing again.</value></data>
+  <data name="FileOperationPending" xml:space="preserve"><value>File operation in progress…</value></data>
+  <data name="PublishedImageMissing" xml:space="preserve"><value>No file was found</value></data>
+  <data name="PublishedImageCandidate" xml:space="preserve"><value>Verified candidate bytes</value></data>
+  <data name="PublishedImageOriginal" xml:space="preserve"><value>Verified original bytes</value></data>
+  <data name="PublishedImageOther" xml:space="preserve"><value>Different bytes were observed</value></data>
+  <data name="PublishedImageUnavailable" xml:space="preserve"><value>The file could not be inspected</value></data>
+  <data name="PublicationCleanupFailed" xml:space="preserve"><value>The prepared file could not be removed.</value></data>
+  <data name="PublicationRetainedStages" xml:space="preserve"><value>Temporary files from a file operation are still present. Their paths are listed below.</value></data>
   <data name="StoreSaveFailed" xml:space="preserve"><value>The file could not be saved. The previous file remains in place.</value></data>
   <data name="RecoveryFileFilter" xml:space="preserve"><value>JSON (*.json;*.bak)|*.json;*.bak|All files (*.*)|*.*</value></data>
   <data name="UseTemporaryState" xml:space="preserve"><value>The local-state file could not be opened. Use temporary, read-only defaults? Use application-file recovery in Settings to restore saving.</value></data>
@@ -378,8 +404,10 @@
   <data name="SftpServerError" xml:space="preserve"><value>The file operation failed.</value></data>
   <data name="SftpUnknownOutcome" xml:space="preserve"><value>The outcome could not be confirmed. Refresh before trying again.</value></data>
   <data name="SftpInvalidName" xml:space="preserve"><value>The name or item type cannot be used for this operation.</value></data>
-  <data name="SftpCannotReplace" xml:space="preserve"><value>The server does not support safe file replacement.</value></data>
+  <data name="SftpCannotReplace" xml:space="preserve"><value>The destination does not support safe file replacement.</value></data>
   <data name="SftpSourceChanged" xml:space="preserve"><value>The source changed during the operation.</value></data>
+  <data name="SftpDownloadOrigin" xml:space="preserve"><value>Windows could not save the Internet zone mark. Choose a destination that supports named streams, such as NTFS.</value></data>
+  <data name="SftpDownloadPermissions" xml:space="preserve"><value>The destination could not restrict access to this file or folder to your Windows account. Choose a folder on a volume that supports Windows permissions, such as NTFS.</value></data>
   <data name="BroadcastInput" xml:space="preserve"><value>Broadcast Input</value></data>
   <data name="BroadcastAcrossWindows" xml:space="preserve"><value>Allow broadcast input across windows</value></data>
   <data name="BroadcastStart" xml:space="preserve"><value>Start Broadcast</value></data>
@@ -399,6 +427,7 @@
   <data name="BroadcastFailedTarget" xml:space="preserve"><value>Failed</value></data>
   <data name="BroadcastSubmitted" xml:space="preserve"><value>Submitted or possibly delivered</value></data>
   <data name="BroadcastNotSent" xml:space="preserve"><value>Not sent</value></data>
+  <data name="PasteTargetChanged" xml:space="preserve"><value>The target terminal changed while preparing the paste.</value></data>
   <data name="BroadcastMoveBusy" xml:space="preserve"><value>Wait for the current broadcast operation to finish or stop it before moving this tab to another window.</value></data>
   <data name="TabGroups" xml:space="preserve"><value>Tab Groups</value></data>
   <data name="TerminalPanes" xml:space="preserve"><value>Terminal Panes</value></data>
@@ -419,6 +448,30 @@
   <data name="SplitGroupBusy" xml:space="preserve"><value>Wait for the tab operation to finish before removing this group.</value></data>
   <data name="WindowGroupName" xml:space="preserve"><value>Window {0} · {1}</value></data>
   <data name="RunMacro" xml:space="preserve"><value>Run macro</value></data>
+  <data name="MacroReview" xml:space="preserve"><value>Review macro execution</value></data>
+  <data name="MacroTrustNotice" xml:space="preserve"><value>A macro can connect to a saved profile, send commands and submit saved passwords. A remembered allow covers identical copies with these arguments, including later external launches. Moving the file can change which profile a relative path selects.</value></data>
+  <data name="MacroElevatedNotice" xml:space="preserve"><value>This macro would run with administrator privileges. It can connect to a saved profile, send commands and submit saved passwords. Approve only if you intend this elevated run.</value></data>
+  <data name="MacroReadRemote" xml:space="preserve"><value>Open macro source</value></data>
+  <data name="MacroReadRemoteNotice" xml:space="preserve"><value>Reading this source may contact a network share or download a file. Continue to read it for this request.</value></data>
+  <data name="MacroReadSource" xml:space="preserve"><value>Read file</value></data>
+  <data name="MacroSourceDigest" xml:space="preserve"><value>Source SHA-256</value></data>
+  <data name="MacroInspectSource" xml:space="preserve"><value>Inspect source</value></data>
+  <data name="MacroRunOnce" xml:space="preserve"><value>Run once</value></data>
+  <data name="MacroAlwaysAllow" xml:space="preserve"><value>Always allow with these arguments</value></data>
+  <data name="MacroAlwaysBlock" xml:space="preserve"><value>Always block with these arguments</value></data>
+  <data name="MacroTrustChanged" xml:space="preserve"><value>A remembered decision changed. Open the macro again to check the current decision.</value></data>
+  <data name="MacroTrustUnavailable" xml:space="preserve"><value>TabTty could not read or update macro decisions in Windows Credential Manager.</value></data>
+  <data name="MacroManageTrust" xml:space="preserve"><value>Manage macro decisions…</value></data>
+  <data name="MacroTrustEmpty" xml:space="preserve"><value>There are no remembered macro decisions.</value></data>
+  <data name="MacroPairFingerprint" xml:space="preserve"><value>Content and argument fingerprint</value></data>
+  <data name="MacroFindArguments" xml:space="preserve"><value>Find by arguments…</value></data>
+  <data name="MacroForgetDecision" xml:space="preserve"><value>Forget decision</value></data>
+  <data name="MacroTrustAllowed" xml:space="preserve"><value>Allowed</value></data>
+  <data name="MacroTrustBlocked" xml:space="preserve"><value>Blocked</value></data>
+  <data name="MacroTrustInvalid" xml:space="preserve"><value>Invalid record</value></data>
+  <data name="MacroTrustNoMatch" xml:space="preserve"><value>There is no remembered decision for these arguments.</value></data>
+  <data name="MacroSourceFile" xml:space="preserve"><value>Macro file</value></data>
+  <data name="MacroNoArguments" xml:space="preserve"><value>No arguments</value></data>
   <data name="MacroFiles" xml:space="preserve"><value>TabTty macros (*.tttym)|*.tttym</value></data>
   <data name="MacroArguments" xml:space="preserve"><value>Arguments</value></data>
   <data name="MacroArgument" xml:space="preserve"><value>Argument</value></data>
@@ -472,6 +525,30 @@
   <data name="AiTakeControl" xml:space="preserve"><value>Take control from AI</value></data>
   <data name="AiGiveControl" xml:space="preserve"><value>Give control to AI</value></data>
   <data name="AiShareOutput" xml:space="preserve"><value>Share output with AI</value></data>
+  <data name="AiLauncherProcess" xml:space="preserve"><value>Bridge launcher (PID {1}) — {0}</value></data>
+  <data name="AiSshTarget" xml:space="preserve"><value>SSH account and destination: {0}</value></data>
+  <data name="AiTelnetTarget" xml:space="preserve"><value>Telnet destination: {0}</value></data>
+  <data name="AiSerialTarget" xml:space="preserve"><value>Serial port: {0}</value></data>
+  <data name="AiHandoffMessage" xml:space="preserve"><value>Message from the AI integration: {0}</value></data>
+  <data name="AiConfirmShare" xml:space="preserve"><value>Share output from “{0}” with integration {1}?
+{3}
+{2}
+
+Check the launcher and match the pairing code in your AI host. Programs and chats that share this host connection can use this permission.
+
+The host can read the current screen and search retained terminal history, including the normal screen behind a full-screen application. Text from before sharing or while sharing was off is included if still retained. The bridge runs locally. The host may keep this data or send it to an external model, depending on its settings.
+
+Use End AI sharing to stop future reads. Sharing again gives the recipient access to the history still retained then.</value></data>
+  <data name="AiConfirmControl" xml:space="preserve"><value>Allow integration {1} to operate the terminal in “{0}”?
+{3}
+{2}
+
+Check the launcher and match the pairing code in your AI host. Programs and chats that share this host connection can use this permission.
+
+The host can send keys and multiple lines of commands without asking again, with all permissions available in the connected terminal. Taking control back stops new AI input and keeps output shared. Choose End AI sharing before entering a password or one-time code.</value></data>
+  <data name="AiConfirmSwitch" xml:space="preserve"><value>Continuing also ends this tab’s sharing with integration {0}.</value></data>
+  <data name="AiUnattendedConsent" xml:space="preserve"><value>This permission stays active when Windows locks, you switch users, or Remote Desktop disconnects.</value></data>
+  <data name="AiConsentExpired" xml:space="preserve"><value>The terminal or its sharing permissions changed. Review the current tab and integration before granting access.</value></data>
   <data name="AiEndSharing" xml:space="preserve"><value>End AI sharing</value></data>
   <data name="AiSetup" xml:space="preserve"><value>Set up AI collaboration</value></data>
   <data name="AiCleanupPending" xml:space="preserve"><value>Terminal input cleanup is still pending. Disconnect is available.</value></data>
@@ -489,4 +566,15 @@
   <data name="AiSetupConfiguration" xml:space="preserve"><value>MCP configuration</value></data>
   <data name="AiSetupHelp" xml:space="preserve"><value>For Goose, add a Standard IO extension using the executable and argument below. For LM Studio, add the JSON to its MCP configuration. Start TabTty first, then connect the integration and match the pairing code before sharing. For offline use, prepare the host, runtime and model in advance.</value></data>
   <data name="BroadcastCleanupPending" xml:space="preserve"><value>Broadcast cleanup is pending.</value></data>
+  <data name="MaxPasteSourceBytes" xml:space="preserve"><value>Maximum paste text size (bytes)</value></data>
+  <data name="InvalidPasteSourceMaximum" xml:space="preserve"><value>Enter a positive whole number of bytes.</value></data>
+  <data name="PasteSourceTooLarge" xml:space="preserve"><value>The clipboard text exceeds the configured paste size.</value></data>
+  <data name="PasteClipboardUnavailable" xml:space="preserve"><value>The clipboard text could not be read.</value></data>
+  <data name="PastePreviewPageLabel" xml:space="preserve"><value>Page</value></data>
+  <data name="PastePreviousPage" xml:space="preserve"><value>Previous page</value></data>
+  <data name="PasteNextPage" xml:space="preserve"><value>Next page</value></data>
+  <data name="PastePreviewPage" xml:space="preserve"><value>Page {0} of {1}</value></data>
+  <data name="CreateVault" xml:space="preserve"><value>Create or initialize vault</value></data>
+  <data name="VaultAlreadyExists" xml:space="preserve"><value>The selected vault already exists and is not empty.</value></data>
+  <data name="VaultRescueCopyExplanation" xml:space="preserve"><value>Copy the retained authenticated vault generation to another file? The selected file will not be changed.</value></data>
 </root>

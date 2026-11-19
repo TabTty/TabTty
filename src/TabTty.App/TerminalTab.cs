@@ -21,6 +21,7 @@ internal sealed partial class TerminalTab : UserControl
     private string path;
     private readonly SshInteraction? sshInteraction;
     private readonly HighlightSet? fixtureHighlights;
+    private readonly Func<Window, long, CancellationToken, Task<TerminalPaste?>> captureClipboard;
     private readonly (int Columns, int Rows)? fixedViewport;
     private CancellationTokenSource stop = new();
     private readonly TextBlock status = new() { Padding = new Thickness(8) };
@@ -42,17 +43,21 @@ internal sealed partial class TerminalTab : UserControl
     private bool capturingFrame;
     private bool immediateFrameQueued;
     private readonly DispatcherTimer bellTimer;
+    private int bellPending;
     private (int Columns, int Rows) appliedGrid = (80, 24);
     private TerminalSession? session;
+    private RecordingStatus? lastRecordingStatus;
     private FileTransferWindow? transferWindow;
     private readonly System.Runtime.CompilerServices.ConditionalWeakTable<TerminalSession, FileOperationOwnership> transferOwnership = new();
     private string? connectedName;
+    private ConnectionDestination? lastDestination;
+    private Window? destinationNotice;
     private string statusKey = "Connecting";
     private string? error;
     private int pendingSends;
     private int pendingMouse;
-    private bool reviewingPaste;
     private bool HasPendingInput => pendingSends > 0 || pasteStop is not null;
+    private CancellationTokenSource? pasteReview;
     private CancellationTokenSource? pasteStop;
     private CancellationTokenSource? searchWork;
     private TerminalSnapshot? snapshot;
@@ -69,12 +74,14 @@ internal sealed partial class TerminalTab : UserControl
     public TerminalTab(string path) : this(path, null) { }
 
     internal TerminalTab(string path, SshInteraction? sshInteraction, (int Columns, int Rows)? fixedViewport = null,
-        HighlightSet? fixtureHighlights = null)
+        HighlightSet? fixtureHighlights = null,
+        Func<Window, long, CancellationToken, Task<TerminalPaste?>>? captureClipboard = null)
     {
         this.path = path;
         this.sshInteraction = sshInteraction;
         this.fixedViewport = fixedViewport;
         this.fixtureHighlights = fixtureHighlights;
+        this.captureClipboard = captureClipboard ?? ClipboardPaste.CaptureAsync;
         bellTimer = new DispatcherTimer(DispatcherPriority.Render, Dispatcher)
         {
             Interval = TimeSpan.FromMilliseconds(150),
@@ -84,6 +91,7 @@ internal sealed partial class TerminalTab : UserControl
             bellTimer.Stop();
             status.ClearValue(TextBlock.BackgroundProperty);
             status.ClearValue(TextBlock.ForegroundProperty);
+            Volatile.Write(ref bellPending, 0);
         };
         frameTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
         {
@@ -195,6 +203,9 @@ internal sealed partial class TerminalTab : UserControl
             mouseInput = Channel.CreateBounded<TerminalMouseInput>(256);
             mousePump = Task.CompletedTask;
             pendingMouse = 0;
+            pendingSends = 0;
+            pasteReview = null;
+            pasteStop = null;
             IsRunning = true;
             appliedGrid = (80, 24);
             sshMessages.Clear();
@@ -206,6 +217,8 @@ internal sealed partial class TerminalTab : UserControl
     private async Task ConnectAsync(Action<ConnectionProfile>? opened, TaskCompletionSource<TerminalSession>? ready = null,
         CancellationToken attempt = default)
     {
+        var generation = stop;
+        lastRecordingStatus = null;
         try
         {
             if (retainedAiSession is { } previous)
@@ -216,7 +229,10 @@ internal sealed partial class TerminalTab : UserControl
             stop.Token.ThrowIfCancellationRequested();
             var app = (App)Application.Current;
             var interaction = sshInteraction ?? new SshInteraction(ApproveHostAsync, RequestSshPasswordAsync,
-                message => Dispatcher.BeginInvoke(() => sshMessages.Add(message)), RequestSshChallengeAsync,
+                message => Dispatcher.BeginInvoke(() =>
+                {
+                    if (ReferenceEquals(stop, generation)) sshMessages.Add(message);
+                }), RequestSshChallengeAsync,
                 RequestSshPrivateKeyAsync, app.HostTrust.ApprovedFormats);
             string fontFamily = app.TerminalFontFamily;
             double fontSize = app.TerminalFontSize;
@@ -224,6 +240,7 @@ internal sealed partial class TerminalTab : UserControl
             int sessionRetention = retention;
             void Opened(ConnectionProfile profile) => Dispatcher.BeginInvoke(() =>
                 {
+                    if (!ReferenceEquals(stop, generation)) return;
                     sessionRetention = profile.RetainedRows ?? retention;
                     baseFontFamily = profile.FontFamily ?? fontFamily;
                     baseFontSize = zoomFontSize = profile.FontSizePoints ?? fontSize;
@@ -242,14 +259,27 @@ internal sealed partial class TerminalTab : UserControl
                     ? await TerminalSession.ConnectMacroAsync(path, run, startup.Token, interaction, Opened, retention, Viewport)
                     : await TerminalSession.ConnectAsync(path, startup.Token, interaction, Opened, retention, Viewport);
             }
-            session.Bell += () => Dispatcher.BeginInvoke(() =>
+            session.Bell += () =>
             {
-                if (app.BellChoice != "visual" || !output.IsPresentationActive || bellTimer.IsEnabled) return;
-                status.Background = Brushes.White;
-                status.Foreground = Brushes.Black;
-                bellTimer.Start();
-            });
+                if (Interlocked.Exchange(ref bellPending, 1) != 0) return;
+                _ = Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+                {
+                    if (!ReferenceEquals(stop, generation) || generation.IsCancellationRequested ||
+                        app.BellChoice != "visual" || !output.IsPresentationActive)
+                    {
+                        Volatile.Write(ref bellPending, 0);
+                        return;
+                    }
+                    status.Background = Brushes.White;
+                    status.Foreground = Brushes.Black;
+                    bellTimer.Start();
+                }));
+            };
             stop.Token.ThrowIfCancellationRequested();
+            var destination = ConnectionDestination.From(session);
+            if (lastDestination is { } previousDestination && previousDestination != destination)
+                NotifyDestinationChange(session, previousDestination, destination, generation.Token);
+            lastDestination = destination;
             connectedName = session.DisplayName;
             SetStatus("Connected");
             Connected?.Invoke(connectedName);
@@ -257,10 +287,12 @@ internal sealed partial class TerminalTab : UserControl
             ApplyHighlightSet();
             foreach (var pane in panes.Keys) pane.SetConnected(!HasActiveMacro);
             mousePump = SendMouseAsync(session);
+            Interlocked.Exchange(ref receivedRevision, 1);
+            ScheduleFrame(immediately: true);
             ScheduleResize();
             ready?.TrySetResult(session);
             await ReceiveOutputAsync(session);
-            await session.WaitForMacroPeerCloseAsync(stop.Token);
+            await session.WaitForTerminalPeerCloseAsync(stop.Token);
             SetStatus("Disconnected");
         }
         catch (OperationCanceledException exception) when (stop.IsCancellationRequested || exception is SshInteractionCancelledException)
@@ -284,6 +316,7 @@ internal sealed partial class TerminalTab : UserControl
         }
         finally
         {
+            destinationNotice?.Close();
             AiCollaboration.EndControl(this);
             transferWindow?.ConnectionEnded();
             stop.Cancel();
@@ -291,9 +324,11 @@ internal sealed partial class TerminalTab : UserControl
             await mousePump;
             if (session is { } closing)
             {
+                if (ClosePending) closing.ProtectRecordingClose();
                 try { await closing.DisposeAsync(); }
                 finally
                 {
+                    lastRecordingStatus = closing.RecordingStatus;
                     session = null;
                     if (removed) await closing.ReleaseRetainedOutputAsync();
                     else retainedAiSession = closing;
@@ -331,14 +366,18 @@ internal sealed partial class TerminalTab : UserControl
 
     private async Task ReceiveOutputAsync(TerminalSession active)
     {
-        while (await active.ProcessOutputAsync(stop.Token).ConfigureAwait(false))
+        // SSH owns its receive cutoff and drains its admitted generation through
+        // peer CLOSE/grace even after the UI stops admitting new input.
+        CancellationToken readLifetime = active.IsSsh ? CancellationToken.None : stop.Token;
+        while (await active.ProcessOutputAsync(readLifetime).ConfigureAwait(false))
         {
             if (Interlocked.Exchange(ref receivedRevision, 1) == 0)
-                _ = Dispatcher.BeginInvoke(() =>
+                _ = Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
                 {
+                    if (!ReferenceEquals(session, active) || removed) return;
                     ScheduleFrame();
                     if (active.RecordingError is { } problem) SetStatus("Connected", problem);
-                });
+                }));
         }
     }
 
@@ -401,10 +440,10 @@ internal sealed partial class TerminalTab : UserControl
     }
 
     private Task<bool> ApproveHostAsync(SshHostKey key, CancellationToken token) =>
-        OnSshPromptAsync((app, owner) => Task.FromResult(app.HostTrust.Approve(owner, key, token)), token);
+        OnSshPromptAsync((app, owner) => app.HostTrust.ApproveAsync(owner, key, token), token);
 
     private Task<VaultSecret?> RequestSshPrivateKeyAsync(SshPrivateKeyRequest request, CancellationToken token) =>
-        OnSshPromptAsync((app, owner) => app.Vault.ReadPrivateKeyAsync(owner, request.SavedKey, token),
+        OnSshPromptAsync((app, owner) => app.Vault.ReadPrivateKeyAsync(owner, request, token),
             token, serialize: false);
 
     private Task<VaultSecret?> RequestSshPasswordAsync(SshPasswordRequest request, CancellationToken token)
@@ -417,7 +456,7 @@ internal sealed partial class TerminalTab : UserControl
             var form = new MainWindow.FormWindow(owner, Text("SshPasswordSource"));
             var password = new PasswordBox { MaxLength = 16 * 1024 };
             form.AddField("SshDestination", new TextBox { Text = request.Destination.ToString(), IsReadOnly = true });
-            form.AddField("SshUsername", new TextBox { Text = request.Username, IsReadOnly = true });
+            form.AddField("SshUsername", new TextBox { Text = PermissionDisplay.Literal(request.Username), IsReadOnly = true });
             form.AddField("VaultPassword", password);
             form.Loaded += (_, _) => password.Focus();
             form.AddButtons(() => { }, acceptKey: "Authenticate");
@@ -430,28 +469,36 @@ internal sealed partial class TerminalTab : UserControl
         }, token);
     }
 
+    internal static (MainWindow.FormWindow Form, List<Control> Inputs) CreateSshChallengeForm(Window owner, SshChallenge challenge)
+    {
+        var form = new MainWindow.FormWindow(owner, Text("KeyboardInteractive")) { Width = 540 };
+        form.AddPinnedNotice(string.Format(CultureInfo.CurrentCulture, Text("SshServerQuestions"), challenge.Destination));
+        if (challenge.Name.Length > 0 || challenge.Instruction.Length > 0)
+            form.AddField("SshInstructions", new TextBox
+            {
+                Text = string.Join(Environment.NewLine, new[] { challenge.Name, challenge.Instruction }
+                    .Where(value => value.Length > 0)),
+                IsReadOnly = true, TextWrapping = TextWrapping.Wrap, MaxHeight = 160,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            });
+        var inputs = new List<Control>();
+        foreach (SshPrompt prompt in challenge.Prompts)
+        {
+            Control input = prompt.Echo
+                ? new TextBox { MaxLength = 8192, IsUndoEnabled = false }
+                : new PasswordBox { MaxLength = 8192 };
+            form.AddPrompt(prompt.Text, input);
+            inputs.Add(input);
+        }
+        form.Loaded += (_, _) => inputs.FirstOrDefault()?.Focus();
+        form.AddButtons(() => { }, acceptKey: "SendSshAnswers");
+        return (form, inputs);
+    }
+
     private Task<VaultSecret[]?> RequestSshChallengeAsync(SshChallenge challenge, CancellationToken token) =>
         OnSshPromptAsync<VaultSecret[]?>((app, owner) =>
         {
-            var form = new MainWindow.FormWindow(owner, Text("KeyboardInteractive")) { Width = 540 };
-            form.AddField("SshDestination", new TextBox { Text = challenge.Destination.ToString(), IsReadOnly = true });
-            if (challenge.Name.Length > 0 || challenge.Instruction.Length > 0)
-                form.AddField("SshInstructions", new TextBox
-                {
-                    Text = string.Join(Environment.NewLine, new[] { challenge.Name, challenge.Instruction }
-                        .Where(value => value.Length > 0)),
-                    IsReadOnly = true, TextWrapping = TextWrapping.Wrap, MaxHeight = 160,
-                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                });
-            var inputs = new List<Control>();
-            foreach (SshPrompt prompt in challenge.Prompts)
-            {
-                Control input = prompt.Echo ? new TextBox { MaxLength = 8192 } : new PasswordBox { MaxLength = 8192 };
-                form.AddPrompt(prompt.Text, input);
-                inputs.Add(input);
-            }
-            form.Loaded += (_, _) => inputs.FirstOrDefault()?.Focus();
-            form.AddButtons(() => { }, acceptKey: "Authenticate");
+            var (form, inputs) = CreateSshChallengeForm(owner, challenge);
             var answers = new List<VaultSecret>();
             try
             {
@@ -527,8 +574,11 @@ internal sealed partial class TerminalTab : UserControl
         Broadcast.Refresh();
     }
 
-    public void StopPaste() => pasteStop?.Cancel();
-    public void AbandonCleanup() => session?.AbandonCleanup();
+    public void StopPaste() => pasteReview?.Cancel();
+    internal RecordingStatus? RecordingCloseStatus => session?.RecordingStatus ?? lastRecordingStatus;
+    public bool RecordingReleasePending => session?.RecordingReleasePending == true;
+    public void ProtectRecordingClose() => session?.ProtectRecordingClose();
+    public bool AbandonCleanup() => session?.AbandonCleanup() == true;
 
     public void ShowConnectionCommands()
     {
@@ -601,14 +651,16 @@ internal sealed partial class TerminalTab : UserControl
             item.Click += async (_, _) =>
             {
                 if (InputSession != active) return;
+                var generation = stop;
                 pendingSends++;
                 try { await command(); }
-                catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+                catch (OperationCanceledException) when (generation.IsCancellationRequested) { }
                 catch (Exception exception) when (exception is IOException or InvalidOperationException)
                 {
-                    if (IsRunning) SetStatus("Connected", exception.Message);
+                    if (ReferenceEquals(stop, generation) && !generation.IsCancellationRequested)
+                        SetStatus("Connected", exception.Message);
                 }
-                finally { pendingSends--; }
+                finally { if (ReferenceEquals(stop, generation)) pendingSends--; }
             };
             menu.Items.Add(item);
         }
@@ -619,9 +671,9 @@ internal sealed partial class TerminalTab : UserControl
         if (session is not { RecordsOutput: true } active || stop.IsCancellationRequested) return;
         try
         {
-            if (resume) await active.ResumeRecordingAsync(stop.Token);
-            else await active.PauseRecordingAsync(stop.Token);
-            SetStatus("Connected", active.RecordingError ?? Text(resume ? "RecordingResumed" : "RecordingPaused"));
+            var outcome = await active.ChangeRecordingAsync(resume, stop.Token);
+            if (!ReferenceEquals(session, active)) return;
+            SetStatus("Connected", outcome.Status.Error ?? Text(resume ? "RecordingResumed" : "RecordingPaused"));
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested)
         {
@@ -715,9 +767,32 @@ internal sealed partial class TerminalTab : UserControl
     private void UpdateStatusText()
     {
         string text = error is null ? Text(statusKey) : $"{Text(statusKey)} — {error}";
-        if (session is { } active) text += $"   {Text("LocalEcho")} {Text(active.LocalEchoEnabled ? "On" : "Off")}";
+        if (session is { } active)
+        {
+            if (active.IsTelnet) text = $"{Text("TelnetUnencrypted")}   {text}";
+            text += $"   {Text("LocalEcho")} {Text(active.LocalEchoEnabled ? "On" : "Off")}";
+        }
         if (output.UsesFontFallback) text += "   " + string.Format(Text("FontFallback"), output.AutomationFontFamily);
         status.Text = text;
+    }
+
+    private void NotifyDestinationChange(TerminalSession connected, ConnectionDestination previous,
+        ConnectionDestination current, CancellationToken token)
+    {
+        // Start receiving before displaying the notice, including for a background tab.
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (session != connected || token.IsCancellationRequested || removed || ClosePending) return;
+            Window? owner = Window.GetWindow(this) ?? AiHost;
+            if (owner is null) return;
+            string body = string.Format(Text("ReconnectDestinationDetails"), PermissionDisplay.Literal(connected.DisplayName),
+                previous, current);
+            var dialog = ThemedMessageBox.Create(owner, body, Text("ReconnectDestinationChanged"),
+                MessageBoxButton.OK, MessageBoxImage.Information, MessageBoxResult.OK, _ => { }, notification: true);
+            destinationNotice = dialog;
+            dialog.Closed += (_, _) => { if (destinationNotice == dialog) destinationNotice = null; };
+            dialog.Show();
+        });
     }
 
     private void ApplyHighlightSet()
@@ -749,7 +824,7 @@ internal sealed partial class TerminalTab : UserControl
             capturingFrame = true;
             try
             {
-                IReadOnlyList<string> frame = await active.GetOutputAsync();
+                IReadOnlyList<string> frame = await active.GetViewportOutputAsync();
                 if (!removed && session == active) pendingFrame = frame;
             }
             catch (Exception exception) when (exception is InvalidOperationException or IOException or ObjectDisposedException)
@@ -766,6 +841,8 @@ internal sealed partial class TerminalTab : UserControl
         ScheduleFrame();
     }
 
+    internal bool HasPendingFrame => pendingFrame is not null || capturingFrame || Volatile.Read(ref receivedRevision) != 0;
+
     private void ScheduleFrame(bool immediately = false)
     {
         if (removed || !output.IsPresentationActive || capturingFrame || immediateFrameQueued ||
@@ -774,7 +851,7 @@ internal sealed partial class TerminalTab : UserControl
         {
             frameTimer.Stop();
             immediateFrameQueued = true;
-            _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(async () =>
+            _ = Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(async () =>
             {
                 immediateFrameQueued = false;
                 await CaptureAndRenderFrameAsync();
@@ -1021,57 +1098,61 @@ internal sealed partial class TerminalTab : UserControl
         var app = (App)Application.Current;
         var operated = output;
         CancellationToken sourceLifetime = stop.Token;
-        if (reviewingPaste) return;
-        bool singlePreview = false;
+        if (pasteReview is not null) return;
+        using var cancellation = new CancellationTokenSource();
+        using var review = CancellationTokenSource.CreateLinkedTokenSource(sourceLifetime, cancellation.Token);
+        pasteReview = cancellation;
+        long maximum = app.MaxPasteTextBytes;
         try
         {
-            TerminalPaste paste = TerminalPaste.Create(Clipboard.GetText());
-            if (paste.CharacterCount == 0) return;
             if (owner is MainWindow host)
             {
-                var broadcast = await app.Broadcast.PasteAsync(host, this, paste, (preview, token) =>
-                    Dispatcher.InvokeAsync(() => PresentPaste(owner, paste, preview.Pacing, preview.Targets, token),
-                        DispatcherPriority.Normal, token).Task);
+                var broadcast = await app.Broadcast.PasteFromClipboardAsync(host, this, CaptureAsync,
+                    (text, preview, token) => Dispatcher.InvokeAsync(() =>
+                        PresentPaste(owner, text, preview.Pacing, preview.Targets, token),
+                        DispatcherPriority.Normal, token).Task, review.Token);
                 if (broadcast != BroadcastInput.PasteOutcome.Inactive)
                 {
-                    if (broadcast == BroadcastInput.PasteOutcome.Submitted && session == active) operated.RevealCursor();
+                    if (broadcast == BroadcastInput.PasteOutcome.Submitted && session == active && !sourceLifetime.IsCancellationRequested)
+                        operated.RevealCursor();
                     return;
                 }
             }
-            reviewingPaste = singlePreview = true;
-            await active.ValidatePasteAsync(paste, sourceLifetime);
-            if (active != session || HasPendingInput || sourceLifetime.IsCancellationRequested) return;
+            using var paste = await CaptureAsync(review.Token);
+            if (paste is null || !SingleTargetCurrent()) return;
             var (characterDelay, lineDelay, remember) = app.PasteDefaults;
-            if (paste.HasNewline)
+            if (paste.RequiresConfirmation)
             {
-                var choice = PresentPaste(owner, paste, (characterDelay, lineDelay, remember), null, sourceLifetime);
-                if (choice is null || session != active || sourceLifetime.IsCancellationRequested) return;
+                var choice = PresentPaste(owner, paste, (characterDelay, lineDelay, remember), null, review.Token);
+                if (choice is null || !SingleTargetCurrent()) return;
                 (characterDelay, lineDelay, remember) = choice;
                 app.PasteDefaults = remember ? (characterDelay, lineDelay, true) : default;
             }
 
-            using var cancellation = new CancellationTokenSource();
             pasteStop = cancellation;
             try
             {
                 SetStatus("Connected", Text("Pasting"));
+                int characters = paste.CharacterCount;
                 var progress = new Progress<int>(sent =>
                 {
-                    if (pasteStop == cancellation && IsRunning && !stop.IsCancellationRequested)
+                    if (ReferenceEquals(pasteStop, cancellation) && session == active && !sourceLifetime.IsCancellationRequested)
                         SetStatus("Connected", string.Format(CultureInfo.CurrentCulture, Text("PasteProgress"), sent,
-                            paste.CharacterCount));
+                            characters));
                 });
                 operated.RevealCursor();
                 bool completed = await active.SendPasteAsync(paste, characterDelay, lineDelay,
-                    cancellation.Token, stop.Token, progress);
-                Interlocked.Exchange(ref receivedRevision, 1);
-                ScheduleFrame();
-                if (IsRunning && !stop.IsCancellationRequested)
+                    cancellation.Token, sourceLifetime, progress);
+                if (session == active && !sourceLifetime.IsCancellationRequested)
+                {
+                    Interlocked.Exchange(ref receivedRevision, 1);
+                    ScheduleFrame();
                     SetStatus("Connected", completed ? active.RecordingError : Text("PasteStopped"));
+                }
             }
             finally
             {
-                pasteStop = null;
+                if (ReferenceEquals(pasteStop, cancellation)) pasteStop = null;
             }
         }
         catch (OperationCanceledException)
@@ -1080,11 +1161,24 @@ internal sealed partial class TerminalTab : UserControl
         catch (Exception exception) when (exception is IOException or SocketException or ArgumentException
             or InvalidOperationException or ExternalException)
         {
-            if (IsRunning) SetStatus("Connected", exception.Message);
+            if (session == active && !sourceLifetime.IsCancellationRequested)
+                SetStatus("Connected", exception.Message);
         }
         finally
         {
-            if (singlePreview) reviewingPaste = false;
+            if (ReferenceEquals(pasteReview, cancellation)) pasteReview = null;
+        }
+
+        bool SingleTargetCurrent() => Window.GetWindow(this) == owner &&
+            (owner is not MainWindow window || !app.Broadcast.IsActive(window)) &&
+            active == InputSession && !HasPendingInput && !review.IsCancellationRequested;
+
+        async Task<TerminalPaste?> CaptureAsync(CancellationToken token)
+        {
+            var value = await captureClipboard(owner, maximum, token);
+            if (active == InputSession && !HasPendingInput && !token.IsCancellationRequested) return value;
+            value?.Dispose();
+            return null;
         }
     }
 
@@ -1098,21 +1192,55 @@ internal sealed partial class TerminalTab : UserControl
         string summary = string.Format(CultureInfo.CurrentCulture, Text("PasteCounts"),
             paste.CharacterCount, paste.LineCount,
             Text(paste.EndsWithNewline ? "TrailingNewline" : "NoTrailingNewline"));
-        form.AddField("PastePreview", new TextBox
+        const int pageUnits = 8192;
+        int page = 0;
+        int pages = 1 + (paste.Text.Length - 1) / pageUnits;
+        // Each source page can expand into visible Unicode markers and line breaks.
+        // Include escaped captions, their joined text and the read-only controls.
+        long captionMemory = targets?.Sum(name => 128L + 64L * name.Length) ?? 0;
+        using var previewMemory = ApplicationResources.TerminalState.Reserve(1024 * 1024 + captionMemory);
+        var previewText = new TextBox
         {
-            Text = paste.Text,
             IsReadOnly = true,
+            IsUndoEnabled = false,
             AcceptsReturn = true,
             MaxHeight = 260,
             MinHeight = 100,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-        });
+        };
+        var pageLabel = new TextBox { IsReadOnly = true };
+        form.AddField("PastePreview", previewText);
+        if (pages > 1)
+        {
+            form.AddField("PastePreviewPageLabel", pageLabel);
+            form.AddAction("PastePreviousPage", () => { if (page > 0) { page--; ShowPage(); } });
+            form.AddAction("PasteNextPage", () => { if (page < pages - 1) { page++; ShowPage(); } });
+        }
+        ShowPage();
+        void ShowPage()
+        {
+            int start = PageBoundary(page);
+            int end = page == pages - 1 ? paste.Text.Length : PageBoundary(page + 1);
+            previewText.Text = PermissionDisplay.PastePage(paste.Text.AsSpan(start, end - start));
+            var position = string.Format(CultureInfo.CurrentCulture, Text("PastePreviewPage"), page + 1, pages);
+            pageLabel.Text = position;
+            AutomationProperties.SetName(previewText, Text("PastePreview") + " " + position);
+        }
+
+        int PageBoundary(int value)
+        {
+            int offset = value * pageUnits;
+            if (offset != 0 && (char.IsLowSurrogate(paste.Text[offset]) ||
+                paste.Text[offset] == '\n' && paste.Text[offset - 1] == '\r')) offset--;
+            return offset;
+        }
+
         form.AddField("PasteCountsLabel", new TextBox { Text = summary, IsReadOnly = true });
         if (targets is not null)
             form.AddField("BroadcastTargets", new TextBox
             {
-                Text = string.Join(Environment.NewLine, targets),
+                Text = string.Join(Environment.NewLine, targets), TextWrapping = TextWrapping.Wrap,
                 IsReadOnly = true, MaxHeight = 130, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             });
         var character = new TextBox { Text = characterDelay.ToString(CultureInfo.InvariantCulture) };
@@ -1147,27 +1275,29 @@ internal sealed partial class TerminalTab : UserControl
             SetStatus("Connected", Text("InputBusy"));
             return;
         }
+        var generation = stop;
+        var lifetime = generation.Token;
         pendingSends++;
         try
         {
             TerminalSurface operated = output;
-            if (Window.GetWindow(this) is MainWindow host && Broadcast.Send(host, input, stop.Token) is { } send)
+            if (Window.GetWindow(this) is MainWindow host && Broadcast.Send(host, input, lifetime) is { } send)
             {
-                if (await send) operated.RevealCursor();
+                if (await send && session == active && !lifetime.IsCancellationRequested) operated.RevealCursor();
                 return;
             }
             switch (input.Kind)
             {
-                case TerminalInputKind.Text: await active.SendTextAsync(input.Text, stop.Token, input.Alt); break;
-                case TerminalInputKind.Enter: await active.SendEnterAsync(stop.Token); break;
-                case TerminalInputKind.Backspace: await active.SendBackspaceAsync(stop.Token); break;
-                case TerminalInputKind.Tab: await active.SendTabAsync(stop.Token); break;
-                case TerminalInputKind.Control: await active.SendControlAsync(input.Text[0], stop.Token); break;
-                case TerminalInputKind.Key: await active.SendKeyAsync(input.Key, input.Modifiers, stop.Token); break;
+                case TerminalInputKind.Text: await active.SendTextAsync(input.Text, lifetime, input.Alt); break;
+                case TerminalInputKind.Enter: await active.SendEnterAsync(lifetime); break;
+                case TerminalInputKind.Backspace: await active.SendBackspaceAsync(lifetime); break;
+                case TerminalInputKind.Tab: await active.SendTabAsync(lifetime); break;
+                case TerminalInputKind.Control: await active.SendControlAsync(input.Text[0], lifetime); break;
+                case TerminalInputKind.Key: await active.SendKeyAsync(input.Key, input.Modifiers, lifetime); break;
             }
-            operated.RevealCursor();
-            if (!stop.IsCancellationRequested)
+            if (session == active && !lifetime.IsCancellationRequested)
             {
+                operated.RevealCursor();
                 Interlocked.Exchange(ref receivedRevision, 1);
                 ScheduleFrame();
                 SetStatus("Connected", session?.RecordingError);
@@ -1178,11 +1308,11 @@ internal sealed partial class TerminalTab : UserControl
         }
         catch (Exception exception) when (exception is IOException or SocketException or ArgumentException or InvalidOperationException)
         {
-            if (IsRunning) SetStatus("Connected", exception.Message);
+            if (session == active && !lifetime.IsCancellationRequested) SetStatus("Connected", exception.Message);
         }
         finally
         {
-            pendingSends--;
+            if (ReferenceEquals(stop, generation)) pendingSends--;
         }
     }
 }

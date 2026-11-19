@@ -1,10 +1,13 @@
 using System.ComponentModel;
+using System.Globalization;
 using System.IO;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
+
+[assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
 
 namespace TabTty.AiTransport;
 
@@ -17,13 +20,13 @@ internal sealed class AiPipe
     private readonly Identity local;
     private readonly string path;
 
-    private readonly record struct Identity(string User, string Logon, bool Elevated, int Session);
+    internal readonly record struct Identity(string User, string Logon, bool Elevated, string IntegritySid, int Session);
 
-    internal AiPipe()
+    internal AiPipe(bool activation = false)
     {
         using var process = Open((uint)Environment.ProcessId);
         local = ProcessIdentity(process);
-        path = @"\\.\pipe\TabTty.Ai.v1." + local.Logon;
+        path = (activation ? @"\\.\pipe\TabTty.Activation.v1." : @"\\.\pipe\TabTty.Ai.v1.") + local.Logon;
     }
 
     internal NamedPipeServerStream Listen(bool first)
@@ -75,30 +78,42 @@ internal sealed class AiPipe
         {
             if (Created(process) > observed || !IsAlive(process) || ProcessIdentity(process) != local || GetProcessId(process) != pid)
                 throw new IOException("Invalid local counterpart.");
-            image = CanonicalFile(Image(process));
-            string expected = CanonicalFile(Path.Combine(AppContext.BaseDirectory, sibling));
-            if (!image.Equals(expected, StringComparison.OrdinalIgnoreCase) || PipePid(pipe, server) != pid ||
-                !IsAlive(process))
+            using var expected = File.OpenHandle(Path.Combine(AppContext.BaseDirectory, sibling),
+                FileMode.Open, FileAccess.Read, FileShare.Read);
+            // Compare the kernel's process image to the installed file. Resolving the peer's
+            // path again would authenticate whatever file that path happens to name now.
+            const uint volumeNameNt = 2;
+            if (!ImagePath(process, native: true).Equals(FinalPath(expected, volumeNameNt), StringComparison.Ordinal) ||
+                PipePid(pipe, server) != pid || !IsAlive(process))
                 throw new IOException("Invalid local counterpart.");
+            image = FinalPath(expected, 0);
             return process;
         }
         catch { process.Dispose(); throw; }
     }
 
-    internal static SafeProcessHandle OpenLauncher()
+    internal SafeProcessHandle OpenLauncher(SafeProcessHandle bridge, out string image, out uint pid)
     {
+        uint bridgeId = GetProcessId(bridge);
+        if (bridgeId == 0 || !IsAlive(bridge)) throw new IOException("The bridge is unavailable.");
         using var snapshot = CreateToolhelp32Snapshot(2, 0);
         if (snapshot.IsInvalid) throw LastError();
         var entry = new ProcessEntry { Size = (uint)Marshal.SizeOf<ProcessEntry>() };
         if (!Process32First(snapshot, ref entry)) throw LastError();
         do
         {
-            if (entry.ProcessId != Environment.ProcessId) continue;
+            if (entry.ProcessId != bridgeId) continue;
             var parent = Open(entry.ParentId);
-            using var self = Open((uint)Environment.ProcessId);
             try
             {
-                if (!IsAlive(parent) || Created(parent) > Created(self) || GetProcessId(parent) != entry.ParentId)
+                pid = GetProcessId(parent);
+                if (pid != entry.ParentId || Created(parent) > Created(bridge) || ProcessIdentity(parent) != local)
+                    throw new IOException("The launcher is unavailable.");
+                image = ImagePath(parent, native: false);
+                // Keep the Windows-reported name unambiguous in the consent dialog.
+                if (image.EnumerateRunes().Any(rune => Rune.GetUnicodeCategory(rune) is UnicodeCategory.Control or
+                    UnicodeCategory.Format or UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator) ||
+                    !IsAlive(parent) || !IsAlive(bridge))
                     throw new IOException("The launcher is unavailable.");
                 return parent;
             }
@@ -129,24 +144,34 @@ internal sealed class AiPipe
     {
         if (!OpenProcessToken(process, TokenQuery, out var token)) throw LastError();
         using (token)
+            return ReadTokenIdentity(token);
+    }
+
+    internal static Identity ReadTokenIdentity(SafeAccessTokenHandle token)
+    {
         using (var identity = new WindowsIdentity(token.DangerousGetHandle()))
         {
             nint logon = TokenInfo(token, 28);
-            nint elevation = 0, session = 0;
+            nint elevation = 0, session = 0, integrity = 0;
             try
             {
                 if (Marshal.ReadInt32(logon) != 1) throw new IOException("Missing logon SID.");
                 var sid = new SecurityIdentifier(Marshal.ReadIntPtr(logon, IntPtr.Size));
                 elevation = TokenInfo(token, 20);
                 session = TokenInfo(token, 12);
+                // TokenIntegrityLevel is a TOKEN_MANDATORY_LABEL starting with a SID pointer.
+                // Two non-elevated processes can have different mandatory integrity levels.
+                integrity = TokenInfo(token, 25);
+                var integritySid = new SecurityIdentifier(Marshal.ReadIntPtr(integrity));
                 return new Identity(identity.User!.Value, sid.Value, Marshal.ReadInt32(elevation) != 0,
-                    Marshal.ReadInt32(session));
+                    integritySid.Value, Marshal.ReadInt32(session));
             }
             finally
             {
                 Marshal.FreeHGlobal(logon);
                 Marshal.FreeHGlobal(elevation);
                 Marshal.FreeHGlobal(session);
+                Marshal.FreeHGlobal(integrity);
             }
         }
     }
@@ -165,19 +190,18 @@ internal sealed class AiPipe
     private static long Created(SafeProcessHandle handle) =>
         GetProcessTimes(handle, out long creation, out _, out _, out _) ? creation : throw LastError();
 
-    private static string Image(SafeProcessHandle process)
+    private static string ImagePath(SafeProcessHandle process, bool native)
     {
         var image = new StringBuilder(32768);
         int capacity = image.Capacity;
-        if (!QueryFullProcessImageName(process, 0, image, ref capacity)) throw LastError();
+        if (!QueryFullProcessImageName(process, native ? 1 : 0, image, ref capacity)) throw LastError();
         return image.ToString();
     }
 
-    private static string CanonicalFile(string file)
+    private static string FinalPath(SafeFileHandle handle, uint volumeFormat)
     {
-        using var handle = File.OpenHandle(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         var full = new StringBuilder(32768);
-        int size = GetFinalPathNameByHandle(handle, full, full.Capacity, 0);
+        int size = GetFinalPathNameByHandle(handle, full, full.Capacity, volumeFormat);
         if (size == 0 || size >= full.Capacity) throw LastError();
         return full.ToString();
     }

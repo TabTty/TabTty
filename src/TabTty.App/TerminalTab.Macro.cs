@@ -94,7 +94,7 @@ internal sealed partial class TerminalTab
     private async Task RetryMacroRecordingAsync()
     {
         if (session is not { } active) { Macro?.RequestRecordingRetry(); return; }
-        try { await active.ResumeRecordingAsync(stop.Token); }
+        try { await active.RetryRecordingAsync(stop.Token); }
         catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException)
         { SetStatus(statusKey, Text("MacroRecordingFailed")); }

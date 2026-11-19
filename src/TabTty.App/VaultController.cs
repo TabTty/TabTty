@@ -8,10 +8,16 @@ namespace TabTty.App;
 
 internal sealed class VaultController(App app) : IDisposable
 {
+    internal const int ManagementDeliveryLimit = 64;
+    internal static readonly ResourceQuota ManagementDeliveries = new(ManagementDeliveryLimit,
+        message: "Too many vault management results are being delivered.", collectOnPressure: false);
     private readonly Dictionary<string, VaultFileController> files = new(StringComparer.Ordinal);
     private readonly Dictionary<VaultFileController, VaultEditorWindow> editors = [];
     private readonly HashSet<string> staleSelectedPaths = new(StringComparer.Ordinal);
     private VaultFileController? selected;
+    private (VaultFileController Previous, VaultFileController Next)? selectionTransition;
+    internal long SelectionEpoch { get; private set; }
+    internal bool HasActiveOperations => selectionTransition is not null || files.Values.Any(file => file.HasActiveWork);
     private event Action? ManagementChanged;
 
     private VaultFileController Selected => selected ??= GetFile(ProfileLocation.Normalize(app.VaultPath));
@@ -33,20 +39,44 @@ internal sealed class VaultController(App app) : IDisposable
 
     private void ReleaseIfUnused(VaultFileController file)
     {
-        if (IsSelected(file) || file.IsBusy || editors.ContainsKey(file)) return;
-        if (!files.TryGetValue(file.FilePath, out var current) || current != file) return;
-        files.Remove(file.FilePath);
-        file.Dispose();
+        if (!IsSelected(file) && !IsSelectionReserved(file) && !file.HasActiveWork && !editors.ContainsKey(file) &&
+            files.TryGetValue(file.FilePath, out var current) && current == file)
+        {
+            files.Remove(file.FilePath);
+            file.Dispose();
+        }
+        app.VaultWorkSettled();
     }
 
-    public void CheckPathChange(string priorPath, string nextPath)
+    internal bool IsSelectionReserved(VaultFileController file) =>
+        selectionTransition is { } change && (change.Previous == file || change.Next == file);
+
+    internal IDisposable? ReservePathChange(string priorPath, string nextPath)
     {
-        if (string.Equals(priorPath, nextPath, StringComparison.Ordinal)) return;
+        if (selectionTransition is not null) throw new InvalidOperationException(Text("VaultBusy"));
+        if (string.Equals(priorPath, nextPath, StringComparison.Ordinal)) return null;
         VaultFileController prior = Selected;
         string target = ProfileLocation.Normalize(nextPath);
-        if (prior.FilePath == target) return;
-        if (prior.IsBusy || (files.TryGetValue(target, out var replacement) && replacement.IsBusy))
-            throw new InvalidOperationException(Text("VaultBusy"));
+        if (prior.FilePath == target) return null;
+        VaultFileController next = GetFile(target);
+        if (prior.IsBusy || next.IsBusy) throw new InvalidOperationException(Text("VaultBusy"));
+        selectionTransition = (prior, next);
+        return new SelectionReservation(this);
+    }
+
+    private sealed class SelectionReservation(VaultController owner) : IDisposable
+    {
+        private bool disposed;
+
+        public void Dispose()
+        {
+            if (disposed) return;
+            disposed = true;
+            if (owner.selectionTransition is not { } transition) return;
+            owner.selectionTransition = null;
+            owner.ReleaseIfUnused(transition.Previous);
+            owner.ReleaseIfUnused(transition.Next);
+        }
     }
 
     public void SelectionChanged(string priorPath)
@@ -55,6 +85,7 @@ internal sealed class VaultController(App app) : IDisposable
         selected = GetFile(ProfileLocation.Normalize(app.VaultPath));
         if (prior != selected)
         {
+            SelectionEpoch++;
             if (prior.IsStale) staleSelectedPaths.Add(prior.FilePath);
             ReleaseIfUnused(prior);
         }
@@ -71,7 +102,7 @@ internal sealed class VaultController(App app) : IDisposable
         }
         catch (Exception exception) when (ProfileCatalog.IsFileProblem(exception) || exception is OperationCanceledException)
         {
-            app.Modal(() => ThemedMessageBox.Show(
+            app.Modal(() => ThemedMessageBox.ShowVault(null,
                 $"{path}\n\n{exception.Message}", Text("Vault"), icon: MessageBoxImage.Error));
             return;
         }
@@ -101,24 +132,32 @@ internal sealed class VaultController(App app) : IDisposable
 
     internal void BuildManagement(FormView form) => BuildManagement(form, () => Selected);
 
-    private void NotifyManagementChanged() => ManagementChanged?.Invoke();
+    private void NotifyManagementChanged()
+    {
+        if (ManagementChanged is not { } changed) return;
+        foreach (Action update in changed.GetInvocationList())
+        {
+            try { update(); }
+            catch (InvalidOperationException) { }
+        }
+    }
 
     public Task UnlockFromMenuAsync(MainWindow owner) => Selected.UnlockFromMenuAsync(owner);
     public Task ManageAsync(MainWindow owner) => Selected.ManageAsync(owner);
     public Task RestoreFromMenuAsync(MainWindow owner) => Selected.RestoreFromMenuAsync(owner);
     public Task ArchiveAsync(MainWindow owner) => Selected.ArchiveAsync(owner);
 
-    public Task ChoosePasswordAsync(Window owner, Action<CredentialReference, string> choose, bool allowInitialize = true) =>
-        Selected.ChooseCredentialAsync(owner, "password", choose, allowInitialize);
+    public Task ChoosePasswordAsync(Window owner, Action<CredentialReference, string> choose) =>
+        Selected.ChooseCredentialAsync(owner, "password", choose);
 
-    public Task ChoosePrivateKeyAsync(Window owner, Action<CredentialReference, string> choose, bool allowInitialize = true) =>
-        Selected.ChooseCredentialAsync(owner, "privateKey", choose, allowInitialize);
+    public Task ChoosePrivateKeyAsync(Window owner, Action<CredentialReference, string> choose) =>
+        Selected.ChooseCredentialAsync(owner, "privateKey", choose);
 
     public Task<VaultSecret?> ReadSavedPasswordAsync(Window owner, CredentialReference reference, CancellationToken token) =>
         Selected.ReadSavedPasswordAsync(owner, reference, token);
 
-    public Task<VaultSecret?> ReadPrivateKeyAsync(Window owner, CredentialReference? reference, CancellationToken token) =>
-        Selected.ReadPrivateKeyAsync(owner, reference, token);
+    public Task<VaultSecret?> ReadPrivateKeyAsync(Window owner, SshPrivateKeyRequest request, CancellationToken token) =>
+        Selected.ReadPrivateKeyAsync(owner, request, token);
 
     public Task<VaultSecret?> ReadMacroPasswordAsync(Window owner, CredentialReference reference, CancellationToken token) =>
         Selected.ReadMacroPasswordAsync(owner, reference, token);
@@ -134,6 +173,8 @@ internal sealed class VaultController(App app) : IDisposable
 
     private void BuildManagement(FormView form, Func<VaultFileController> target)
     {
+        form.CanDismissBusyView = () => target().CanDismissMasterChange(form.OwnerWindow);
+        form.ShowFileOperationStatus();
         var list = new ListBox { DisplayMemberPath = nameof(VaultEntryInfo.Name), Height = 250 };
         var metadata = new TextBox { IsReadOnly = true, TextWrapping = TextWrapping.Wrap, MinHeight = 100,
             MaxHeight = 180, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
@@ -142,8 +183,8 @@ internal sealed class VaultController(App app) : IDisposable
         var selectedActions = new List<Button>();
         form.AddActionRow(() =>
         {
-            Add("AddVaultPassword", static (file, window) => file.AddPasswordAsync(window), refresh: true);
-            Add("ImportPrivateKey", static (file, window) => file.ImportPrivateKeyAsync(window), refresh: true);
+            Add("AddVaultPassword", static (file, window) => file.AddPasswordAsync(window));
+            Add("ImportPrivateKey", static (file, window) => file.ImportPrivateKeyAsync(window));
         });
         form.AddColumns(() => form.AddGroup("VaultEntryList", () => form.AddDisplay("VaultEntries", list)),
             () => form.AddGroup("CredentialDetails", () =>
@@ -151,14 +192,20 @@ internal sealed class VaultController(App app) : IDisposable
                 form.AddDisplay("CredentialDetails", metadata);
                 form.AddActionRow(() =>
                 {
-                    selectedActions.Add(Add("EditCredential", (file, window) => WithSelectedAsync(file, window, file.EditEntryAsync), refresh: true));
-                    selectedActions.Add(Add("DeleteCredential", (file, window) => WithSelectedAsync(file, window, file.DeleteEntryAsync), refresh: true));
-                    selectedActions.Add(Add("CopyMacroReference", (file, window) => WithSelectedAsync(file, window, (_, unlocked, entry) =>
+                    selectedActions.Add(Add("EditCredential", (file, window) => list.SelectedItem is VaultEntryInfo entry ?
+                        file.EditEntryAsync(window, entry) : Task.CompletedTask));
+                    selectedActions.Add(Add("DeleteCredential", (file, window) => list.SelectedItem is VaultEntryInfo entry ?
+                        file.DeleteEntryAsync(window, entry) : Task.CompletedTask));
+                    selectedActions.Add(Add("CopyMacroReference", (file, _) =>
                     {
-                        string kind = entry.Kind == "password" ? "Password" : "PrivateKey";
-                        Clipboard.SetText($"Credential(\"{unlocked.Id:D}\", \"{entry.Id:D}\", CredentialKind.{kind})");
+                        if (list.SelectedItem is VaultEntryInfo entry)
+                        {
+                            var reference = file.EntryReference(entry);
+                            string kind = reference.Kind == "password" ? "Password" : "PrivateKey";
+                            Clipboard.SetText($"Credential(\"{reference.VaultId:D}\", \"{reference.EntryId:D}\", CredentialKind.{kind})");
+                        }
                         return Task.CompletedTask;
-                    })));
+                    }));
                 });
             }));
         form.AddGroup("VaultFileOperations", () =>
@@ -166,9 +213,11 @@ internal sealed class VaultController(App app) : IDisposable
             form.AddField("VaultPath", vaultPath);
             form.AddActionRow(() =>
             {
+                Add("CreateVault", static (file, window) => file.InitializeAsync(window));
                 Add("BackupVault", static (file, window) => file.BackupAsync(window));
                 Add("RestoreVault", static (file, window) => file.RestoreAsync(window));
                 Add("ChangeMaster", static (file, window) => file.ChangeMasterAsync(window));
+                Add("RecheckFilePublication", static (file, window) => file.ReconcilePublicationAsync(window));
                 form.AddAsyncAction("ArchiveVault", async () =>
                 {
                     Window window = form.OwnerWindow;
@@ -185,23 +234,12 @@ internal sealed class VaultController(App app) : IDisposable
         form.Unloaded += (_, _) => ManagementChanged -= UpdateEntries;
         UpdateEntries();
 
-        Button Add(string key, Func<VaultFileController, Window, Task> action, bool refresh = false) => form.AddAsyncAction(key, () =>
+        Button Add(string key, Func<VaultFileController, Window, Task> action) => form.AddAsyncAction(key, () =>
         {
             Window window = form.OwnerWindow;
             VaultFileController file = target();
-            return file.RunAsync(window, async () =>
-            {
-                await action(file, window);
-                if (refresh) await file.RefreshManagementAsync();
-            });
+            return file.RunAsync(window, () => action(file, window));
         });
-
-        async Task WithSelectedAsync(VaultFileController file, Window window,
-            Func<Window, CredentialVault, VaultEntryInfo, Task> action)
-        {
-            if (file.Unlocked is { } unlocked && list.SelectedItem is VaultEntryInfo entry)
-                await action(window, unlocked, entry);
-        }
 
         void UpdateEntries()
         {

@@ -1,10 +1,69 @@
 using System.IO;
+using TabTty.App;
 using TabTty.Core;
 
 internal static partial class Program
 {
-    private static async Task CheckFileOperations()
+    private static async Task CheckFileOperations(string root)
     {
+        string folderPath = Path.Combine(root, "private-transfer-folder");
+        using (var parent = new TransferWindowsPath(root))
+        {
+            parent.CreateDirectory(folderPath);
+            if (!PrivateWindowsFile.HasPrivateAccess(new DirectoryInfo(folderPath)))
+                throw new InvalidOperationException("A newly created transfer folder lacks its private inheritable ACL.");
+            try
+            {
+                parent.CreateDirectory(folderPath);
+                throw new InvalidOperationException("Transfer folder creation silently reused an existing folder.");
+            }
+            catch (IOException) { }
+        }
+
+        if (TransferFiles.NextOffset(5, 3, 8) != 8 || TransferFiles.NextOffset(5, 3, null) != 8)
+            throw new InvalidOperationException("A valid transfer byte range was rejected.");
+        try
+        {
+            TransferFiles.NextOffset(5, 4, 8);
+            throw new InvalidOperationException("A transfer block exceeded the declared length.");
+        }
+        catch (SftpException error) when (error.Failure == SftpFailure.SourceChanged) { }
+
+        string stage = Path.Combine(root, "transfer-stage.part"), target = Path.Combine(root, "transfer-target.txt");
+        string replacement = Path.Combine(root, "transfer-other.part");
+        File.WriteAllText(stage, "staged");
+        File.WriteAllText(replacement, "other");
+        FileObjectIdentity identity;
+        using (var file = File.OpenRead(stage)) identity = FileObjectIdentity.Read(file.SafeFileHandle);
+        if (FileObjectIdentity.MoveIfSame(replacement, identity, target, false) ||
+            FileObjectIdentity.DeleteIfSame(replacement, identity) || !File.Exists(replacement) ||
+            !FileObjectIdentity.MoveIfSame(stage, identity, target, false) || File.ReadAllText(target) != "staged")
+            throw new InvalidOperationException("Local transfer publication or cleanup lost the staged file identity.");
+
+        File.WriteAllText(target + ":Zone.Identifier", "[ZoneTransfer]\r\nZoneId=2\r\n");
+        using (var file = TransferWindowsPath.CreateDownload(stage))
+        {
+            identity = FileObjectIdentity.Read(file.SafeFileHandle);
+            TransferWindowsPath.MarkDownload(stage, file);
+            file.Write("download"u8);
+        }
+        using (TransferWindowsPath.OpenVerifiedDownloadMark(stage, identity))
+            if (!FileObjectIdentity.MoveIfSame(stage, identity, target, replace: true))
+                throw new InvalidOperationException("The verified download could not be published.");
+        if (File.ReadAllText(target) != "download" ||
+            File.ReadAllText(target + ":Zone.Identifier") != "[ZoneTransfer]\r\nZoneId=3\r\n")
+            throw new InvalidOperationException("A replaced download did not retain its own Internet zone.");
+        using (var published = File.OpenRead(target))
+            if (!PrivateWindowsFile.HasPrivateAccess(published))
+                throw new InvalidOperationException("A replaced download lost its private access rules.");
+        File.WriteAllText(target + ":Zone.Identifier", "[ZoneTransfer]\r\nZoneId=2\r\n");
+        try
+        {
+            using var invalid = TransferWindowsPath.OpenVerifiedDownloadMark(target, identity);
+            throw new InvalidOperationException("A changed zone mark passed the download publication check.");
+        }
+        catch (SftpException error) when (error.Failure == SftpFailure.DownloadOrigin) { }
+
         var io = new ControlledFiles();
         var owner = new FileOperationOwnership();
         var ops = new FileOperations(io, owner, CancellationToken.None);
@@ -55,17 +114,26 @@ internal static partial class Program
             throw new InvalidOperationException("Unknown recycling permitted another destructive operation.");
         owner.Refreshed();
 
+        string sameSizeFile = Path.Combine(root, "same-size.txt");
+        File.WriteAllText(sameSizeFile, "equal");
+        File.SetLastWriteTimeUtc(sameSizeFile, File.GetLastWriteTimeUtc(replacement));
+        var firstFile = TransferWindowsPath.Stat(replacement)!;
+        var secondFile = TransferWindowsPath.Stat(sameSizeFile)!;
+        if (firstFile.LocalIdentity is null || secondFile.LocalIdentity is null || firstFile.Size != secondFile.Size ||
+            firstFile.Modified != secondFile.Modified || firstFile.LocalIdentity == secondFile.LocalIdentity)
+            throw new InvalidOperationException("Local status did not distinguish ordinary files with equal metadata.");
+        TransferAttributes[] versions = [firstFile with { Size = 1 }, firstFile, secondFile];
+        io.CopyTargetVersions = new Queue<TransferAttributes>(versions);
         int overwriteQuestions = 0;
-        io.ChangeCopyTarget = true;
         string copied = await ops.Copy([a], source, question =>
         {
-            if (question.Kind != TransferQuestionKind.Overwrite || question.Existing?.Size != ++overwriteQuestions)
+            if (question.Kind != TransferQuestionKind.Overwrite || question.Existing != versions[overwriteQuestions++])
                 throw new InvalidOperationException("A changed copy target reused the earlier approval.");
             return ValueTask.FromResult(TransferChoice.Overwrite);
         })!;
-        if (copied != "TransferFinished" || overwriteQuestions != 2)
+        if (copied != "TransferFinished" || overwriteQuestions != versions.Length)
             throw new InvalidOperationException("Copy did not obtain a fresh approval for a changed target.");
-        io.ChangeCopyTarget = false;
+        io.CopyTargetVersions.Clear();
 
         io.LoseCommit = true;
         if (await ops.Copy([a], source, _ => ValueTask.FromResult(TransferChoice.Overwrite))! != "SftpUnknownOutcome" ||
@@ -98,8 +166,7 @@ internal static partial class Program
         public List<string> Removed { get; } = [];
         public bool LoseCommit;
         public bool FailRecheck;
-        public bool ChangeCopyTarget;
-        private int targetReads;
+        public Queue<TransferAttributes> CopyTargetVersions = new();
         public int RecycleCalls;
         public bool IsOpen => true;
         public string Display(TransferPath path) => path.Local ?? System.Text.Encoding.UTF8.GetString(path.Remote!);
@@ -108,7 +175,8 @@ internal static partial class Program
         public Task<TransferItem[]> ListAsync(TransferPath path, CancellationToken token) => Task.FromResult(Children);
         public Task<TransferAttributes?> StatAsync(TransferPath path, CancellationToken token) =>
             Task.FromResult<TransferAttributes?>(path.Local == "tree" ? Directory :
-                path.Local == "out/a" && ChangeCopyTarget ? File with { Size = Math.Min(++targetReads, 2) } : File);
+                path.Local == "out/a" && CopyTargetVersions.Count > 0 ?
+                    (CopyTargetVersions.Count == 1 ? CopyTargetVersions.Peek() : CopyTargetVersions.Dequeue()) : File);
         public Task<bool> IsCaseSensitiveAsync(TransferPath path, CancellationToken token) => Task.FromResult(true);
         public Task CreateAsync(TransferPath path, CancellationToken token) => Task.CompletedTask;
         public Task RenameAsync(TransferPath source, TransferPath target, bool replace, CancellationToken token) => throw new NotSupportedException();

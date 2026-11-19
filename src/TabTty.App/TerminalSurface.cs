@@ -54,6 +54,7 @@ internal sealed class TerminalSurface : FrameworkElement
     public ScrollViewer Scroller { get; }
     internal TerminalSnapshot? Snapshot => snapshot;
     internal bool IsCurrentSnapshotRendered => snapshot is not null && snapshotVersion == renderedSnapshotVersion;
+    internal event Action? ViewportRendered;
     internal TerminalMatch? Selection => selection;
     internal string AutomationFontFamily => font.Source;
     internal double AutomationFontPoints => fontSize * 72 / 96;
@@ -488,6 +489,10 @@ internal sealed class TerminalSurface : FrameworkElement
         }
         for (int row = first; row < end; row++)
         {
+            // Share horizontal cell translations across rows, including on the first view of a long scrollback.
+            var rowPosition = new TranslateTransform(0, row * rowHeight);
+            rowPosition.Freeze();
+            drawing.PushTransform(rowPosition);
             highlights.TryGetValue(row, out var rules);
             matches.TryGetValue(row, out var found);
             foreach (TerminalCell cell in snapshot.GetCells(row).Span)
@@ -515,11 +520,12 @@ internal sealed class TerminalSurface : FrameworkElement
                     (foreground, background) = (0, 0xFFD54F);
                 if (selection is { } selected && Covers(selected, row, cell))
                     (foreground, background) = (0xFFFFFF, 0x0050A0);
-                Rect rect = CellRect(row, cell.Column, cell.Width);
+                Rect rect = CellRect(0, cell.Column, cell.Width);
                 if (background != 0) drawing.DrawRectangle(BrushFor(background), null, rect);
                 if (!flags.HasFlag(TerminalStyleFlags.Conceal)) DrawGlyph(drawing, rect, cell.Text, foreground, flags);
                 if (current) drawing.DrawRectangle(null, new Pen(Brushes.White, 1), rect);
             }
+            drawing.Pop();
         }
         if (connected && snapshot.CursorVisible && cursorOn && snapshot.CursorRow >= first && snapshot.CursorRow <= end)
         {
@@ -562,6 +568,7 @@ internal sealed class TerminalSurface : FrameworkElement
             }
         }
         renderedSnapshotVersion = snapshotVersion;
+        ViewportRendered?.Invoke();
     }
 
     protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
@@ -685,18 +692,21 @@ internal sealed class TerminalSurface : FrameworkElement
     {
         if (text == " ") return;
         var key = (text, foreground, flags);
-        FormattedText formatted = Glyph(text, foreground, flags);
         if (!glyphs.TryGetValue(key, out GlyphEntry? entry))
         {
-            drawing.PushTransform(CellTranslation(cell.TopLeft));
-            drawing.DrawDrawing(BuildCellDrawing(formatted, cell.Width, cell.Height));
-            drawing.Pop();
-            return;
+            FormattedText formatted = Glyph(text, foreground, flags);
+            if (!glyphs.TryGetValue(key, out entry))
+            {
+                drawing.PushTransform(CellTranslation(cell.TopLeft));
+                drawing.DrawDrawing(BuildCellDrawing(formatted, cell.Width, cell.Height));
+                drawing.Pop();
+                return;
+            }
         }
         bool wide = cell.Width > cellWidth;
         DrawingGroup layout = wide
-            ? entry.Wide ??= BuildCellDrawing(formatted, cell.Width, cell.Height)
-            : entry.Narrow ??= BuildCellDrawing(formatted, cell.Width, cell.Height);
+            ? entry.Wide ??= BuildCellDrawing(entry.Text, cell.Width, cell.Height)
+            : entry.Narrow ??= BuildCellDrawing(entry.Text, cell.Width, cell.Height);
         drawing.PushTransform(CellTranslation(cell.TopLeft));
         drawing.DrawDrawing(layout);
         drawing.Pop();
@@ -752,9 +762,8 @@ internal sealed class TerminalSurface : FrameworkElement
             glyphs.Clear();
             memory = null;
         }
-        if (text.EnumerateRunes().FirstOrDefault() is var rune &&
-            Rune.GetUnicodeCategory(rune) is UnicodeCategory.NonSpacingMark or UnicodeCategory.EnclosingMark
-                or UnicodeCategory.SpacingCombiningMark)
+        if (text.Length != 0 && text[0] >= 128 &&
+            NativeTerminalCore.HasDrawingMark(text.EnumerateRunes().First()))
             text = "\u25CC" + text;
         var typeface = new Typeface(font, flags.HasFlag(TerminalStyleFlags.Italic) ? FontStyles.Italic : FontStyles.Normal,
             flags.HasFlag(TerminalStyleFlags.Bold) ? FontWeights.Bold : FontWeights.Normal, FontStretches.Normal);

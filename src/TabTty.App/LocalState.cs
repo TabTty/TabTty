@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using TabTty.Core;
 
 namespace TabTty.App;
 
@@ -10,6 +11,7 @@ internal static class LocalState
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TabTty");
     private static readonly string StatePath = Path.Combine(DirectoryPath, "state.json");
     private static bool temporaryDefaults;
+    private static byte[]? verifiedBytes;
 
     public static bool Initialize()
     {
@@ -33,11 +35,14 @@ internal static class LocalState
     public static void Change(Action<JsonObject> update)
     {
         if (temporaryDefaults) throw new InvalidOperationException(App.Text("UseTemporaryState"));
+        if (VerifiedFilePublication.HasPendingPublication(StatePath))
+            throw new IOException(App.Text("StoreSaveUnverified"));
         var (state, original) = ReadSnapshot();
         update(state);
         byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(state);
         if (bytes.Length > 16 * 1024 * 1024) throw new InvalidDataException(App.Text("LocalStateInvalid"));
-        JsonStoreRecovery.Save(StatePath, bytes, original);
+        JsonStoreRecovery.Save(StatePath, bytes, original, path => _ = ReadSnapshot(path));
+        Volatile.Write(ref verifiedBytes, bytes);
     }
 
     private static JsonObject Defaults() => new()
@@ -49,9 +54,21 @@ internal static class LocalState
     private static (JsonObject State, byte[]? Bytes) ReadSnapshot(string? path = null)
     {
         if (path is null && temporaryDefaults) return (Defaults(), null);
+        bool live = path is null;
         path ??= StatePath;
-        if (!File.Exists(path)) return (Defaults(), null);
-        byte[] bytes = ReadBytes(path);
+        if (live && VerifiedFilePublication.HasPendingPublication(path))
+            return Parse(Volatile.Read(ref verifiedBytes));
+        byte[]? bytes = File.Exists(path) ? ReadBytes(path) : null;
+        if (live && VerifiedFilePublication.HasPendingPublication(path))
+            return Parse(Volatile.Read(ref verifiedBytes));
+        var snapshot = Parse(bytes);
+        if (live) Volatile.Write(ref verifiedBytes, bytes);
+        return snapshot;
+    }
+
+    private static (JsonObject State, byte[]? Bytes) Parse(byte[]? bytes)
+    {
+        if (bytes is null) return (Defaults(), null);
         JsonObject state = JsonStoreRecovery.ParseObject(bytes);
         if (state["schemaVersion"]?.GetValue<int>() != 1 ||
             state["requiredFeatures"] is not JsonArray { Count: 0 } ||
@@ -60,13 +77,16 @@ internal static class LocalState
             (state["selectedVaultPath"] is not null && state["selectedVaultPath"]?.GetValue<string>() is not { Length: <= 32760 }))
             throw new InvalidDataException(App.Text("LocalStateInvalid"));
         var ids = new HashSet<Guid>();
+        if (state["selectedVaultPath"]?.GetValue<string>() is { Length: > 0 } legacyPath)
+            try { _ = App.NormalizeVaultPath(legacyPath); }
+            catch (ArgumentException error) { throw new InvalidDataException(App.Text("LocalStateInvalid"), error); }
         WindowPlacement.Validate(state["lastWindow"]);
         foreach (JsonNode? node in registrations)
         {
             if (node is not JsonObject item ||
                 !Guid.TryParseExact(item["registrationId"]?.GetValue<string>(), "D", out Guid id) || id == Guid.Empty ||
                 id.ToString("D") != item["registrationId"]!.GetValue<string>() || !ids.Add(id) ||
-                item["path"]?.GetValue<string>() is not { Length: > 0 and <= 32760 } location || !Path.IsPathFullyQualified(location) ||
+                item["path"]?.GetValue<string>() is not { } location || !OrdinaryWindowsPath.IsValid(location) || !Path.IsPathFullyQualified(location) ||
                 item["displayPath"]?.GetValue<string>() is not { Length: > 0 and <= 32760 } ||
                 item["favorite"]?.GetValue<bool>() is not { } || !item.ContainsKey("lastUsed") ||
                 (item["lastUsed"] is not null && item["lastUsed"]?.GetValue<DateTimeOffset>() is not { Offset.Ticks: 0 }))

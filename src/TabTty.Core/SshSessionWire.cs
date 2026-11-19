@@ -42,29 +42,27 @@ internal sealed partial class SshSessionWire : ISessionWire
     private long lastLiveness;
     private string[]? serverSignatureAlgorithms;
     private readonly CancellationTokenSource stop = new();
-    private readonly SemaphoreSlim send = new(1);
+    private readonly SshPacketWriterOrder send = new();
     private readonly SemaphoreSlim receive = new(1);
     private readonly TaskCompletionSource packetKeysCleared = NewSignal();
     private readonly object creditGate = new();
     // Receive credit bounds bytes independently of the peer's packet fragmentation.
     // Record the two receive sources in a bitset rather than queueing a node per packet.
-    private readonly byte[] incoming = new byte[ReceiveWindow];
-    private readonly System.Collections.BitArray standardErrorBytes = new(ReceiveWindow);
+    private byte[] incoming = new byte[ReceiveWindow];
+    private System.Collections.BitArray standardErrorBytes = new(ReceiveWindow);
     private readonly Channel<bool> incomingReady = Channel.CreateBounded<bool>(1);
     private int incomingStart, incomingCount;
     private TaskCompletionSource creditChanged = NewSignal();
-    private int receiveCredit = ReceiveWindow;
-    private int returnedCredit;
+    private readonly SshChannelWindow channelWindow = new(ReceiveWindow, MaxChunk);
     private uint peerChannel;
-    private uint peerWindow;
-    private uint peerPacket;
     private int columns = 80;
     private int rows = 24;
     private int closed;
-    private bool peerClosed;
-    private bool peerEof;
-    private bool sentClose;
-    private readonly TaskCompletionSource peerCloseReceived = NewSignal();
+    private volatile bool peerClosed;
+    private readonly SshChannelClosure channelClosure = new();
+    private readonly SshChannelRequests terminalRequests = new();
+    private long enqueuedTerminalBytes, deliveredStartupBytes;
+    private TaskCompletionSource startupProgress = NewSignal();
     private readonly object shutdownGate = new();
     private Task? shutdown;
     private bool initialExtensionWindow = true;
@@ -74,10 +72,10 @@ internal sealed partial class SshSessionWire : ISessionWire
     private int messages;
     private int messageBytes;
 
-    public TerminalReceiveSource Source { get; private set; }
     public string Details => exchange.Details;
 
-    private SshSessionWire(TcpClient client, SshDestination destination, ConnectionProfile profile, SshInteraction interaction)
+    private SshSessionWire(TcpClient client, Stream packetStream, SshDestination destination,
+        ConnectionProfile profile, SshInteraction interaction)
     {
         this.client = client;
         this.destination = destination;
@@ -85,14 +83,14 @@ internal sealed partial class SshSessionWire : ISessionWire
         wait = TimeSpan.FromSeconds(profile.WaitSeconds);
         livenessEnabled = profile.SshLivenessEnabled;
         livenessInterval = profile.SshLivenessInterval * 1000L;
-        packets = new SshPackets(client.GetStream());
+        packets = new SshPackets(packetStream);
         exchange = new SshKeyExchange(packets, destination, interaction.ApprovedHostFormats?.Invoke(destination) ?? []);
     }
 
     public static async Task<ISessionWire> OpenAsync(ConnectionProfile profile, SshInteraction interaction,
         Func<CancellationToken, Task<(int Columns, int Rows)>> getGrid,
-        Func<ISessionWire, TerminalSession> initialize,
-        CancellationToken connectToken, CancellationToken sessionToken)
+        TerminalPayloadConsumer consumeStartup,
+        CancellationToken connectToken, CancellationToken sessionToken, Func<Stream, Stream>? wrapPacketStream = null)
     {
         var destination = SshDestination.Parse(profile.Host, profile.Port);
         var client = new TcpClient { NoDelay = true };
@@ -100,14 +98,14 @@ internal sealed partial class SshSessionWire : ISessionWire
         try
         {
             await client.ConnectAsync(destination.NetworkHost, destination.Port, connectToken).ConfigureAwait(false);
-            wire = new SshSessionWire(client, destination, profile, interaction);
-            await wire.exchange.IdentifyAsync(client.GetStream(), connectToken).ConfigureAwait(false);
+            Stream stream = client.GetStream();
+            wire = new SshSessionWire(client, wrapPacketStream?.Invoke(stream) ?? stream, destination, profile, interaction);
+            await wire.exchange.IdentifyAsync(stream, connectToken).ConfigureAwait(false);
             SshHostKey host = await wire.exchange.ExchangeAsync(connectToken).ConfigureAwait(false);
             await wire.ApproveAsync(host, sessionToken).ConfigureAwait(false);
             await wire.AuthenticateAsync(profile, sessionToken).ConfigureAwait(false);
             using var startup = new SshRemoteDeadline(sessionToken, wire.wait);
-            await wire.OpenChannelAsync(profile, startup, getGrid, initialize).ConfigureAwait(false);
-            wire.pump = Task.Run(wire.ReceiveAsync);
+            await wire.OpenChannelAsync(profile, startup, getGrid, consumeStartup).ConfigureAwait(false);
             return wire;
         }
         catch
@@ -117,7 +115,7 @@ internal sealed partial class SshSessionWire : ISessionWire
             {
                 wire.Dispose();
                 await wire.packetKeysCleared.Task.ConfigureAwait(false);
-                wire.receiveMemory.Dispose();
+                await wire.ReleaseReceiveAsync().ConfigureAwait(false);
                 wire.stop.Dispose();
             }
             throw;
@@ -282,7 +280,7 @@ internal sealed partial class SshSessionWire : ISessionWire
                     using var password = AuthenticationRequest(profile.SshUsername, "password", secret.Bytes.Length);
                     password.Byte(0);
                     password.String(secret.Bytes.Span);
-                    await SendAuthenticationAsync(password.Memory, token).ConfigureAwait(false);
+                    await SendAuthenticationAsync(password.Memory, token, padCredentials: true).ConfigureAwait(false);
                 }
                 else
                 {
@@ -340,7 +338,7 @@ internal sealed partial class SshSessionWire : ISessionWire
             response.Byte(61);
             response.Number((uint)answers.Length);
             foreach (VaultSecret answer in answers) response.String(answer.Bytes.Span);
-            await SendAuthenticationAsync(response.Memory, token).ConfigureAwait(false);
+            await SendAuthenticationAsync(response.Memory, token, padCredentials: true).ConfigureAwait(false);
         }
         finally
         {
@@ -359,7 +357,7 @@ internal sealed partial class SshSessionWire : ISessionWire
     }
 
     private async Task OpenChannelAsync(ConnectionProfile profile, SshRemoteDeadline deadline,
-        Func<CancellationToken, Task<(int Columns, int Rows)>> getGrid, Func<ISessionWire, TerminalSession> initialize)
+        Func<CancellationToken, Task<(int Columns, int Rows)>> getGrid, TerminalPayloadConsumer consumeStartup)
     {
         CancellationToken token = deadline.Token;
         using (var channel = new SshWriter())
@@ -375,52 +373,104 @@ internal sealed partial class SshSessionWire : ISessionWire
         reply.Expect(91);
         RequireChannel(ref reply);
         peerChannel = reply.Number();
-        peerWindow = reply.Number();
-        peerPacket = reply.Number();
-        if (peerPacket == 0) throw new InvalidDataException("Invalid SSH peer packet limit.");
+        channelWindow.Open(reply.Number(), reply.Number());
         reply.End();
         var grid = await getGrid(token).ConfigureAwait(false);
         (columns, rows) = grid;
-        TerminalSession session = initialize(this);
-        using (var pty = ChannelMessage(98))
+        using var stopDelivery = new CancellationTokenSource();
+        Task delivery = DeliverStartupAsync(consumeStartup, stopDelivery.Token);
+        pump = Task.Run(ReceiveAsync);
+        try
         {
-            pty.Text("pty-req");
-            pty.Byte(1);
-            pty.Text(profile.AdvertisedType);
-            pty.Number((uint)grid.Columns);
-            pty.Number((uint)grid.Rows);
-            pty.Number(0);
-            pty.Number(0);
-            pty.String(profile.TransmitEncoding == "utf-8" ? new byte[] { 42, 0, 0, 0, 1, 0 } : new byte[] { 0 });
-            await packets.SendAsync(pty.Memory, token).ConfigureAwait(false);
+            using (var pty = ChannelMessage(98))
+            {
+                pty.Text("pty-req");
+                pty.Byte(1);
+                pty.Text(profile.AdvertisedType);
+                pty.Number((uint)grid.Columns);
+                pty.Number((uint)grid.Rows);
+                pty.Number(0);
+                pty.Number(0);
+                pty.String(profile.TransmitEncoding == "utf-8" ? new byte[] { 42, 0, 0, 0, 1, 0 } : new byte[] { 0 });
+                await RequestStartupAsync(pty.Memory, delivery, token).ConfigureAwait(false);
+            }
+            using (var shell = ChannelMessage(98))
+            {
+                shell.Text("shell");
+                shell.Byte(1);
+                await RequestStartupAsync(shell.Memory, delivery, token).ConfigureAwait(false);
+            }
+            token.ThrowIfCancellationRequested();
         }
-        await RequireChannelSuccessAsync(deadline, session).ConfigureAwait(false);
-        using (var shell = ChannelMessage(98))
+        catch
         {
-            shell.Text("shell");
-            shell.Byte(1);
-            await packets.SendAsync(shell.Memory, token).ConfigureAwait(false);
+            // No further transport input is admitted. Already buffered input
+            // still belongs to this startup generation and must settle there.
+            Dispose();
+            await pump.ConfigureAwait(false);
+            long admitted;
+            lock (creditGate) admitted = enqueuedTerminalBytes;
+            if (!delivery.IsFaulted)
+                await WaitForStartupDeliveryAsync(admitted, delivery, CancellationToken.None).ConfigureAwait(false);
+            throw;
         }
-        await RequireChannelSuccessAsync(deadline, session).ConfigureAwait(false);
+        finally
+        {
+            stopDelivery.Cancel();
+            await delivery.ConfigureAwait(false);
+        }
     }
 
-    private async Task RequireChannelSuccessAsync(SshRemoteDeadline deadline, TerminalSession session)
+    private async Task RequestStartupAsync(ReadOnlyMemory<byte> payload, Task delivery, CancellationToken token)
     {
-        CancellationToken token = deadline.Token;
+        var reply = await terminalRequests.RequestAsync(
+            commit => SendTransferPacketAsync(payload, token, committed: commit), token).ConfigureAwait(false);
+        await WaitForStartupDeliveryAsync(reply.ReceiveFence, delivery, token).ConfigureAwait(false);
+        if (!reply.Success) throw new IOException("The SSH server refused terminal startup.");
+    }
+
+    private async Task WaitForStartupDeliveryAsync(long fence, Task delivery, CancellationToken token)
+    {
         while (true)
         {
-            byte[] packet = await ReadProtocolAsync(token, authenticate: false, deadline).ConfigureAwait(false);
-            if (packet[0] == 99)
+            Task changed;
+            lock (creditGate)
             {
-                var reply = new SshReader(packet);
-                reply.Expect(99);
-                RequireChannel(ref reply);
-                reply.End();
-                return;
+                if (deliveredStartupBytes >= fence) return;
+                changed = startupProgress.Task;
             }
-            if (packet[0] is not (93 or 94 or 95))
-                throw new IOException("The SSH server refused terminal startup.");
-            await ProcessAsync(packet, token, startup: session).ConfigureAwait(false);
+            if (await Task.WhenAny(changed, delivery).WaitAsync(token).ConfigureAwait(false) == delivery)
+            {
+                await delivery.ConfigureAwait(false);
+                lock (creditGate) if (deliveredStartupBytes >= fence) return;
+                throw new IOException("The SSH channel closed before completing startup delivery.");
+            }
+        }
+    }
+
+    private async Task DeliverStartupAsync(TerminalPayloadConsumer consume, CancellationToken token)
+    {
+        var buffer = new byte[8192];
+        try
+        {
+            while (!token.IsCancellationRequested)
+            {
+                int count = await DeliverPayloadAsync(buffer, consume, token).ConfigureAwait(false);
+                if (count == 0) return;
+                lock (creditGate)
+                {
+                    deliveredStartupBytes += count;
+                    startupProgress.TrySetResult();
+                    startupProgress = NewSignal();
+                }
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        catch (Exception error)
+        {
+            terminalRequests.End(error);
+            Dispose();
+            throw;
         }
     }
 
@@ -474,11 +524,12 @@ internal sealed partial class SshSessionWire : ISessionWire
         return await packets.ReadAsync(deadline.Token).ConfigureAwait(false);
     }
 
-    private async ValueTask SendAuthenticationAsync(ReadOnlyMemory<byte> packet, CancellationToken token)
+    private async ValueTask SendAuthenticationAsync(ReadOnlyMemory<byte> packet, CancellationToken token,
+        bool padCredentials = false)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         deadline.CancelAfter(wait);
-        await packets.SendAsync(packet, deadline.Token).ConfigureAwait(false);
+        await packets.SendAsync(packet, deadline.Token, padCredentials: padCredentials).ConfigureAwait(false);
     }
 
     private bool HandleTransport(byte[] packet, bool authenticate)
@@ -543,7 +594,7 @@ internal sealed partial class SshSessionWire : ISessionWire
         if (messages >= 64 || messageBytes >= 256 * 1024 || interaction.Message is null) return;
         int length = Math.Min(body.Length, Math.Min(16 * 1024, 256 * 1024 - messageBytes));
         string safe = InertText(Encoding.UTF8.GetString(body[..length]));
-        if (length < body.Length) safe += " […]";
+        if (length < body.Length) safe += " [窶ｦ]";
         messages++;
         messageBytes += length;
         interaction.Message(safe);
@@ -563,35 +614,45 @@ internal sealed partial class SshSessionWire : ISessionWire
         return safe.ToString();
     }
 
-    internal Task PeerClosed => peerCloseReceived.Task;
+    internal Task PeerClosed => channelClosure.ProtocolEnded;
 
-    public async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken)
+    public async ValueTask<int> DeliverPayloadAsync(Memory<byte> buffer, TerminalPayloadConsumer consume, CancellationToken token)
     {
-        await receive.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await receive.WaitAsync(token).ConfigureAwait(false);
         try
         {
-            while (true)
-            {
-                lock (creditGate)
-                {
-                    if (incomingCount != 0) return ReadBuffered(buffer.Span);
-                    if (peerEof) return 0;
-                }
-                if (!await incomingReady.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
-                {
-                    // Closing may race with the final buffer notification.
-                    lock (creditGate) return incomingCount == 0 ? 0 : ReadBuffered(buffer.Span);
-                }
-                incomingReady.Reader.TryRead(out _);
-            }
+            var (count, source) = await ReadTerminalPayloadAsync(buffer, token).ConfigureAwait(false);
+            if (count == 0) return 0;
+            await consume(source, buffer[..count].ToArray(), CancellationToken.None).ConfigureAwait(false);
+            Acknowledge(count);
+            return count;
         }
         finally { receive.Release(); }
     }
 
-    private int ReadBuffered(Span<byte> buffer)
+    private async ValueTask<(int Count, TerminalReceiveSource Source)> ReadTerminalPayloadAsync(
+        Memory<byte> buffer, CancellationToken token)
+    {
+        while (true)
+        {
+            lock (creditGate)
+            {
+                if (incomingCount != 0) return ReadBuffered(buffer.Span);
+                if (channelClosure.ReceiveEnded) return default;
+            }
+            if (!await incomingReady.Reader.WaitToReadAsync(token).ConfigureAwait(false))
+            {
+                // Closing may race with the final buffer notification.
+                lock (creditGate) return incomingCount == 0 ? default : ReadBuffered(buffer.Span);
+            }
+            incomingReady.Reader.TryRead(out _);
+        }
+    }
+
+    private (int Count, TerminalReceiveSource Source) ReadBuffered(Span<byte> buffer)
     {
         bool standardError = standardErrorBytes[incomingStart];
-        Source = standardError ? TerminalReceiveSource.StandardError : TerminalReceiveSource.Data;
+        var source = standardError ? TerminalReceiveSource.StandardError : TerminalReceiveSource.Data;
         int limit = Math.Min(buffer.Length, incomingCount);
         int count = 0;
         int offset = incomingStart;
@@ -602,7 +663,7 @@ internal sealed partial class SshSessionWire : ISessionWire
         }
         incomingStart = offset;
         incomingCount -= count;
-        return count;
+        return (count, source);
     }
 
     private void EnqueueTerminalPayload(ReadOnlySpan<byte> bytes, bool standardError)
@@ -618,66 +679,133 @@ internal sealed partial class SshSessionWire : ISessionWire
             for (int i = 0; i < bytes.Length; i++)
                 standardErrorBytes[(start + i) & (ReceiveWindow - 1)] = standardError;
             incomingCount += bytes.Length;
+            enqueuedTerminalBytes += bytes.Length;
         }
         incomingReady.Writer.TryWrite(true);
     }
 
-    public async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken)
+    public async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken) =>
+        _ = await WriteChannelAsync(buffer, cancellationToken, new(buffer.Length)).ConfigureAwait(false);
+
+    internal ValueTask<int> WriteChannelAsync(ReadOnlyMemory<byte> buffer, CancellationToken token, SshSendProgress progress) =>
+        WriteObservedAsync(buffer, token, default, default, progress, null);
+
+    internal ValueTask<int> WritePreparedPasteAsync(ReadOnlyMemory<byte> data, ReadOnlyMemory<int> encodedEnds, CancellationToken lifetime,
+        CancellationToken stopInput, Action<int>? confirmed = null) =>
+        WriteObservedAsync(data, lifetime, stopInput, encodedEnds, new(data.Length), confirmed);
+
+    private async ValueTask<int> WriteObservedAsync(ReadOnlyMemory<byte> buffer, CancellationToken lifetime,
+        CancellationToken stopInput, ReadOnlyMemory<int> encodedEnds, SshSendProgress progress, Action<int>? confirmed)
     {
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, stop.Token);
-        while (!buffer.IsEmpty)
-        {
-            linked.Token.ThrowIfCancellationRequested();
-            await send.WaitAsync(linked.Token).ConfigureAwait(false);
-            Task? waitForCredit = null;
-            try
-            {
-                int count;
-                lock (creditGate)
-                {
-                    if (peerClosed) throw new IOException("The SSH channel is closed.");
-                    count = exchange.IsDue ? 0 : (int)Math.Min((uint)Math.Min(MaxChunk, buffer.Length), Math.Min(peerWindow, peerPacket));
-                    if (count == 0) waitForCredit = exchange.IsDue ? rekeyCompleted.Task : creditChanged.Task;
-                    else peerWindow -= (uint)count;
-                }
-                if (count != 0)
-                {
-                    using var data = ChannelMessage(94, count + 32);
-                    data.String(buffer.Span[..count]);
-                    await packets.SendAsync(data.Memory, linked.Token).ConfigureAwait(false);
-                    buffer = buffer[count..];
-                }
-            }
-            catch
-            {
-                Dispose();
-                throw;
-            }
-            finally { send.Release(); }
-            if (waitForCredit is not null) await waitForCredit.WaitAsync(linked.Token).ConfigureAwait(false);
-        }
+        try { return await WriteChannelBytesAsync(buffer, lifetime, stopInput, encodedEnds, progress, confirmed).ConfigureAwait(false); }
+        finally { progress.Settle(); }
     }
 
-    public void Acknowledge(int count)
+    private async ValueTask<int> WriteChannelBytesAsync(ReadOnlyMemory<byte> buffer, CancellationToken lifetime,
+        CancellationToken stopInput, ReadOnlyMemory<int> encodedEnds, SshSendProgress progress, Action<int>? confirmed)
     {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(lifetime, stop.Token);
+        using var beforeUnit = stopInput.CanBeCanceled
+            ? CancellationTokenSource.CreateLinkedTokenSource(linked.Token, stopInput) : null;
+        int submitted = 0;
+        int confirmedBytes = 0;
+        while (submitted < buffer.Length)
+        {
+            linked.Token.ThrowIfCancellationRequested();
+            bool boundary = beforeUnit is null || IsCompleteBoundary(submitted);
+            CancellationToken admission = boundary && beforeUnit is not null ? beforeUnit.Token : linked.Token;
+            int requested = buffer.Length - submitted;
+            if (beforeUnit is not null && !boundary)
+            {
+                requested = 1;
+                while (!IsCompleteBoundary(submitted + requested)) requested++;
+            }
+
+            try
+            {
+                await send.WaitAsync(admission, payload: true).ConfigureAwait(false);
+                Task? waitForCredit = null;
+                try
+                {
+                    int count;
+                    lock (creditGate)
+                    {
+                        if (peerClosed || channelClosure.CloseRequested) throw new IOException("The SSH channel is closed.");
+                        count = exchange.IsDue ? 0 : channelWindow.ReserveSend(requested);
+                        if (count == 0) waitForCredit = exchange.IsDue ? rekeyCompleted.Task : creditChanged.Task;
+                    }
+                    if (count != 0)
+                    {
+                        using var data = ChannelMessage(94, count + 32);
+                        data.String(buffer.Span.Slice(submitted, count));
+                        try
+                        {
+                            await packets.SendChannelAsync(data.Memory, stop.Token, admission, () =>
+                            {
+                                lock (creditGate) channelWindow.CommitSend(count);
+                            }, progress, count).ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException) when (progress.State.Uncertain is null && !stop.IsCancellationRequested)
+                        {
+                            lock (creditGate)
+                            {
+                                channelWindow.CancelSend(count);
+                                SignalCredit();
+                            }
+                            throw;
+                        }
+                        submitted += count;
+                        if (confirmed is not null)
+                        {
+                            int boundaryIndex = encodedEnds.Span.BinarySearch(submitted);
+                            if (boundaryIndex < 0) boundaryIndex = ~boundaryIndex - 1;
+                            if (boundaryIndex >= 0 && encodedEnds.Span[boundaryIndex] > confirmedBytes)
+                            {
+                                confirmedBytes = encodedEnds.Span[boundaryIndex];
+                                confirmed(confirmedBytes);
+                            }
+                        }
+                    }
+                }
+                catch (OperationCanceledException) when (admission.IsCancellationRequested && !stop.IsCancellationRequested &&
+                    progress.State.Uncertain is null)
+                {
+                    throw;
+                }
+                catch
+                {
+                    Dispose();
+                    throw;
+                }
+                finally { send.Release(); }
+                if (waitForCredit is not null) await waitForCredit.WaitAsync(admission).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (boundary && stopInput.IsCancellationRequested && !linked.IsCancellationRequested &&
+                progress.State.Uncertain is null)
+            {
+                return submitted;
+            }
+        }
+        return submitted;
+
+        bool IsCompleteBoundary(int offset) => encodedEnds.IsEmpty ? Utf8Cutoff(buffer.Span, offset) :
+            offset == 0 || encodedEnds.Span.BinarySearch(offset) >= 0;
+    }
+
+    private static bool Utf8Cutoff(ReadOnlySpan<byte> encoded, int index) =>
+        index == 0 || index == encoded.Length ||
+        ((encoded[index] & 0xc0) != 0x80 && (encoded[index - 1] != 13 || encoded[index] != 10));
+
+    private void Acknowledge(int count)
+    {
+        if (stop.IsCancellationRequested || peerClosed) return;
         int adjust = CollectCredit(count);
         if (adjust != 0) _ = ReturnCreditAsync(adjust);
     }
 
     private int CollectCredit(int count)
     {
-        int adjust = 0;
-        lock (creditGate)
-        {
-            returnedCredit += count;
-            if (returnedCredit >= ReceiveWindow / 2 || receiveCredit <= MaxChunk)
-            {
-                adjust = returnedCredit;
-                returnedCredit = 0;
-                receiveCredit += adjust;
-            }
-        }
-        return adjust;
+        lock (creditGate) return channelWindow.Consume(count);
     }
 
     public async Task ResizeAsync(int width, int height, CancellationToken token)
@@ -714,9 +842,17 @@ internal sealed partial class SshSessionWire : ISessionWire
 
     private async Task SendCreditAsync(int count, CancellationToken token)
     {
-        using var adjust = ChannelMessage(93);
-        adjust.Number((uint)count);
-        await SendControlAsync(adjust.Memory, token).ConfigureAwait(false);
+        while (count != 0)
+        {
+            using var adjust = ChannelMessage(93);
+            adjust.Number((uint)count);
+            int grant = count;
+            await SendControlAsync(adjust.Memory, token, () =>
+            {
+                lock (creditGate) channelWindow.CommitGrant(grant);
+            }).ConfigureAwait(false);
+            lock (creditGate) count = channelWindow.CompleteGrant();
+        }
     }
 
     private async Task ReceiveAsync()
@@ -726,17 +862,18 @@ internal sealed partial class SshSessionWire : ISessionWire
         {
             lastLiveness = Environment.TickCount64;
             read = packets.ReadAsync(stop.Token).AsTask();
+            Task timer = Task.Delay(TimeSpan.FromSeconds(1), stop.Token);
             while (!peerClosed && !stop.IsCancellationRequested)
             {
-                Task timer = Task.Delay(TimeSpan.FromSeconds(1), stop.Token);
                 Task ready = await Task.WhenAny(read, timer).ConfigureAwait(false);
-                if (ready == timer && !exchange.IsDue)
-                {
-                    await CheckLivenessAsync().ConfigureAwait(false);
-                    continue;
-                }
                 if (ready == timer)
                 {
+                    timer = Task.Delay(TimeSpan.FromSeconds(1), stop.Token);
+                    if (!exchange.IsDue)
+                    {
+                        await CheckLivenessAsync().ConfigureAwait(false);
+                        continue;
+                    }
                     await RekeyAsync(null, read).ConfigureAwait(false);
                 }
                 else
@@ -759,6 +896,7 @@ internal sealed partial class SshSessionWire : ISessionWire
         }
         finally
         {
+            terminalRequests.End(new IOException("The SSH terminal channel ended."));
             // A timed-out exchange may still own its original stream read.
             EndTransferChannel();
             // End that read before the packet keys can be released.
@@ -770,7 +908,7 @@ internal sealed partial class SshSessionWire : ISessionWire
                 catch (Exception exception) when (exception is IOException or SocketException or
                     OperationCanceledException or ObjectDisposedException or CryptographicException) { }
             }
-            peerCloseReceived.TrySetResult();
+            channelClosure.EndProtocol();
         }
     }
 
@@ -795,11 +933,17 @@ internal sealed partial class SshSessionWire : ISessionWire
                 rekeyCompleted = NewSignal();
             }
         }
+        catch (Exception error)
+        {
+            // Stop queued channel writes before handing the writer over after a failed trust decision or exchange.
+            incomingReady.Writer.TryComplete(stop.IsCancellationRequested ? null : error);
+            Dispose();
+            throw;
+        }
         finally { send.Release(); }
     }
 
-    private async ValueTask ProcessAsync(byte[] packet, CancellationToken token, bool duringExchange = false,
-        TerminalSession? startup = null)
+    private async ValueTask ProcessAsync(byte[] packet, CancellationToken token, bool duringExchange = false)
     {
         if (HandleTransport(packet, authenticate: false)) return;
         var reader = new SshReader(packet);
@@ -846,8 +990,7 @@ internal sealed partial class SshSessionWire : ISessionWire
                 reader.End();
                 lock (creditGate)
                 {
-                    if (amount > uint.MaxValue - peerWindow) throw new InvalidDataException("SSH channel window overflow.");
-                    peerWindow += amount;
+                    channelWindow.AddSend(amount);
                     SignalCredit();
                 }
                 break;
@@ -856,52 +999,58 @@ internal sealed partial class SshSessionWire : ISessionWire
                 uint dataType = type == 95 ? reader.Number() : 0;
                 byte[] bytes = reader.String().ToArray();
                 reader.End();
-                if (peerEof || bytes.Length > MaxChunk) throw new InvalidDataException("Unexpected SSH channel data.");
-                lock (creditGate)
-                {
-                    if (bytes.Length > receiveCredit) throw new InvalidDataException("SSH receive window exceeded.");
-                    receiveCredit -= bytes.Length;
-                }
+                if (channelClosure.ReceiveEnded || bytes.Length > MaxChunk) throw new InvalidDataException("Unexpected SSH channel data.");
+                lock (creditGate) channelWindow.AcceptReceive(bytes.Length);
                 if (bytes.Length != 0)
                 {
-                    var source = type == 94 ? TerminalReceiveSource.Data : TerminalReceiveSource.StandardError;
                     bool terminalPayload = type == 94 || dataType == 1;
-                    if (startup is not null)
-                    {
-                        if (terminalPayload) await startup.ProcessPayloadAsync(source, bytes, token).ConfigureAwait(false);
-                        int adjust = CollectCredit(bytes.Length);
-                        if (adjust != 0) await SendCreditAsync(adjust, token).ConfigureAwait(false);
-                    }
-                    else if (terminalPayload) EnqueueTerminalPayload(bytes, type == 95);
+                    if (terminalPayload) EnqueueTerminalPayload(bytes, type == 95);
                     else Acknowledge(bytes.Length);
                 }
                 break;
             case 96:
                 reader.End();
-                lock (creditGate) peerEof = true;
+                channelClosure.ReceiveEof();
                 incomingReady.Writer.TryWrite(true);
                 break;
             case 97:
                 reader.End();
-                if (!sentClose)
-                {
-                    using var close = ChannelMessage(97);
+                using (var close = ChannelMessage(97))
                     await RespondCloseAsync(close.Memory, token, duringExchange).ConfigureAwait(false);
-                }
                 lock (creditGate)
                 {
                     peerClosed = true;
                     SignalCredit();
                 }
-                peerCloseReceived.TrySetResult();
+                channelClosure.EndProtocol();
                 break;
             case 98:
-                reader.String();
-                if (reader.Boolean())
+                ReadOnlySpan<byte> request = reader.String();
+                bool wantsReply = reader.Boolean();
+                bool exitStatus = request.SequenceEqual("exit-status"u8);
+                bool exitSignal = request.SequenceEqual("exit-signal"u8);
+                if (exitStatus)
                 {
-                    using var failure = ChannelMessage(100);
-                    await RespondAsync(failure.Memory, token, duringExchange).ConfigureAwait(false);
+                    reader.Number();
+                    reader.End();
                 }
+                else if (exitSignal)
+                {
+                    reader.String();
+                    reader.Boolean();
+                    reader.String();
+                    reader.String();
+                    reader.End();
+                }
+                if (wantsReply)
+                {
+                    using var response = ChannelMessage(exitStatus || exitSignal ? (byte)99 : (byte)100);
+                    await RespondAsync(response.Memory, token, duringExchange).ConfigureAwait(false);
+                }
+                break;
+            case 99 or 100:
+                reader.End();
+                lock (creditGate) terminalRequests.Complete(type == 99, enqueuedTerminalBytes);
                 break;
             default:
                 throw new InvalidDataException($"Unexpected SSH channel message ({type}).");
@@ -912,26 +1061,30 @@ internal sealed partial class SshSessionWire : ISessionWire
     {
         if (defer)
         {
-            if (!sentClose)
-            {
-                sentClose = true;
+            if (channelClosure.ScheduleClosePacket())
                 await RespondAsync(close, token, defer: true).ConfigureAwait(false);
-            }
             return;
         }
         await send.WaitAsync(token).ConfigureAwait(false);
         try
         {
-            if (sentClose || Volatile.Read(ref closed) != 0) return;
-            sentClose = true;
+            if (Volatile.Read(ref closed) != 0 || !channelClosure.ScheduleClosePacket()) return;
             await packets.SendAsync(close, token).ConfigureAwait(false);
         }
         finally { send.Release(); }
     }
 
-    public ValueTask CloseAsync()
+    public async ValueTask CloseAsync()
     {
-        lock (shutdownGate) return new ValueTask(shutdown ??= CloseChannelAsync());
+        try { await DisconnectForDeliveryAsync().ConfigureAwait(false); }
+        finally { await ReleaseReceiveAsync().ConfigureAwait(false); }
+    }
+
+    internal Task DisconnectForDeliveryAsync()
+    {
+        if (channelClosure.RequestClose())
+            lock (creditGate) SignalCredit();
+        lock (shutdownGate) return shutdown ??= CloseChannelAsync();
     }
 
     private async Task CloseChannelAsync()
@@ -943,21 +1096,39 @@ internal sealed partial class SshSessionWire : ISessionWire
             {
                 using var close = ChannelMessage(97);
                 await RespondCloseAsync(close.Memory, deadline.Token, defer: false).ConfigureAwait(false);
-                await peerCloseReceived.Task.WaitAsync(deadline.Token).ConfigureAwait(false);
+                await channelClosure.ProtocolEnded.WaitAsync(deadline.Token).ConfigureAwait(false);
             }
         }
         catch (Exception exception) when (exception is IOException or SocketException or OperationCanceledException
             or ObjectDisposedException or CryptographicException or InvalidDataException) { }
         finally { Dispose(); }
         await packetKeysCleared.Task.ConfigureAwait(false);
+    }
+
+    internal async Task ReleaseReceiveAsync()
+    {
+        if (!channelClosure.BeginRelease())
+        {
+            await channelClosure.ActualRelease.ConfigureAwait(false);
+            return;
+        }
         await receive.WaitAsync().ConfigureAwait(false);
         try
         {
-            lock (creditGate) incomingCount = 0;
+            lock (creditGate)
+            {
+                incomingCount = incomingStart = 0;
+                incoming = [];
+                standardErrorBytes = new System.Collections.BitArray(0);
+            }
             incomingReady.Reader.TryRead(out _);
             receiveMemory.Dispose();
         }
-        finally { receive.Release(); }
+        finally
+        {
+            receive.Release();
+            channelClosure.EndRelease();
+        }
     }
 
     private async Task CheckLivenessAsync()
@@ -994,10 +1165,19 @@ internal sealed partial class SshSessionWire : ISessionWire
         return packet;
     }
 
-    private async Task SendControlAsync(ReadOnlyMemory<byte> packet, CancellationToken token)
+    private async Task SendControlAsync(ReadOnlyMemory<byte> packet, CancellationToken token, Action? committed = null)
     {
         await send.WaitAsync(token).ConfigureAwait(false);
-        try { await packets.SendAsync(packet, token).ConfigureAwait(false); }
+        bool issued = false;
+        try
+        {
+            await packets.SendAsync(packet, stop.Token, token, () =>
+            {
+                issued = true;
+                committed?.Invoke();
+            }).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!issued && !stop.IsCancellationRequested) { throw; }
         catch
         {
             Dispose();

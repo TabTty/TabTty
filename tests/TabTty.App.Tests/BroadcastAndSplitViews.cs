@@ -11,8 +11,103 @@ using TabTty.Core;
 
 internal static partial class Program
 {
+    private static void SendText(TerminalSurface pane, string input) => pane.RaiseEvent(new TextCompositionEventArgs(
+        Keyboard.PrimaryDevice, new TextComposition(InputManager.Current, pane, input))
+        { RoutedEvent = TextCompositionManager.PreviewTextInputEvent });
+
+    private static async Task CheckBroadcastReconnectAsync(App app, string directory)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+        using var first = new TcpListener(IPAddress.Loopback, 0);
+        using var second = new TcpListener(IPAddress.Loopback, 0);
+        first.Start();
+        second.Start();
+        string path = Path.Combine(directory, "broadcast-reconnect.ttty");
+        await ConnectionProfile.CreateTelnet("Same name", "127.0.0.1", ((IPEndPoint)first.LocalEndpoint).Port)
+            .SaveNewAsync(path, deadline.Token);
+        var tab = new TerminalTab(path);
+        bool autoClose = app.AutoCloseDisconnectedTabs;
+        await SetAutoClose(false);
+        var window = new MainWindow(app);
+        window.Show();
+        window.AddTerminalTab(tab);
+        try
+        {
+            await CheckConnection(first, selected: true);
+            await CheckConnection(first, selected: true);
+            var profile = await ConnectionProfile.LoadAsync(path, deadline.Token);
+            var edit = System.Text.Json.Nodes.JsonNode.Parse(profile.ToEditorJson())!;
+            edit["connection"]!["port"] = ((IPEndPoint)second.LocalEndpoint).Port;
+            await profile.Edit(edit.ToJsonString()).SaveEditAsync(deadline.Token);
+            await CheckConnection(second, selected: true, previous: first);
+            tab.BroadcastChecked = false;
+            await CheckConnection(second, selected: false);
+        }
+        finally
+        {
+            tab.Disconnect();
+            await tab.Completion;
+            window.Close();
+            await SetAutoClose(autoClose);
+        }
+
+        Task SetAutoClose(bool enabled) => app.SaveSettingsAsync(app.LanguageChoice, app.ThemeChoice, app.BellChoice,
+            app.TerminalFontFamily, app.TerminalFontSize, app.RetainedRows, enabled, app.VaultPath, app.SettingsRevision);
+
+        async Task CheckConnection(TcpListener endpoint, bool selected, TcpListener? previous = null)
+        {
+            var ready = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            void Connected(string _) => ready.TrySetResult(tab.BroadcastChecked);
+            tab.Connected += Connected;
+            try
+            {
+                tab.Start();
+                using var peer = await endpoint.AcceptTcpClientAsync(deadline.Token);
+                await peer.GetStream().ReadExactlyAsync(new byte[15], deadline.Token);
+                if (await ready.Task.WaitAsync(deadline.Token) != selected)
+                    throw new InvalidOperationException("Reconnecting changed the user's broadcast selection.");
+                await window.Dispatcher.InvokeAsync(async () =>
+                {
+                    var notice = window.OwnedWindows.OfType<Window>().SingleOrDefault(dialog => dialog.IsVisible);
+                    try
+                    {
+                        if (previous is null && notice is null) return;
+                        if (previous is null || notice is not { Topmost: true, ShowActivated: false, IsActive: false } ||
+                            !window.IsEnabled || notice.Title != App.Text("ReconnectDestinationChanged"))
+                            throw new InvalidOperationException("The destination change notification appeared at the wrong time or below the owner.");
+                        string before = string.Format(App.Text("AiTelnetTarget"), previous.LocalEndpoint);
+                        string after = string.Format(App.Text("AiTelnetTarget"), endpoint.LocalEndpoint);
+                        string body = string.Format(App.Text("ReconnectDestinationDetails"), "Same name", before, after);
+                        if (!FindControls<TextBlock>(notice).Any(label => label.Text == body) || FindControls<Button>(notice).Count() != 1)
+                            throw new InvalidOperationException("The reconnect notification did not identify the old and new destinations.");
+                        var pane = FindControls<TerminalSurface>(tab).Single();
+                        SendText(pane, "a");
+                        var input = new byte[2];
+                        await peer.GetStream().ReadExactlyAsync(input.AsMemory(0, 1), deadline.Token);
+                        app.Broadcast.Start(window);
+                        if (!app.Broadcast.IsActive(window))
+                            throw new InvalidOperationException("Broadcast could not start while the notification was visible.");
+                        SendText(pane, "b");
+                        await peer.GetStream().ReadExactlyAsync(input.AsMemory(1), deadline.Token);
+                        if (!input.AsSpan().SequenceEqual("ab"u8) || !notice.IsVisible)
+                            throw new InvalidOperationException("The open notification interrupted terminal or broadcast input.");
+                        app.Broadcast.Stop(window);
+                        FindControls<Button>(notice).Single().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                        if (notice.IsVisible || !tab.BroadcastChecked)
+                            throw new InvalidOperationException("Acknowledging the notification changed broadcast selection.");
+                    }
+                    finally { if (notice?.IsVisible == true) notice.Close(); }
+                }, DispatcherPriority.ApplicationIdle, deadline.Token).Task.Unwrap();
+                tab.Disconnect();
+                await tab.Completion.WaitAsync(deadline.Token);
+            }
+            finally { tab.Connected -= Connected; }
+        }
+    }
+
     private static async Task BroadcastAndSplitViews(App app, string directory)
     {
+        await CheckBroadcastReconnectAsync(app, directory);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -21,12 +116,21 @@ internal static partial class Program
         var other = new MainWindow(app);
         var terminals = new List<TerminalTab>();
         bool originalScope = app.BroadcastAcrossWindows;
+        var captureStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var clipboard = new TaskCompletionSource<TerminalPaste?>(TaskCreationOptions.RunContinuationsAsynchronously);
         try
         {
             host.Show();
             other.Show();
-            var (source, firstPeer) = await Connect(host, "UTF-8", "utf-8");
+            var (source, firstPeer) = await Connect(host, "UTF-8", "utf-8", (_, _, _) =>
+            {
+                captureStarted.SetResult();
+                return clipboard.Task;
+            });
             using var first = firstPeer;
+            if (!FindControls<TextBlock>(source).Any(label => label.IsVisible &&
+                label.Text.Contains(App.Text("TelnetUnencrypted"), StringComparison.Ordinal)))
+                throw new InvalidOperationException("The connected Telnet tab omitted its clear-text transport status.");
             var (target, secondPeer) = await Connect(host, "CP932", "cp932");
             using var second = secondPeer;
             var (outside, thirdPeer) = await Connect(other, "Outside", "utf-8");
@@ -74,16 +178,21 @@ internal static partial class Program
             var broadcast = FindMenu(host, "ConnectionMenu", "BroadcastInput");
             Click(Child(broadcast, "BroadcastStart"));
             var otherBroadcast = FindMenu(other, "ConnectionMenu", "BroadcastInput");
-            if (!source.BroadcastChecked || !target.BroadcastChecked || outside.BroadcastChecked)
-                throw new InvalidOperationException("First local use did not select just the window's tabs.");
+            if (!source.BroadcastChecked || !target.BroadcastChecked || !outside.BroadcastChecked || app.Broadcast.IsActive(other))
+                throw new InvalidOperationException("New tabs must be checked by default and respect the active window scope.");
             var tabBar = (TabControl)host.FindName("tabs");
             var headers = tabBar.Items.OfType<TabItem>().ToArray();
             var sourceCheck = ((DockPanel)headers[0].Header).Children.OfType<CheckBox>().Single();
+            string destination = string.Format(App.Text("AiTelnetTarget"), $"127.0.0.1:{port}");
+            if (sourceCheck.ToolTip as string != $"{destination} — UTF-8" ||
+                !System.Windows.Automation.AutomationProperties.GetName(sourceCheck).Contains(destination))
+                throw new InvalidOperationException("The broadcast checkbox did not identify its connection.");
             sourceCheck.IsChecked = false;
             sourceCheck.RaiseEvent(new RoutedEventArgs(CheckBox.ClickEvent, sourceCheck));
             tabBar.SelectedItem = headers[0];
             host.UpdateLayout();
             var sourceView = FindControls<TerminalSurface>(source).Single();
+            await VerifyClipboardRoutingAsync(source, first, second, third);
             SendText(sourceView, "あ");
             var actual = new byte[2];
             await second.GetStream().ReadExactlyAsync(actual, deadline.Token);
@@ -95,7 +204,8 @@ internal static partial class Program
             Click(Child(broadcast, "BroadcastStart"));
             if (source.BroadcastChecked) throw new InvalidOperationException("Stop/Start lost the remembered selection.");
             Click(Child(otherBroadcast, "BroadcastStart"));
-            SaveScope(true);
+            await VerifyCompetingPastesAsync(source, first, target, second, outside, third);
+            await SaveScope(true);
             if (source.BroadcastChecked || !app.Broadcast.IsLocal(host))
                 throw new InvalidOperationException("Saving scope changed an active local broadcast.");
             broadcast = FindMenu(host, "ConnectionMenu", "BroadcastInput");
@@ -108,12 +218,26 @@ internal static partial class Program
                 throw new InvalidOperationException("The first global Start did not reset all selections.");
 
             var waitingAnswer = new TaskCompletionSource<BroadcastInput.PasteDecision?>();
+            var previewEntered = new TaskCompletionSource<BroadcastInput.PastePreview>(TaskCreationOptions.RunContinuationsAsynchronously);
             var defaults = app.PasteDefaults;
+            using var origin = new CancellationTokenSource();
+            using var previewSource = TerminalPaste.Create("cancelled\n");
             Task<BroadcastInput.PasteOutcome> cancelledPreview = app.Broadcast.PasteAsync(host, source,
-                TerminalPaste.Create("cancelled\n"), (_, _) => waitingAnswer.Task);
-            app.Broadcast.StopPaste(host);
+                previewSource, (preview, _) =>
+                {
+                    previewEntered.SetResult(preview);
+                    return waitingAnswer.Task;
+                }, origin: origin.Token);
+            var shown = await previewEntered.Task.WaitAsync(deadline.Token);
+            origin.Cancel();
+            string currentDestination = string.Format(App.Text("AiTelnetTarget"), $"127.0.0.1:{port}");
+            string[] expectedRecipients = [$"{currentDestination} — UTF-8", $"{currentDestination} — CP932", $"{currentDestination} — Outside"];
+            if (!shown.Targets.Order().SequenceEqual(expectedRecipients.Order()))
+                throw new InvalidOperationException("Unexpected paste recipients: " + string.Join(", ", shown.Targets));
             if (await cancelledPreview.WaitAsync(deadline.Token) != BroadcastInput.PasteOutcome.Stopped)
                 throw new InvalidOperationException("The obsolete preview did not release its operation.");
+            previewSource.Dispose();
+            using (previewSource.HoldSource()) { }
             if (await app.Broadcast.PasteAsync(host, source, TerminalPaste.Create("shared"),
                 (_, _) => throw new InvalidOperationException("Single-line paste must not prompt."), new(0, 0, false))
                 != BroadcastInput.PasteOutcome.Submitted)
@@ -243,14 +367,15 @@ internal static partial class Program
             await Task.WhenAll(terminals.Select(terminal => terminal.Completion));
             if (!host.IsClosing) host.Close();
             if (!other.IsClosing) other.Close();
-            SaveScope(originalScope);
+            await SaveScope(originalScope);
         }
 
-        async Task<(TerminalTab Tab, TcpClient Peer)> Connect(MainWindow window, string name, string codec)
+        async Task<(TerminalTab Tab, TcpClient Peer)> Connect(MainWindow window, string name, string codec,
+            Func<Window, long, CancellationToken, Task<TerminalPaste?>>? capture = null)
         {
             string path = Path.Combine(directory, $"broadcast-{codec}-{Guid.NewGuid():N}.ttty");
             await ConnectionProfile.CreateTelnet(name, "127.0.0.1", port, receiveEncoding: codec).SaveNewAsync(path, deadline.Token);
-            var terminal = new TerminalTab(path);
+            var terminal = new TerminalTab(path, null, captureClipboard: capture);
             terminals.Add(terminal);
             window.AddTerminalTab(terminal);
             var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -263,7 +388,82 @@ internal static partial class Program
             return (terminal, peer);
         }
 
-        void SaveScope(bool acrossWindows) => app.SaveSettings(app.LanguageChoice, app.ThemeChoice, app.BellChoice,
+        async Task VerifyClipboardRoutingAsync(TerminalTab source, TcpClient first, TcpClient second, TcpClient third)
+        {
+            Task paste = source.PasteAsync();
+            await captureStarted.Task.WaitAsync(deadline.Token);
+            app.Broadcast.Select(host, source, true);
+            if (source.BroadcastChecked)
+                throw new InvalidOperationException("The broadcast recipients changed during clipboard capture.");
+            clipboard.SetResult(TerminalPaste.Create("A"));
+            await paste.WaitAsync(deadline.Token);
+            var received = new byte[1];
+            await second.GetStream().ReadExactlyAsync(received, deadline.Token);
+            if (received[0] != 'A' || first.Available != 0 || third.Available != 0)
+                throw new InvalidOperationException("The clipboard text was sent beyond the original recipients.");
+
+            foreach (bool stopBroadcast in new[] { true, false })
+            {
+                captureStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                clipboard = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                paste = source.PasteAsync();
+                await captureStarted.Task.WaitAsync(deadline.Token);
+                if (stopBroadcast) app.Broadcast.Stop(host);
+                else app.Broadcast.Start(host);
+                clipboard.SetResult(TerminalPaste.Create("B"));
+                await paste.WaitAsync(deadline.Token);
+                if (first.Available != 0 || second.Available != 0 || third.Available != 0)
+                    throw new InvalidOperationException("Changing broadcast mode redirected a pending paste.");
+                if (stopBroadcast) await WaitForStart(host);
+            }
+        }
+
+        async Task VerifyCompetingPastesAsync(TerminalTab source, TcpClient first, TerminalTab target, TcpClient second,
+            TerminalTab outside, TcpClient third)
+        {
+            using var shared = TerminalPaste.Create("XY");
+            app.Broadcast.SetAll(host, true);
+            using (var pressure = await target.InputSession!.PrepareInputAsync(
+                new TerminalInput(TerminalInputKind.Text, new string('p', 512 * 1024)), null, deadline.Token))
+            {
+                var outsidePaste = app.Broadcast.PasteAsync(other, outside, shared, NoPreview,
+                    new BroadcastInput.PasteDecision(10_000, 0, false), deadline.Token);
+                try
+                {
+                    var prefix = new byte[1];
+                    await third.GetStream().ReadExactlyAsync(prefix, deadline.Token);
+                    var refused = await app.Broadcast.PasteAsync(host, source, shared, NoPreview,
+                        new BroadcastInput.PasteDecision(0, 0, false), deadline.Token);
+                    if (prefix[0] != 'X' || refused != BroadcastInput.PasteOutcome.Stopped ||
+                        first.Available != 0 || second.Available != 0 || outsidePaste.IsCompleted)
+                        throw new InvalidOperationException("One exhausted target did not refuse the whole local broadcast.");
+                }
+                finally { app.Broadcast.StopPaste(other); }
+                if (await outsidePaste != BroadcastInput.PasteOutcome.Stopped || third.Available != 0)
+                    throw new InvalidOperationException("Stopping the independent paste sent its uncommitted suffix.");
+            }
+            if (!app.Broadcast.IsActive(host))
+            {
+                await WaitForStart(host);
+                app.Broadcast.Start(host);
+                app.Broadcast.SetAll(host, true);
+            }
+            var sent = await app.Broadcast.PasteAsync(host, source, shared, NoPreview,
+                new BroadcastInput.PasteDecision(0, 0, false), deadline.Token);
+            var received = new byte[2];
+            await first.GetStream().ReadExactlyAsync(received, deadline.Token);
+            bool firstExact = received.AsSpan().SequenceEqual("XY"u8);
+            await second.GetStream().ReadExactlyAsync(received, deadline.Token);
+            if (sent != BroadcastInput.PasteOutcome.Submitted || !firstExact ||
+                !received.AsSpan().SequenceEqual("XY"u8) || third.Available != 0)
+                throw new InvalidOperationException("Released capacity did not restore exact paste to the local targets.");
+            app.Broadcast.Select(host, source, false);
+
+            static Task<BroadcastInput.PasteDecision?> NoPreview(BroadcastInput.PastePreview _, CancellationToken token) =>
+                throw new InvalidOperationException("A two-character paste unexpectedly opened a preview.");
+        }
+
+        Task SaveScope(bool acrossWindows) => app.SaveSettingsAsync(app.LanguageChoice, app.ThemeChoice, app.BellChoice,
             app.TerminalFontFamily, app.TerminalFontSize, app.RetainedRows, app.AutoCloseDisconnectedTabs,
             app.VaultPath, app.SettingsRevision, acrossWindows);
 
@@ -274,9 +474,6 @@ internal static partial class Program
             while (!Child(commands, "BroadcastStart").IsEnabled);
         }
 
-        static void SendText(TerminalSurface pane, string input) => pane.RaiseEvent(new TextCompositionEventArgs(
-            Keyboard.PrimaryDevice, new TextComposition(InputManager.Current, pane, input))
-        { RoutedEvent = TextCompositionManager.PreviewTextInputEvent });
         static MenuItem Child(ItemsControl menu, string key) => menu.Items.OfType<MenuItem>()
             .Single(item => Equals(item.Header, App.Text(key)));
         static MenuItem FindMenu(MainWindow window, string top, string child) =>

@@ -9,12 +9,9 @@ using static TabTty.App.App;
 
 namespace TabTty.App;
 
-internal sealed class SshHostTrust(App app)
+internal sealed class SshHostTrust(App app, string pathName, Action<string, string, string?>? issue)
 {
-    private static readonly string PathName = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TabTty", "host-keys.json");
-
-    public JsonStoreRecovery.Store RecoveryStore() => new(Text("HostKeys"), PathName,
+    public JsonStoreRecovery.Store RecoveryStore() => new(Text("HostKeys"), pathName,
         path => _ = Read(path), () => { },
         () => "{\"schemaVersion\":1,\"requiredFeatures\":[],\"destinations\":[]}"u8.ToArray());
 
@@ -28,7 +25,7 @@ internal sealed class SshHostTrust(App app)
             .Select(key => key["format"]!.GetValue<string>()).ToArray() ?? [];
     }
 
-    public bool Approve(Window owner, SshHostKey key, CancellationToken token)
+    public async Task<bool> ApproveAsync(Window owner, SshHostKey key, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
         var (document, original) = Read();
@@ -44,14 +41,23 @@ internal sealed class SshHostTrust(App app)
         if (priorFingerprint == key.Fingerprint && previous!["publicBlob"]!.GetValue<string>() ==
             Convert.ToBase64String(key.PublicBlob.Span))
             return true;
-        var form = new MainWindow.FormWindow(owner, Text(priorFingerprint is null ? "NewHostKey" : "ChangedHostKey"));
+        var (title, accept) = (destination, previous) switch
+        {
+            (null, _) => ("NewHostKey", "TrustHostKey"),
+            (_, null) => ("AdditionalHostKey", "AddHostKey"),
+            _ => ("ChangedHostKey", "ReplaceHostKey"),
+        };
+        var form = new MainWindow.FormWindow(owner, Text(title));
         form.AddField("SshDestination", ReadOnly(key.Destination.ToString()));
         form.AddField("HostKeyType", ReadOnly(key.Format));
         if (priorFingerprint is not null)
             form.AddField("PreviousFingerprint", ReadOnly(priorFingerprint));
+        else if (keys is not null)
+            form.AddField("ApprovedHostKeys", ReadOnly(string.Join(Environment.NewLine,
+                keys.OfType<JsonObject>().Select(item => $"{item["format"]}   {item["fingerprint"]}"))));
         form.AddField("PresentedFingerprint", ReadOnly(key.Fingerprint));
-        form.AddButtons(() => { }, acceptKey: priorFingerprint is null ? "TrustHostKey" : "ReplaceHostKey",
-            cancelDefault: true);
+        form.AddNotice("VerifyHostFingerprint");
+        form.AddButtons(() => { }, acceptKey: accept, cancelDefault: true);
         if (ShowCancellable(app, form, token) != true) return false;
         token.ThrowIfCancellationRequested();
 
@@ -77,36 +83,38 @@ internal sealed class SshHostTrust(App app)
             JsonStoreRecovery.PreserveUnknown(entry, previous);
             keys![keys.IndexOf(previous)] = entry;
         }
-        Save(document, original);
+        await SaveAsync(document, original, token);
+        token.ThrowIfCancellationRequested();
         return true;
     }
 
     public void Show(MainWindow owner) => owner.OpenForm("HostKeys", form =>
     {
+        form.ShowFileOperationStatus();
         var (document, original) = Read();
         var destinations = document["destinations"]!.AsArray();
         var items = destinations.OfType<JsonObject>().SelectMany(destination => destination["keys"]!.AsArray()
             .OfType<JsonObject>().Select(key => new HostRow(destination, key))).ToList();
         var list = new ListBox { MinHeight = 140, MaxHeight = 320, ItemsSource = items };
         form.AddField("HostKeys", list);
-        form.AddAsyncButtons(() =>
+        form.AddAsyncButtons(async () =>
         {
             if (list.SelectedItem is not HostRow row) throw new ArgumentException(Text("SelectHostKey"));
             if (app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow, Text("ConfirmDeleteHostKey"), Text("HostKeys"),
                     MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No)) != MessageBoxResult.Yes)
-                return Task.FromResult(false);
+                return false;
             var keys = row.Destination["keys"]!.AsArray();
             int index = keys.IndexOf(row.Key);
             keys.RemoveAt(index);
             if (keys.Count == 0) destinations.Remove(row.Destination);
-            try { Save(document, original); }
+            try { await SaveAsync(document, original); }
             catch
             {
                 if (row.Destination.Parent is null) destinations.Add(row.Destination);
                 keys.Insert(index, row.Key);
                 throw;
             }
-            return Task.FromResult(true);
+            return true;
         }, acceptKey: "DeleteHostKey", cancelDefault: true);
     });
 
@@ -120,9 +128,12 @@ internal sealed class SshHostTrust(App app)
 
     private static TextBox ReadOnly(string value) => new() { Text = value, IsReadOnly = true };
 
-    private static (JsonObject Document, byte[]? Original) Read(string? path = null)
+    private (JsonObject Document, byte[]? Original) Read(string? path = null)
     {
-        path ??= PathName;
+        bool live = path is null;
+        path ??= pathName;
+        if (live && VerifiedFilePublication.IsPublicationActive(path)) throw new IOException(Text("FileOperationPending"));
+        if (live && VerifiedFilePublication.IsUnresolved(path)) throw new IOException(Text("StoreSaveUnverified"));
         if (!File.Exists(path))
             return (new JsonObject
             {
@@ -173,11 +184,12 @@ internal sealed class SshHostTrust(App app)
         return bytes;
     }
 
-    private static void Save(JsonObject document, byte[]? original)
+    private async Task SaveAsync(JsonObject document, byte[]? original, CancellationToken token = default)
     {
         byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(document);
         if (bytes.Length > 16 * 1024 * 1024) throw InvalidStore();
-        JsonStoreRecovery.Save(PathName, bytes, original);
+        var operation = JsonStoreRecovery.BeginSave(pathName, bytes, original, path => _ = Read(path), issue, token);
+        JsonStoreRecovery.RequireVerified(await operation.ObserveAsync());
     }
 
     private static InvalidDataException InvalidStore() => new(Text("HostStoreInvalid"));

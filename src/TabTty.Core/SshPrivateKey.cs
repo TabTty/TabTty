@@ -116,7 +116,7 @@ internal sealed class SshPrivateKey : IDisposable
                 var file = new AsnReader(plaintext, AsnEncodingRules.DER);
                 var key = file.ReadSequence();
                 if (key.ReadInteger() != 1) throw InvalidKey();
-                key.ReadOctetString();
+                if (!key.TryReadPrimitiveOctetString(out _)) throw InvalidKey();
                 var parameters = key.ReadSequence(new Asn1Tag(TagClass.ContextSpecific, 0, isConstructed: true));
                 string curve = parameters.ReadObjectIdentifier();
                 parameters.ThrowIfNotEmpty();
@@ -158,8 +158,7 @@ internal sealed class SshPrivateKey : IDisposable
             if (password.Length > 16 * 1024 || password.Span.Contains((byte)0))
                 throw new ArgumentException("Invalid private-key passphrase.");
             _ = VaultContainer.StrictUtf8.GetCharCount(password.Span);
-            using OpenSsl.Key key = OpenSsl.DecryptPkcs8(source, password.Span);
-            byte[] der = OpenSsl.ExportPkcs8(key);
+            byte[] der = OpenSsl.DecryptPkcs8(copy, password.Span);
             try { return FromPkcs8(der); }
             finally { CryptographicOperations.ZeroMemory(der); }
         }
@@ -173,7 +172,7 @@ internal sealed class SshPrivateKey : IDisposable
         try
         {
             string algorithm = PrivateKeyEnvelope.InspectPkcs8(owned);
-            return Adopt(OpenSsl.ImportPkcs8(der), algorithm);
+            return Adopt(OpenSsl.ImportPkcs8(owned), algorithm);
         }
         finally { CryptographicOperations.ZeroMemory(owned); }
     }

@@ -13,22 +13,30 @@ internal static class ThemedMessageBox
 
     public static MessageBoxResult Show(Window? owner, string message, string title,
         MessageBoxButton buttons = MessageBoxButton.OK, MessageBoxImage icon = MessageBoxImage.None,
-        MessageBoxResult defaultResult = MessageBoxResult.None)
+        MessageBoxResult defaultResult = MessageBoxResult.None, ImageSource? windowIcon = null)
     {
         MessageBoxResult result = DismissalResult(buttons);
-        Window dialog = Create(owner, message, title, buttons, icon, defaultResult, selected => result = selected);
+        Window dialog = Create(owner, message, title, buttons, icon, defaultResult, selected => result = selected,
+            windowIcon: windowIcon);
         dialog.ShowDialog();
         return result;
     }
 
+    public static MessageBoxResult ShowVault(Window? owner, string message, string title,
+        MessageBoxButton buttons = MessageBoxButton.OK, MessageBoxImage icon = MessageBoxImage.None,
+        MessageBoxResult defaultResult = MessageBoxResult.None) =>
+        Show(owner, message, title, buttons, icon, defaultResult, WindowIcons.Vault);
+
     internal static Window Create(Window? owner, string message, string title, MessageBoxButton buttons,
         MessageBoxImage icon, MessageBoxResult defaultResult, Action<MessageBoxResult> select,
-        Func<MessageBoxResult, string>? label = null)
+        Func<MessageBoxResult, string>? label = null, ImageSource? windowIcon = null, bool notification = false)
     {
         owner = owner is { IsVisible: true } ? owner : null;
         var dialog = new Window
         {
-            Owner = owner, Title = title, Width = 480, SizeToContent = SizeToContent.Height,
+            Owner = owner, Title = title, Icon = windowIcon ?? WindowIcons.App,
+            Topmost = notification, ShowActivated = !notification,
+            Width = 480, SizeToContent = SizeToContent.Height,
             ResizeMode = ResizeMode.NoResize, ShowInTaskbar = owner is null,
             WindowStartupLocation = owner is null ? WindowStartupLocation.CenterScreen : WindowStartupLocation.CenterOwner,
             MaxWidth = Math.Max(300, SystemParameters.WorkArea.Width - 32),
@@ -91,14 +99,15 @@ internal static class ThemedMessageBox
             var button = new Button
             {
                 Content = label?.Invoke(choice) ?? Text(choice.ToString()), MinWidth = 84, Margin = new Thickness(8, 0, 0, 0),
-                IsDefault = choice == initial, IsCancel = choice == DismissalResult(buttons),
+                IsDefault = choice == initial, IsCancel = !notification && choice == DismissalResult(buttons),
             };
             button.Click += (_, _) =>
             {
                 select(choice);
-                dialog.DialogResult = true;
+                if (notification) dialog.Close();
+                else dialog.DialogResult = true;
             };
-            if (button.IsDefault) dialog.Loaded += (_, _) => button.Focus();
+            if (!notification && button.IsDefault) dialog.Loaded += (_, _) => button.Focus();
             actions.Children.Add(button);
         }
         return dialog;

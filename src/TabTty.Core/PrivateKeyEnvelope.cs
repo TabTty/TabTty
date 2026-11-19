@@ -60,7 +60,8 @@ internal static class PrivateKeyEnvelope
         ReadOnlySpan<byte> modulus = Positive(key.ReadIntegerBytes().Span);
         int bits = modulus.Length * 8 - BitOperations.LeadingZeroCount((uint)modulus[0]) + 24;
         if (bits is < 2048 or > 8192) throw Invalid();
-        for (int index = 0; index < 7; index++) _ = Positive(key.ReadIntegerBytes().Span);
+        for (int index = 0; index < 7; index++)
+            if (Positive(key.ReadIntegerBytes().Span).Length > modulus.Length) throw Invalid();
         key.ThrowIfNotEmpty();
         file.ThrowIfNotEmpty();
     }

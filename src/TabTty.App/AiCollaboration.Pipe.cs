@@ -63,11 +63,13 @@ internal sealed partial class AiCollaboration
         {
             using (pipe)
             using (var process = endpoint.VerifyPeer(pipe, server: false, "TabTty.McpBridge.exe", out string location))
-            using (var channel = new AiPrivateChannel(pipe, process))
+            using (var launcher = endpoint.OpenLauncher(process, out string launcherPath, out uint launcherId))
+            using (var channel = new AiPrivateChannel(pipe, process, launcher))
             {
                 using (var handshake = AiFrames.Deadline(token, 5))
                     await AiPrivateChannel.HandshakeAsync(pipe, server: true, handshake.Token).ConfigureAwait(false);
-                peer = await app.Dispatcher.InvokeAsync(() => Attach(location), DispatcherPriority.Normal, token).Task.ConfigureAwait(false);
+                peer = await app.Dispatcher.InvokeAsync(() => Attach(location, launcherPath, launcherId),
+                    DispatcherPriority.Normal, token).Task.ConfigureAwait(false);
                 if (peer is null) return;
                 Counterpart attached = peer;
                 await app.Dispatcher.InvokeAsync(() => attached.SharingEnded = id =>
@@ -89,7 +91,8 @@ internal sealed partial class AiCollaboration
                     {
                         string? name = client.GetString();
                         if (name is not null && name.EnumerateRunes().Count() <= 128)
-                            await app.Dispatcher.InvokeAsync(() => attached.Name = CleanDisplay(name)).Task.ConfigureAwait(false);
+                            await app.Dispatcher.InvokeAsync(() => attached.Name ??= PermissionDisplay.SingleLine(name),
+                                DispatcherPriority.Background, channel.Token).Task.ConfigureAwait(false);
                         return;
                     }
                     int id = message.GetProperty("id").GetInt32();
@@ -98,23 +101,25 @@ internal sealed partial class AiCollaboration
                     if (nameOfTool == "protocol")
                     {
                         int retry = await app.Dispatcher.InvokeAsync(() => TryTakeCall(attached, out int delay) ? 0 : delay,
-                            DispatcherPriority.Normal, channel.Token).Task.ConfigureAwait(false);
+                            DispatcherPriority.Background, channel.Token).Task.ConfigureAwait(false);
                         if (!channel.TrySend(new { id, protocol_retry_after_ms = retry })) channel.Stop();
                         return;
                     }
                     Request? request = null;
+                    int retryAfter = 50;
                     lock (gate)
                     {
                         if (requests.ContainsKey(id)) throw new InvalidDataException();
                         int ordinary = requests.Values.Count(value => value.Ordinary);
                         bool isOrdinary = nameOfTool != "tabtty_return_control";
-                        if (requests.Count < 18 && (!isOrdinary || ordinary < 16))
+                        if (requests.Count < 18 && (isOrdinary ? ordinary < 16 : attached.TryTakeReturn(Now, out retryAfter)))
                         {
                             try
                             {
-                                long weight = message.GetRawText().Length * 2L + 256;
-                                if (isOrdinary || weight <= 4 * KiB)
+                                string frame = message.GetRawText();
+                                if (isOrdinary || Encoding.UTF8.GetByteCount(frame) <= AiPrivateChannel.MaxControlFrame)
                                 {
+                                    long weight = frame.Length * 2L + 256;
                                     request = new Request(isOrdinary, channel.Token,
                                         (isOrdinary ? frameMemory : attachmentMemory).Reserve(weight));
                                     requests.Add(id, request);
@@ -125,7 +130,9 @@ internal sealed partial class AiCollaboration
                     }
                     if (request is null)
                     {
-                        if (!channel.TrySend(new { id, result = Error("busy", new { retry_after_ms = 50 }) }))
+                        // Return overflow stays on the pipe reader, ahead of any GUI work.
+                        if (!channel.TrySend(new { id, result = Error("busy", new { retry_after_ms = retryAfter > 0 ? retryAfter : 50 }) },
+                            priority: nameOfTool == "tabtty_return_control"))
                             channel.Stop();
                         return;
                     }
@@ -136,8 +143,8 @@ internal sealed partial class AiCollaboration
                 {
                     try
                     {
-                        Reply reply = await app.Dispatcher.InvokeAsync(() => CallAsync(attached, name, arguments, request.Token),
-                            DispatcherPriority.Normal, request.Token).Task.Unwrap().ConfigureAwait(false);
+                        Reply reply = await app.Dispatcher.InvokeAsync(() => CallAdmittedAsync(attached, name, arguments, request.Token),
+                            DispatcherPriority.Background, request.Token).Task.Unwrap().ConfigureAwait(false);
                         using var prepared = reply.History;
                         byte[] frame = AiFrames.Serialize(new { id, result = reply.Body, session = reply.Share?.Id,
                             listing = reply.SharingRevision.HasValue ? true : (bool?)null });
@@ -192,8 +199,9 @@ internal sealed partial class AiCollaboration
                 }
             }
         }
-        catch (Exception error) when (error is IOException or Win32Exception or OperationCanceledException or
-            InvalidOperationException or JsonException or KeyNotFoundException or ArgumentException) { }
+        catch (Exception error) when (error is IOException or InvalidDataException or Win32Exception or
+            OperationCanceledException or InvalidOperationException or JsonException or KeyNotFoundException or
+            ArgumentException or FormatException or UnauthorizedAccessException) { }
         finally
         {
             if (peer is not null && !app.Dispatcher.HasShutdownStarted)

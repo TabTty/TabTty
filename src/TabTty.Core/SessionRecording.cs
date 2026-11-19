@@ -12,75 +12,87 @@ internal sealed class SessionRecording
     private const int ItemLimit = 4096;
     private const int BatchBytes = 64 * 1024;
     private const int BatchItems = 512;
-    private readonly Channel<(RecordingFormat Format, byte[] Payload)> queue = Channel.CreateUnbounded<(RecordingFormat, byte[])>(new UnboundedChannelOptions
+    private readonly Channel<Work> queue = Channel.CreateUnbounded<Work>(new UnboundedChannelOptions
     {
         SingleReader = true,
         AllowSynchronousContinuations = false,
     });
     private readonly object gate = new();
     private readonly Task writer;
-    private readonly string stem;
     private readonly RecordingFormat[] formats;
     private int pendingBytes;
     private int pendingItems;
-    private bool stopped;
+    private bool stopped, protectClose, receiveFlushQueued, settled;
+    private readonly record struct Work(RecordingFormat Format, byte[]? Payload, bool Flush = false);
     private string? failure;
     private readonly ResourceReservation payloadReservation = ApplicationResources.LogPayload.Reserve(0);
     private readonly CancellationTokenSource abandon = new();
-    private Action? failureNotification;
+    private readonly TaskCompletionSource incomplete = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TimeProvider clock;
+    private readonly Func<int, RecordingFormat, IRecordingFile> openFile;
 
     private SessionRecording(string stem, int part, RecordingFormat[] formats)
+        : this(part, formats, TimeProvider.System, (number, format) => OpenFile(stem, number, format)) { }
+
+    internal SessionRecording(RecordingFormat[] formats, TimeProvider clock, Func<RecordingFormat, IRecordingFile> open)
+        : this(formats, clock, (_, format) => open(format)) { }
+
+    internal SessionRecording(RecordingFormat[] formats, TimeProvider clock, Func<int, RecordingFormat, IRecordingFile> open)
+        : this(1, formats, clock, open) { }
+
+    private SessionRecording(int part, RecordingFormat[] formats, TimeProvider clock,
+        Func<int, RecordingFormat, IRecordingFile> open)
     {
-        this.stem = stem;
         this.formats = formats;
-        var streams = new Dictionary<RecordingFormat, FileStream>();
+        this.clock = clock;
+        openFile = open;
+        PartNumber = part;
+        var streams = new Dictionary<RecordingFormat, IRecordingFile>();
         try
         {
-            foreach (RecordingFormat format in formats)
-            {
-                string extension = format switch
-                {
-                    RecordingFormat.Raw => ".raw.tttylog",
-                    RecordingFormat.Text => ".log",
-                    _ => ".term.tttylog",
-                };
-                string file = $"{stem}-p{part.ToString("D3", CultureInfo.InvariantCulture)}{extension}";
-                streams.Add(format, new FileStream(file, FileMode.CreateNew, FileAccess.Write, FileShare.Read,
-                    bufferSize: 1, FileOptions.Asynchronous | FileOptions.SequentialScan));
-            }
+            foreach (RecordingFormat format in formats) streams.Add(format, openFile(part, format));
         }
         catch
         {
-            foreach (FileStream stream in streams.Values)
+            foreach (IRecordingFile stream in streams.Values)
             {
-                stream.Dispose();
+                try { stream.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+                catch (Exception error) when (IsFileFailure(error)) { }
             }
+            payloadReservation.Dispose();
             throw;
         }
 
         writer = Task.Run(() => WriteAsync(streams));
     }
 
-    public string? Failure => Volatile.Read(ref failure);
-    internal Action? FailureNotification
+    private static IRecordingFile OpenFile(string stem, int part, RecordingFormat format)
     {
-        get => Volatile.Read(ref failureNotification);
-        set => Volatile.Write(ref failureNotification, value);
+        string extension = format switch
+        {
+            RecordingFormat.Raw => ".raw.tttylog",
+            RecordingFormat.Text => ".log",
+            _ => ".term.tttylog",
+        };
+        string file = $"{stem}-p{part.ToString("D3", CultureInfo.InvariantCulture)}{extension}";
+        return new RecordingFile(new FileStream(file, FileMode.CreateNew, FileAccess.Write, FileShare.Read,
+            bufferSize: 1, FileOptions.Asynchronous | FileOptions.SequentialScan));
     }
 
+    public int PartNumber { get; }
+    public Task Incomplete => incomplete.Task;
+    public Task ActualRelease => writer;
+
+    public void ProtectClose()
+    {
+        lock (gate) protectClose = true;
+    }
+
+    public string? Failure => Volatile.Read(ref failure);
     public static SessionRecording Open(string profilePath, ConnectionProfile profile, string? nameOverride = null,
         int part = 1, string? runSuffix = null, DateTimeOffset? capturedStart = null)
     {
-        string configured = profile.LogDirectory;
-        string path = Path.GetFullPath(configured, Path.GetDirectoryName(Path.GetFullPath(profilePath))!);
-        if ((Path.IsPathRooted(configured) && !Path.IsPathFullyQualified(configured)) ||
-            configured.StartsWith(@"\\?\", StringComparison.Ordinal) ||
-            configured.StartsWith(@"\\.\", StringComparison.Ordinal) ||
-            (configured.Length > 2 && configured[2..].Contains(':')) ||
-            (configured.Contains(':') && !(configured.Length > 2 && char.IsAsciiLetter(configured[0]) && configured[1] == ':')))
-        {
-            throw new InvalidDataException("Invalid recording directory.");
-        }
+        string path = OrdinaryWindowsPath.Resolve(profile.LogDirectory, Path.GetDirectoryName(Path.GetFullPath(profilePath))!);
 
         Directory.CreateDirectory(path);
         char[] invalid = Path.GetInvalidFileNameChars();
@@ -95,11 +107,12 @@ internal sealed class SessionRecording
         if (profile.RecordRaw) formats.Add(RecordingFormat.Raw);
         if (profile.RecordText) formats.Add(RecordingFormat.Text);
         if (profile.RecordTerminal) formats.Add(RecordingFormat.Terminal);
-        return new SessionRecording(Path.Combine(path, $"{label}-{timestamp}-{runSuffix ?? Guid.NewGuid().ToString("N")}"), part,
-            formats.ToArray());
+        string stem = $"{label}-{timestamp}-{runSuffix ?? Guid.NewGuid().ToString("N")}";
+        if (OrdinaryWindowsPath.IsReservedFileName(stem)) stem = "_" + stem;
+        return new SessionRecording(Path.Combine(path, stem), part, formats.ToArray());
     }
 
-    public SessionRecording OpenPart(int part) => new(stem, part, formats);
+    public SessionRecording OpenPart(int part) => new(part, formats, clock, openFile);
 
     public void Enqueue(RecordingFormat format, byte[] payload)
     {
@@ -122,7 +135,17 @@ internal sealed class SessionRecording
                 return;
             }
             pendingItems++;
-            queue.Writer.TryWrite((format, payload));
+            queue.Writer.TryWrite(new(format, payload));
+        }
+    }
+
+    public void FlushReceived()
+    {
+        lock (gate)
+        {
+            if (stopped || receiveFlushQueued) return;
+            receiveFlushQueued = true;
+            queue.Writer.TryWrite(new(default, null, Flush: true));
         }
     }
 
@@ -139,10 +162,15 @@ internal sealed class SessionRecording
 
     public void MarkIncomplete(string message) => Fail(message);
 
-    public void Abandon()
+    public bool Abandon()
     {
-        Fail("Recording cleanup was cancelled. Capture may be incomplete.");
-        abandon.Cancel();
+        lock (gate)
+        {
+            if (settled) return false;
+            Fail("Recording cleanup was cancelled. Capture may be incomplete.");
+        }
+        _ = abandon.CancelAsync();
+        return true;
     }
 
     private void Fail(string message)
@@ -152,28 +180,42 @@ internal sealed class SessionRecording
             failure ??= message;
             stopped = true;
             queue.Writer.TryComplete();
+            incomplete.TrySetResult();
         }
-        FailureNotification?.Invoke();
     }
 
-    private async Task WriteAsync(Dictionary<RecordingFormat, FileStream> streams)
+    private ITimer WatchProgress(string message, CancellationTokenSource? deadline = null) =>
+        clock.CreateTimer(_ =>
+        {
+            lock (gate)
+            {
+                if (protectClose) return;
+                Fail(message);
+            }
+            try { deadline?.Cancel(); }
+            catch (ObjectDisposedException) { }
+        }, null, TimeSpan.FromSeconds(10), Timeout.InfiniteTimeSpan);
+
+    private static bool IsFileFailure(Exception error) =>
+        error is IOException or UnauthorizedAccessException or OperationCanceledException or NotSupportedException;
+
+    private async Task WriteAsync(Dictionary<RecordingFormat, IRecordingFile> streams)
     {
         var batches = streams.Keys.ToDictionary(format => format, _ => new WriteBatch());
         try
         {
             while (await queue.Reader.WaitToReadAsync(abandon.Token).ConfigureAwait(false))
             {
-                await StageBatchAsync(batches).ConfigureAwait(false);
+                bool flush = await StageBatchAsync(batches).ConfigureAwait(false);
                 foreach (var (format, batch) in batches)
                 {
                     if (batch.Buffers.Count == 0) continue;
                     using var deadline = CancellationTokenSource.CreateLinkedTokenSource(abandon.Token);
-                    deadline.CancelAfter(TimeSpan.FromSeconds(10));
-                    using var timeout = deadline.Token.Register(() => Fail("Recording write timed out."));
+                    await using var timeout = WatchProgress("Recording write timed out.", deadline);
                     await ApplicationResources.LogIo.WaitAsync(deadline.Token).ConfigureAwait(false);
                     try
                     {
-                        await RandomAccess.WriteAsync(streams[format].SafeFileHandle, batch.Buffers,
+                        await streams[format].WriteAsync(batch.Buffers,
                             batch.FileOffset, deadline.Token).ConfigureAwait(false);
                     }
                     finally { ApplicationResources.LogIo.Release(); }
@@ -182,45 +224,59 @@ internal sealed class SessionRecording
                         pendingBytes -= batch.Bytes;
                         pendingItems -= batch.Buffers.Count;
                         batch.FileOffset += batch.Bytes;
+                        batch.Dirty = true;
                         batch.Bytes = 0;
                         batch.Buffers.Clear();
                         payloadReservation.Resize(pendingBytes);
                     }
                 }
+                if (flush) await FlushAsync(streams, batches).ConfigureAwait(false);
             }
 
-            foreach (FileStream stream in streams.Values)
-            {
-                abandon.Token.ThrowIfCancellationRequested();
-                using var flushDeadline = CancellationTokenSource.CreateLinkedTokenSource(abandon.Token);
-                flushDeadline.CancelAfter(TimeSpan.FromSeconds(10));
-                using var flushTimeout = flushDeadline.Token.Register(() => Fail("Recording flush timed out."));
-                await ApplicationResources.LogIo.WaitAsync(flushDeadline.Token).ConfigureAwait(false);
-                try { RandomAccess.FlushToDisk(stream.SafeFileHandle); }
-                finally { ApplicationResources.LogIo.Release(); }
-            }
+            await FlushAsync(streams, batches).ConfigureAwait(false);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
-            or OperationCanceledException or NotSupportedException)
+        catch (Exception exception) when (IsFileFailure(exception))
         {
             Fail(exception.Message);
             while (queue.Reader.TryRead(out _)) { }
         }
         finally
         {
-            foreach (FileStream stream in streams.Values)
+            foreach (IRecordingFile stream in streams.Values)
             {
+                await using var timeout = WatchProgress("Recording file close timed out.");
                 try { await stream.DisposeAsync().ConfigureAwait(false); }
-                catch (IOException exception) { Fail(exception.Message); }
+                catch (Exception exception) when (IsFileFailure(exception)) { Fail(exception.Message); }
             }
             payloadReservation.Dispose();
+            lock (gate) settled = true;
         }
     }
 
-    private async Task StageBatchAsync(Dictionary<RecordingFormat, WriteBatch> batches)
+    private async Task FlushAsync(Dictionary<RecordingFormat, IRecordingFile> streams,
+        Dictionary<RecordingFormat, WriteBatch> batches)
     {
-        using var window = CancellationTokenSource.CreateLinkedTokenSource(abandon.Token);
-        window.CancelAfter(TimeSpan.FromSeconds(1));
+        foreach (var (format, stream) in streams)
+        {
+            var batch = batches[format];
+            if (!batch.Dirty) continue;
+            abandon.Token.ThrowIfCancellationRequested();
+            using var flushDeadline = CancellationTokenSource.CreateLinkedTokenSource(abandon.Token);
+            await using var flushTimeout = WatchProgress("Recording flush timed out.", flushDeadline);
+            await ApplicationResources.LogIo.WaitAsync(flushDeadline.Token).ConfigureAwait(false);
+            try
+            {
+                await stream.FlushAsync(flushDeadline.Token).ConfigureAwait(false);
+                batch.Dirty = false;
+            }
+            finally { ApplicationResources.LogIo.Release(); }
+        }
+    }
+
+    private async Task<bool> StageBatchAsync(Dictionary<RecordingFormat, WriteBatch> batches)
+    {
+        using var interval = new CancellationTokenSource(TimeSpan.FromSeconds(1), clock);
+        using var window = CancellationTokenSource.CreateLinkedTokenSource(abandon.Token, interval.Token);
         int bytes = 0, items = 0;
         try
         {
@@ -228,15 +284,18 @@ internal sealed class SessionRecording
             {
                 while (!window.IsCancellationRequested && queue.Reader.TryRead(out var next))
                 {
+                    if (next.Flush) return true;
+                    byte[] payload = next.Payload!;
                     WriteBatch batch = batches[next.Format];
-                    batch.Buffers.Add(next.Payload);
-                    batch.Bytes += next.Payload.Length;
-                    bytes += next.Payload.Length;
-                    if (++items >= BatchItems || bytes >= BatchBytes) return;
+                    batch.Buffers.Add(payload);
+                    batch.Bytes += payload.Length;
+                    bytes += payload.Length;
+                    if (++items >= BatchItems || bytes >= BatchBytes) return false;
                 }
             } while (await queue.Reader.WaitToReadAsync(window.Token).ConfigureAwait(false));
         }
         catch (OperationCanceledException) when (!abandon.IsCancellationRequested) { }
+        return false;
     }
 
     private sealed class WriteBatch
@@ -244,5 +303,27 @@ internal sealed class SessionRecording
         public List<ReadOnlyMemory<byte>> Buffers { get; } = [];
         public int Bytes { get; set; }
         public long FileOffset { get; set; }
+        public bool Dirty { get; set; } = true;
     }
+
+    private sealed class RecordingFile(FileStream stream) : IRecordingFile
+    {
+        public ValueTask WriteAsync(IReadOnlyList<ReadOnlyMemory<byte>> buffers, long offset, CancellationToken token) =>
+            RandomAccess.WriteAsync(stream.SafeFileHandle, buffers, offset, token);
+
+        public ValueTask FlushAsync(CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            RandomAccess.FlushToDisk(stream.SafeFileHandle);
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask DisposeAsync() => stream.DisposeAsync();
+    }
+}
+
+internal interface IRecordingFile : IAsyncDisposable
+{
+    ValueTask WriteAsync(IReadOnlyList<ReadOnlyMemory<byte>> buffers, long offset, CancellationToken token);
+    ValueTask FlushAsync(CancellationToken token);
 }

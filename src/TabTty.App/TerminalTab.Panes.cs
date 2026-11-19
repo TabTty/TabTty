@@ -23,7 +23,23 @@ internal sealed partial class TerminalTab
         public bool HighlightSuspended;
     }
 
-    private bool broadcastChecked;
+    private bool broadcastChecked = true;
+
+    private readonly record struct ConnectionDestination(string LabelKey, string Endpoint)
+    {
+        internal static ConnectionDestination From(TerminalSession target)
+        {
+            string label = target.IsSsh ? "AiSshTarget" : target.IsSerial ? "AiSerialTarget" : "AiTelnetTarget";
+            string endpoint = target.IsSsh ? target.FileTransferEndpoint : target.ConnectionDetails;
+            return new(label, PermissionDisplay.Literal(endpoint));
+        }
+
+        public override string ToString() => string.Format(Text(LabelKey), Endpoint);
+    }
+
+    internal static string BroadcastTargetLabel(TerminalSession target) =>
+        $"{ConnectionDestination.From(target)} — {PermissionDisplay.Literal(target.DisplayName)}";
+
     internal bool BroadcastChecked
     {
         get => broadcastChecked;

@@ -12,10 +12,8 @@ namespace TabTty.App;
 
 internal sealed record HighlightSet(Guid Id, string Name, bool Enabled, IReadOnlyList<TerminalHighlightRule> Rules);
 
-internal sealed class HighlightCatalog(App app)
+internal sealed class HighlightCatalog(App app, string pathName, Action<string, string, string?>? issue)
 {
-    private static readonly string PathName = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TabTty", "highlighting.json");
     private IReadOnlyList<HighlightSet>? sets;
     private byte[]? original;
     private JsonObject? originalDocument;
@@ -35,7 +33,7 @@ internal sealed class HighlightCatalog(App app)
         }
     }
 
-    public JsonStoreRecovery.Store RecoveryStore() => new(Text("HighlightSets"), PathName,
+    public JsonStoreRecovery.Store RecoveryStore() => new(Text("HighlightSets"), pathName,
         path => _ = ReadSets(ReadBytes(path), out _), () =>
         {
             sets = null;
@@ -81,6 +79,7 @@ internal sealed class HighlightCatalog(App app)
 
         void Build(FormView form)
         {
+            form.ShowFileOperationStatus();
             var originalSets = GetSets();
             var draft = originalSets.ToList();
             var list = new ListBox { DisplayMemberPath = nameof(HighlightSet.Name), Height = 250 };
@@ -119,12 +118,13 @@ internal sealed class HighlightCatalog(App app)
             }, (saved, current) => saved.Length == current.Length && saved.Zip(current).All(pair =>
                 pair.First.Id == pair.Second.Id && pair.First.Name == pair.Second.Name &&
                 pair.First.Enabled == pair.Second.Enabled && pair.First.Rules.SequenceEqual(pair.Second.Rules)));
-            form.AddEditorButtons(() =>
+            form.AddEditorButtons(async () =>
             {
                 if (!ReferenceEquals(originalSets, GetSets()))
                     throw new InvalidOperationException(Text("ManagementTabOutdated"));
-                Save(draft.ToArray());
+                await SaveAsync(draft.ToArray());
                 originalSets = GetSets();
+                return true;
             });
 
             void UpdateSelection()
@@ -255,8 +255,8 @@ internal sealed class HighlightCatalog(App app)
     private IReadOnlyList<HighlightSet> GetSets()
     {
         if (sets is not null) return sets;
-        if (!File.Exists(PathName)) return sets = [];
-        byte[] bytes = ReadBytes();
+        if (!File.Exists(pathName)) return sets = [];
+        byte[] bytes = ReadBytes(pathName);
         sets = ReadSets(bytes, out originalDocument);
         original = bytes;
         return sets;
@@ -299,7 +299,7 @@ internal sealed class HighlightCatalog(App app)
             style["bold"]?.GetValue<bool>(), style["underline"]?.GetValue<bool>()));
     }
 
-    private void Save(IReadOnlyList<HighlightSet> draft)
+    private async Task SaveAsync(IReadOnlyList<HighlightSet> draft)
     {
         if (temporaryDefaults) throw new InvalidOperationException(Text("UseTemporaryHighlighting"));
         byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(new
@@ -321,16 +321,18 @@ internal sealed class HighlightCatalog(App app)
         if (originalDocument is not null) JsonStoreRecovery.PreserveUnknown(document, originalDocument);
         bytes = JsonSerializer.SerializeToUtf8Bytes(document);
         if (bytes.Length > 16 * 1024 * 1024) throw new InvalidDataException(Text("HighlightStoreInvalid"));
-        JsonStoreRecovery.Save(PathName, bytes, original);
+        var operation = JsonStoreRecovery.BeginSave(pathName, bytes, original,
+            path => _ = ReadSets(ReadBytes(path), out _), issue);
+        JsonStoreRecovery.RequireVerified(await operation.ObserveAsync());
         original = bytes;
         originalDocument = document;
         sets = draft;
         Changed?.Invoke();
     }
 
-    private static byte[] ReadBytes(string? path = null)
+    private static byte[] ReadBytes(string path)
     {
-        using var file = File.OpenRead(path ?? PathName);
+        using var file = File.OpenRead(path);
         if (file.Length is <= 0 or > 16 * 1024 * 1024) throw new InvalidDataException(Text("HighlightStoreInvalid"));
         byte[] bytes = new byte[(int)file.Length];
         file.ReadExactly(bytes);

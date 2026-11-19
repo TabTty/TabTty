@@ -6,8 +6,29 @@ using TabTty.Core;
 
 try
 {
+    if (args is ["--native-bundle-probe"])
+    {
+        var terminal = new TerminalOutput();
+        terminal.ReleaseNativeState();
+        Console.WriteLine("PASS NativeBundleProbe");
+        return 0;
+    }
+    if (args is ["--single-byte-mappings", var referenceDirectory])
+    {
+        SingleByteMappings.Run(referenceDirectory);
+        Console.WriteLine("PASS SingleByteMappings");
+        return 0;
+    }
+    if (args is ["--independent-openssh", var port, var username, var userKey, var hostFingerprint, var sharedDirectory])
+    {
+        await IndependentOpenSsh.RunAsync(int.Parse(port), username, userKey, hostFingerprint, sharedDirectory);
+        Console.WriteLine("PASS IndependentOpenSshTerminalAndSftp");
+        return 0;
+    }
     NativeTerminalContracts.Run();
     Console.WriteLine("PASS NativeTerminalContracts");
+    await ArchitectureOwnershipContracts.RunAsync();
+    Console.WriteLine("PASS ArchitectureOwnershipContracts");
     await MacroContracts.RunAsync();
     if (args.Contains("--macros")) return 0;
     _ = CoreWorkload.Cycle();
@@ -80,6 +101,8 @@ try
     Console.WriteLine("PASS SavedTelnetProfileKeepsItsSettings");
     await FirstProfileSaveCreatesTheParentFolders();
     Console.WriteLine("PASS FirstProfileSaveCreatesTheParentFolders");
+    await ProfileAndRecordingPathsUseOrdinaryFiles();
+    Console.WriteLine("PASS ProfileAndRecordingPathsUseOrdinaryFiles");
     await ProfileEditsPreserveIdentityAndRejectExternalChanges();
     Console.WriteLine("PASS ProfileEditsPreserveIdentityAndRejectExternalChanges");
     await SavedSshProfileKeepsTheCredentialReference();
@@ -130,12 +153,16 @@ try
     Console.WriteLine("PASS PasteUsesNegotiatedBracketsWithoutAppendingEnter");
     await FailedUtf8InputDoesNotEchoOrReplay();
     Console.WriteLine("PASS FailedUtf8InputDoesNotEchoOrReplay");
+    CredentialInputBoundsPreserveValidEncodings();
+    Console.WriteLine("PASS CredentialInputBoundsPreserveValidEncodings");
     if (File.Exists(Path.Combine(AppContext.BaseDirectory, "libcrypto-3-x64.dll")))
     {
         VaultDecryptsAnIndependentFixedContainer();
         Console.WriteLine("PASS VaultDecryptsAnIndependentFixedContainer");
         await SshPacketsAuthenticateBeforeReleasingPayload();
         Console.WriteLine("PASS SshPacketsAuthenticateBeforeReleasingPayload");
+        await SshCredentialPacketsUseCoarseLengthBuckets();
+        Console.WriteLine("PASS SshCredentialPacketsUseCoarseLengthBuckets");
         OpenSslCiphersMatchIndependentVectors();
         Console.WriteLine("PASS OpenSslCiphersMatchIndependentVectors");
         await VaultCopyUnlocksAndRejectsTampering();
@@ -162,6 +189,8 @@ try
         {
             await MacroContracts.SshEarlyDataAsync(sshPort);
             Console.WriteLine("PASS MacroReceivesRealSshStartupData");
+            await ArchitectureOwnershipContracts.SshStartupFailurePreservesOriginalRecordingAsync(sshPort);
+            Console.WriteLine("PASS SshStartupFailurePreservesOriginalRecording");
         }
         await SshKeyboardInteractiveUsesEachChallenge(sshPort);
         Console.WriteLine("PASS SshKeyboardInteractiveUsesEachChallenge");
@@ -171,6 +200,21 @@ try
         {
             await SftpUsesTheSameSshConnectionWithoutRecordingFileData(sshPort);
             Console.WriteLine("PASS SftpUsesTheSameSshConnectionWithoutRecordingFileData");
+            if (Environment.GetEnvironmentVariable("TABTTY_INTEROP_OWNERSHIP") is not null)
+            {
+                await ArchitectureOwnershipContracts.SshCreditRecordingAndTransferProgressAsync(sshPort);
+                await ArchitectureOwnershipContracts.SshTerminalAndSftpRetainCommittedPacketsAsync(sshPort);
+                Console.WriteLine("PASS SshTerminalAndSftpRetainCommittedPackets");
+                await ArchitectureOwnershipContracts.SftpLateOpenAndClosePreserveTheOriginalSlotAsync(sshPort);
+                Console.WriteLine("PASS SftpLateOpenAndClosePreserveTheOriginalSlot");
+                await ArchitectureOwnershipContracts.SftpLateOpenAndClosePreserveTheOriginalSlotAsync(sshPort, timeOut: true);
+                Console.WriteLine("PASS SftpUnansweredOpenAndCloseExpireWaitersWithoutReusingTheSlot");
+                Console.WriteLine("PASS SshCreditRecordingAndTransferProgress");
+                await ArchitectureOwnershipContracts.SshEofFlushesWhileReverseInputRemainsAvailableAsync(sshPort);
+                Console.WriteLine("PASS SshEofFlushesWhileReverseInputRemainsAvailable");
+                await ArchitectureOwnershipContracts.SshTinyAlternatingPayloadPreservesOrderAsync(sshPort);
+                Console.WriteLine("PASS SshTinyAlternatingPayloadPreservesOrder");
+            }
         }
         if (Environment.GetEnvironmentVariable("TABTTY_INTEROP_USER_KEY") is { } keyFixture)
         {
@@ -235,6 +279,11 @@ static async Task SftpUsesTheSameSshConnectionWithoutRecordingFileData(int port)
     await using (var session = await TerminalSession.ConnectAsync(path, token, interaction))
     {
         using var transfer = await session.OpenFileTransferAsync(token);
+        if (transfer.DisplayName("notes\r01"u8.ToArray()) != "notes<U+000D>01" ||
+            transfer.DisplayName("notes<U+000D>01"u8.ToArray()) == "notes<U+000D>01" ||
+            transfer.DisplayName("<bytes:FF>"u8.ToArray()) == SftpClient.DisplayBytes([0xff]) ||
+            transfer.DisplayPath("/home/notes\r01"u8.ToArray()) != "/home/notes<U+000D>01")
+            throw new InvalidOperationException("SFTP file labels must distinguish text, controls and byte markers.");
         byte[] directory = await transfer.ResolveAsync("."u8.ToArray(), token);
         byte[] staged = SftpClient.Child(directory, transfer.EncodeName(".stage"));
         byte[] final = SftpClient.Child(directory, transfer.EncodeName("試験.bin"));
@@ -258,6 +307,16 @@ static async Task SftpUsesTheSameSshConnectionWithoutRecordingFileData(int port)
         IReadOnlyList<string>? screen = await session.ReadOutputAsync(token);
         while (screen is not null && !screen.Contains("shell")) screen = await session.ReadOutputAsync(token);
         if (screen is null || passwords != 1) throw new InvalidOperationException("SFTP affected shell I/O or repeated SSH login.");
+        try
+        {
+            await transfer.ResolveAsync("/fixture-oversize-frame"u8.ToArray(), token);
+            throw new InvalidOperationException("An oversized SFTP frame was accepted.");
+        }
+        catch (SftpException error) when (error.Failure == SftpFailure.InvalidReply) { }
+        using var reopened = await session.OpenFileTransferAsync(token);
+        ExpectBytes(await reopened.ResolveAsync("."u8.ToArray(), token), "/home"u8.ToArray());
+        if (!session.AcceptsInput || passwords != 1)
+            throw new InvalidOperationException("An invalid SFTP response closed the shell or reopened the SSH connection.");
         session.Disconnect();
     }
     string log = Directory.GetFiles(Path.Combine(folder.Path, "Logs"), "*.raw.tttylog").Single();
@@ -319,6 +378,8 @@ static async Task SshPasswordSessionPreservesChannelBytes(int port)
     while (await session.ReadOutputAsync(deadline.Token) is { } rows) last = rows;
     if (last is null || !last.SequenceEqual(new[] { expectEarlyData ? "early あ!" : "あ!" }))
         throw new InvalidOperationException("The SSH terminal did not decode DATA and stderr.");
+    await session.WaitForTerminalPeerCloseAsync(deadline.Token);
+    await session.DisposeAsync();
     string log = Directory.GetFiles(Path.Combine(folder.Path, "Logs"), "*.raw.tttylog").Single();
     byte[] expected = expectEarlyData ? [.. "early "u8, 0x82, 0xA0, 0x21] : [0x82, 0xA0, 0x21];
     ExpectBytes(await File.ReadAllBytesAsync(log), expected);
@@ -469,7 +530,8 @@ static async Task VaultInitializesAnEmptyFileAndArchivesItsEncryptedContents()
     catch (ArgumentException) { }
     await File.WriteAllBytesAsync(path, []);
     Guid vaultId, entryId;
-    using (var initialized = await CredentialVault.InitializeEmptyAsync(path, master.AsMemory()))
+    VaultFileEvidence originalEmpty = CredentialVault.InspectFile(path)!;
+    using (var initialized = await CredentialVault.InitializeEmptyAsync(path, master.AsMemory(), originalEmpty))
     {
         vaultId = initialized.Id;
         entryId = await initialized.AddPasswordAsync("Test", null, "test-secret"u8.ToArray());
@@ -477,7 +539,7 @@ static async Task VaultInitializesAnEmptyFileAndArchivesItsEncryptedContents()
     byte[] encrypted = await File.ReadAllBytesAsync(path);
     try
     {
-        using var replaced = await CredentialVault.InitializeEmptyAsync(path, master.AsMemory());
+        using var replaced = await CredentialVault.InitializeEmptyAsync(path, master.AsMemory(), originalEmpty);
         throw new InvalidOperationException("Empty-file initialization replaced an existing encrypted vault.");
     }
     catch (IOException) { }
@@ -563,7 +625,26 @@ static async Task VaultImportsAnIndependentEd25519Key()
     Guid entry;
     using (var vault = await CredentialVault.CreateAsync(path, master.AsMemory()))
     {
-        entry = await vault.ImportPrivateKeyAsync("Fixture key", source);
+        using var acquired = CredentialVault.ReadPrivateKeySource(source);
+        long reviewedRevision = vault.Revision;
+        await File.WriteAllBytesAsync(source, "incompatible external replacement"u8.ToArray());
+        Guid other = await vault.AddPasswordAsync("Other entry", null, "test password"u8.ToArray());
+        try
+        {
+            await vault.ImportPrivateKeySourceAsync("Stale key", acquired, expectedRevision: reviewedRevision);
+            throw new InvalidOperationException("Import accepted an obsolete vault revision.");
+        }
+        catch (InvalidOperationException error) when (error.Message == "The reviewed vault revision changed before the operation.") { }
+        entry = await vault.ImportPrivateKeySourceAsync("Fixture key", acquired, expectedRevision: vault.Revision);
+        if (!(await File.ReadAllBytesAsync(source)).AsSpan().SequenceEqual("incompatible external replacement"u8))
+            throw new InvalidOperationException("Import mutated the external source file.");
+        await vault.DeleteEntryAsync(other);
+        try
+        {
+            using var deleted = await vault.GetPasswordAsync(vault.Id, other);
+            throw new InvalidOperationException("A deleted reference still resolved after import.");
+        }
+        catch (CredentialLookupException) { }
         File.Delete(source);
     }
     using var reopened = await CredentialVault.UnlockAsync(path, master.AsMemory());
@@ -574,6 +655,24 @@ static async Task VaultImportsAnIndependentEd25519Key()
         throw new InvalidOperationException("Imported key metadata does not match the independent public-key vector.");
     using VaultSecret key = await reopened.GetPrivateKeyAsync(reopened.Id, entry);
     ExpectBytes(key.Bytes.ToArray(), der);
+
+    using (var file = new FileStream(source, FileMode.CreateNew)) file.SetLength(1024 * 1024);
+    var sources = new List<CredentialVault.PrivateKeySource>();
+    try
+    {
+        for (int index = 0; index < 8; index++) sources.Add(CredentialVault.ReadPrivateKeySource(source));
+        try
+        {
+            using var excess = CredentialVault.ReadPrivateKeySource(source);
+            throw new InvalidOperationException("A ninth source bypassed the secret-input budget.");
+        }
+        catch (ResourceLimitException) { }
+    }
+    finally
+    {
+        foreach (var sourceOwner in sources) sourceOwner.Dispose();
+    }
+    using var admittedAgain = CredentialVault.ReadPrivateKeySource(source);
 }
 
 static async Task VaultCopyUnlocksAndRejectsTampering()
@@ -923,6 +1022,35 @@ static async Task FirstProfileSaveCreatesTheParentFolders()
     ConnectionProfile saved = await ConnectionProfile.LoadAsync(path);
     if (saved.Id != profile.Id || saved.DisplayName != "First profile")
         throw new InvalidOperationException("The first profile was not saved in the requested folder.");
+}
+
+static async Task ProfileAndRecordingPathsUseOrdinaryFiles()
+{
+    using var folder = new TemporaryDirectory();
+    var profile = ConnectionProfile.CreateTelnet("NUL.session", "localhost", recordText: true);
+    var document = JsonNode.Parse(profile.ToEditorJson())!.AsObject();
+    foreach (string rejected in new[] { @"//./directory", @"\/?\UNC\server\share", @"\\server\PIPE\channel",
+        @"C:Logs", @"\Logs", "Logs:stream", "local/NUL.txt", @"COM¹.log" })
+    {
+        document["logging"]!["directory"] = rejected;
+        try
+        {
+            profile.Edit(document.ToJsonString()).ValidateEditorSettings();
+            throw new InvalidOperationException("The profile accepted a non-file recording destination.");
+        }
+        catch (InvalidDataException) { }
+    }
+    foreach (string accepted in new[] { "//server/share/Logs", @"\\server\\share\a\b", @"C:/Logs",
+        @"C:\", "../Logs", @"./ログ/.local", @"./a/../Logs" })
+        if (!OrdinaryWindowsPath.IsValid(accepted))
+            throw new InvalidOperationException("An ordinary recording path was rejected.");
+
+    string profilePath = Path.Combine(folder.Path, "record.ttty");
+    await profile.SaveNewAsync(profilePath);
+    SessionRecording recording = SessionRecording.Open(profilePath, profile);
+    await recording.FinishAsync();
+    if (!Directory.EnumerateFiles(Path.Combine(folder.Path, "Logs"), "_NUL.session-*.log").Any())
+        throw new InvalidOperationException("The recording name did not preserve the label as an ordinary file.");
 }
 
 static void FragmentedTelnetCommandsStayOutOfTerminalData()
@@ -1329,6 +1457,20 @@ static void VaultDecryptsAnIndependentFixedContainer()
     }
 }
 
+static void CredentialInputBoundsPreserveValidEncodings()
+{
+    ExpectBytes(VaultContainer.NormalizeMaster("example phrase e\u0301"), "example phrase é"u8.ToArray());
+    string maximum = string.Concat(Enumerable.Repeat("\U0001F600", VaultContainer.MaximumMasterLength));
+    ExpectBytes(VaultContainer.NormalizeMaster(maximum), System.Text.Encoding.UTF8.GetBytes(maximum));
+    ExpectBytes(OpenSsl.PositiveInteger([0, 128], 1).ToArray(), [128]);
+    try
+    {
+        _ = OpenSsl.PositiveInteger([1, 0], 1);
+        throw new InvalidOperationException("An SSH integer exceeded the allowed unsigned width.");
+    }
+    catch (InvalidDataException) { }
+}
+
 static async Task SshPacketsAuthenticateBeforeReleasingPayload()
 {
     foreach (string cipher in new[] { "aes128-gcm@openssh.com", "aes256-gcm@openssh.com", "aes128-ctr", "aes256-ctr" })
@@ -1357,8 +1499,44 @@ static async Task SshPacketsAuthenticateBeforeReleasingPayload()
     }
 }
 
+static async Task SshCredentialPacketsUseCoarseLengthBuckets()
+{
+    using var stream = new MemoryStream();
+    using var writer = new SshPackets(stream);
+    using var reader = new SshPackets(stream);
+    try { await writer.SendAsync(new byte[5], default, padCredentials: true); }
+    catch (InvalidOperationException) { }
+    if (stream.Length != 0) throw new InvalidOperationException("A credential packet was sent before encryption.");
+
+    foreach (string cipher in new[] { "aes128-gcm@openssh.com", "aes256-gcm@openssh.com", "aes128-ctr", "aes256-ctr" })
+    {
+        bool ctr = cipher.EndsWith("-ctr", StringComparison.Ordinal);
+        foreach (int tagSize in ctr ? new[] { 32, 64 } : new[] { 16 })
+        {
+            string? mac = ctr ? $"hmac-sha2-{tagSize * 8}-etm@openssh.com" : null;
+            int keySize = cipher.StartsWith("aes128", StringComparison.Ordinal) ? 16 : 32;
+            int nonceSize = ctr ? 16 : 12;
+            writer.SetKeys(true, new byte[keySize], new byte[nonceSize], true, cipher, mac, ctr ? new byte[tagSize] : []);
+            reader.SetKeys(false, new byte[keySize], new byte[nonceSize], true, cipher, mac, ctr ? new byte[tagSize] : []);
+            foreach (var (length, expectedBody) in new[] { (5, 128), (85, 128), (123, 128), (124, 256), (65536, 65664) })
+            {
+                byte[] payload = new byte[length];
+                long start = stream.Position;
+                await writer.SendAsync(payload, default, padCredentials: true);
+                if (stream.Position - start != 4 + expectedBody + tagSize)
+                    throw new InvalidOperationException("Incorrect size of a padded SSH credential packet.");
+                stream.Position = start;
+                ExpectBytes(await reader.ReadAsync(default), payload);
+            }
+        }
+    }
+}
+
 static void OpenSslCiphersMatchIndependentVectors()
 {
+    // AES-128-CBC fixture with the traditional PEM derivation and an empty passphrase.
+    ExpectBytes(OpenSsl.DecryptLegacyPem("AES-128-CBC", Convert.FromHexString("000102030405060708090a0b0c0d0e0f"),
+        [], Convert.FromHexString("cd356969e1b016b933899e2cfc983681")), "PEM fixture"u8.ToArray());
     byte[] result = new byte[16];
     using (var counter = new OpenSsl.Ctr(Convert.FromHexString("2b7e151628aed2a6abf7158809cf4f3c"),
         Convert.FromHexString("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff"), encrypt: true))

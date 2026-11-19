@@ -39,6 +39,7 @@ const algorithms = { cipher: ['aes128-gcm@openssh.com'] };
 const cycle = fs.readFileSync(process.env.TABTTY_ARCH_CYCLE);
 const producers = [];
 let started = false;
+let transferRekeyStarted = false;
 function feed(channel, rate) {
   if (!rate) return;
   const begin = process.hrtime.bigint();
@@ -63,8 +64,21 @@ function feed(channel, rate) {
 }
 '@)
 $server=$server.Replace("['tabtty-interop', 'tabtty-sftp', 'tabtty-sftp-denied'].includes(ctx.username)", "(['tabtty-interop', 'tabtty-sftp', 'tabtty-sftp-denied'].includes(ctx.username) || /^tabtty-load-(?:[0-9]|1[0-9])$/.test(ctx.username))")
-$server=$server.Replace("if (username !== 'tabtty-sftp') return rejectSftp();", "if (username !== 'tabtty-load-18') return rejectSftp();")
-$server=$server.Replace("        status(id, 0);"+"`n"+"      });"+"`n"+"      channel.on('READ'", "        setTimeout(() => status(id, 0), 12);"+"`n"+"      });"+"`n"+"      channel.on('READ'")
+$transferUser = if ($Distribution -eq 'one-busy') { 'tabtty-load-10' } else { 'tabtty-load-18' }
+$server=$server.Replace("if (username !== 'tabtty-sftp') return rejectSftp();", "if (username !== '$transferUser') return rejectSftp();")
+$server=$server.Replace("        status(id, 0);"+"`n"+"      });"+"`n"+"      channel.on('READ'", @'
+        if (!transferRekeyStarted) {
+          transferRekeyStarted = true;
+          return client.rekey(error => {
+            if (error) return channel.destroy(error);
+            process.stderr.write('Rekey completed while the SFTP write reply was held.\n');
+            setTimeout(() => status(id, 0), 12);
+          });
+        }
+        setTimeout(() => status(id, 0), 12);
+      });
+      channel.on('READ'
+'@)
 $server=$server.Replace("        if (username.startsWith('tabtty-sftp')) {", @'
         if (username.startsWith('tabtty-load-')) {
           const index = Number(username.slice('tabtty-load-'.length));
@@ -107,7 +121,10 @@ try {
     $metrics = $reportBody | ConvertFrom-Json
     if ($result -eq 0 -and $Seconds -eq 1800 -and
         (!$metrics.completed -or $metrics.interactions -lt 600 -or !$metrics.localTargetPassed -or
-         !$metrics.stopTargetPassed -or @($metrics.rawLogs | Where-Object { !$_.CycleMatches }).Count -gt 0)) {
+         !$metrics.stopTargetPassed -or $metrics.rawLogs.Count -ne 20 -or $metrics.disconnects.Count -ne 0 -or
+         $metrics.textLogs -ne 20 -or $metrics.terminalLogs -ne 20 -or
+         @($metrics.rawLogs | Where-Object { !$_.CycleMatches }).Count -gt 0 -or
+         !(Select-String -LiteralPath $serverLog -SimpleMatch 'Rekey completed while the SFTP write reply was held.'))) {
         exit 1
     }
     exit $result

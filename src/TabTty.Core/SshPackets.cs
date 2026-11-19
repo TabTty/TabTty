@@ -29,10 +29,13 @@ internal sealed class SshPackets(Stream stream) : IDisposable
         }
     }
 
-    public async ValueTask SendAsync(ReadOnlyMemory<byte> payload, CancellationToken token)
+    public async ValueTask SendAsync(ReadOnlyMemory<byte> payload, CancellationToken token,
+        CancellationToken admission = default, Action? committed = null, bool padCredentials = false)
     {
         Direction? state = transmit;
-        int block = state is null ? 8 : 16;
+        if (padCredentials && state is null)
+            throw new InvalidOperationException("SSH credentials require encrypted transport.");
+        int block = padCredentials ? 128 : state is null ? 8 : 16;
         int align = state is null ? 4 : 0;
         int padding = block - (payload.Length + 1 + align) % block;
         if (padding < 4) padding += block;
@@ -45,6 +48,8 @@ internal sealed class SshPackets(Stream stream) : IDisposable
         if (state is null)
         {
             BuildBody(packet.AsSpan(4), payload.Span, padding);
+            admission.ThrowIfCancellationRequested();
+            committed?.Invoke();
         }
         else
         {
@@ -53,6 +58,8 @@ internal sealed class SshPackets(Stream stream) : IDisposable
             {
                 BuildBody(body, payload.Span, padding);
                 state.CheckBudget(totalSize);
+                admission.ThrowIfCancellationRequested();
+                committed?.Invoke();
                 if (state.Ctr is { } ctr)
                 {
                     ctr.Transform(body, packet.AsSpan(4, bodySize));
@@ -68,6 +75,25 @@ internal sealed class SshPackets(Stream stream) : IDisposable
         }
         transmitSequence++;
         await stream.WriteAsync(packet, token).ConfigureAwait(false);
+    }
+
+    internal async ValueTask SendChannelAsync(ReadOnlyMemory<byte> payload, CancellationToken lifetime,
+        CancellationToken admission, Action commitCredit, SshSendProgress progress, int count)
+    {
+        try
+        {
+            await SendAsync(payload, lifetime, admission, () =>
+            {
+                commitCredit();
+                progress.Commit(count);
+            }).ConfigureAwait(false);
+            progress.Submitted();
+        }
+        catch
+        {
+            progress.Failed();
+            throw;
+        }
     }
 
     public async ValueTask<byte[]> ReadAsync(CancellationToken token)

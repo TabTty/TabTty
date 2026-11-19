@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
 using TabTty.App;
@@ -21,6 +22,17 @@ internal static partial class Program
 
     private static async Task AiSharesAnExistingTerminal(App app, string directory)
     {
+        PipeIdentityIncludesIntegrityLevel();
+        Console.WriteLine("PASS PipeIdentityIncludesIntegrityLevel");
+        using (var localPipe = new System.IO.Pipes.NamedPipeClientStream("TabTty-closed-channel-test"))
+        using (var self = System.Diagnostics.Process.GetCurrentProcess())
+        {
+            var channel = new TabTty.AiTransport.AiPrivateChannel(localPipe, self.SafeHandle);
+            channel.Dispose();
+            Check(!channel.TrySend(new { revoked = "ended" }, priority: true),
+                "Revoking a share after pipe shutdown should leave local takeover available.");
+            channel.Stop();
+        }
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(25));
         var token = deadline.Token;
         using var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -35,10 +47,22 @@ internal static partial class Program
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         tab.Connected += _ => ready.TrySetResult();
         var ai = app.Ai;
-        var owner = ai.Attach("fixture bridge")!;
-        var stranger = ai.Attach("fixture bridge")!;
+        var owner = ai.Attach("fixture bridge", @"C:\Fixtures\Selected\Host.exe", 101)!;
+        var stranger = ai.Attach("fixture bridge", @"C:\Fixtures\Other\Host.exe", 202)!;
         try
         {
+            owner.Name = PermissionDisplay.SingleLine("_Client\u2028\u2029\u202e名");
+            stranger.Name = owner.Name;
+            var aiMenu = new ContextMenu();
+            tab.FillAiMenu(aiMenu);
+            var picker = (MenuItem)aiMenu.Items[0];
+            Check(owner.Name == "_Client名" && new[] { owner, stranger }.All(recipient =>
+                picker.Items.OfType<MenuItem>().Any(item => item.Header is TextBlock label &&
+                    label.Text.StartsWith(recipient.Label + "\n", StringComparison.Ordinal) &&
+                    label.Text.Contains(string.Format(App.Text("AiLauncherProcess"), recipient.LauncherPath, recipient.LauncherId)))),
+                "The picker must separate the claimed name from the OS-observed launcher and process ID.");
+            Check(PermissionDisplay.Literal("記録\u202E名\u2028末") == "記録<U+202E>名<U+2028>末",
+                "The permission dialog must visibly distinguish identity text containing display controls.");
             tab.Start();
             using var connection = await listener.AcceptTcpClientAsync(token);
             NetworkStream wire = connection.GetStream();
@@ -57,7 +81,19 @@ internal static partial class Program
             app.Broadcast.Start(window);
             Check(ai.Share(tab, owner) == "AiBroadcastTarget", "An active checked broadcast target was shared.");
             app.Broadcast.Stop(window);
-            Check(ai.Share(tab, owner) is null && !tab.BroadcastChecked, "Sharing did not clear the saved check.");
+            await Decide(owner, grant: false, approve: false);
+            Check(!tab.IsAiShared, "Cancel disclosed output.");
+            await Decide(owner, grant: false, approve: true);
+            Check(tab.AiSharing?.Peer == owner && !tab.IsAiControlling && !tab.BroadcastChecked,
+                "Confirmed sharing changed input ownership or retained a broadcast check.");
+            await Decide(stranger, grant: false, approve: false);
+            Check(tab.AiSharing?.Peer == owner, "Cancelling a switch revoked the prior recipient.");
+            await Decide(owner, grant: true, approve: true, () =>
+            {
+                ai.EndSharing(tab);
+                Check(ai.Share(tab, owner) is null, "Failed to create a new sharing generation.");
+            });
+            Check(!tab.IsAiControlling, "A stale dialog gave control to a new sharing generation.");
             app.Broadcast.Start(window);
             app.Broadcast.SetAll(window, true);
             Check(!tab.BroadcastChecked, "Broadcast selected a shared tab.");
@@ -110,10 +146,19 @@ internal static partial class Program
             Check(ai.Grant(tab) == "AiInputBusy", "Grant interrupted an active IME composition.");
             surface.CancelComposition();
 
-            Check(ai.Grant(tab) is null && tab.InputSession is null, "Grant failed to exclude manual input.");
+            await Decide(owner, grant: true, approve: false);
+            Check(!tab.IsAiControlling, "Cancelling input consent granted control.");
+            await Decide(owner, grant: true, approve: true);
+            Check(tab.IsAiControlling && tab.InputSession is null, "Grant failed to exclude manual input.");
             string control = tab.AiSharing.Control!.Id;
             string observation = await Observe();
             var first = new { session, control, action_seq = 1, observation, input = new { kind = "key", key = "ArrowUp" } };
+            var otherListing = await Call(stranger, "list_shared_sessions", new { });
+            Check(otherListing.GetProperty("sessions").GetArrayLength() == 0 &&
+                Code(await Call(stranger, "send_input", first)) == "not_shared" &&
+                Code(await Call(stranger, "return_control", new { session, control })) == "not_shared" &&
+                tab.IsAiControlling && connection.Available == 0,
+                "A second integration shared the first integration's input authority.");
             var sent = await Call(owner, "send_input", first);
             Check(sent.GetProperty("delivery").GetString() == "submitted", "A valid terminal key was not submitted.");
             await Bytes("\u001b[A");
@@ -147,15 +192,73 @@ internal static partial class Program
             var obsolete = await Call(owner, "send_input", new { session, control = currentControl, action_seq = 1, observation,
                 input = new { kind = "text", text = "STALE" } });
             Check(Code(obsolete) == "stale_observation", "A dimension change that was undone reused an old observation.");
+            const string handoff = "Review the result";
+            await Call(owner, "return_control", new { session, control = currentControl, reason = handoff });
+            string attributed = string.Format(App.Text("AiHandoffMessage"), handoff);
+            Check(tab.IsAiShared && !tab.IsAiControlling &&
+                FindControls<TextBlock>(tab).Any(label => label.Text.EndsWith("\n" + attributed, StringComparison.Ordinal)),
+                "The AI's handoff message must be distinct from TabTty status while reading continues.");
             AiCollaboration.Reply read = await ai.CallAsync(owner, "tabtty_read_state",
                 JsonSerializer.SerializeToElement(new { session }), token);
             Check(ai.CanDeliver(owner, read), "The authorized result could not be committed.");
-            ai.EndSharing(tab);
+            var endSharing = FindControls<Button>(tab).Single(button =>
+                Equals(button.Content, App.Text("AiEndSharing")) && button.IsVisible);
+            endSharing.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Check(!ai.CanDeliver(owner, read) && !tab.BroadcastChecked, "Sharing end permitted disclosure or restored a broadcast check.");
             Check(Code(await Call(owner, "read_history", new { session })) == "not_shared", "The ended share remained readable.");
             await ChangedSearchCannotCommit();
             await PublicationChecksTheLiveSourceAndAuthority();
+            await CheckControlReturnBudget();
             await ReadFromPausedMacro();
+            Check(ai.Share(tab, owner) is null && ai.Grant(tab) is null, "The original integration could not obtain a fresh grant.");
+            string closingSession = tab.AiSharing!.Id;
+            string closingControl = tab.AiSharing.Control!.Id;
+            var lastState = await Call(owner, "read_state", new { session = closingSession });
+            ai.Detach(owner);
+            var reattached = ai.Attach("fixture bridge", owner.LauncherPath, owner.LauncherId)!;
+            try
+            {
+                reattached.Name = owner.Name;
+                var listing = await Call(reattached, "list_shared_sessions", new { });
+                var oldInput = new { session = closingSession, control = closingControl, action_seq = 1,
+                    observation = lastState.GetProperty("observation").GetString(), input = new { kind = "key", key = "ArrowUp" } };
+                Check(!tab.IsAiShared && reattached.Id != owner.Id && listing.GetProperty("sessions").GetArrayLength() == 0 &&
+                    Code(await Call(reattached, "read_state", new { session = closingSession })) == "not_shared" &&
+                    Code(await Call(reattached, "send_input", oldInput)) == "not_shared" && connection.Available == 0,
+                    "Reattaching the same integration restored a previous session or input grant.");
+                Console.WriteLine("PASS McpIntegrationGrantsAreIsolatedAndExpireOnDetach");
+            }
+            finally { ai.Detach(reattached); }
+
+            async Task Decide(AiCollaboration.Counterpart recipient, bool grant, bool approve, Action? beforeDecision = null)
+            {
+                var menu = new ContextMenu();
+                tab.FillAiMenu(menu);
+                string title = App.Text(grant ? "AiGiveControl" : "AiShareOutput");
+                MenuItem operation = menu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, title));
+                if (!grant) operation = operation.Items.OfType<MenuItem>().Single(
+                    item => item.Header is TextBlock label && label.Text.StartsWith(recipient.Label + "\n", StringComparison.Ordinal));
+                var review = window.Dispatcher.InvokeAsync(() =>
+                {
+                    Window dialog = app.Windows.OfType<Window>().Single(candidate => candidate.Owner == window && candidate.Title == title);
+                    try
+                    {
+                        var buttons = FindControls<Button>(dialog).ToArray();
+                        Check(buttons.Single(button => button.IsDefault).IsCancel, "Consent should default to Cancel.");
+                        Check(FindControls<TextBlock>(dialog).Any(label =>
+                            label.Text.Contains(tab.TabCaption) && label.Text.Contains(recipient.Code) &&
+                            label.Text.Contains(string.Format(App.Text("AiTelnetTarget"), $"127.0.0.1:{port}")) &&
+                            label.Text.Contains(string.Format(App.Text("AiLauncherProcess"), recipient.LauncherPath, recipient.LauncherId)) &&
+                            label.Text.Contains(App.Text("AiUnattendedConsent"))),
+                            "Consent did not identify the session destination, recipient and unattended access.");
+                        beforeDecision?.Invoke();
+                        buttons.Single(button => button.IsCancel != approve).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    }
+                    finally { if (dialog.IsVisible) dialog.Close(); }
+                }, DispatcherPriority.Background);
+                operation.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                await review.Task.WaitAsync(token);
+            }
 
             async Task ChangedSearchCannotCommit()
             {
@@ -193,7 +296,7 @@ internal static partial class Program
             {
                 var clock = new HistoryClock();
                 using var collab = new AiCollaboration(app, clock);
-                var peer = collab.Attach("controlled publication")!;
+                var peer = collab.Attach("controlled publication", @"C:\Fixtures\History\Host.exe", 303)!;
                 Check(collab.Share(tab, peer) is null, "The fixture could not share a retained terminal.");
                 string session = tab.AiSharing!.Id;
                 var page = await Prepare(new { session });
@@ -241,6 +344,53 @@ internal static partial class Program
                 }
             }
 
+            async Task CheckControlReturnBudget()
+            {
+                var clock = new HistoryClock();
+                using var collab = new AiCollaboration(app, clock);
+                var peer = collab.Attach("return budget", @"C:\Fixtures\Host.exe", 304)!;
+                var other = collab.Attach("independent budget", @"C:\Fixtures\Host.exe", 305)!;
+                Check(collab.Share(tab, peer) is null && collab.Grant(tab) is null, "Could not grant input.");
+                string session = tab.AiSharing!.Id;
+                string control = tab.AiSharing.Control!.Id;
+                Check(Code(await Return(peer, "unshared")) == "not_shared", "Unknown return disclosed a session.");
+                // One handoff and six idempotent acknowledgements use the remaining burst.
+                for (int i = 0; i < 7; i++)
+                    Check(Code(await Return(peer, session)) is null, "A return within the burst failed.");
+                await WaitForTakeover();
+                Check(collab.Grant(tab) is null, "Could not grant input again.");
+                control = tab.AiSharing.Control!.Id;
+                var limited = await Return(peer, session);
+                Check(Code(limited) == "busy" && limited.GetProperty("error").GetProperty("retry_after_ms").GetInt32() == 250 &&
+                    tab.IsAiControlling, "A limited return changed a grant or gave an incorrect retry delay.");
+                Check(Code(await Return(other, session)) == "not_shared", "One peer consumed another's return budget.");
+                var listing = await collab.CallAsync(peer, "tabtty_list_shared_sessions",
+                    JsonSerializer.SerializeToElement(new { }), token);
+                Check(JsonSerializer.SerializeToElement(listing.Body).GetProperty("status").GetString() == "ok",
+                    "Returning control consumed the ordinary-call budget.");
+                collab.EndControl(tab);
+                Check(!tab.IsAiControlling, "Local takeover waited for an integration's return budget.");
+                clock.Advance(249);
+                limited = await Return(peer, session);
+                Check(Code(limited) == "busy" && limited.GetProperty("error").GetProperty("retry_after_ms").GetInt32() == 1,
+                    "The return budget refilled too early.");
+                clock.Advance(1);
+                Check(Code(await Return(peer, session)) is null, "The return budget did not recover at the boundary.");
+                await WaitForTakeover();
+
+                async Task<JsonElement> Return(AiCollaboration.Counterpart counterpart, string target)
+                {
+                    var reply = await collab.CallAsync(counterpart, "tabtty_return_control",
+                        JsonSerializer.SerializeToElement(new { session = target, control }), token);
+                    return JsonSerializer.SerializeToElement(reply.Body);
+                }
+
+                async Task WaitForTakeover()
+                {
+                    while (tab.IsAiTakingControl) await Task.Delay(10, token);
+                }
+            }
+
             async Task ReadFromPausedMacro()
             {
                 string source = Path.Combine(directory, "ai-macro.tttym");
@@ -249,7 +399,9 @@ internal static partial class Program
                     Connect("ai-session.ttty");
                     WaitPrompt(Literal("MACRO-DONE"));
                     """, token);
-                await window.OpenMacroAsync(source, []);
+                Task decide = DecideMacroRequest(app, window, source, App.Text("MacroNoArguments"), "MacroRunOnce");
+                await window.OpenExternalMacroAsync(new InstanceLaunch(source, []));
+                await decide;
                 TerminalTab macroTab = window.TerminalTabs.Single(candidate => candidate.Macro is not null);
                 using var macroConnection = await listener.AcceptTcpClientAsync(token);
                 await macroConnection.GetStream().ReadExactlyAsync(new byte[15], token);

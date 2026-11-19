@@ -18,6 +18,7 @@ internal sealed class MacroDialogWindow : Window
     public MacroDialogWindow(Window owner, string macro, MacroDialogRequest request)
     {
         Owner = owner;
+        Icon = WindowIcons.App;
         Title = request.Title.Length == 0 ? macro : $"{request.Title} ({macro})";
         Width = 480;
         MaxHeight = SystemParameters.WorkArea.Height;

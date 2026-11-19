@@ -52,6 +52,8 @@ pub struct RowView {
     pub cells: *const CellView,
     pub text: *const u16,
     pub cell_text: *const u16,
+    pub formats: *const FormatView,
+    pub format_count: u32,
     pub cell_count: u32,
     pub text_length: u32,
     pub cell_text_length: u32,
@@ -288,7 +290,66 @@ fn run<F: FnOnce() -> Result<(), i32>>(f: F) -> i32 {
 }
 #[no_mangle]
 pub extern "C" fn tc_abi_version() -> u32 {
-    10
+    11
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tc_analyze_paste(
+    text: *const u16,
+    length: u32,
+    graphemes: *mut u32,
+    lines: *mut u32,
+) -> i32 {
+    if !valid(graphemes) || !valid(lines) || (length != 0 && !valid(text)) {
+        return 1;
+    }
+    run(|| {
+        let text = if length == 0 { &[] } else { slice::from_raw_parts(text, length as usize) };
+        let (count, line_count) = unicode::Unicode::new().analyze_paste(text)?;
+        graphemes.write(count as u32);
+        lines.write(line_count as u32);
+        Ok(())
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tc_paste_chunk(
+    text: *const u16,
+    length: u32,
+    context: u32,
+    character_delay: u32,
+    line_delay: u32,
+    output: *mut [u32; 4],
+) -> i32 {
+    if length == 0 || !valid(text) || !valid(output) || character_delay > 10_000 || line_delay > 10_000 {
+        return 1;
+    }
+    run(|| {
+        output.write(unicode::Unicode::new().paste_chunk(slice::from_raw_parts(text, length as usize),
+            context, character_delay, line_delay)?);
+        Ok(())
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tc_drawing_mark(scalar: u32) -> u32 {
+    unicode::Unicode::new().is_mark(scalar) as u32
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tc_next_grapheme(
+    text: *const u16,
+    length: u32,
+    consumed: *mut u32,
+) -> i32 {
+    if !valid(consumed) || (length != 0 && !valid(text)) {
+        return 1;
+    }
+    run(|| {
+        let text = if length == 0 { &[] } else { slice::from_raw_parts(text, length as usize) };
+        consumed.write(unicode::Unicode::new().next_grapheme(text)? as u32);
+        Ok(())
+    })
 }
 
 #[no_mangle]
@@ -968,7 +1029,7 @@ mod tests {
     #[test]
     fn abi() {
         assert_eq!(size_of::<CellView>(), 32);
-        assert_eq!(size_of::<RowView>(), 72);
+        assert_eq!(size_of::<RowView>(), 88);
         assert_eq!(size_of::<SnapshotView>(), 48);
         assert_eq!(size_of::<Effects>(), 72);
         assert_eq!(size_of::<ScreenState>(), 48);
@@ -1076,7 +1137,7 @@ mod tests {
     #[test]
     fn export_preserves_empty_screen_and_all_abi_layouts() {
         assert_eq!(size_of::<TabView>(), 8);
-        assert_eq!(size_of::<ExportRow>(), 152);
+        assert_eq!(size_of::<ExportRow>(), 168);
         assert_eq!(size_of::<SourceView>(), 64);
         assert_eq!(size_of::<ExportState>(), 168);
         assert_eq!(size_of::<EditingView>(), 256);
@@ -1157,21 +1218,17 @@ mod tests {
         assert_eq!(row_text(&mut t, 0), "before");
     }
     #[test]
-    fn preflight_rejects_cluster_overflow_without_losing_retained_output() {
+    fn preflight_and_receive_retain_only_the_first_256_scalars() {
         let mut t = Model::new(16, 4, 100, 1);
         let cluster = format!("a{}", "\u{301}".repeat(255));
         t.feed(0, cluster.as_bytes(), 3).unwrap();
         let before = t.stats().feed_bytes;
-        for source in 0..2 {
-            assert_eq!(t.preflight(0, source, "\u{301}".as_bytes(), 3), Err(2));
-            assert_eq!(t.stats().feed_bytes, before);
-            assert_eq!(row_text(&mut t, 0), cluster);
-        }
-        let e = t.export().unwrap();
-        assert_eq!(e.cluster_count, 256);
-        unsafe {
-            assert_eq!((*e.sources).last_graphic_count, 256);
-        }
+        let tail = "\u{301}b";
+        assert!(t.preflight(0, 0, tail.as_bytes(), 3).is_ok());
+        assert_eq!(t.stats().feed_bytes, before);
+        assert_eq!(row_text(&mut t, 0), cluster);
+        t.feed(0, tail.as_bytes(), 3).unwrap();
+        assert_eq!(row_text(&mut t, 0), format!("{}b", cluster));
     }
     #[test]
     fn preflight_rejects_fragmented_escape_overflow_without_consuming_it() {

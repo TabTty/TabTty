@@ -9,7 +9,8 @@ using static TabTty.App.App;
 
 namespace TabTty.App;
 
-internal sealed class ProfileCatalog(App app)
+internal sealed class ProfileCatalog(App app, Action<string, string, string?>? issueProfiles = null,
+    Action<string>? validateProfileStage = null)
 {
     private readonly Dictionary<string, string> names = new(StringComparer.Ordinal);
     private event Action? ProfileSaved;
@@ -285,7 +286,7 @@ internal sealed class ProfileCatalog(App app)
     public void CreateProfile()
     {
         if (!ActivateEditor("NewProfile", null))
-            new ProfileEditorWindow(app, "NewProfile", null, ProfileEditor.NewProfile("telnet"), creating: true).Show();
+            new ProfileEditorWindow(app, "NewProfile", null, ProfileEditor.NewProfile("ssh"), creating: true).Show();
     }
 
     private bool ActivateEditor(string title, string? identity)
@@ -302,6 +303,40 @@ internal sealed class ProfileCatalog(App app)
         Action<string>? savedAs = null, bool fromExplorer = false)
     {
         var editor = new ProfileEditor(form, profile, app, creating, fromExplorer);
+        string? attemptedPath = path;
+        FilePublicationResult? pendingPublication = null;
+        form.DescribeUnresolvedPublication = () =>
+            pendingPublication is { } publication ? JsonStoreRecovery.DescribeFailure(publication) : null;
+        form.AddActionRow(() => form.AddAsyncAction("RecheckFilePublication", async () =>
+        {
+            if (attemptedPath is null) return;
+            ConnectionProfile? committed;
+            try { committed = await ConnectionProfile.ReconcileSaveAsync(attemptedPath, pendingPublication?.OperationId); }
+            catch (FilePublicationException error)
+            {
+                pendingPublication = error.Result.EvidenceRetired ? null : error.Result;
+                throw;
+            }
+            if (committed is null)
+            {
+                var stages = await Task.Run(() => VerifiedFilePublication.ReinspectRetainedStages(attemptedPath));
+                if (!JsonStoreRecovery.ShowRetainedStages(app, form, stages))
+                    app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow, Text("NoFilePublicationToRecheck"), Text("Profiles")));
+                return;
+            }
+            pendingPublication = null;
+            editor.UseSavedRevision(committed);
+            if (path is null)
+            {
+                path = attemptedPath;
+                savedAs?.Invoke(path);
+                await RememberAsync(path, committed, used: false);
+            }
+            else names[path] = committed.DisplayName;
+            ProfileSaved?.Invoke();
+            JsonStoreRecovery.ShowRetainedStages(app, form, VerifiedFilePublication.GetRetainedStagePaths(attemptedPath));
+        }));
+        form.ShowFileOperationStatus();
         form.AddEditorButtons(async () =>
         {
             ConnectionProfile draft = editor.GetDraft();
@@ -309,20 +344,40 @@ internal sealed class ProfileCatalog(App app)
             {
                 string? destination = ChooseNewPath(form.OwnerWindow);
                 if (destination is null) return false;
-                await draft.SaveNewAsync(destination);
+                if (!string.Equals(attemptedPath, destination, StringComparison.OrdinalIgnoreCase))
+                    pendingPublication = null;
+                attemptedPath = destination;
+                await ObserveSaveAsync(draft.BeginSaveNew(destination, issueProfiles, validateProfileStage));
                 editor.UseSavedRevision(draft);
-                path = await RememberAsync(destination, draft, used: false);
+                path = destination;
                 savedAs?.Invoke(path);
+                await RememberAsync(path, draft, used: false);
             }
             else
             {
-                await draft.SaveEditAsync();
+                await ObserveSaveAsync(draft.BeginSaveEdit(issueProfiles, validateProfileStage));
                 editor.UseSavedRevision(draft);
                 names[path] = draft.DisplayName;
             }
             ProfileSaved?.Invoke();
+            JsonStoreRecovery.ShowRetainedStages(app, form, VerifiedFilePublication.GetRetainedStagePaths(path));
             return true;
         });
+
+        async Task ObserveSaveAsync(ConnectionProfile.ProfileSaveOperation operation)
+        {
+            try
+            {
+                await operation.ObserveAsync();
+                pendingPublication = null;
+            }
+            catch (FilePublicationException error) when (error.Result.OperationId == operation.Id)
+            {
+                if (error.Result.Status != FilePublicationStatus.Unchanged || error.Result.CleanupError is not null)
+                    pendingPublication = error.Result;
+                throw;
+            }
+        }
     }
 
     public string? ChooseNewPath(Window owner)

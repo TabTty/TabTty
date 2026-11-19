@@ -64,6 +64,18 @@ internal sealed class MacroList(MacroType element, IEnumerable<object> values)
 
 internal static class MacroLimits
 {
+    internal static void ValidateArguments(IReadOnlyList<string> arguments)
+    {
+        if (arguments.Count > 64 || arguments.Any(argument => argument.Length > 4096) ||
+            arguments.Sum(argument => argument.Length) > 16384)
+            throw new MacroSourceException("ArgumentLimit", new(1, 1));
+        foreach (string argument in arguments)
+        {
+            try { Unicode(argument); }
+            catch (MacroError) { throw new MacroSourceException("InvalidArgument", new(1, 1)); }
+        }
+    }
+
     public const int SourceBytes = 1024 * 1024, StringUnits = 1024 * 1024, ListItems = 65536,
         LineUnits = 65536, HistoryUnits = 1024 * 1024, HistoryLines = 65536;
     public const long RunBytes = 32L * 1024 * 1024, ReserveBytes = 8L * 1024 * 1024;

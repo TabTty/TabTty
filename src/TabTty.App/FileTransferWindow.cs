@@ -44,7 +44,7 @@ internal sealed class FileTransferWindow : Window
     private int resultCharacters;
     private long lastProgress;
     private Point dragStart;
-    private TransferItem? dragItem;
+    private Row? dragRow;
     private DragSelection? activeDrag;
     private ListViewItem? highlighted;
 
@@ -54,6 +54,7 @@ internal sealed class FileTransferWindow : Window
         this.ownership = ownership;
         ownership.Changed += OwnershipChanged;
         Title = $"{Text("FileTransfer")} — {session.FileTransferEndpoint}";
+        Icon = WindowIcons.App;
         Width = 1060;
         Height = 660;
         MinWidth = 550;
@@ -145,11 +146,23 @@ internal sealed class FileTransferWindow : Window
         if (!pane.Remote) localHeading = heading;
         header.Children.Add(heading);
         AutomationProperties.SetName(pane.Path, Text("TransferPath"));
+        pane.Path.TextChanged += (_, _) =>
+        {
+            pane.Load?.Cancel();
+            activeDrag = null;
+            UpdateActions();
+        };
         pane.Path.KeyDown += (_, args) =>
         {
+            if (args.Key == Key.Escape && pane.ListedPath is { } previous)
+            {
+                args.Handled = true;
+                pane.Path.Text = previous;
+                return;
+            }
             if (args.Key != Key.Enter) return;
             args.Handled = true;
-            _ = NavigateAsync(pane, pane.Path.Text);
+            _ = pane.IsListed ? RefreshAsync(pane) : NavigateAsync(pane, pane.Path.Text);
         };
         header.Children.Add(pane.Path);
         var actions = new WrapPanel();
@@ -177,7 +190,11 @@ internal sealed class FileTransferWindow : Window
         AddColumn("TransferModified", 145, nameof(Row.Modified));
         pane.List.View = view;
         AutomationProperties.SetName(pane.List, title);
-        pane.List.SelectionChanged += (_, _) => UpdateActions();
+        pane.List.SelectionChanged += (_, _) =>
+        {
+            if (activeDrag?.Source == pane) activeDrag = null;
+            UpdateActions();
+        };
         pane.List.MouseDoubleClick += (_, args) => OpenFolder(pane, RowAt(pane, args.OriginalSource));
         pane.List.KeyDown += (_, args) =>
         {
@@ -190,12 +207,16 @@ internal sealed class FileTransferWindow : Window
         pane.List.PreviewMouseLeftButtonDown += (_, args) =>
         {
             dragStart = args.GetPosition(pane.List);
-            dragItem = RowAt(pane, args.OriginalSource)?.Item;
+            dragRow = RowAt(pane, args.OriginalSource);
         };
         pane.List.PreviewMouseMove += (_, args) => Drag(pane, args);
         pane.List.DragOver += (_, args) => HandleDrop(pane, args, commit: false);
         pane.List.Drop += (_, args) => HandleDrop(pane, args, commit: true);
-        pane.List.DragLeave += (_, _) => Highlight(null);
+        pane.List.DragLeave += (_, _) =>
+        {
+            if (activeDrag is { } drag) drag.PreviewTarget = null;
+            Highlight(null);
+        };
         layout.Children.Add(pane.List);
         return layout;
 
@@ -216,14 +237,19 @@ internal sealed class FileTransferWindow : Window
     }
 
     private Task NavigateAsync(Pane pane, string path) => BrowseAsync(pane, token => files!.ResolveAsync(pane.Remote, path, pane.Directory, token));
-    private Task<bool> RefreshAsync(Pane pane) => pane.Directory is { } path ? BrowseAsync(pane, _ => Task.FromResult(path)) : Task.FromResult(false);
+    private Task<bool> RefreshAsync(Pane pane) => pane.Directory is { } path
+        ? BrowseAsync(pane, _ => Task.FromResult(path), preserveDraft: pane.Path.Text != pane.ListedPath)
+        : Task.FromResult(false);
 
-    private async Task<bool> BrowseAsync(Pane pane, Func<CancellationToken, Task<TransferPath>> target)
+    private async Task<bool> BrowseAsync(Pane pane, Func<CancellationToken, Task<TransferPath>> target, bool preserveDraft = false)
     {
         if (files is null || client?.IsOpen != true || disconnected || closing) return false;
         pane.Load?.Cancel();
         using var load = CancellationTokenSource.CreateLinkedTokenSource(connection.Token);
         pane.Load = load;
+        activeDrag = null;
+        dragRow = null;
+        UpdateActions();
         try
         {
             TransferPath path = await target(load.Token);
@@ -232,10 +258,12 @@ internal sealed class FileTransferWindow : Window
             if (pane.Load != load || load.IsCancellationRequested) return false;
             Row[] rows = items.OrderByDescending(item => item.Attributes.Kind == TransferKind.Directory)
                 .ThenBy(item => item.Label, StringComparer.CurrentCultureIgnoreCase).Select(item => new Row(item)).ToArray();
-            pane.Directory = path;
-            pane.Path.Text = files.Display(path);
-            pane.Revision++;
             pane.List.ItemsSource = rows;
+            pane.Revision++;
+            pane.Directory = path;
+            pane.ListedPath = files.Display(path);
+            pane.Load = null;
+            if (!preserveDraft) pane.Path.Text = pane.ListedPath;
             return true;
         }
         catch (OperationCanceledException) { return false; }
@@ -260,29 +288,41 @@ internal sealed class FileTransferWindow : Window
 
     private void Drag(Pane pane, MouseEventArgs args)
     {
-        if (ownership.IsBusy || disconnected || args.LeftButton != MouseButtonState.Pressed || dragItem is null) return;
+        if (args.LeftButton != MouseButtonState.Pressed || dragRow is null) return;
         Point now = args.GetPosition(pane.List);
         if (Math.Abs(now.X - dragStart.X) < SystemParameters.MinimumHorizontalDragDistance &&
             Math.Abs(now.Y - dragStart.Y) < SystemParameters.MinimumVerticalDragDistance) return;
-        TransferItem[] selection = Selected(pane);
-        activeDrag = new DragSelection(pane, pane.Revision, selection.Contains(dragItem) ? selection : [dragItem]);
-        dragItem = null;
-        try { DragDrop.DoDragDrop(pane.List, new DataObject(typeof(DragSelection), activeDrag), DragDropEffects.Copy); }
+        IDataObject? data = CreateDragData(pane.List, dragRow);
+        dragRow = null;
+        if (data is null) return;
+        try { DragDrop.DoDragDrop(pane.List, data, DragDropEffects.Copy); }
         finally { activeDrag = null; Highlight(null); }
+    }
+
+    internal IDataObject? CreateDragData(ListView list, object clickedRow)
+    {
+        Pane pane = list == local.List ? local : remote;
+        if (ownership.IsBusy || disconnected || !pane.IsListed || pane.List != list ||
+            clickedRow is not Row row || !list.Items.Contains(row)) return null;
+        TransferItem[] selection = Selected(pane);
+        activeDrag = new DragSelection(pane, pane.Revision, selection.Contains(row.Item) ? selection : [row.Item]);
+        return new DataObject(typeof(DragSelection), activeDrag);
     }
 
     private void HandleDrop(Pane pane, DragEventArgs args, bool commit)
     {
         args.Handled = true;
         args.Effects = DragDropEffects.None;
-        if (ownership.IsBusy || disconnected || pane.Load is not null || pane.Directory is null || activeDrag is not { } drag ||
+        if (ownership.IsBusy || disconnected || !pane.IsListed || pane.Directory is null || activeDrag is not { } drag ||
             !ReferenceEquals(args.Data.GetData(typeof(DragSelection)), drag) || drag.Source == pane || drag.Revision != drag.Source.Revision) return;
         Row? row = RowAt(pane, args.OriginalSource);
         TransferPath target = row?.Item.Attributes.Kind == TransferKind.Directory ? row.Item.Path : pane.Directory;
+        if (commit && !ReferenceEquals(drag.PreviewTarget, target)) return;
         args.Effects = DragDropEffects.Copy;
         if (commit) StartCopy(drag.Source, drag.Items, target);
         else
         {
+            drag.PreviewTarget = target;
             Highlight(args.OriginalSource is DependencyObject element ? ItemsControl.ContainerFromElement(pane.List, element) as ListViewItem : null);
             status.Text = Format("TransferDropTarget", files!.Display(target));
         }
@@ -298,7 +338,7 @@ internal sealed class FileTransferWindow : Window
 
     private void StartCopy(Pane source, TransferItem[] selection, TransferPath? target)
     {
-        if (target is null || selection.Length == 0 || source.Load is not null) return;
+        if (target is null || selection.Length == 0 || !local.IsListed || !remote.IsListed) return;
         Observe(operations?.Copy(selection, target, PresentQuestion));
     }
 
@@ -366,14 +406,15 @@ internal sealed class FileTransferWindow : Window
     {
         bool connected = files is not null && client?.IsOpen == true && !disconnected && !closing;
         bool idle = connected && operations?.CanStart == true;
-        upload.IsEnabled = idle && local.List.SelectedItems.Count != 0 && remote.Directory is not null && remote.Load is null;
-        download.IsEnabled = idle && remote.List.SelectedItems.Count != 0 && local.Directory is not null && local.Load is null;
+        bool canCopy = idle && local.IsListed && remote.IsListed;
+        upload.IsEnabled = canCopy && local.List.SelectedItems.Count != 0;
+        download.IsEnabled = canCopy && remote.List.SelectedItems.Count != 0;
         retry.IsEnabled = idle && operations?.CanRetry == true;
         cancel.IsEnabled = operations?.IsRunning == true && !closing;
         foreach (var (button, pane, key) in mutations)
         {
             int selected = pane.List.SelectedItems.Count;
-            button.IsEnabled = idle && pane.Directory is not null && pane.Load is null && (key switch
+            button.IsEnabled = idle && pane.IsListed && (key switch
             {
                 "TransferRename" => selected == 1,
                 "TransferDelete" => selected != 0,
@@ -381,6 +422,8 @@ internal sealed class FileTransferWindow : Window
             });
         }
         local.Path.IsEnabled = remote.Path.IsEnabled = connected;
+        local.List.IsEnabled = local.IsListed;
+        remote.List.IsEnabled = remote.IsListed;
     }
 
     private void AddResult(string path, string key)
@@ -410,7 +453,7 @@ internal sealed class FileTransferWindow : Window
     private ValueTask<TransferChoice> PresentQuestion(TransferQuestion question)
     {
         if (question.Kind == TransferQuestionKind.PermanentDelete)
-            return ValueTask.FromResult(Confirm(Format("TransferDeletePermanent", question.Path.Local!), question.Lifetime) ? TransferChoice.Overwrite : TransferChoice.Skip);
+            return ValueTask.FromResult(Confirm(Format("TransferDeletePermanent", files!.Display(question.Path)), question.Lifetime) ? TransferChoice.Overwrite : TransferChoice.Skip);
         if (question.Kind == TransferQuestionKind.Delete)
         {
             var items = question.Selection!;
@@ -436,24 +479,26 @@ internal sealed class FileTransferWindow : Window
 
     private void StartCreate(Pane pane)
     {
-        if (operations?.CanStart != true || pane.Directory is not { } parent || pane.Load is not null || disconnected) return;
+        if (operations?.CanStart != true || pane.Directory is not { } parent || !pane.IsListed || disconnected) return;
+        int revision = pane.Revision;
         string? name = PromptName("TransferNewFolder", "");
-        if (name is null) return;
+        if (name is null || !pane.IsListed || pane.Revision != revision) return;
         Observe(operations?.Create(parent, name));
     }
 
     private void StartRename(Pane pane)
     {
-        if (operations?.CanStart != true || pane.Directory is not { } parent || pane.Load is not null ||
+        if (operations?.CanStart != true || pane.Directory is not { } parent || !pane.IsListed ||
             Selected(pane) is not [{ Name: { } oldName } item]) return;
+        int revision = pane.Revision;
         string? name = PromptName("TransferRename", oldName);
-        if (name is null || name == oldName) return;
+        if (name is null || name == oldName || !pane.IsListed || pane.Revision != revision) return;
         Observe(operations.Rename(parent, item, name));
     }
 
     private void StartDelete(Pane pane)
     {
-        if (operations?.CanStart != true || pane.Directory is not { } parent || pane.Load is not null) return;
+        if (operations?.CanStart != true || pane.Directory is not { } parent || !pane.IsListed) return;
         TransferItem[] items = Selected(pane);
         if (items.Length != 0) Observe(operations.Delete(parent, items, PresentQuestion));
     }
@@ -463,7 +508,8 @@ internal sealed class FileTransferWindow : Window
         var box = new TextBox { Text = initial, MinWidth = 320 };
         AutomationProperties.SetName(box, Text("TransferName"));
         var layout = new StackPanel { Margin = new Thickness(12) };
-        var dialog = new Window { Owner = this, Title = Text(title), Content = layout, SizeToContent = SizeToContent.WidthAndHeight,
+        var dialog = new Window { Owner = this, Title = Text(title), Icon = WindowIcons.App,
+            Content = layout, SizeToContent = SizeToContent.WidthAndHeight,
             WindowStartupLocation = WindowStartupLocation.CenterOwner, ResizeMode = ResizeMode.NoResize, ShowInTaskbar = false };
         layout.Children.Add(box);
         var commands = new WrapPanel();
@@ -608,6 +654,8 @@ internal sealed class FileTransferWindow : Window
         public TextBox Path { get; } = new() { Margin = new Thickness(0, 5, 0, 0) };
         public ListView List { get; } = new();
         public TransferPath? Directory;
+        public string? ListedPath;
+        public bool IsListed => Directory is not null && Load is null && Path.Text == ListedPath;
         public CancellationTokenSource? Load;
         public int Revision;
     }
@@ -619,5 +667,8 @@ internal sealed class FileTransferWindow : Window
         public string Modified => FileTransferWindow.Modified(Item.Attributes);
     }
 
-    private sealed record DragSelection(Pane Source, int Revision, TransferItem[] Items);
+    private sealed record DragSelection(Pane Source, int Revision, TransferItem[] Items)
+    {
+        public TransferPath? PreviewTarget { get; set; }
+    }
 }

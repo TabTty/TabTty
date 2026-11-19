@@ -7,12 +7,6 @@ namespace TabTty.App;
 
 internal static class ProfileFileAssociation
 {
-    public static void RegisterOnStartup()
-    {
-        try { RegisterOpenWith(); }
-        catch (Exception exception) when (IsRegistrationFailure(exception)) { }
-    }
-
     public static bool IsRegistrationFailure(Exception exception) =>
         ProfileCatalog.IsFileProblem(exception) || exception is SecurityException;
 

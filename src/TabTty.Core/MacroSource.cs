@@ -1,6 +1,8 @@
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using Microsoft.Win32.SafeHandles;
 
 namespace TabTty.Core;
 
@@ -14,20 +16,44 @@ internal sealed class MacroProgram
     internal MacroBlock Body { get; }
     internal Dictionary<string, MacroFunction> Functions { get; }
     internal int NodeCount { get; }
+    internal string? SourceDigest { get; private set; }
 
     public static async Task<MacroProgram> LoadAsync(string path, CancellationToken token = default)
     {
-        try { MacroLimits.Unicode(path); }
-        catch (MacroError) { throw SourceError("Path"); }
-        path = Path.GetFullPath(path);
+        path = ResolveSourcePath(path);
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read,
             4096, FileOptions.Asynchronous | FileOptions.SequentialScan);
-        if (stream.Length > MacroLimits.SourceBytes) throw SourceError("SourceLimit");
+        return await LoadAsync(path, stream, token).ConfigureAwait(false);
+    }
+
+    internal static async Task<MacroProgram?> TryLoadLocalAsync(string path, CancellationToken token = default)
+    {
+        path = ResolveSourcePath(path);
+        using SafeFileHandle? handle = LocalMacroFile.TryOpen(path);
+        if (handle is null) return null;
+        await using var stream = new FileStream(handle, FileAccess.Read);
+        return await LoadAsync(path, stream, token).ConfigureAwait(false);
+    }
+
+    internal static string ResolveSourcePath(string path)
+    {
+        try
+        {
+            MacroLimits.Unicode(path);
+            return OrdinaryWindowsPath.Resolve(path);
+        }
+        catch (Exception error) when (error is MacroError or InvalidDataException or ArgumentException or PathTooLongException)
+        { throw SourceError("Path"); }
+    }
+
+    private static async Task<MacroProgram> LoadAsync(string path, FileStream stream, CancellationToken token)
+    {
         long length = stream.Length;
-        DateTime stamp = File.GetLastWriteTimeUtc(path);
+        if (length > MacroLimits.SourceBytes) throw SourceError("SourceLimit");
+        DateTime stamp = File.GetLastWriteTimeUtc(stream.SafeFileHandle);
         byte[] bytes = new byte[(int)length];
         await stream.ReadExactlyAsync(bytes, token).ConfigureAwait(false);
-        if (stream.Length != length || stream.ReadByte() != -1 || File.GetLastWriteTimeUtc(path) != stamp)
+        if (stream.Length != length || stream.ReadByte() != -1 || File.GetLastWriteTimeUtc(stream.SafeFileHandle) != stamp)
             throw SourceError("SourceChanged");
         Encoding encoding = new UTF8Encoding(false, true);
         int skip = 0;
@@ -36,7 +62,12 @@ internal sealed class MacroProgram
         else if (bytes.AsSpan().StartsWith(new byte[] { 0xef, 0xbb, 0xbf })) skip = 3;
         else if (bytes.AsSpan().StartsWith(new byte[] { 0xff, 0xfe })) { encoding = new UnicodeEncoding(false, true, true); skip = 2; }
         else if (bytes.AsSpan().StartsWith(new byte[] { 0xfe, 0xff })) { encoding = new UnicodeEncoding(true, true, true); skip = 2; }
-        try { return Parse(path, encoding.GetString(bytes, skip, bytes.Length - skip)); }
+        try
+        {
+            var program = Parse(path, encoding.GetString(bytes, skip, bytes.Length - skip));
+            program.SourceDigest = Convert.ToHexString(SHA256.HashData(bytes));
+            return program;
+        }
         catch (DecoderFallbackException) { throw SourceError("SourceEncoding"); }
     }
 

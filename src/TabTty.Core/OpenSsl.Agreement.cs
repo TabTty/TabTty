@@ -112,7 +112,7 @@ internal static unsafe partial class OpenSsl
 
     internal static ReadOnlySpan<byte> PositiveInteger(ReadOnlySpan<byte> encoded, int maximum)
     {
-        if (encoded.IsEmpty || encoded[0] >= 0x80 || encoded.Length > maximum + 1 ||
+        if (encoded.IsEmpty || encoded[0] >= 0x80 || encoded.Length - (encoded[0] == 0 ? 1 : 0) > maximum ||
             (encoded[0] == 0 && (encoded.Length == 1 || encoded[1] < 0x80)))
             throw new InvalidDataException("Invalid positive SSH mpint.");
         return encoded[0] == 0 ? encoded[1..] : encoded;

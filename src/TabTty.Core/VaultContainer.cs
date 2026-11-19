@@ -21,17 +21,26 @@ internal static class VaultContainer
         if (input.Length > MaximumMasterInputLength)
             throw new ArgumentOutOfRangeException(nameof(input), MasterLengthMessage);
         _ = StrictUtf8.GetByteCount(input);
-        string normalized = input.ToString().Normalize(NormalizationForm.FormC);
-        int count = 0;
-        foreach (Rune rune in normalized.EnumerateRunes())
+        char[] buffer = new char[MaximumMasterInputLength];
+        try
         {
-            if (Rune.IsControl(rune) || rune.Value is 0x2028 or 0x2029)
-                throw new ArgumentException("The master password contains a control character.");
-            count++;
+            if (!input.TryNormalize(buffer, out int written, NormalizationForm.FormC))
+                throw new ArgumentOutOfRangeException(nameof(input), MasterLengthMessage);
+            ReadOnlySpan<char> normalized = buffer.AsSpan(0, written);
+            int count = 0;
+            foreach (Rune rune in normalized.EnumerateRunes())
+            {
+                if (Rune.IsControl(rune) || rune.Value is 0x2028 or 0x2029)
+                    throw new ArgumentException("The master password contains a control character.");
+                count++;
+            }
+            if (count is < MinimumMasterLength or > MaximumMasterLength)
+                throw new ArgumentOutOfRangeException(nameof(input), MasterLengthMessage);
+            byte[] password = new byte[StrictUtf8.GetByteCount(normalized)];
+            StrictUtf8.GetBytes(normalized, password);
+            return password;
         }
-        if (count is < MinimumMasterLength or > MaximumMasterLength)
-            throw new ArgumentOutOfRangeException(nameof(input), MasterLengthMessage);
-        return StrictUtf8.GetBytes(normalized);
+        finally { Array.Clear(buffer); }
     }
 
     public static Guid Validate(ReadOnlySpan<byte> file)

@@ -164,7 +164,7 @@ internal sealed class TransferBatch(IFileOperationIo files)
             {
                 await files.RecheckAsync(item.Source.Path, item.Source.Attributes, null, token);
                 TransferAttributes? now = await files.StatAsync(item.Target, token);
-                if (now is not null && (approval is null || ConflictChanged(approval, now)))
+                if (now is not null && !TransferAttributes.SameOverwriteTarget(approval, now))
                 {
                     if (!await ApproveAsync(now)) { result(label, "TransferSkipped"); return; }
                     approval = now;
@@ -221,9 +221,6 @@ internal sealed class TransferBatch(IFileOperationIo files)
             return choice == TransferChoice.Overwrite;
         }
     }
-
-    private static bool ConflictChanged(TransferAttributes approved, TransferAttributes current) =>
-        approved.Kind != current.Kind || approved.Size != current.Size || approved.Modified != current.Modified;
 
     private void ReportTree(Plan plan, Action<string, string> result)
     {

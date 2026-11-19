@@ -14,6 +14,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Threading;
 using System.IO;
+using System.Security.AccessControl;
 using TabTty.App;
 using TabTty.Core;
 
@@ -22,13 +23,91 @@ internal static partial class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        bool nativeClipboard = args is ["--isolated-clipboard", _];
+        bool clipboardFixture = nativeClipboard || args is ["--clipboard-block", _];
+        if (nativeClipboard)
+        {
+            try { PrepareClipboardFixtureStation(); }
+            catch (System.ComponentModel.Win32Exception error)
+            {
+                Console.Error.WriteLine($"NOT RUN native clipboard fixture: {error.Message} ({error.NativeErrorCode}).");
+                return 2;
+            }
+        }
         string settingsDirectory = Directory.CreateTempSubdirectory("TabTty-settings-test-").FullName;
         string settingsPath = Path.Combine(settingsDirectory, "settings.json");
+        var settingsFixture = args is ["--file-editors"] ? new FilePublicationFixture() : null;
+        var profileFixture = args is ["--file-editors"] ? new FilePublicationFixture() : null;
+        var otherStoreFixture = args is ["--store-publication-faults"] ? new FilePublicationFixture() : null;
+        var vaultFaults = args is ["--vault-file-faults"] ? new VaultFileFaultFixture() : null;
+        bool standaloneVault = args is ["--vault-last-editor"];
+        bool missingMasterBackup = args is ["--vault-last-window-unverified"];
+        var masterFixture = standaloneVault || missingMasterBackup || args is ["--vault-last-window"]
+            ? new FilePublicationFixture() : null;
 #pragma warning disable WPF0001 // Match the application's startup theme before creating test windows.
-        var application = new App(settingsPath) { ShutdownMode = ShutdownMode.OnExplicitShutdown, ThemeMode = ThemeMode.System };
+        var application = new App(settingsPath, settingsFixture is null ? null : settingsFixture.Issue,
+            masterFixture is null ? null : masterFixture.Issue, profileFixture is null ? null : profileFixture.Issue,
+            vaultFaults?.Hooks, otherStoreFixture is null ? null : otherStoreFixture.Issue,
+            profileFixture is null ? null : profileFixture.Validate)
+            { ShutdownMode = ShutdownMode.OnExplicitShutdown, ThemeMode = ThemeMode.System };
 #pragma warning restore WPF0001
         try
         {
+            if (otherStoreFixture is not null)
+            {
+                var storeFrame = new DispatcherFrame();
+                Task run = application.Dispatcher.InvokeAsync(async () =>
+                {
+                    var owner = new MainWindow(application);
+                    owner.Show();
+                    await CheckHighlightAndHostTrustPublicationAsync(application, owner, otherStoreFixture);
+                }).Task.Unwrap();
+                _ = run.ContinueWith(_ => storeFrame.Continue = false, TaskScheduler.Default);
+                Dispatcher.PushFrame(storeFrame);
+                run.GetAwaiter().GetResult();
+                return 0;
+            }
+            if (vaultFaults is not null)
+            {
+                var vaultFileFrame = new DispatcherFrame();
+                Task run = application.Dispatcher.InvokeAsync(() =>
+                    CheckVaultFilesAsync(application, settingsDirectory, vaultFaults)).Task.Unwrap();
+                _ = run.ContinueWith(_ => vaultFileFrame.Continue = false, TaskScheduler.Default);
+                Dispatcher.PushFrame(vaultFileFrame);
+                run.GetAwaiter().GetResult();
+                return 0;
+            }
+            if (masterFixture is not null)
+            {
+                CheckLastWindowDuringMasterPublication(application, settingsDirectory, masterFixture,
+                    standaloneVault, missingMasterBackup);
+                return 0;
+            }
+            if (clipboardFixture)
+            {
+                var clipboardFrame = new DispatcherFrame();
+                Task run = application.Dispatcher.InvokeAsync(() =>
+                    CheckClipboardAndSftpAsync(application, settingsDirectory, int.Parse(args[1]), nativeClipboard)).Task.Unwrap();
+                _ = run.ContinueWith(_ => clipboardFrame.Continue = false, TaskScheduler.Default);
+                Dispatcher.PushFrame(clipboardFrame);
+                run.GetAwaiter().GetResult();
+                Console.WriteLine(nativeClipboard ? "PASS IsolatedNativeClipboardAndSftp" : "PASS ClipboardBlockAndSftp");
+                return 0;
+            }
+            if (args is ["--visual-check", var check])
+            {
+                switch (check)
+                {
+                    case "terminal": TerminalSurfaceRendersItsCellSnapshot(); break;
+                    case "menu": MainMenuOpensAndReusesManagementTabs(application); break;
+                    case "authentication": AuthenticationDialogsIdentifyTheRecipient(application); break;
+                    case "keyboard": MainMenuAcceptsKeyboardCommands(); break;
+                    case "desktop": RequireDesktopInput(); break;
+                    default: throw new ArgumentException("Unknown visual check.", nameof(args));
+                }
+                Console.WriteLine($"PASS {check}");
+                return 0;
+            }
             if (args is ["--background-memory", var count, var memoryReport] &&
                 int.TryParse(count, out int receivers) && receivers is >= 1 and <= 6)
             {
@@ -54,17 +133,22 @@ internal static partial class Program
             }
             if (args.SequenceEqual(["--file-operations"]))
             {
-                CheckFileOperations().GetAwaiter().GetResult();
+                CheckFileOperations(settingsDirectory).GetAwaiter().GetResult();
                 return 0;
             }
-            bool testTransferClose = args is ["--transfer-window-close", _];
-            if (args.SequenceEqual(["--native-utf8-baseline"]) || args.SequenceEqual(["--terminal-tab-close"]) || testTransferClose)
+            if (args is ["--native-utf8-baseline" or "--terminal-tab-close" or "--broadcast-splits" or "--macro-launch"] or
+                ["--transfer-window-close" or "--fullscreen-vim" or "--overload-controls" or "--sftp-batch", _])
             {
                 var integrationFrame = new DispatcherFrame();
                 Task run = application.Dispatcher.InvokeAsync(() => args[0] switch
                 {
                     "--native-utf8-baseline" => TerminalReceivesWhilePresentationIsPaused(verifyNativeResidency: true),
                     "--terminal-tab-close" => CheckTerminalClosure(application, settingsDirectory),
+                    "--broadcast-splits" => BroadcastAndSplitViews(application, settingsDirectory),
+                    "--macro-launch" => MacroLaunchAndDialog(application, settingsDirectory),
+                    "--fullscreen-vim" => CheckFullScreenApplicationAsync(application, settingsDirectory, args[1]),
+                    "--overload-controls" => CheckOverloadControlsAsync(application, settingsDirectory, args[1]),
+                    "--sftp-batch" => SftpBatchCopiesFolderTrees(int.Parse(args[1]), settingsDirectory),
                     _ => CheckTransferWindowClose(settingsDirectory, int.Parse(args[1])),
                 }).Task.Unwrap();
                 _ = run.ContinueWith(_ => integrationFrame.Continue = false, TaskScheduler.Default);
@@ -81,19 +165,20 @@ internal static partial class Program
             if (args.SequenceEqual(["--file-editors"]))
             {
                 var editorActivationFrame = new DispatcherFrame();
-                Task run = application.Dispatcher.InvokeAsync(() => CheckFileEditors(application, settingsDirectory)).Task.Unwrap();
+                Task run = application.Dispatcher.InvokeAsync(() =>
+                    CheckFileEditors(application, settingsDirectory, settingsFixture!, profileFixture!)).Task.Unwrap();
                 _ = run.ContinueWith(_ => editorActivationFrame.Continue = false, TaskScheduler.Default);
                 Dispatcher.PushFrame(editorActivationFrame);
                 run.GetAwaiter().GetResult();
                 return 0;
             }
-            CheckFileOperations().GetAwaiter().GetResult();
+            CheckFileOperations(settingsDirectory).GetAwaiter().GetResult();
             TextProviderKeepsLogicalTextAndSurvivingRanges();
             Console.WriteLine("PASS TextProviderKeepsLogicalTextAndSurvivingRanges");
             TextProviderMovesByPinnedUnicodeCharacters();
             Console.WriteLine("PASS TextProviderMovesByPinnedUnicodeCharacters");
-            TerminalSurfaceRendersItsCellSnapshot();
-            Console.WriteLine("PASS TerminalSurfaceRendersItsCellSnapshot");
+            bool visualChecksPassed = true;
+            RunVisualCheck(nameof(TerminalSurfaceRendersItsCellSnapshot), TerminalSurfaceRendersItsCellSnapshot);
             var highlightFrame = new DispatcherFrame();
             Task highlightTest = application.Dispatcher.InvokeAsync(HighlightWaitsForIdleOrViewportChange).Task.Unwrap();
             _ = highlightTest.ContinueWith(_ => highlightFrame.Continue = false, TaskScheduler.Default);
@@ -102,6 +187,8 @@ internal static partial class Program
             Console.WriteLine("PASS HighlightWaitsForIdleOrViewportChange");
             ProfileEditorKeepsUnchangedOptionsAndEditsTypedFields(application);
             Console.WriteLine("PASS ProfileEditorKeepsUnchangedOptionsAndEditsTypedFields");
+            AuthenticationDialogsIdentifyTheRecipient(application);
+            Console.WriteLine("PASS AuthenticationDialogsIdentifyTheRecipient");
             WindowPlacementKeepsNormalBoundsInsideChangedWorkAreas();
             Console.WriteLine("PASS WindowPlacementKeepsNormalBoundsInsideChangedWorkAreas");
             ProfileLocationUsesTheStoredSpelling();
@@ -110,7 +197,7 @@ internal static partial class Program
             Console.WriteLine("PASS StoreRecoveryPreservesTheOriginalAndValidatesTheBackup");
             MissingTerminalFontUsesAnInstalledFixedPitchFallback();
             Console.WriteLine("PASS MissingTerminalFontUsesAnInstalledFixedPitchFallback");
-            Task.Run(VaultUnlockWaitersShareOneInteraction).GetAwaiter().GetResult();
+            Task.Run(() => VaultUnlockWaitersShareOneInteraction(settingsDirectory)).GetAwaiter().GetResult();
             Console.WriteLine("PASS VaultUnlockWaitersShareOneInteraction");
             var macroFrame = new DispatcherFrame();
             Task macroTest = application.Dispatcher.InvokeAsync(() => MacroLaunchAndDialog(application, settingsDirectory)).Task.Unwrap();
@@ -139,10 +226,8 @@ internal static partial class Program
                 nativePresentationTest.GetAwaiter().GetResult();
                 Console.WriteLine("PASS NativeTerminalReceivesWhilePresentationIsPaused");
             }
-            MainMenuOpensAndReusesManagementTabs(application);
-            Console.WriteLine("PASS MainMenuOpensAndReusesManagementTabs");
-            MainMenuAcceptsKeyboardCommands();
-            Console.WriteLine("PASS MainMenuAcceptsKeyboardCommands");
+            RunVisualCheck(nameof(MainMenuOpensAndReusesManagementTabs), () => MainMenuOpensAndReusesManagementTabs(application));
+            RunVisualCheck(nameof(MainMenuAcceptsKeyboardCommands), MainMenuAcceptsKeyboardCommands);
             ManagementPagesShareResponsiveLayout(application);
             Console.WriteLine("PASS ManagementPagesShareResponsiveLayout");
             var closeFrame = new DispatcherFrame();
@@ -164,7 +249,11 @@ internal static partial class Program
             broadcastTest.GetAwaiter().GetResult();
             Console.WriteLine("PASS BroadcastAndSplitViews");
             RunAiCollaboration();
-            SettingsSwitchLanguageAndThemeInOpenWindows(application);
+            var settingsFrame = new DispatcherFrame();
+            Task settingsTest = application.Dispatcher.InvokeAsync(() => SettingsSwitchLanguageAndThemeInOpenWindows(application)).Task.Unwrap();
+            _ = settingsTest.ContinueWith(_ => settingsFrame.Continue = false, TaskScheduler.Default);
+            Dispatcher.PushFrame(settingsFrame);
+            settingsTest.GetAwaiter().GetResult();
             Console.WriteLine("PASS SettingsSwitchLanguageAndThemeInOpenWindows");
             var editorFrame = new DispatcherFrame();
             Task editorTest = application.Dispatcher.InvokeAsync(() => EditorKeepsSavedRevisionAndRestoresDraft(application)).Task.Unwrap();
@@ -189,7 +278,30 @@ internal static partial class Program
                 transferTest.GetAwaiter().GetResult();
                 Console.WriteLine("PASS CheckTransferWindowClose");
             }
-            return 0;
+            return visualChecksPassed ? 0 : 1;
+
+            void RunVisualCheck(string name, Action check)
+            {
+                try
+                {
+                    check();
+                    Console.WriteLine($"PASS {name}");
+                }
+                catch (DesktopInputUnavailableException exception)
+                {
+                    Console.WriteLine($"NOT RUN {name}: {exception.Message}");
+                }
+                catch (InvalidOperationException exception)
+                {
+                    visualChecksPassed = false;
+                    Console.Error.WriteLine($"FAIL {name}: {exception.Message}");
+                }
+            }
+        }
+        catch (DesktopInputUnavailableException exception)
+        {
+            Console.WriteLine($"NOT RUN: {exception.Message}");
+            return 2;
         }
         catch (Exception exception)
         {
@@ -227,9 +339,14 @@ internal static partial class Program
         string source = Path.Combine(root, "upload");
         string target = Path.Combine(root, "download");
         Directory.CreateDirectory(Path.Combine(source, "tree", "empty"));
-        Directory.CreateDirectory(Path.Combine(target, "tree"));
+        var mergeDirectory = Directory.CreateDirectory(Path.Combine(target, "tree"));
+        string originalAcl = mergeDirectory.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.Access);
         byte[] expected = Enumerable.Range(0, 70_001).Select(value => (byte)value).ToArray();
-        await File.WriteAllBytesAsync(Path.Combine(source, "tree", "試験.bin"), expected, token);
+        string sourceFile = Path.Combine(source, "tree", "試験.bin");
+        await File.WriteAllBytesAsync(sourceFile, expected, token);
+        DateTimeOffset sourceModified = DateTimeOffset.FromUnixTimeSeconds(1_650_000_000);
+        File.SetLastWriteTimeUtc(sourceFile, sourceModified.UtcDateTime);
+        File.SetLastAccessTimeUtc(sourceFile, sourceModified.AddDays(7).UtcDateTime);
         await File.WriteAllTextAsync(Path.Combine(target, "tree", "unrelated.txt"), "keep", token);
         await File.WriteAllTextAsync(Path.Combine(target, "tree", "試験.bin"), "replace", token);
         TransferPath upload = await files.ResolveAsync(false, source, null, token);
@@ -249,11 +366,18 @@ internal static partial class Program
         }
         ValueTask<TransferChoice> Confirm(TransferQuestion question) => Approve(question.Source!, question.Path, question.Existing!);
         string uploaded = await operations.Copy(await files.ListAsync(upload, token), remote, Confirm)!;
+        var remoteTimes = await client.StatAsync(client.EncodePath("/home/tree/試験.bin"), token);
+        if (remoteTimes?.Modified != sourceModified || remoteTimes?.Accessed != sourceModified)
+            throw new InvalidOperationException("An upload must publish only its source modification time.");
         string downloaded = await operations.Copy(await files.ListAsync(remote, token), download, Confirm)!;
         if (uploaded != "TransferFinished" || downloaded != "TransferFinished")
             throw new InvalidOperationException($"{uploaded}, {downloaded}");
         byte[] actual = await File.ReadAllBytesAsync(Path.Combine(target, "tree", "試験.bin"), token);
-        if (!actual.SequenceEqual(expected) || approvals != 1 || !Directory.Exists(Path.Combine(target, "tree", "empty")) ||
+        if (!actual.SequenceEqual(expected) || approvals != 1 ||
+            File.ReadAllText(Path.Combine(target, "tree", "試験.bin") + ":Zone.Identifier") != "[ZoneTransfer]\r\nZoneId=3\r\n" ||
+            !Directory.Exists(Path.Combine(target, "tree", "empty")) ||
+            !PrivateWindowsFile.HasPrivateAccess(new DirectoryInfo(Path.Combine(target, "tree", "empty"))) ||
+            mergeDirectory.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.Access) != originalAcl ||
             !File.Exists(Path.Combine(target, "tree", "unrelated.txt")) || results.Any(key => key.StartsWith("Sftp", StringComparison.Ordinal)))
             throw new InvalidOperationException("The SFTP batch did not preserve file bytes, the empty directory, and unrelated content. " + string.Join(", ", results));
 
@@ -283,12 +407,26 @@ internal static partial class Program
         if ((await files.ListAsync(remote, token)).Length != 0)
             throw new InvalidOperationException("The remote recursive delete left fixture entries.");
 
-        // The current view closes while a separate provider narrowly outlives it.
+        byte[] providerBytes = "bounded local provider"u8.ToArray();
+        TransferPath providerSource = files.Child(remote, "provider.bin");
+        var remoteHandle = await client.OpenAsync(providerSource.Remote!, write: true, token);
+        await client.WriteAsync(remoteHandle, 0, providerBytes, token);
+        await client.CloseAsync(remoteHandle, token);
+        var providerEntry = (await files.ListAsync(remote, token)).Single(item => item.Label == "provider.bin");
+        var entered = new TaskCompletionSource<ReadOnlyMemory<byte>>(TaskCreationOptions.RunContinuationsAsynchronously);
         var provider = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        owner.Track(provider.Task);
-        client.Dispose();
+        var blockedFiles = new TransferFiles(client, session.FileTransferWait, owner, beforeLocalWrite: async data =>
+        {
+            entered.TrySetResult(data);
+            await provider.Task.WaitAsync(token);
+        });
+        var staging = new FileOperations(blockedFiles, owner, token);
+        Task<string> pendingProvider = staging.Copy([providerEntry], download,
+            _ => ValueTask.FromResult(TransferChoice.Overwrite))!;
         try
         {
+            var heldBytes = await entered.Task.WaitAsync(token);
+            client.Dispose();
             using var reopenedClient = await session.OpenFileTransferAsync(token);
             var reopenedFiles = new TransferFiles(reopenedClient, session.FileTransferWait, owner);
             var reopened = new FileOperations(reopenedFiles, owner, token);
@@ -296,16 +434,31 @@ internal static partial class Program
             _ = await reopenedFiles.ListAsync(current, token);
             if (reopened.Create(current, "pending") is not null || reopened.Results.Count != 0)
                 throw new InvalidOperationException("Reopening restored results or released a pending mutation.");
-            await using var newSession = await TerminalSession.ConnectAsync(profile, token, interaction);
-            using var newClient = await newSession.OpenFileTransferAsync(token);
-            var newOwner = new FileOperationOwnership();
-            var newFiles = new TransferFiles(newClient, newSession.FileTransferWait, newOwner);
-            var newOperations = new FileOperations(newFiles, newOwner, token);
-            var newDirectory = await newFiles.ResolveAsync(true, ".", null, token);
-            CheckStatus(await newOperations.Create(newDirectory, "new-generation")!);
-            if (!owner.IsBusy) throw new InvalidOperationException("Another SSH connection released the original provider.");
+            if (!heldBytes.Span.SequenceEqual(providerBytes) || !owner.IsBusy || pendingProvider.IsCompleted)
+                throw new InvalidOperationException("Channel release changed the local provider's admitted block.");
+            try
+            {
+                using var unexpected = SftpClient.ReserveProviderStorage(30 * 1024 * 1024);
+                throw new InvalidOperationException("The channel returned a block still owned by the local provider.");
+            }
+            catch (SftpException error) when (error.Failure == SftpFailure.Capacity) { }
+            {
+                await using var newSession = await TerminalSession.ConnectAsync(profile, token, interaction);
+                using var newClient = await newSession.OpenFileTransferAsync(token);
+                var newOwner = new FileOperationOwnership();
+                var newFiles = new TransferFiles(newClient, newSession.FileTransferWait, newOwner);
+                var newOperations = new FileOperations(newFiles, newOwner, token);
+                var newDirectory = await newFiles.ResolveAsync(true, ".", null, token);
+                CheckStatus(await newOperations.Create(newDirectory, "new-generation")!);
+                if (!owner.IsBusy) throw new InvalidOperationException("Another SSH connection released the original provider.");
+                newClient.Dispose();
+            }
             provider.SetResult();
+            string providerResult = await pendingProvider.WaitAsync(token);
+            if (providerResult == "TransferFinished" || File.Exists(Path.Combine(target, "provider.bin")))
+                throw new InvalidOperationException("Closing SFTP published a partial download.");
             while (owner.IsBusy) await Task.Delay(10, token);
+            using (SftpClient.ReserveProviderStorage(30 * 1024 * 1024)) { }
             CheckStatus(await reopened.Create(current, "after-completion")!);
         }
         finally { provider.TrySetResult(); }
@@ -314,6 +467,62 @@ internal static partial class Program
         {
             if (status != "TransferFinished") throw new InvalidOperationException(status);
         }
+    }
+
+    private static void AuthenticationDialogsIdentifyTheRecipient(App app)
+    {
+        app.Profiles.CreateProfile();
+        var editor = app.Windows.OfType<ProfileEditorWindow>().Single();
+        try
+        {
+            var editorView = (FormView)editor.Content;
+            if (((RadioButton)editorView.FindName("ProtocolSSH")).IsChecked != true)
+                throw new InvalidOperationException("A new profile did not start with SSH selected.");
+            var telnetFields = (StackPanel)editorView.FindName("telnetFields");
+            if (!FindControls<TextBlock>(telnetFields).Any(text => text.Text == App.Text("TelnetPrivacyNotice")))
+                throw new InvalidOperationException("The Telnet settings omitted the clear-text notice.");
+
+            var destination = SshDestination.Parse("fixture.example", 2222);
+            var challenge = new SshChallenge(destination, "Example", "Sign in", [new("User", true), new("Code", false)]);
+            var (dialog, inputs) = TerminalTab.CreateSshChallengeForm(editor, challenge);
+            try
+            {
+                var contents = (FormView)dialog.Content;
+                string expected = string.Format(App.Text("SshServerQuestions"), destination);
+                if (contents.Children[0] is not TextBlock notice || notice.Text != expected ||
+                    DockPanel.GetDock(notice) != Dock.Top || inputs is not [TextBox { IsUndoEnabled: false }, PasswordBox] ||
+                    !FindControls<Button>(contents).Any(button => Equals(button.Content, App.Text("SendSshAnswers"))))
+                    throw new InvalidOperationException("The SSH form did not keep the recipient above the scrolling server questions.");
+            }
+            finally { dialog.Close(); }
+
+            var key = new VaultEntryInfo(Guid.NewGuid(), "Team key", null, "privateKey", "ssh-ed25519", "SHA256:fixture");
+            var password = new VaultEntryInfo(Guid.NewGuid(), "Team\u2028password", "operator\tA");
+            VaultEntryInfo[] entries = [key, password, password with { Id = Guid.NewGuid() }];
+            var request = new SshPrivateKeyRequest(destination, "operator\u200B", null);
+            var (keyPicker, keys) = VaultFileController.CreateCredentialPicker(editor, entries, "privateKey", request);
+            try
+            {
+                string[] fields = FindControls<TextBox>(keyPicker).Where(box => box.IsReadOnly).Select(box => box.Text).ToArray();
+                if (!fields.Contains(destination.ToString()) || !fields.Contains("operator<U+200B>") ||
+                    keys.SelectedIndex != -1 || keys.Items.Count != 1 ||
+                    !keys.Items[0].ToString()!.Split('\n').Contains(key.Fingerprint) ||
+                    !FindControls<Button>(keyPicker).Any(button => button.IsDefault && button.IsCancel))
+                    throw new InvalidOperationException("Private-key selection must identify the SSH recipient and key before authentication.");
+            }
+            finally { keyPicker.Close(); }
+
+            var (passwordPicker, passwords) = VaultFileController.CreateCredentialPicker(editor, entries, "password", null);
+            try
+            {
+                string[][] rows = passwords.Items.Cast<object>().Select(item => item.ToString()!.Split('\n')).ToArray();
+                if (rows.Length != 2 || rows.Any(row => !row.Contains("Team<U+2028>password") || !row.Contains("operator<U+0009>A")) ||
+                    !rows[0].Contains(password.Id.ToString("D")) || !rows[1].Contains(entries[2].Id.ToString("D")))
+                    throw new InvalidOperationException("The credential picker must distinguish same-name, same-account password entries.");
+            }
+            finally { passwordPicker.Close(); }
+        }
+        finally { editor.Close(); }
     }
 
     private static void MainMenuOpensAndReusesManagementTabs(App app)
@@ -381,7 +590,9 @@ internal static partial class Program
                 .SequenceEqual(new[] { App.Text("UnlockVault"), App.Text("ManageVault"), App.Text("RestoreVault"), App.Text("ArchiveVault") }))
                 throw new InvalidOperationException("The vault commands were not grouped under Credential vault.");
 
-            OpenMenuUsesWindowTextFont(window, menuButton, settings);
+            DesktopInputUnavailableException? visualUnavailable = null;
+            try { OpenMenuUsesWindowTextFont(window, menuButton, settings); }
+            catch (DesktopInputUnavailableException exception) { visualUnavailable = exception; }
             bool? completed = null;
             var settingsForm = (FormView)settings.Content;
             settingsForm.Completed += result => completed = result;
@@ -394,6 +605,7 @@ internal static partial class Program
             if (menuButton.Foreground is not SolidColorBrush lightIcon || window.Background is not SolidColorBrush lightStrip ||
                 lightIcon.Color.R >= lightStrip.Color.R)
                 throw new InvalidOperationException("The tab strip did not update after changing to the light theme.");
+            if (visualUnavailable is not null) throw visualUnavailable;
 
             void Click(string section, string action)
             {
@@ -479,14 +691,14 @@ internal static partial class Program
 
     private static void OpenMenuUsesWindowTextFont(Window window, Button button, TabItem tab)
     {
+        RequireDesktopInput();
         var menu = (Menu)window.FindName("mainMenu");
         var root = (FrameworkElement)window.Content;
-        using var source = new System.Windows.Interop.HwndSource(new System.Windows.Interop.HwndSourceParameters("TabTty menu test")
-        {
-            WindowStyle = unchecked((int)0x80000000), Width = 960, Height = 620,
-        });
-        window.Content = null;
-        source.RootVisual = root;
+        window.Width = 960;
+        window.Height = 620;
+        window.Show();
+        window.Activate();
+        var source = PresentationSource.FromVisual(window);
         menu.Opacity = 0;
         try
         {
@@ -522,13 +734,12 @@ internal static partial class Program
         {
             if (menu.IsVisible) button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, button));
             menu.Opacity = 1;
-            source.RootVisual = null;
-            window.Content = root;
         }
     }
 
     private static void MainMenuAcceptsKeyboardCommands()
     {
+        RequireDesktopInput();
         var window = new MainWindow((App)Application.Current);
         try
         {
@@ -541,7 +752,10 @@ internal static partial class Program
             button.Focus();
             button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, button));
             WaitForInput();
-            if (!file.IsKeyboardFocused) throw new InvalidOperationException("The application menu did not receive keyboard focus.");
+            if (!file.IsKeyboardFocused)
+                throw new InvalidOperationException($"The application menu did not receive keyboard focus. " +
+                    $"Active={window.IsActive}, menu={menu.IsVisible}, windowHandle={new WindowInteropHelper(window).Handle}, " +
+                    $"foreground={VisualCheckForegroundWindow()}, focused={Keyboard.FocusedElement?.GetType().Name}.");
             Press(Key.Down);
             if (!edit.IsKeyboardFocused) throw new InvalidOperationException("Down did not select the next category.");
             Press(Key.Up);
@@ -565,6 +779,31 @@ internal static partial class Program
         }
 
         static void WaitForInput() => Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+    }
+
+    [DllImport("user32.dll", EntryPoint = "GetForegroundWindow", ExactSpelling = true)]
+    private static extern nint VisualCheckForegroundWindow();
+
+    private sealed class DesktopInputUnavailableException(string message) : Exception(message);
+
+    private static void RequireDesktopInput()
+    {
+        var control = new TextBox();
+        var probe = new Window { Content = control, Width = 160, Height = 100, ShowInTaskbar = false };
+        try
+        {
+            probe.Show();
+            probe.Activate();
+            control.Focus();
+            Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            bool captured = Mouse.Capture(control, CaptureMode.SubTree);
+            nint foreground = VisualCheckForegroundWindow();
+            if (captured) Mouse.Capture(null);
+            if (foreground == 0 && !captured)
+                throw new DesktopInputUnavailableException(
+                    $"An independent WPF window could not acquire foreground input or mouse capture (focused={control.IsKeyboardFocused}).");
+        }
+        finally { probe.Close(); }
     }
 
     private static void CheckTabStripLayout(Window window, Button menu, TabItem item)
@@ -658,7 +897,7 @@ internal static partial class Program
                 }
             }
 
-            var editor = new ProfileEditorWindow(app, "NewProfile", null, ProfileEditor.NewProfile("telnet"), creating: true);
+            var editor = new ProfileEditorWindow(app, "NewProfile", null, ProfileEditor.NewProfile("ssh"), creating: true);
             try
             {
                 var form = (FormView)editor.Content;
@@ -725,7 +964,7 @@ internal static partial class Program
         settings.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent, settings));
     }
 
-    private static void SettingsSwitchLanguageAndThemeInOpenWindows(App app)
+    private static async Task SettingsSwitchLanguageAndThemeInOpenWindows(App app)
     {
         var window = new MainWindow(app);
         string originalLanguage = app.LanguageChoice;
@@ -739,18 +978,20 @@ internal static partial class Program
             var theme = FindControls<ComboBox>(form).Single(choice => choice.Items.Contains(App.Text("Dark")));
             var save = FindControls<Button>(form).Single(button => Equals(button.Content, App.Text("Save")));
 
-            Apply("Japanese", "Dark", "ja", "dark", "設定", "認証情報 vault", "vault の管理");
-            Apply("English", "Light", "en", "light", "Settings", "Credential vault", "Manage vault");
+            await Apply("Japanese", "Dark", "ja", "dark", "設定", "認証情報 vault", "vault の管理");
+            await Apply("English", "Light", "en", "light", "Settings", "Credential vault", "Manage vault");
             bool systemJapanese = SystemLanguage.Resolve() == "ja";
-            Apply("System", "System", "system", "system", systemJapanese ? "設定" : "Settings",
+            await Apply("System", "System", "system", "system", systemJapanese ? "設定" : "Settings",
                 systemJapanese ? "認証情報 vault" : "Credential vault", systemJapanese ? "vault の管理" : "Manage vault");
 
-            void Apply(string languageKey, string themeKey, string languageCode, string themeMode, string settingsLabel,
+            async Task Apply(string languageKey, string themeKey, string languageCode, string themeMode, string settingsLabel,
                 string vaultLabel, string manageLabel)
             {
                 language.SelectedItem = App.Text(languageKey);
                 theme.SelectedItem = App.Text(themeKey);
                 save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, save));
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+                while (form.IsBusy) await Task.Delay(15, deadline.Token);
                 if (app.LanguageChoice != languageCode || app.ThemeChoice != themeMode || tabs.SelectedContent != form)
                     throw new InvalidOperationException("Saving did not apply language and theme in the open settings tab.");
 
@@ -769,7 +1010,7 @@ internal static partial class Program
         }
         finally
         {
-            app.SaveSettings(originalLanguage, originalTheme, app.BellChoice, app.TerminalFontFamily, app.TerminalFontSize,
+            await app.SaveSettingsAsync(originalLanguage, originalTheme, app.BellChoice, app.TerminalFontFamily, app.TerminalFontSize,
                 app.RetainedRows, app.AutoCloseDisconnectedTabs, app.VaultPath, app.SettingsRevision);
             window.Close();
         }
@@ -952,6 +1193,7 @@ internal static partial class Program
             navigation.SelectedIndex = 2;
             autoClose.IsChecked = false;
             save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, save));
+            while (form.IsBusy) await Task.Delay(15, deadline.Token);
             using (var saved = System.Text.Json.JsonDocument.Parse(File.ReadAllBytes(settingsPath)))
                 if (app.AutoCloseDisconnectedTabs || saved.RootElement.GetProperty("autoCloseDisconnectedTabs").GetBoolean() ||
                     saved.RootElement.GetProperty("language").GetString() != "system")
@@ -977,6 +1219,7 @@ internal static partial class Program
             var themeChoice = FindControls<ComboBox>(form).Single(choice => choice.Items.Contains(App.Text("Dark")));
             themeChoice.SelectedItem = App.Text("Dark");
             save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, save));
+            while (form.IsBusy) await Task.Delay(15, deadline.Token);
             using (var saved = System.Text.Json.JsonDocument.Parse(File.ReadAllBytes(settingsPath)))
                 if (!app.AutoCloseDisconnectedTabs || !saved.RootElement.GetProperty("autoCloseDisconnectedTabs").GetBoolean() ||
                     app.ThemeChoice != "dark" ||
@@ -1431,9 +1674,10 @@ internal static partial class Program
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool PostMessage(nint window, uint message, nint wParam, nint lParam);
 
-    private static async Task VaultUnlockWaitersShareOneInteraction()
+    private static async Task VaultUnlockWaitersShareOneInteraction(string directory)
     {
-        var interaction = new VaultUnlockInteraction();
+        int adoptions = 0;
+        var interaction = new VaultUnlockInteraction(adopt: _ => adoptions++);
         var pending = new TaskCompletionSource<CredentialVault?>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var detached = new CancellationTokenSource();
         Task<CredentialVault?> first = interaction.WaitAsync(() => pending.Task);
@@ -1455,6 +1699,68 @@ internal static partial class Program
                 return Task.FromResult<CredentialVault?>(null);
             }) is not null || prompts != 1)
             throw new InvalidOperationException("A subsequent attempt did not start a new interaction.");
+
+        var verifying = new TaskCompletionSource<CredentialVault?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var original = interaction.Admit(null, (_, _) => verifying.Task);
+        var admitted = interaction.Status;
+        try
+        {
+            await original.ObserveAsync(new CancellationToken(canceled: true));
+            throw new InvalidOperationException("The detached observation did not cancel.");
+        }
+        catch (OperationCanceledException) { }
+        if (interaction.Status != admitted)
+            throw new InvalidOperationException("Cancelling observation changed the admitted unlock operation.");
+        using var joinedObserver = interaction.Admit(null, (_, _) => UnexpectedPrompt());
+        verifying.SetResult(null);
+        await Task.WhenAll(original.ObserveAsync(), joinedObserver.ObserveAsync());
+        if (interaction.IsPending) throw new InvalidOperationException("Completed consumers retained their admission.");
+
+        using var last = new CancellationTokenSource();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        var enteredCancellation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var late = new TaskCompletionSource<CredentialVault?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<CredentialVault?> retiring = interaction.WaitAsync(null, async (_, workerLifetime) =>
+        {
+            using var registration = workerLifetime.Register(() => enteredCancellation.TrySetResult());
+            return await late.Task;
+        }, last.Token);
+        Guid retiredId = interaction.Status.OperationId!.Value;
+        last.Cancel();
+        try
+        {
+            await retiring.WaitAsync(deadline.Token);
+            throw new InvalidOperationException("The last consumer retained its observation after Stop.");
+        }
+        catch (OperationCanceledException) when (!deadline.IsCancellationRequested) { }
+        await enteredCancellation.Task.WaitAsync(deadline.Token);
+        var replacement = new TaskCompletionSource<CredentialVault?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var replacementStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<CredentialVault?> next = interaction.WaitAsync(() =>
+        {
+            replacementStarted.SetResult();
+            return replacement.Task;
+        }, deadline.Token);
+        if (replacementStarted.Task.IsCompleted || interaction.Status is not { Retiring: true } ||
+            interaction.Status.OperationId != retiredId)
+            throw new InvalidOperationException("An abandoned native result released its worker before actual completion.");
+        string retiredPath = Path.Combine(directory, "retired-unlock.tttykey");
+        const string retiredMaster = "fixture master for retired generation";
+        using var discarded = await CredentialVault.CreateAsync(retiredPath, retiredMaster.AsMemory(), deadline.Token);
+        late.SetResult(discarded);
+        await replacementStarted.Task.WaitAsync(deadline.Token);
+        if (interaction.Status.OperationId == retiredId || next.IsCompleted || adoptions != 0)
+            throw new InvalidOperationException("A late unlock result was delivered to a replacement attempt.");
+        try
+        {
+            await discarded.ListEntriesAsync(deadline.Token);
+            throw new InvalidOperationException("A retired native result kept its unlocked vault.");
+        }
+        catch (ObjectDisposedException) { }
+        using var fresh = await CredentialVault.UnlockAsync(retiredPath, retiredMaster.AsMemory(), deadline.Token);
+        replacement.SetResult(fresh);
+        if (!ReferenceEquals(await next.WaitAsync(deadline.Token), fresh) || adoptions != 1)
+            throw new InvalidOperationException("The replacement unlock was not adopted exactly once.");
 
         static Task<CredentialVault?> UnexpectedPrompt() =>
             throw new InvalidOperationException("Concurrent unlock opened another prompt.");
@@ -1602,6 +1908,41 @@ internal static partial class Program
         Equal(range.GetText(-1), "👩‍💻");
         range.MoveEndpointByUnit(TextPatternRangeEndpoint.End, TextUnit.Character, -1);
         Equal(range.GetText(-1), "");
+
+        var saturated = new TerminalOutput(columns: 6, retainedRowLimit: 100, screenRows: 3);
+        try
+        {
+            string retained = "👩" + new string('\u0301', 254) + "\u200D";
+            byte[] bytes = Encoding.UTF8.GetBytes(retained + "💻😀");
+            for (int index = 0; index < bytes.Length; index += 7)
+                saturated.Receive(TerminalReceiveSource.Data, bytes.AsSpan(index, Math.Min(7, bytes.Length - index)));
+            surface.SetSnapshot(saturated.GetRows());
+            range = provider.DocumentRange;
+            range.ExpandToEnclosingUnit(TextUnit.Character);
+            Equal(range.GetText(-1), retained);
+            var anchor = range.Clone();
+            if (range.Move(TextUnit.Character, 1) != 1)
+                throw new InvalidOperationException("The UIA range split or joined the bounded stored span.");
+            Equal(range.GetText(-1), "😀");
+            saturated.Resize(4, 3);
+            surface.SetSnapshot(saturated.GetRows());
+            Equal(anchor.GetText(-1), retained);
+            saturated.Receive(TerminalReceiveSource.Data, "\u001b[?1049halternate"u8);
+            surface.SetSnapshot(saturated.GetRows());
+            Equal(provider.DocumentRange.GetText(-1), "alternate");
+            saturated.Receive(TerminalReceiveSource.Data, "\u001b[?1049l"u8);
+            surface.SetSnapshot(saturated.GetRows());
+            Equal(provider.DocumentRange.GetText(-1), retained + "😀");
+            byte[] tail = Encoding.UTF8.GetBytes(string.Concat(Enumerable.Repeat("\r\ntail", 120)));
+            saturated.Receive(TerminalReceiveSource.Data, tail);
+            surface.SetSnapshot(saturated.GetRows());
+            Equal(anchor.GetText(-1), "");
+        }
+        finally
+        {
+            terminal.ReleaseNativeState();
+            saturated.ReleaseNativeState();
+        }
     }
 
     private static void TerminalSurfaceRendersItsCellSnapshot()
@@ -1622,7 +1963,9 @@ internal static partial class Program
         bitmap.CopyPixels(pixels, 900 * 4, 0);
         if (!Enumerable.Range(0, pixels.Length / 4).Any(index =>
                 pixels[index * 4 + 2] > 100 && pixels[index * 4] < 80))
-            throw new InvalidOperationException("The terminal renderer did not draw its red rendition.");
+            throw new InvalidOperationException($"The terminal renderer did not draw its red rendition. " +
+                $"Presentation={surface.IsCurrentSnapshotRendered}, viewport={surface.ViewportHeight}, " +
+                $"pixels={pixels.Count(value => value != 0)}.");
         string? artifact = Environment.GetEnvironmentVariable("TABTTY_RENDER_ARTIFACT");
         if (artifact is not null)
         {

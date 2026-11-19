@@ -3,27 +3,24 @@ using TabTty.Core;
 
 namespace TabTty.App;
 
-internal sealed class TransferFiles(SftpClient client, TimeSpan wait, FileOperationOwnership? ownership = null, nint recycleOwner = 0) : IFileOperationIo
+internal sealed class TransferFiles(SftpClient client, TimeSpan wait, FileOperationOwnership? ownership = null,
+    nint recycleOwner = 0, Func<ReadOnlyMemory<byte>, Task>? beforeLocalWrite = null) : IFileOperationIo
 {
     private static readonly SemaphoreSlim LocalCalls = new(8);
     private static readonly SemaphoreSlim LocalCommit = new(1);
-    private static readonly HashSet<string> Reserved = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
-        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "COM¹", "COM²", "COM³",
-        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9", "LPT¹", "LPT²", "LPT³",
-    };
 
     public bool IsOpen => client.IsOpen;
 
-    public string Display(TransferPath path) => path.Local ?? client.DisplayPath(path.Remote!);
+    public string Display(TransferPath path) => path.Local is { } local
+        ? PermissionDisplay.Literal(local) : client.DisplayPath(path.Remote!);
 
     public async Task<TransferPath> ResolveAsync(bool remote, string path, TransferPath? current, CancellationToken token)
     {
         if (!remote)
         {
-            if (string.IsNullOrEmpty(path)) throw new SftpException(SftpFailure.InvalidName);
-            string full = current?.Local is { } parent ? Path.GetFullPath(path, parent) : Path.GetFullPath(path);
+            string full;
+            try { full = OrdinaryWindowsPath.Resolve(path, current?.Local); }
+            catch (InvalidDataException) { throw new SftpException(SftpFailure.InvalidName); }
             await LocalAsync(() => RequireDirectory(full), token);
             return new TransferPath(full);
         }
@@ -50,26 +47,37 @@ internal sealed class TransferFiles(SftpClient client, TimeSpan wait, FileOperat
                 foreach (string entry in Directory.EnumerateFileSystemEntries(local))
                 {
                     token.ThrowIfCancellationRequested();
-                    bytes += entry.Length * 4L + 256;
+                    string name = Path.GetFileName(entry);
+                    string label = PermissionDisplay.Literal(name);
+                    bytes += 2L * (entry.Length + name.Length + label.Length) + 256;
                     if (items.Count == SftpClient.MaxEntries || bytes > 16 * 1024 * 1024)
                         throw new SftpException(SftpFailure.Capacity);
-                    string name = Path.GetFileName(entry);
                     if (LocalStat(entry) is { } attributes)
-                        items.Add(new TransferItem(new TransferPath(entry) { ParentPath = path }, name, name, attributes));
+                        items.Add(new TransferItem(new TransferPath(entry) { ParentPath = path }, name, label, attributes));
                 }
                 return items.ToArray();
             }, token);
         await RequireRemoteDirectoryAsync(path, token);
         SftpEntry[] entries = await client.ListAsync(path.Remote!, token);
-        return entries.Select(entry =>
+        var rows = new TransferItem[entries.Length];
+        long rowBytes = 0;
+        for (int index = 0; index < entries.Length; index++)
         {
+            token.ThrowIfCancellationRequested();
+            var entry = entries[index];
             var child = new TransferPath(SftpClient.Child(path.Remote!, entry.Name)) { ParentPath = path };
-            try { return new TransferItem(child, client.DecodeName(entry.Name), client.DisplayName(entry.Name), entry.Attributes); }
+            string? name = null;
+            string label;
+            try { name = client.DecodeName(entry.Name); label = PermissionDisplay.Literal(name); }
             catch (SftpException error) when (error.Failure == SftpFailure.InvalidName)
             {
-                return new TransferItem(child, null, $"[{Convert.ToHexString(entry.Name)}]", entry.Attributes);
+                label = SftpClient.DisplayBytes(entry.Name);
             }
-        }).ToArray();
+            rowBytes += child.Remote!.Length + 2L * ((name?.Length ?? 0) + label.Length) + 256;
+            if (rowBytes > 16 * 1024 * 1024) throw new SftpException(SftpFailure.Capacity);
+            rows[index] = new TransferItem(child, name, label, entry.Attributes);
+        }
+        return rows;
     }
 
     public TransferPath Child(TransferPath directory, string name)
@@ -77,7 +85,7 @@ internal sealed class TransferFiles(SftpClient client, TimeSpan wait, FileOperat
         if (directory.Remote is { } remote)
             return new TransferPath(SftpClient.Child(remote, client.EncodeName(name))) { ParentPath = directory };
         if (name.Length == 0 || name is "." or ".." || name[^1] is '.' or ' ' ||
-            name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || Reserved.Contains(name.Split('.')[0].TrimEnd()))
+            name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || OrdinaryWindowsPath.IsReservedFileName(name))
             throw new SftpException(SftpFailure.InvalidName);
         string path = Path.Combine(directory.Local!, name);
         if (path.Length > 32767) throw new SftpException(SftpFailure.InvalidName);
@@ -98,7 +106,7 @@ internal sealed class TransferFiles(SftpClient client, TimeSpan wait, FileOperat
         {
             string? parent = Path.GetDirectoryName(local);
             using var directory = parent is null ? null : OpenDirectory(Parent(path));
-            return LocalStat(local);
+            return TransferWindowsPath.Stat(local);
         }, token) : client.StatAsync(path.Remote!, token);
 
     public Task<bool> IsCaseSensitiveAsync(TransferPath directory, CancellationToken token) => directory.Local is { } local
@@ -116,8 +124,10 @@ internal sealed class TransferFiles(SftpClient client, TimeSpan wait, FileOperat
             await LocalAsync(() =>
             {
                 using var directory = OpenDirectory(Parent(path));
-                TransferWindowsPath.CreateDirectory(local);
+                directory.CreateDirectory(local);
                 using var created = OpenDirectory(path);
+                if (!PrivateWindowsFile.HasPrivateAccess(new DirectoryInfo(local)))
+                    throw new SftpException(SftpFailure.DownloadPermissions);
                 path.DirectoryIdentity ??= created.Identity;
                 return true;
             }, token, mutation: true);
@@ -152,11 +162,12 @@ internal sealed class TransferFiles(SftpClient client, TimeSpan wait, FileOperat
         CancellationToken token) => LocalAsync(() =>
     {
         using var directory = OpenDirectory(Parent(target));
-        TransferAttributes? current = LocalStat(target.Local!);
-        if (current?.Kind != approved?.Kind || current?.Size != approved?.Size || current?.Modified != approved?.Modified)
-            return false;
-        if (LocalStat(source.Local!) is not { Kind: TransferKind.File }) throw new SftpException(SftpFailure.SourceChanged);
-        File.Move(source.Local!, target.Local!, approved is not null);
+        if (source.StagedIdentity is not { } identity) throw new SftpException(SftpFailure.SourceChanged);
+        using var marker = TransferWindowsPath.OpenVerifiedDownloadMark(source.Local!, identity);
+        if (!TransferAttributes.SameOverwriteTarget(approved, TransferWindowsPath.Stat(target.Local!))) return false;
+        if (approved is { LocalIdentity: null }) throw new SftpException(SftpFailure.CannotReplace);
+        if (!FileObjectIdentity.MoveIfSame(source.Local!, identity, target.Local!, approved is not null))
+            throw new SftpException(SftpFailure.SourceChanged);
         return true;
     }, token, mutation: true);
 
@@ -166,6 +177,12 @@ internal sealed class TransferFiles(SftpClient client, TimeSpan wait, FileOperat
             await LocalAsync(() =>
             {
                 using var directory = OpenDirectory(Parent(path));
+                if (path.StagedIdentity is { } identity)
+                {
+                    if (!FileObjectIdentity.DeleteIfSame(local, identity))
+                        throw new SftpException(SftpFailure.SourceChanged);
+                    return true;
+                }
                 if (kind == TransferKind.Directory && path.DirectoryIdentity is { })
                     using (OpenDirectory(path)) { }
                 FileAttributes current = File.GetAttributes(local);
@@ -206,6 +223,10 @@ internal sealed class TransferFiles(SftpClient client, TimeSpan wait, FileOperat
     public async Task<bool> StageAsync(TransferPath source, TransferPath temporary, TransferAttributes snapshot,
         Action<long> progress, Action created, CancellationToken token)
     {
+        token.ThrowIfCancellationRequested();
+        // The provider owns its block and stream workspace until local I/O
+        // and stream disposal actually return, including after channel close.
+        using var storage = SftpClient.ReserveProviderStorage(2 * SftpClient.BlockSize);
         bool metadataWarning = false;
         byte[]? handle = null;
         FileStream? stream = null;
@@ -213,7 +234,10 @@ internal sealed class TransferFiles(SftpClient client, TimeSpan wait, FileOperat
         {
             if (source.Local is not null)
             {
-                stream = await OpenLocalAsync(source, FileMode.Open, FileAccess.Read, token);
+                stream = await OpenLocalAsync(source, FileMode.Open, token);
+                long expectedSize = stream.Length;
+                if (snapshot.Size is { } listedSize && listedSize != expectedSize)
+                    throw new SftpException(SftpFailure.SourceChanged);
                 await RequireRemoteDirectoryAsync(Parent(temporary), token);
                 handle = await client.OpenAsync(temporary.Remote!, write: true, token);
                 created();
@@ -223,14 +247,17 @@ internal sealed class TransferFiles(SftpClient client, TimeSpan wait, FileOperat
                 {
                     int count = await LocalStreamAsync(inner => stream.ReadAsync(buffer, inner).AsTask(), token);
                     if (count == 0) break;
+                    long next = NextOffset(offset, count, expectedSize);
                     await client.WriteAsync(handle, offset, buffer.AsMemory(0, count), token);
-                    offset += count;
+                    offset = next;
                     progress(offset);
                 }
+                if (offset != expectedSize) throw new SftpException(SftpFailure.SourceChanged);
                 await RecheckAsync(source, snapshot, offset, token);
                 if (snapshot.Modified is { } modified)
                 {
-                    try { await client.SetTimeAsync(handle, modified, snapshot.Accessed, token); }
+                    // SFTP v3 has a single flag for both timestamps. Disclose only the source modification time.
+                    try { await client.SetTimeAsync(handle, modified, accessed: null, token); }
                     catch (Exception error) when (error is IOException or OverflowException) { metadataWarning = true; }
                 }
                 byte[] completed = handle;
@@ -243,29 +270,40 @@ internal sealed class TransferFiles(SftpClient client, TimeSpan wait, FileOperat
                 handle = await client.OpenAsync(source.Remote!, write: false, token);
                 TransferAttributes opened = await client.GetAttributesAsync(handle, token);
                 if (Changed(snapshot, opened)) throw new SftpException(SftpFailure.SourceChanged);
-                stream = await OpenLocalAsync(temporary, FileMode.CreateNew, FileAccess.Write, token);
+                long? expectedSize = opened.Size ?? snapshot.Size;
+                stream = await OpenLocalAsync(temporary, FileMode.CreateNew, token);
                 created();
+                await LocalStreamAsync(inner => Task.Run(() =>
+                {
+                    using var directory = OpenDirectory(Parent(temporary));
+                    TransferWindowsPath.MarkDownload(temporary.Local!, stream);
+                    return true;
+                }, inner), token);
                 long offset = 0;
                 while (await client.ReadAsync(handle, offset, SftpClient.BlockSize, token) is { } data)
                 {
-                    await LocalStreamAsync(async inner => { await stream.WriteAsync(data, inner); return true; }, token);
-                    offset += data.Length;
+                    long next = NextOffset(offset, data.Length, expectedSize);
+                    await LocalStreamAsync(async inner =>
+                    {
+                        if (beforeLocalWrite is not null) await beforeLocalWrite(data);
+                        await stream.WriteAsync(data, inner);
+                        return true;
+                    }, token);
+                    offset = next;
                     progress(offset);
                 }
-                if (Changed(opened, await client.GetAttributesAsync(handle, token)))
+                TransferAttributes completed = await client.GetAttributesAsync(handle, token);
+                if (Changed(opened, completed) || (expectedSize ?? completed.Size) is { } size && offset != size)
                     throw new SftpException(SftpFailure.SourceChanged);
                 await RecheckAsync(source, snapshot, offset, token);
                 await LocalStreamAsync(async inner => { await stream.FlushAsync(inner); return true; }, token);
-                await stream.DisposeAsync();
-                stream = null;
-                if (snapshot.Modified is { } modified)
+                if ((opened.Modified ?? snapshot.Modified) is { } modified)
                 {
-                    try { await LocalAsync(() =>
+                    try { await LocalStreamAsync(inner => Task.Run(() =>
                     {
-                        using var directory = OpenDirectory(Parent(temporary));
-                        File.SetLastWriteTimeUtc(temporary.Local!, modified.UtcDateTime);
+                        File.SetLastWriteTimeUtc(stream.SafeFileHandle, modified.UtcDateTime);
                         return true;
-                    }, token); }
+                    }, inner), token); }
                     catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentOutOfRangeException)
                     { metadataWarning = true; }
                 }
@@ -282,8 +320,15 @@ internal sealed class TransferFiles(SftpClient client, TimeSpan wait, FileOperat
     public async Task RecheckAsync(TransferPath source, TransferAttributes expected, long? length, CancellationToken token)
     {
         TransferAttributes? actual = await StatAsync(source, token);
-        if (actual is null || Changed(expected, actual) || (length.HasValue && expected.Size is { } size && length != size))
+        if (actual is null || Changed(expected, actual) ||
+            (length.HasValue && (expected.Size ?? actual.Size) is { } size && length != size))
             throw new SftpException(SftpFailure.SourceChanged);
+    }
+
+    internal static long NextOffset(long offset, int count, long? expectedSize)
+    {
+        if (offset > (expectedSize ?? long.MaxValue) - count) throw new SftpException(SftpFailure.SourceChanged);
+        return offset + count;
     }
 
     public static bool Changed(TransferAttributes before, TransferAttributes after) =>
@@ -313,7 +358,7 @@ internal sealed class TransferFiles(SftpClient client, TimeSpan wait, FileOperat
         TransferKind kind = Kind(attributes);
         if (kind == TransferKind.Link) return new(kind, null, null);
         FileSystemInfo info = kind == TransferKind.Directory ? new DirectoryInfo(path) : new FileInfo(path);
-        return new(kind, info is FileInfo file ? file.Length : null, info.LastWriteTimeUtc, info.LastAccessTimeUtc);
+        return new(kind, info is FileInfo file ? file.Length : null, info.LastWriteTimeUtc);
     }
 
     private static bool RequireDirectory(string path)
@@ -338,20 +383,26 @@ internal sealed class TransferFiles(SftpClient client, TimeSpan wait, FileOperat
         catch { opened.Dispose(); throw; }
     }
 
-    private async Task<FileStream> OpenLocalAsync(TransferPath path, FileMode mode, FileAccess access, CancellationToken token)
+    private async Task<FileStream> OpenLocalAsync(TransferPath path, FileMode mode, CancellationToken token)
     {
         return await LocalAsync(() =>
         {
             using var directory = OpenDirectory(Parent(path));
-            return mode == FileMode.Open ? TransferWindowsPath.OpenRead(path.Local!) :
-                new FileStream(path.Local!, mode, access, FileShare.Read, SftpClient.BlockSize, FileOptions.Asynchronous);
+            if (mode == FileMode.Open) return TransferWindowsPath.OpenRead(path.Local!);
+            var stream = TransferWindowsPath.CreateDownload(path.Local!);
+            try
+            {
+                path.StagedIdentity = FileObjectIdentity.Read(stream.SafeFileHandle);
+                return stream;
+            }
+            catch { stream.Dispose(); throw; }
         }, token, discard: stream =>
         {
             stream.Dispose();
-            if (mode == FileMode.CreateNew)
+            if (path.StagedIdentity is { } identity)
             {
                 using var directory = OpenDirectory(Parent(path));
-                File.Delete(path.Local!);
+                FileObjectIdentity.DeleteIfSame(path.Local!, identity);
             }
         });
     }

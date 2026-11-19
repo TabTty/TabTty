@@ -22,5 +22,5 @@ public static class TerminalText
     }
 
     public static int NextCharacterLength(ReadOnlySpan<char> text) =>
-        text.IsEmpty ? 0 : Unicode17.NextGraphemeLength(text);
+        text.IsEmpty ? 0 : NativeTerminalCore.NextGraphemeLength(text);
 }

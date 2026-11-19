@@ -39,30 +39,32 @@ internal static unsafe partial class OpenSsl
     {
         nint info = EVP_PKEY2PKCS8(key);
         Require(info != 0);
-        try
-        {
-            int length = i2d_PKCS8_PRIV_KEY_INFO(info, null);
-            Require(length is > 0 and <= 65536);
-            byte[] der = new byte[length];
-            try
-            {
-                fixed (byte* output = der)
-                {
-                    byte* cursor = output;
-                    Require(i2d_PKCS8_PRIV_KEY_INFO(info, &cursor) == length && cursor == output + length);
-                }
-                return der;
-            }
-            catch
-            {
-                CryptographicOperations.ZeroMemory(der);
-                throw;
-            }
-        }
+        try { return EncodePkcs8(info); }
         finally { PKCS8_PRIV_KEY_INFO_free(info); }
     }
 
-    public static Key DecryptPkcs8(ReadOnlySpan<byte> encoded, ReadOnlySpan<byte> passphrase)
+    private static byte[] EncodePkcs8(nint info)
+    {
+        int length = i2d_PKCS8_PRIV_KEY_INFO(info, null);
+        Require(length is > 0 and <= 65536);
+        byte[] der = new byte[length];
+        try
+        {
+            fixed (byte* output = der)
+            {
+                byte* cursor = output;
+                Require(i2d_PKCS8_PRIV_KEY_INFO(info, &cursor) == length && cursor == output + length);
+            }
+            return der;
+        }
+        catch
+        {
+            CryptographicOperations.ZeroMemory(der);
+            throw;
+        }
+    }
+
+    public static byte[] DecryptPkcs8(ReadOnlySpan<byte> encoded, ReadOnlySpan<byte> passphrase)
     {
         fixed (byte* input = encoded)
         fixed (byte* password = passphrase)
@@ -75,12 +77,7 @@ internal static unsafe partial class OpenSsl
                 Require(cursor == input + encoded.Length);
                 nint info = PKCS8_decrypt_ex(envelope, password, passphrase.Length, Context.Value, "provider=default");
                 Require(info != 0);
-                try
-                {
-                    nint pointer = EVP_PKCS82PKEY_ex(info, Context.Value, "provider=default");
-                    Require(pointer != 0);
-                    return new Key(pointer);
-                }
+                try { return EncodePkcs8(info); }
                 finally { PKCS8_PRIV_KEY_INFO_free(info); }
             }
             finally { X509_SIG_free(envelope); }

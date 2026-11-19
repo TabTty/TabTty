@@ -1,4 +1,4 @@
-use crate::unicode::Unicode;
+use crate::unicode::{GraphemeState, Unicode};
 use crate::{
     account, CellView, Effects, FormatView, ReceiveObservation, RowView, ScreenRowView,
     ScreenState, SnapshotView, Stats, TabView, LIVE_MODELS,
@@ -501,6 +501,34 @@ impl Row {
         }
         output
     }
+    // Enumerate the units emitted by serialize(false, None) without
+    // segmenting the resulting concatenation, which has lost VT cutoffs.
+    fn spans(&self, mut visit: impl FnMut(usize, usize) -> bool) {
+        let end = self.text_end().max(self.formats.last().map_or(0, |mark| mark.column as usize));
+        let mut marks = self.formats.iter().peekable();
+        let mut offset = 0;
+        for column in 0..=end {
+            while marks.next_if(|mark| mark.column as usize == column).is_some() {
+                if !visit(offset, offset + 1) { return; }
+                offset += 1;
+            }
+            if column == end { break; }
+            let length = match self.cells.get(column) {
+                Some(cell) if cell.width > 0 => cell.length as usize,
+                Some(cell) if cell.width < 0 => 0,
+                _ => 1,
+            };
+            if length != 0 && !visit(offset, offset + length) { return; }
+            offset += length;
+        }
+    }
+
+    fn span_count(&self) -> usize {
+        let mut count = 0;
+        self.spans(|_, _| { count += 1; true });
+        count
+    }
+
     fn refresh_plain(&mut self) {
         if self.dirty {
             self.plain = self.serialize(false, None);
@@ -528,6 +556,7 @@ struct Source {
     string_bytes: usize,
     parameters: Vec<u8>,
     last_graphic: Vec<u32>,
+    graphic_breaks: GraphemeState,
     last_was_graphic: bool,
     charset: Charset,
     pending_interval: u32,
@@ -635,6 +664,7 @@ impl Default for SavedCursor {
 struct RecordedPosition {
     column: usize,
     cluster: Vec<u32>,
+    cluster_breaks: GraphemeState,
     known: bool,
     initialized: bool,
 }
@@ -686,18 +716,17 @@ impl RecordedPosition {
         if matches!(c, 9 | 10 | 13) {
             self.column = 0;
             self.cluster.clear();
+            self.cluster_breaks = GraphemeState::default();
             self.known = true;
             return;
         }
-        if !self.known {
-            return;
-        }
-        if !self.cluster.is_empty() && !u.joins(&self.cluster, c) {
+        if self.cluster_breaks.push(u, c) {
             self.cluster.clear();
         }
         if self.cluster.len() == 256 {
+            // The serialized stream retained the suffix. Its column can no
+            // longer be proven by the bounded spelling, so avoid literal TAB.
             self.known = false;
-            self.cluster.clear();
             return;
         }
         let before = if self.cluster.is_empty() {
@@ -738,6 +767,7 @@ pub struct Model {
     wrap_pending: bool,
     style: Style,
     cluster: Vec<u32>,
+    cluster_breaks: GraphemeState,
     layout_epoch: i64,
     cluster_row: i64,
     cluster_column: usize,
@@ -825,6 +855,7 @@ impl Model {
             wrap_pending: false,
             style: Style::default(),
             cluster: Vec::with_capacity(256),
+            cluster_breaks: GraphemeState::default(),
             layout_epoch: 0,
             cluster_row: 0,
             cluster_column: 0,
@@ -1053,7 +1084,7 @@ impl Model {
     }
     pub fn feed(&mut self, index: usize, payload: &[u8], flags: u32) -> Result<(), i32> {
         self.start_call(flags)?;
-        if self.finished || index > 2 {
+        if index > 2 || (self.finished && index != 2) {
             return Err(1);
         }
         self.feed_batches += 1;
@@ -1541,13 +1572,15 @@ impl Model {
         Ok(())
     }
     fn print(&mut self, source: &mut Source, c: u32) -> Result<(), i32> {
-        if !source.last_was_graphic || !self.unicode.joins(&source.last_graphic, c) {
+        if !source.last_was_graphic {
+            source.graphic_breaks = GraphemeState::default();
+        }
+        if source.graphic_breaks.push(&self.unicode, c) {
             source.last_graphic.clear();
         }
-        if source.last_graphic.len() == 256 {
-            return Err(RESOURCE);
+        if source.last_graphic.len() < 256 {
+            source.last_graphic.push(c);
         }
-        source.last_graphic.push(c);
         source.last_was_graphic = true;
         self.operation_scalar(c);
         if self.recording_alternate() {
@@ -1560,11 +1593,14 @@ impl Model {
             return self.screen[self.cursor_row]
                 .add_format(self.column + self.wrap_pending as usize, self.content_stamp);
         }
-        if self.cluster_row != 0 && self.unicode.joins(&self.cluster, c) {
-            if self.cluster.len() == 256 {
-                return Err(RESOURCE);
+        if self.cluster_row == 0 {
+            self.cluster_breaks = GraphemeState::default();
+        }
+        if !self.cluster_breaks.push(&self.unicode, c) {
+            let retained = self.cluster.len() < 256;
+            if retained {
+                self.cluster.push(c);
             }
-            self.cluster.push(c);
             if !self.record_unit {
                 if let Some(row) = self
                     .screen
@@ -1574,7 +1610,7 @@ impl Model {
                     row.excluded = true;
                 }
             }
-            return self.extend_cluster();
+            return if retained { self.extend_cluster() } else { Ok(()) };
         }
         self.cluster.clear();
         self.cluster.push(c);
@@ -1697,8 +1733,7 @@ impl Model {
         let prev_cluster_offset = self.screen[self.cursor_row].logical_cluster_offset;
         let excluded = self.screen[self.cursor_row].excluded;
         let prev_clusters = if soft {
-            self.unicode
-                .count_utf16(&self.screen[self.cursor_row].plain)
+            self.screen[self.cursor_row].span_count()
         } else {
             0
         };
@@ -2384,9 +2419,9 @@ impl Model {
             .flatten()
             .chain(self.screen.iter())
             .map(|row| {
-                384 + row.cells.len() as u64 * 154
+                384 + row.cells.len() as u64 * 158
                     + row.arena.len() as u64 * 6
-                    + row.format_units() as u64 * 2
+                    + row.format_units() as u64 * 6
             })
             .sum::<u64>()
     }
@@ -2505,7 +2540,7 @@ impl Model {
             if let Some((_, offset, count, soft)) = previous {
                 row.logical_cluster_offset = if soft { offset + count as i64 } else { 0 };
             }
-            let count = self.unicode.count_utf16(&row.plain);
+            let count = row.span_count();
             previous = Some((row.logical_id, row.logical_cluster_offset, count, row.soft));
             if index < last_history {
                 self.history_bytes += row.bytes();
@@ -2696,7 +2731,7 @@ impl Model {
         let mut repeated_bytes = 0;
         let mut screen_changes = 0;
         if operation == 0 {
-            if self.finished || payload.len() > 1024 * 1024 {
+            if (self.finished && source != 2) || payload.len() > 1024 * 1024 {
                 return Err(UNSUPPORTED);
             }
             let mut probe = Probe::from_source(&self.sources[source], self);
@@ -2863,6 +2898,8 @@ fn view(r: &Row) -> RowView {
         cells: r.cells.as_ptr(),
         text: r.plain.as_ptr(),
         cell_text: r.arena.as_ptr(),
+        formats: r.formats.as_ptr(),
+        format_count: r.formats.len() as u32,
         cell_count: r.cells.len() as u32,
         text_length: r.plain.len() as u32,
         cell_text_length: r.arena.len() as u32,
@@ -3096,6 +3133,8 @@ struct Probe<'a> {
     source_graphic: [u32; 256],
     source_count: usize,
     source_was_graphic: bool,
+    graphic_breaks: GraphemeState,
+    cluster_breaks: GraphemeState,
     cluster: [u32; 256],
     cluster_count: usize,
     cluster_active: bool,
@@ -3131,6 +3170,8 @@ impl<'a> Probe<'a> {
             source_graphic: [0; 256],
             source_count: source.last_graphic.len(),
             source_was_graphic: source.last_was_graphic,
+            graphic_breaks: source.graphic_breaks,
+            cluster_breaks: model.cluster_breaks,
             cluster: [0; 256],
             cluster_count: model.cluster.len(),
             cluster_active: model.cluster_row != 0,
@@ -3165,22 +3206,21 @@ impl<'a> Probe<'a> {
         self.parameters[..self.parameter_count].copy_from_slice(&source.parameters);
         self.source_count = source.last_graphic.len();
         self.source_was_graphic = source.last_was_graphic;
+        self.graphic_breaks = source.graphic_breaks;
         self.charset = source.charset;
         self.source_graphic[..self.source_count].copy_from_slice(&source.last_graphic);
     }
     fn graphic(&mut self, c: u32) -> Result<(), i32> {
-        if !self.source_was_graphic
-            || !self
-                .unicode
-                .joins(&self.source_graphic[..self.source_count], c)
-        {
+        if !self.source_was_graphic {
+            self.graphic_breaks = GraphemeState::default();
+        }
+        if self.graphic_breaks.push(self.unicode, c) {
             self.source_count = 0;
         }
-        if self.source_count == 256 {
-            return Err(UNSUPPORTED);
+        if self.source_count < 256 {
+            self.source_graphic[self.source_count] = c;
+            self.source_count += 1;
         }
-        self.source_graphic[self.source_count] = c;
-        self.source_count += 1;
         self.source_was_graphic = true;
         if c == 0xfeff {
             // Charge all marks to the busiest starting cell. Cursor movement can
@@ -3206,14 +3246,16 @@ impl<'a> Probe<'a> {
             self.cluster_active = false;
             return Ok(());
         }
-        if !self.cluster_active || !self.unicode.joins(&self.cluster[..self.cluster_count], c) {
+        if !self.cluster_active {
+            self.cluster_breaks = GraphemeState::default();
+        }
+        if self.cluster_breaks.push(self.unicode, c) {
             self.cluster_count = 0;
         }
-        if self.cluster_count == 256 {
-            return Err(UNSUPPORTED);
+        if self.cluster_count < 256 {
+            self.cluster[self.cluster_count] = c;
+            self.cluster_count += 1;
         }
-        self.cluster[self.cluster_count] = c;
-        self.cluster_count += 1;
         self.cluster_active = true;
         Ok(())
     }

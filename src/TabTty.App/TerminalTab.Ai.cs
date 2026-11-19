@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using TabTty.AiTransport;
 using TabTty.Core;
 using static TabTty.App.App;
 
@@ -10,10 +11,14 @@ internal sealed partial class TerminalTab
 {
     private readonly TextBlock aiStatus = new() { VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap };
     private readonly Button aiTakeover = new() { Margin = new Thickness(8, 0, 0, 0) };
+    private readonly Button aiEndSharing = new() { Margin = new Thickness(8, 0, 0, 0) };
     private readonly DockPanel aiStatusBar = new() { Margin = new Thickness(8, 2, 8, 2) };
     private TerminalSession? retainedAiSession;
+    private long aiAuthorityRevision;
     internal AiCollaboration.Sharing? AiSharing { get; set; }
     internal TerminalSession? AiSession => removed ? null : session ?? retainedAiSession;
+    internal MainWindow? AiHost => Application.Current.Windows.OfType<MainWindow>()
+        .FirstOrDefault(window => window.TerminalTabs.Contains(this));
     internal (int Columns, int Rows) AiGrid => snapshot is { } view ? (view.Columns, view.ScreenRows) : appliedGrid;
     internal bool HasAiHighlightRules => ((App)Application.Current).Highlights.Find(highlightSetId) is { Enabled: true, Rules.Count: > 0 };
     internal (long Id, long Revision, TerminalHighlightSpan[] Spans)? CaptureAiHighlightRow(int row) =>
@@ -22,8 +27,8 @@ internal sealed partial class TerminalTab
     internal bool IsAiTakingControl { get; set; }
     internal bool IsAiControlling => AiSharing?.Control is not null;
     internal bool AiCleanupDelayed { get; set; }
-    internal AiCollaboration.RateLimit? AiSendRate { get; set; }
-    internal bool HasAiGrantConflict => HasPendingInput || reviewingPaste || Volatile.Read(ref pendingMouse) != 0 ||
+    internal AiRateLimit? AiSendRate { get; set; }
+    internal bool HasAiGrantConflict => HasPendingInput || pasteReview is not null || Volatile.Read(ref pendingMouse) != 0 ||
         HasMouseCapture || panes.Keys.Any(pane => pane.HasComposition) || Broadcast.HasUnfinishedOperation(this);
 
     private AiCollaboration AiCollaboration => ((App)Application.Current).Ai;
@@ -34,17 +39,21 @@ internal sealed partial class TerminalTab
     private void InitializeAiControls()
     {
         DockPanel.SetDock(aiStatusBar, Dock.Bottom);
+        DockPanel.SetDock(aiEndSharing, Dock.Right);
+        aiStatusBar.Children.Add(aiEndSharing);
         DockPanel.SetDock(aiTakeover, Dock.Right);
         aiStatusBar.Children.Add(aiTakeover);
         aiStatusBar.Children.Add(aiStatus);
         panel.Children.Add(aiStatusBar);
         AutomationProperties.SetLiveSetting(aiStatus, AutomationLiveSetting.Polite);
         aiTakeover.Click += (_, _) => AiCollaboration.EndControl(this);
+        aiEndSharing.Click += (_, _) => AiCollaboration.EndSharing(this);
         UpdateAiControls();
     }
 
     internal void AiAuthorityChanged()
     {
+        aiAuthorityRevision++;
         foreach (var pane in panes.Keys) pane.SetConnected(InputSession is not null);
         UpdateAiControls();
         CaptionChanged?.Invoke();
@@ -57,9 +66,13 @@ internal sealed partial class TerminalTab
         aiTakeover.Visibility = IsAiControlling ? Visibility.Visible : Visibility.Collapsed;
         aiTakeover.Content = Text("AiTakeControl");
         AutomationProperties.SetName(aiTakeover, Text("AiTakeControl"));
+        aiEndSharing.Visibility = IsAiShared ? Visibility.Visible : Visibility.Collapsed;
+        aiEndSharing.Content = Text("AiEndSharing");
+        AutomationProperties.SetName(aiEndSharing, Text("AiEndSharing"));
         string detail = AiSharing is { } share ? "  " + share.Peer.Label : "";
         if (AiCleanupDelayed) detail += "  " + Text("AiCleanupPending");
-        if (AiSharing?.Reason is { Length: > 0 } reason) detail += "  " + reason;
+        if (AiSharing?.Reason is { Length: > 0 } reason)
+            detail += "\n" + string.Format(Text("AiHandoffMessage"), reason);
         string updated = state + detail;
         if (aiStatus.Text == updated) return;
         aiStatus.Text = updated;
@@ -77,11 +90,12 @@ internal sealed partial class TerminalTab
         ToolTipService.SetShowOnDisabled(shareMenu, true);
         foreach (var peer in AiCollaboration.Peers)
         {
-            var choice = new MenuItem { Header = peer.Label, ToolTip = peer.Location + "\n" + Text("AiCounterpartScope") };
-            choice.Click += (_, _) =>
-            {
-                if (AiCollaboration.Share(this, peer) is { } problem) SetStatus(statusKey, Text(problem));
-            };
+            string recipient = peer.Label + "\n" + LauncherDescription(peer);
+            var choice = new MenuItem { Header = new TextBlock { Text = recipient, MaxWidth = 540,
+                    TextTrimming = TextTrimming.CharacterEllipsis },
+                ToolTip = recipient + "\n" + PermissionDisplay.Literal(peer.Location) + "\n" + Text("AiCounterpartScope") };
+            AutomationProperties.SetName(choice, recipient);
+            choice.Click += (_, _) => ConfirmAiPermission(peer, grantControl: false);
             shareMenu.Items.Add(choice);
         }
         menu.Items.Add(shareMenu);
@@ -92,10 +106,8 @@ internal sealed partial class TerminalTab
             else
             {
                 string? conflict = AiCollaboration.GrantUnavailable(this);
-                Add("AiGiveControl", () =>
-                {
-                    if (AiCollaboration.Grant(this) is { } problem) SetStatus(statusKey, Text(problem));
-                }, conflict);
+                var peer = AiSharing!.Peer;
+                Add("AiGiveControl", () => ConfirmAiPermission(peer, grantControl: true), conflict);
             }
             Add("AiEndSharing", () => AiCollaboration.EndSharing(this));
         }
@@ -109,5 +121,38 @@ internal sealed partial class TerminalTab
             item.Click += (_, _) => action();
             menu.Items.Add(item);
         }
+    }
+
+    private static string LauncherDescription(AiCollaboration.Counterpart peer) =>
+        string.Format(Text("AiLauncherProcess"), PermissionDisplay.Literal(peer.LauncherPath), peer.LauncherId);
+
+    private void ConfirmAiPermission(AiCollaboration.Counterpart peer, bool grantControl)
+    {
+        var collaboration = AiCollaboration;
+        var share = AiSharing;
+        if (grantControl ? share?.Peer != peer : share?.Peer == peer) return;
+        string? unavailable = grantControl ? collaboration.GrantUnavailable(this) : collaboration.ShareUnavailable(this);
+        if (unavailable is not null) { SetStatus(statusKey, Text(unavailable)); return; }
+        if (ClosePending || AiSession is not { } sessionAtPrompt || AiHost is not { } owner || !collaboration.Peers.Contains(peer)) return;
+        var generation = ConnectionGeneration;
+        var revision = aiAuthorityRevision;
+        string title = Text(grantControl ? "AiGiveControl" : "AiShareOutput");
+        string message = string.Format(Text(grantControl ? "AiConfirmControl" : "AiConfirmShare"),
+            PermissionDisplay.Literal(TabCaption), peer.Code, LauncherDescription(peer), ConnectionDestination.From(sessionAtPrompt));
+        message += "\n\n" + Text("AiUnattendedConsent");
+        if (!grantControl && share is not null)
+            message += "\n\n" + string.Format(Text("AiConfirmSwitch"), share.Peer.Code);
+        var answer = ((App)Application.Current).Modal(() => ThemedMessageBox.Show(owner, message, title,
+            MessageBoxButton.OKCancel, MessageBoxImage.Question, MessageBoxResult.Cancel));
+        if (answer != MessageBoxResult.OK) return;
+        if (ClosePending || ConnectionGeneration != generation || AiSession != sessionAtPrompt || AiSharing != share ||
+            aiAuthorityRevision != revision ||
+            AiHost != owner || !collaboration.Peers.Contains(peer))
+        {
+            SetStatus(statusKey, Text("AiConsentExpired"));
+            return;
+        }
+        string? problem = grantControl ? collaboration.Grant(this) : collaboration.Share(this, peer);
+        if (problem is not null) SetStatus(statusKey, Text(problem));
     }
 }

@@ -1,0 +1,172 @@
+using System.Buffers.Binary;
+using System.ComponentModel;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
+using TabTty.Core;
+
+namespace TabTty.App;
+
+internal enum MacroTrustDecision : byte { Allow = 1, Block = 2 }
+
+internal readonly record struct MacroTrustKey(string SourceDigest, string Fingerprint)
+{
+    private static readonly UTF8Encoding Utf8 = new(false, true);
+
+    internal static MacroTrustKey Create(string sourceDigest, IReadOnlyList<string> arguments)
+    {
+        MacroLimits.ValidateArguments(arguments);
+
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        hash.AppendData("TabTty/MacroTrust/v2"u8);
+        hash.AppendData(Convert.FromHexString(sourceDigest));
+        AppendLength(arguments.Count);
+        foreach (string argument in arguments)
+        {
+            byte[] encoded = Utf8.GetBytes(argument);
+            AppendLength(encoded.Length);
+            hash.AppendData(encoded);
+        }
+        return new(sourceDigest, Convert.ToHexString(hash.GetHashAndReset()));
+
+        void AppendLength(int value)
+        {
+            Span<byte> bytes = stackalloc byte[4];
+            BinaryPrimitives.WriteInt32BigEndian(bytes, value);
+            hash.AppendData(bytes);
+        }
+    }
+}
+
+// Used on the application dispatcher. Reads remain live so a store error or an
+// out-of-process removal cannot be hidden by an in-memory decision.
+internal static class MacroTrust
+{
+    private const string Prefix = "TabTty/MacroTrust/v2/";
+    private const uint Generic = 1, LocalMachine = 2;
+    private const int NotFound = 1168, RecordSize = 66;
+    internal static long Revision { get; private set; }
+
+    internal readonly record struct Entry(string Fingerprint, string? SourceDigest, MacroTrustDecision? Decision);
+
+    internal static MacroTrustDecision? Read(MacroTrustKey key)
+    {
+        if (!CredRead(Prefix + key.Fingerprint, Generic, 0, out nint result))
+        {
+            int error = Marshal.GetLastWin32Error();
+            if (error == NotFound) return null;
+            throw new Win32Exception(error);
+        }
+        try
+        {
+            Entry entry = Decode(Marshal.PtrToStructure<Credential>(result), key.Fingerprint);
+            if (entry.SourceDigest != key.SourceDigest || entry.Decision is null)
+                throw new InvalidDataException("Invalid macro trust decision.");
+            return entry.Decision;
+        }
+        finally { CredFree(result); }
+    }
+
+    internal static unsafe void Save(MacroTrustKey key, MacroTrustDecision decision)
+    {
+        Span<byte> data = stackalloc byte[RecordSize];
+        data[0] = 2;
+        data[1] = (byte)decision;
+        Convert.FromHexString(key.SourceDigest).CopyTo(data[2..34]);
+        Convert.FromHexString(key.Fingerprint).CopyTo(data[34..]);
+        fixed (byte* blob = data)
+        {
+            var credential = new Credential
+            {
+                Type = Generic,
+                TargetName = Prefix + key.Fingerprint,
+                BlobSize = RecordSize,
+                Blob = (nint)blob,
+                Persist = LocalMachine,
+            };
+            if (!CredWrite(ref credential, 0)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+        Revision++;
+    }
+
+    internal static List<Entry> List()
+    {
+        if (!CredEnumerate(Prefix + "*", 0, out uint count, out nint results))
+        {
+            int error = Marshal.GetLastWin32Error();
+            if (error == NotFound) return [];
+            throw new Win32Exception(error);
+        }
+        try
+        {
+            var entries = new List<Entry>();
+            for (int i = 0; i < count; i++)
+            {
+                var value = Marshal.PtrToStructure<Credential>(Marshal.ReadIntPtr(results, i * IntPtr.Size));
+                if (value.Type != Generic || value.TargetName?.StartsWith(Prefix, StringComparison.OrdinalIgnoreCase) != true)
+                    continue;
+                string fingerprint = value.TargetName[Prefix.Length..].ToUpperInvariant();
+                if (fingerprint.Length == 64 && fingerprint.All(char.IsAsciiHexDigit))
+                    entries.Add(Decode(value, fingerprint));
+            }
+            return entries;
+        }
+        finally { CredFree(results); }
+    }
+
+    internal static void Forget(string fingerprint)
+    {
+        if (fingerprint.Length != 64 || !fingerprint.All(char.IsAsciiHexDigit))
+            throw new ArgumentException(nameof(fingerprint));
+        if (!CredDelete(Prefix + fingerprint, Generic, 0))
+        {
+            int error = Marshal.GetLastWin32Error();
+            if (error != NotFound) throw new Win32Exception(error);
+        }
+        Revision++;
+    }
+
+    private static Entry Decode(Credential value, string fingerprint)
+    {
+        if (value.Type == Generic && value.Persist == LocalMachine && value.BlobSize == RecordSize && value.Blob != 0 &&
+            string.Equals(value.TargetName, Prefix + fingerprint, StringComparison.OrdinalIgnoreCase))
+        {
+            byte[] record = new byte[RecordSize];
+            Marshal.Copy(value.Blob, record, 0, record.Length);
+            var decision = (MacroTrustDecision)record[1];
+            if (record[0] == 2 && decision is MacroTrustDecision.Allow or MacroTrustDecision.Block &&
+                Convert.ToHexString(record.AsSpan(34)) == fingerprint)
+                return new(fingerprint, Convert.ToHexString(record.AsSpan(2, 32)), decision);
+        }
+        return new(fingerprint, null, null);
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct Credential
+    {
+        internal uint Flags, Type;
+        internal string? TargetName, Comment;
+        internal System.Runtime.InteropServices.ComTypes.FILETIME LastWritten;
+        internal uint BlobSize;
+        internal nint Blob;
+        internal uint Persist, AttributeCount;
+        internal nint Attributes;
+        internal string? TargetAlias, UserName;
+    }
+
+    [DllImport("advapi32.dll", EntryPoint = "CredReadW", ExactSpelling = true, CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CredRead(string target, uint type, uint flags, out nint credential);
+
+    [DllImport("advapi32.dll", EntryPoint = "CredWriteW", ExactSpelling = true, CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CredWrite(ref Credential credential, uint flags);
+
+    [DllImport("advapi32.dll", EntryPoint = "CredEnumerateW", ExactSpelling = true, CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CredEnumerate(string filter, uint flags, out uint count, out nint credentials);
+
+    [DllImport("advapi32.dll", EntryPoint = "CredDeleteW", ExactSpelling = true, CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CredDelete(string target, uint type, uint flags);
+
+    [DllImport("advapi32.dll", ExactSpelling = true)]
+    private static extern void CredFree(nint buffer);
+}

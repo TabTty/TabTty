@@ -1,11 +1,11 @@
 using System.IO;
 using System.Net.Sockets;
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
+using TabTty.AiTransport;
 using TabTty.Core;
 using static TabTty.App.App;
 
@@ -22,16 +22,23 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
     private const int HandleLifetime = 60_000;
     internal IReadOnlyCollection<Counterpart> Peers => peers.Values;
 
-    internal sealed class Counterpart(string location, long now)
+    internal sealed class Counterpart(string location, string launcherPath, uint launcherId, long now)
     {
         internal string Id { get; } = NewId();
         internal string Code { get; } = Convert.ToHexString(RandomNumberGenerator.GetBytes(4));
         internal string Location { get; } = location;
+        internal string LauncherPath { get; } = launcherPath;
+        internal uint LauncherId { get; } = launcherId;
         internal string? Name { get; set; }
         internal string Label => Name is { Length: > 0 } name ? $"{Code} · {name} ({Text("AiUnverified")})" : Code;
         internal Dictionary<string, Handle> Handles { get; } = [];
         internal CancellationTokenSource Lifetime { get; } = new();
-        internal RateLimit Calls { get; } = new(20, 40, now);
+        internal AiRateLimit Calls { get; } = AiRateLimit.OrdinaryCalls(now);
+        private readonly AiRateLimit returns = AiRateLimit.ControlReturns(now);
+        internal bool TryTakeReturn(long now, out int retry)
+        {
+            lock (returns) return returns.Take(now, out retry);
+        }
         internal int InFlight { get; set; }
         internal long SharingRevision { get; set; }
         internal Action<string>? SharingEnded { get; set; }
@@ -83,31 +90,16 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
         internal object? Detail { get; } = detail;
     }
 
-    internal sealed class RateLimit(int rate, int burst, long now)
-    {
-        private double tokens = burst;
-        private long updated = now;
-        internal bool Take(long time, out int retry)
-        {
-            tokens = Math.Min(burst, tokens + Math.Max(0, time - updated) * rate / 1000d);
-            updated = time;
-            retry = tokens < 1 ? (int)Math.Ceiling((1 - tokens) * 1000 / rate) : 0;
-            if (retry != 0) return false;
-            tokens--;
-            return true;
-        }
-    }
-
-    private RateLimit? applicationCalls;
+    private AiRateLimit? applicationCalls;
     private long Now => (long)clock.GetElapsedTime(0, clock.GetTimestamp()).TotalMilliseconds;
     private static string NewId() => Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
 
-    internal Counterpart? Attach(string location)
+    internal Counterpart? Attach(string location, string launcherPath, uint launcherId)
     {
         app.Dispatcher.VerifyAccess();
         if (disposed || peers.Count >= 8) return null;
         Counterpart peer;
-        do { peer = new(location, Now); } while (peers.Values.Any(other => other.Code == peer.Code));
+        do { peer = new(location, launcherPath, launcherId, Now); } while (peers.Values.Any(other => other.Code == peer.Code));
         peers.Add(peer.Id, peer);
         return peer;
     }
@@ -125,7 +117,7 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
     {
         if (EndpointFailed) return "AiEndpointUnavailable";
         if (tab.AiSession is null || tab.IsRunning && tab.AiSession.AiConnectionEnded) return "AiSessionUnavailable";
-        if (tab.BroadcastChecked && Window.GetWindow(tab) is MainWindow host && app.Broadcast.IsActive(host))
+        if (tab.BroadcastChecked && tab.AiHost is { } host && app.Broadcast.IsActive(host))
             return "AiBroadcastTarget";
         return null;
     }
@@ -241,11 +233,19 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
 
     private bool TryTakeCall(Counterpart peer, out int retry)
     {
-        applicationCalls ??= new RateLimit(100, 200, Now);
+        applicationCalls ??= new AiRateLimit(100, 200, Now);
         return peer.Calls.Take(Now, out retry) && applicationCalls.Take(Now, out retry);
     }
 
-    internal async Task<Reply> CallAsync(Counterpart peer, string name, JsonElement arguments, CancellationToken token)
+    internal Task<Reply> CallAsync(Counterpart peer, string name, JsonElement arguments, CancellationToken token)
+    {
+        app.Dispatcher.VerifyAccess();
+        if (name == "tabtty_return_control" && !peer.TryTakeReturn(Now, out int retry))
+            return Task.FromResult(new Reply(Error("busy", new { retry_after_ms = retry }), null));
+        return CallAdmittedAsync(peer, name, arguments, token);
+    }
+
+    private async Task<Reply> CallAdmittedAsync(Counterpart peer, string name, JsonElement arguments, CancellationToken token)
     {
         app.Dispatcher.VerifyAccess();
         if (!peers.ContainsKey(peer.Id)) return new Reply(Error("not_shared"), null);
@@ -260,6 +260,12 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
         }
         try
         {
+            if (name is "tabtty_read_state" or "tabtty_read_history" or "tabtty_search_history")
+            {
+                await Dispatcher.Yield(DispatcherPriority.Background);
+                token.ThrowIfCancellationRequested();
+                if (!peers.ContainsKey(peer.Id)) return new Reply(Error("not_shared"), null);
+            }
             Prune(peer);
             var args = new Arguments(arguments);
             if (name == "tabtty_list_shared_sessions") return new Reply(List(peer, args), null, peer.SharingRevision);
@@ -302,6 +308,7 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
     internal async Task PublishReplyAsync(Counterpart peer, Reply reply, Func<object, bool, bool> deliver, CancellationToken token)
     {
         using var ownedPreparation = reply.History;
+        var priority = reply.History is null ? DispatcherPriority.Normal : DispatcherPriority.Background;
         bool done = await Attempt();
         if (done) return;
         await Task.Delay(10, token).ConfigureAwait(false);
@@ -312,7 +319,7 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
                     reply.History?.Source is { } id && !HasSource(id) ? Error("cursor_expired") :
                     Error("busy", new { retry_after_ms = 50 });
                 deliver(error, false);
-            }, DispatcherPriority.Normal, token).Task.ConfigureAwait(false);
+            }, priority, token).Task.ConfigureAwait(false);
 
         Task<bool> Attempt() => app.Dispatcher.InvokeAsync(() =>
         {
@@ -354,7 +361,7 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
                 foreach (var (handleId, value) in staged.Handles)
                     peer.Handles.Add(handleId, new Handle(share, expires, value));
             }
-        }, DispatcherPriority.Normal, token).Task;
+        }, priority, token).Task;
 
         bool HasSource(string id) => peer.Handles.TryGetValue(id, out var handle) &&
             handle.Share == reply.Share && handle.Expires > Now;
@@ -401,7 +408,7 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
     {
         args.Only("session", "control", "reason");
         string id = args.String("control", 256);
-        string? reason = args.Has("reason") ? CleanDisplay(args.String("reason", 256, allowEmpty: true)) : null;
+        string? reason = args.Has("reason") ? PermissionDisplay.SingleLine(args.String("reason", 256, allowEmpty: true)) : null;
         if (share.Control?.Id == id) EndControl(share.Tab, reason);
         else if (share.Control is not null || share.LastControl != id) throw new ToolException("control_required");
         return Ok(share, new { cleanup_pending = share.Tab.IsAiTakingControl });
@@ -446,7 +453,7 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
         if (!TryResolve(share.Peer, share, observationId, out Observation? observation) || observation is null ||
             observation.Control != control.Id || !observation.CanSend || observation.Completed != share.Completed)
             return DeliveryError("stale_observation", "not_sent", sequence, false, control);
-        share.Tab.AiSendRate ??= new RateLimit(5, 10, Now);
+        share.Tab.AiSendRate ??= new AiRateLimit(5, 10, Now);
         if (!share.Tab.AiSendRate.Take(Now, out int retry))
             return DeliveryError("busy", "not_sent", sequence, false, control, retry);
 
@@ -493,7 +500,7 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
             {
                 if (action.PasteText is { } text)
                 {
-                    var paste = await Task.Run(() => TerminalPaste.Create(text), token);
+                    using var paste = await Task.Run(() => TerminalPaste.Create(text), token);
                     bool complete = await share.Session.SendAiPasteAsync(paste, action.CharacterDelay,
                         action.LineDelay, action.Kind == "paste", attempt, share.Tab.InputLifetime);
                     if (!complete) code = "cancelled";
@@ -653,9 +660,6 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
         foreach (var property in details.GetType().GetProperties()) result.Add(property.Name, property.GetValue(details));
         return result;
     }
-
-    internal static string CleanDisplay(string text) => string.Concat(text.EnumerateRunes().Where(rune =>
-        !Rune.IsControl(rune) && Rune.GetUnicodeCategory(rune) != System.Globalization.UnicodeCategory.Format));
 
     internal void ShowSetup(TerminalTab tab)
     {

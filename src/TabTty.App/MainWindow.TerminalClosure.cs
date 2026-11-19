@@ -3,6 +3,7 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
+using TabTty.Core;
 using static TabTty.App.App;
 
 namespace TabTty.App;
@@ -105,7 +106,7 @@ internal sealed partial class MainWindow
                 if (entireWindow)
                 {
                     claimedWindow = window.closing = true;
-                    window.IsEnabled = false;
+                    window.SetWindowCloseControls(pending: true);
                 }
                 foreach (Target target in unreviewed)
                 {
@@ -141,7 +142,7 @@ internal sealed partial class MainWindow
                 if (claimedWindow && !window.closed)
                 {
                     window.closing = window.readyToClose = false;
-                    window.IsEnabled = true;
+                    window.SetWindowCloseControls(pending: false);
                 }
                 if (entireWindow) windowRequest = null;
                 else disconnectedRequest = null;
@@ -189,6 +190,7 @@ internal sealed partial class MainWindow
         {
             request.Started = request.Target.Item.IsClosing = true;
             request.Target.Terminal.ClosePending = true;
+            request.Target.Terminal.ProtectRecordingClose();
             request.Decision.TrySetResult();
             _ = ExecuteAsync(request);
         }
@@ -212,7 +214,7 @@ internal sealed partial class MainWindow
                 transfer = terminal.CloseFileTransferAsync();
                 terminal.Disconnect();
                 actualCleanup = ObserveCleanupAsync(terminal.Completion);
-                Task<bool> wait = WaitForCleanupAsync(actualCleanup, terminal.AbandonCleanup);
+                Task<bool> wait = WaitForCleanupAsync(request, actualCleanup);
                 await Task.WhenAll(wait, transfer);
                 adopted = await wait;
                 transferOutcome = await transfer;
@@ -250,32 +252,47 @@ internal sealed partial class MainWindow
             }
             finally
             {
-                Finish(request, new(outcome, adopted, transferOutcome, actualCleanup, outputRelease));
+                Finish(request, new(outcome, adopted, transferOutcome, actualCleanup, outputRelease,
+                    target.Terminal.RecordingCloseStatus));
                 window.CloseIfEmpty();
             }
         }
 
-        private async Task<bool> WaitForCleanupAsync(Task cleanup, Action abandon)
+        internal async Task ReviewRecordingLossAsync(WindowTab item)
         {
-            if (!cleanup.IsCompleted &&
-                await Task.WhenAny(cleanup, Task.Delay(TimeSpan.FromSeconds(5))) != cleanup &&
-                window.app.CanOwnCleanup)
+            if (!requests.TryGetValue(item, out var request) || !request.Started ||
+                request.Cleanup is not { } cleanup) return;
+            await prompts.WaitAsync();
+            try
             {
-                await prompts.WaitAsync();
-                try
+                var terminal = request.Target.Terminal;
+                if (cleanup.IsCompleted || !terminal.RecordingReleasePending) return;
+                if (!window.app.CanOwnCleanup)
                 {
-                    if (!cleanup.IsCompleted && window.app.CanOwnCleanup && window.ConfirmCleanupLoss() &&
-                        !cleanup.IsCompleted && window.app.OwnCleanup(cleanup))
-                    {
-                        abandon();
-                        return true;
-                    }
+                    Report(Text("RecordingCleanupCapacity"), Text("CleanupPending"));
+                    return;
                 }
-                catch (Exception error) when (IsPresentationFailure(error)) { }
-                finally { prompts.Release(); }
+                if (!window.ConfirmCleanupLoss() || cleanup.IsCompleted || !terminal.RecordingReleasePending) return;
+                if (window.app.OwnCleanup(cleanup))
+                {
+                    if (terminal.AbandonCleanup()) request.LossAccepted.TrySetResult();
+                }
+                else Report(Text("RecordingCleanupCapacity"), Text("CleanupPending"));
             }
-            await cleanup;
-            return false;
+            catch (Exception error) when (IsPresentationFailure(error)) { }
+            finally { prompts.Release(); }
+        }
+
+        private async Task<bool> WaitForCleanupAsync(Request request, Task cleanup)
+        {
+            request.Cleanup = cleanup;
+            Task completed = await Task.WhenAny(cleanup, request.LossAccepted.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+            if (completed != cleanup && completed != request.LossAccepted.Task &&
+                request.Target.Terminal.RecordingReleasePending)
+                await ReviewRecordingLossAsync(request.Target.Item);
+
+            await Task.WhenAny(cleanup, request.LossAccepted.Task);
+            return request.LossAccepted.Task.IsCompleted;
         }
 
         private static async Task<CleanupDisposition> ObserveCleanupAsync(Task cleanup)
@@ -315,7 +332,7 @@ internal sealed partial class MainWindow
         }
 
         private bool WindowScopeMatches(WindowTab[] scope) =>
-            window.AllTabs.All(item => scope.Contains(item) && item.Content is not FormView { IsBusy: true });
+            window.AllTabs.All(item => scope.Contains(item) && item.Content is not FormView { BlocksClose: true });
 
         private CloseDisposition Changed()
         {
@@ -341,6 +358,8 @@ internal sealed partial class MainWindow
             internal Target Target { get; } = target;
             internal TaskCompletionSource Decision { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
             internal TaskCompletionSource<CloseResult> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            internal Task? Cleanup;
+            internal TaskCompletionSource LossAccepted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
             internal bool Started;
         }
 
@@ -348,6 +367,6 @@ internal sealed partial class MainWindow
         internal enum CleanupDisposition { Completed, Failed }
         internal readonly record struct CloseResult(CloseDisposition Disposition, bool CleanupAdopted = false,
             TransferWindowCloseResult? Transfer = null, Task<CleanupDisposition>? Cleanup = null,
-            Task<CleanupDisposition>? OutputRelease = null);
+            Task<CleanupDisposition>? OutputRelease = null, RecordingStatus? Recording = null);
     }
 }

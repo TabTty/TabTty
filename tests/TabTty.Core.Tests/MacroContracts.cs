@@ -221,8 +221,9 @@ internal static class MacroContracts
         await host.Session!.ProcessPayloadAsync(TerminalReceiveSource.Data, "late"u8.ToArray(), default);
         await host.Session.ProcessOutputAsync();
         await run.Completion.WaitAsync(TimeSpan.FromSeconds(5));
-        Check(Encoding.UTF8.GetString(host.Wire.Bytes.ToArray()) == "WaitTimeout,late,EndOfInput",
-            "Late output rescued an expired wait or EOF lost a final prompt.");
+        string transcript = Encoding.UTF8.GetString(host.Wire.Bytes.ToArray());
+        Check(transcript == "WaitTimeout,late,EndOfInput",
+            $"Late output rescued an expired wait or EOF lost a final prompt. Observed {transcript}, {run.Status}.");
         await host.CloseAsync();
     }
 
@@ -274,30 +275,37 @@ internal static class MacroContracts
         var host = new Host { OpenRealProfile = true };
         var program = MacroProgram.Parse(Path.Combine(root, "example.tttym"), "#tttym 1\nConnect(\"profile.ttty\"); Write(\"ready\");");
         using var run = new MacroRun(program, [], host);
-        run.Start();
-        Task<TcpClient> accepted = listener.AcceptTcpClientAsync(deadline.Token).AsTask();
-        await UntilAsync(() => run.Status.Holds.HasFlag(MacroHold.RecordingFailure));
-        Check(!accepted.IsCompleted, "The transport started before recording preparation.");
-        File.Delete(logs);
-        Directory.CreateDirectory(logs);
-        run.RequestRecordingRetry();
-        await UntilAsync(() => run.Status.Holds.HasFlag(MacroHold.RecordingReady));
-        Check(!accepted.IsCompleted, "Retry implicitly resumed the connection.");
-        string part = Directory.GetFiles(logs).Single();
-        Check(Path.GetFileName(part).StartsWith("example-", StringComparison.Ordinal) && !part.EndsWith("-p001.raw.tttylog", StringComparison.Ordinal),
-            "The successful retry used the wrong log stem or part.");
-        run.Resume();
-        if (await Task.WhenAny(accepted, run.Completion) == run.Completion && !accepted.IsCompleted)
+        try
         {
-            await run.Completion;
-            throw new InvalidOperationException($"Connection ended before accepting the peer: {run.Status}");
+            run.Start();
+            Task<TcpClient> accepted = listener.AcceptTcpClientAsync(deadline.Token).AsTask();
+            await UntilAsync(() => run.Status.Holds.HasFlag(MacroHold.RecordingFailure));
+            Check(!accepted.IsCompleted, "The transport started before recording preparation.");
+            File.Delete(logs);
+            Directory.CreateDirectory(logs);
+            run.RequestRecordingRetry();
+            await UntilAsync(() => run.Status.Holds.HasFlag(MacroHold.RecordingReady));
+            Check(!accepted.IsCompleted, "Retry implicitly resumed the connection.");
+            string part = Directory.GetFiles(logs).Single();
+            Check(Path.GetFileName(part).StartsWith("example-", StringComparison.Ordinal) && !part.EndsWith("-p001.raw.tttylog", StringComparison.Ordinal),
+                "The successful retry used the wrong log stem or part.");
+            run.Resume();
+            using var peer = await accepted;
+            byte[] message = new byte[20]; // Initial Telnet negotiation and the five macro bytes.
+            await peer.GetStream().ReadExactlyAsync(message, deadline.Token);
+            Check(message.AsSpan(15).SequenceEqual("ready"u8), "Resume did not complete the pending connection.");
+            await run.Completion.WaitAsync(deadline.Token);
+            Check(run.Status.State == MacroRunState.Completed, $"The resumed run did not complete: {run.Status}");
         }
-        using var peer = await accepted;
-        byte[] message = new byte[20]; // Initial Telnet negotiation and the five macro bytes.
-        await peer.GetStream().ReadExactlyAsync(message, deadline.Token);
-        Check(message.AsSpan(15).SequenceEqual("ready"u8), "Resume did not complete the pending connection.");
-        await run.Completion.WaitAsync(deadline.Token);
-        await host.CloseAsync();
+        finally
+        {
+            if (!run.Completion.IsCompleted)
+            {
+                run.Stop();
+                await run.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            await host.CloseAsync();
+        }
     }
 
     private static async Task PausedConnectionAndAlternateScreenAsync()

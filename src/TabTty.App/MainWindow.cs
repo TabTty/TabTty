@@ -42,6 +42,8 @@ internal sealed partial class MainWindow : Window
             System.Windows.Interop.HwndSource.FromHwnd(new System.Windows.Interop.WindowInteropHelper(this).Handle)
                 ?.AddHook(HandleWindowMessage);
         InitializeComponent();
+        Icon = WindowIcons.App;
+        welcomeIcon.Source = WindowIcons.Welcome;
         MinWidth = WindowPlacement.MinimumWidth;
         menuButton.Click += (_, _) =>
         {
@@ -209,6 +211,13 @@ internal sealed partial class MainWindow : Window
         AddButton("ProfileCatalog", () => app.Profiles.Show(this));
         AddButton("New", CreateProfile);
         AddButton("CloseTab", CloseSelectedTab);
+        AddButton("CloseWithLoss", async () =>
+        {
+            var pending = AllTabs.Where(item => item.Content is TerminalTab { ClosePending: true, RecordingReleasePending: true });
+            var target = pending.FirstOrDefault(item => ReferenceEquals(item.Content, SelectedTab)) ??
+                (closing ? pending.FirstOrDefault() : null);
+            if (target is not null) await terminalClosure.ReviewRecordingLossAsync(target);
+        });
         AddButton("CloseWindow", Close);
         BeginMenu("EditMenu", Key.E);
         AddButton("Copy", () => SelectedTab?.CopySelection());
@@ -282,6 +291,7 @@ internal sealed partial class MainWindow : Window
         AddButton("HighlightSets", () => app.Highlights.Show(this));
         AddButton("Settings", EditSettings);
         ApplyApplicationMenuStyle(mainMenu.Items);
+        if (closing) SetWindowCloseControls(pending: true);
         foreach (WindowTab item in AllTabs)
         {
             item.UpdateCloseLabel();
@@ -529,7 +539,7 @@ internal sealed partial class MainWindow : Window
 
     private static MenuItem MenuAction(string key, Action action)
     {
-        var button = new MenuItem { Header = Text(key) };
+        var button = new MenuItem { Header = Text(key), Tag = key };
         button.Click += (_, _) => action();
         return button;
     }
@@ -723,6 +733,7 @@ internal sealed partial class MainWindow : Window
 
     private void EditSettings() => OpenForm("Settings", form =>
     {
+        form.ShowFileOperationStatus();
         int revision = app.SettingsRevision;
         string[] languages = ["en", "ja", "system"];
         string[] themes = ["system", "light", "dark"];
@@ -734,6 +745,7 @@ internal sealed partial class MainWindow : Window
         var fontSize = new TextBox { Text = app.TerminalFontSize.ToString(CultureInfo.InvariantCulture) };
         var retained = new TextBox { Text = app.RetainedRows.ToString(CultureInfo.InvariantCulture) };
         var autoClose = new CheckBox { IsChecked = app.AutoCloseDisconnectedTabs };
+        var maxPaste = new TextBox { Text = app.MaxPasteTextBytes.ToString(CultureInfo.InvariantCulture), MaxLength = 19 };
         var broadcastScope = new CheckBox { IsChecked = app.BroadcastAcrossWindows };
         var vaultPath = new TextBox { Text = app.VaultPath, MaxLength = 32760, TextWrapping = TextWrapping.Wrap,
             MaxHeight = 96, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
@@ -754,6 +766,7 @@ internal sealed partial class MainWindow : Window
             {
                 form.AddField("AutoCloseDisconnectedTabs", autoClose);
                 form.AddField("BroadcastAcrossWindows", broadcastScope);
+                form.AddField("MaxPasteSourceBytes", maxPaste);
             }),
             ("SettingsVault", () =>
             {
@@ -763,12 +776,13 @@ internal sealed partial class MainWindow : Window
             ("SettingsMaintenance", () => form.AddActionRow(() =>
             {
                 form.AddAction("RegisterFileType", RegisterFileType);
+                form.AddAction("MacroManageTrust", () => form.TabOwner?.ManageMacroTrust());
                 form.AddAction("RecoverStores", () =>
                 {
                     if (form.TabOwner is { } host) app.ShowStoreRecovery(host);
                 });
             })));
-        form.AddEditorButtons(() =>
+        form.AddEditorButtons(async () =>
         {
             if (string.IsNullOrWhiteSpace(fontFamily.Text) ||
                 !double.TryParse(fontSize.Text, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out double size) ||
@@ -776,10 +790,14 @@ internal sealed partial class MainWindow : Window
                 !int.TryParse(retained.Text, NumberStyles.None, CultureInfo.InvariantCulture, out int rows) ||
                 rows is < 100 or > 100_000)
                 throw new ArgumentException(Text("InvalidTerminalDefaults"));
-            app.SaveSettings(languages[language.SelectedIndex], themes[theme.SelectedIndex], bells[bell.SelectedIndex],
-                fontFamily.Text, size, rows, autoClose.IsChecked == true, vaultPath.Text, revision, broadcastScope.IsChecked == true);
+            if (!long.TryParse(maxPaste.Text, NumberStyles.None, CultureInfo.InvariantCulture, out long maxPasteBytes) ||
+                maxPasteBytes <= 0)
+                throw new ArgumentException(Text("InvalidPasteSourceMaximum"));
+            await app.SaveSettingsAsync(languages[language.SelectedIndex], themes[theme.SelectedIndex], bells[bell.SelectedIndex],
+                fontFamily.Text, size, rows, autoClose.IsChecked == true, vaultPath.Text, revision, broadcastScope.IsChecked == true, maxPasteBytes);
             revision = app.SettingsRevision;
             vaultPath.Text = app.VaultPath;
+            return true;
         });
 
         Task BrowseVaultPathAsync()
@@ -827,7 +845,7 @@ internal sealed partial class MainWindow : Window
         if (item.Content is FormView form)
         {
             if (closing || item.IsClosing || GroupOf(item) is null) return;
-            form.RequestClose(() => app.Modal(() => ThemedMessageBox.Show(this, Text("DiscardChangesAndClose"),
+            form.RequestClose(() => app.Modal(() => ThemedMessageBox.Show(this, form.ClosePrompt("DiscardChangesAndClose"),
                 Text("CloseTab"), MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No)) == MessageBoxResult.Yes);
             return;
         }
@@ -861,16 +879,38 @@ internal sealed partial class MainWindow : Window
     {
         if (!closed && !closing && !AllTabs.Any()) Close();
     }
+
+    private void SetWindowCloseControls(bool pending)
+    {
+        groupHost.IsEnabled = !pending;
+        if (mainMenu.Items.OfType<MenuItem>().FirstOrDefault() is not { } file) return;
+        foreach (var category in mainMenu.Items.OfType<MenuItem>().Skip(1))
+            category.IsEnabled = !pending;
+        foreach (var action in file.Items.OfType<MenuItem>())
+            action.IsEnabled = !pending || action.Tag is "CloseWithLoss";
+    }
     protected override void OnClosing(CancelEventArgs e)
     {
         base.OnClosing(e);
         if (e.Cancel) return;
-        if (AllTabs.Any(tab => tab.Content is FormView { IsBusy: true }))
+        if (AllTabs.Any(tab => tab.Content is FormView { BlocksClose: true }))
         {
             e.Cancel = true;
             return;
         }
         if (readyToClose) { SavePlacement(); return; }
+        if (!closing)
+        {
+            string[] unresolved = AllTabs.Select(tab => (tab.Content as FormView)?.UnresolvedPublication)
+                .OfType<string>().ToArray();
+            if (unresolved.Length > 0 && app.Modal(() => ThemedMessageBox.Show(this,
+                $"{Text("DiscardChangesAndCloseWindow")}\n\n{string.Join("\n\n", unresolved)}", Title,
+                MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No)) != MessageBoxResult.Yes)
+            {
+                e.Cancel = true;
+                return;
+            }
+        }
         if (!closing && !TerminalTabs.Any())
         {
             closing = readyToClose = true;
@@ -923,7 +963,9 @@ internal sealed partial class MainWindow : Window
 
     internal static void ShowError(Window owner, Exception exception) =>
         ((App)Application.Current).Modal(() =>
-            ThemedMessageBox.Show(owner, exception.Message, Text("Error"), MessageBoxButton.OK, MessageBoxImage.Error));
+            ThemedMessageBox.Show(owner, exception is FilePublicationException publication ?
+                JsonStoreRecovery.DescribeFailure(publication.Result) : exception.Message,
+                Text("Error"), MessageBoxButton.OK, MessageBoxImage.Error));
 
     private sealed class WindowTab : TabItem
     {
@@ -1035,10 +1077,12 @@ internal sealed partial class MainWindow : Window
             targetCheck.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
             targetCheck.IsEnabled = editable && !terminal.IsAiShared;
             targetCheck.IsChecked = terminal.BroadcastChecked;
-            targetCheck.ToolTip = terminal.IsAiShared ? Text("AiBroadcastExcluded") : null;
+            string target = visible && terminal.InputSession is { } active
+                ? TerminalTab.BroadcastTargetLabel(active) : PermissionDisplay.Literal(Caption);
+            targetCheck.ToolTip = terminal.IsAiShared ? Text("AiBroadcastExcluded") : target;
             ToolTipService.SetShowOnDisabled(targetCheck, true);
             AutomationProperties.SetHelpText(targetCheck, terminal.IsAiShared ? Text("AiBroadcastExcluded") : "");
-            AutomationProperties.SetName(targetCheck, string.Format(Text("BroadcastTarget"), Caption));
+            AutomationProperties.SetName(targetCheck, string.Format(Text("BroadcastTarget"), target));
             updatingBroadcast = false;
         }
         public string Caption
@@ -1072,10 +1116,11 @@ internal sealed partial class MainWindow : Window
     {
         private readonly FormView form = new(modal: true);
 
-        public FormWindow(Window? owner, string title)
+        public FormWindow(Window? owner, string title, ImageSource? icon = null)
         {
             if (owner is not null) Owner = owner;
             Title = title;
+            Icon = icon ?? WindowIcons.App;
             Width = 400;
             SizeToContent = SizeToContent.Height;
             ResizeMode = ResizeMode.NoResize;
@@ -1091,8 +1136,16 @@ internal sealed partial class MainWindow : Window
         public void AddAction(string key, Action action) => form.AddAction(key, action);
         public void AddField(string key, Control control) => form.AddField(key, control);
         public void AddPrompt(string caption, Control control) => form.AddPrompt(caption, control);
+        public void AddNotice(string key) => form.AddNotice(key);
+        public void AddPinnedNotice(string message)
+        {
+            var notice = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(14, 10, 14, 4) };
+            DockPanel.SetDock(notice, Dock.Top);
+            form.Children.Insert(0, notice);
+        }
         public void AddButtons(Action save, string acceptKey = "Save", bool cancelDefault = false, string cancelKey = "Cancel") =>
             form.AddButtons(save, acceptKey, cancelDefault, cancelKey);
-        public void AddAsyncButtons(Func<Task<bool>> save) => form.AddAsyncButtons(save);
+        public void AddAsyncButtons(Func<Task<bool>> save, string acceptKey = "Save", bool cancelDefault = false) =>
+            form.AddAsyncButtons(save, acceptKey, cancelDefault);
     }
 }

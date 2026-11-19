@@ -35,11 +35,10 @@ public sealed class TerminalOutput
 
     public TerminalOutput(int columns = 80, int retainedRowLimit = 5000, int screenRows = 24,
         string receiveEncoding = "utf-8", bool receiveSevenBitKana = false, int ambiguousWidth = 1)
-        : this(columns, retainedRowLimit, screenRows, receiveEncoding, receiveSevenBitKana, ambiguousWidth,
-            new ResourceQuota(2L * 1024 * 1024 * 1024, ApplicationResources.TerminalState)) { }
+        : this(columns, retainedRowLimit, screenRows, receiveEncoding, receiveSevenBitKana, ambiguousWidth, null) { }
 
     internal TerminalOutput(int columns, int retainedRowLimit, int screenRows, string receiveEncoding,
-        bool receiveSevenBitKana, int ambiguousWidth, ResourceQuota stateQuota)
+        bool receiveSevenBitKana, int ambiguousWidth, ResourceQuota? stateQuota)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(columns, 2);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(columns, 1024);
@@ -52,11 +51,11 @@ public sealed class TerminalOutput
         this.columns = columns;
         rows = screenRows;
         this.retainedRowLimit = retainedRowLimit;
-        StateQuota = stateQuota;
+        StateQuota = stateQuota ?? new ResourceQuota(2L * 1024 * 1024 * 1024, ApplicationResources.TerminalState);
         var codec = new TerminalEncoding(receiveEncoding);
         try
         {
-            native = new NativeTerminalCore(columns, rows, retainedRowLimit, ambiguousWidth, stateQuota,
+            native = new NativeTerminalCore(columns, rows, retainedRowLimit, ambiguousWidth, StateQuota,
                 codec.NativePage, receiveSevenBitKana);
         }
         catch (Exception error) when (error is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
@@ -81,13 +80,16 @@ public sealed class TerminalOutput
             token, replies.Enqueue, replies.Count, Bell);
     }
 
-    internal void EchoUtf8(ReadOnlySpan<byte> payload)
+    internal void EchoUtf8(ReadOnlySpan<byte> payload, ResourceReservation? prepaid = null)
     {
-        if (!TryEcho(payload)) throw new ResourceLimitException();
+        if (!TryEcho(payload, prepaid)) throw new ResourceLimitException();
     }
 
-    internal bool TryEcho(ReadOnlySpan<byte> payload) =>
-        native.TryFeed(2, payload, recordingFlags, textRecord, terminalRecord, replySink: replies.Enqueue, pendingReplies: replies.Count, bell: Bell);
+    internal bool TryEcho(ReadOnlySpan<byte> payload, ResourceReservation? prepaid = null) =>
+        native.TryFeed(2, payload, recordingFlags, textRecord, terminalRecord, replySink: replies.Enqueue,
+            pendingReplies: replies.Count, bell: Bell, prepaid: prepaid);
+
+    internal ResourceReservation ReserveEcho(ReadOnlySpan<byte> payload) => native.ReserveEcho(payload, recordingFlags, replies.Count);
 
     public void CompleteReceive()
     {

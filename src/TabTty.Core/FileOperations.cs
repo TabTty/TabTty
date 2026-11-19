@@ -7,6 +7,7 @@ internal sealed class TransferPath
     public string? Local { get; }
     public byte[]? Remote { get; }
     public TransferFileIdentity? DirectoryIdentity { get; set; }
+    internal FileObjectIdentity? StagedIdentity { get; set; }
     public TransferPath? ParentPath { get; init; }
     public TransferPath(string local) => Local = local;
     public TransferPath(byte[] remote) => Remote = remote;

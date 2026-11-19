@@ -26,7 +26,10 @@ internal static unsafe partial class OpenSsl
             fixed (byte* source = encrypted)
             fixed (byte* destination = output)
             {
-                Require(EVP_BytesToKey(cipher, digest, nonce, pass, password.Length, 1, secret, null) == keyLength);
+                // A null input only queries the key length, even for an intentionally empty passphrase.
+                byte empty = 0;
+                Require(EVP_BytesToKey(cipher, digest, nonce, pass == null ? &empty : pass, password.Length,
+                    1, secret, null) == keyLength);
                 Require(EVP_CipherInit_ex2(operation, cipher, secret, nonce, 0, 0) == 1);
                 Require(EVP_CipherUpdate(operation, destination, out int size, source, encrypted.Length) == 1);
                 Require(size <= encrypted.Length);

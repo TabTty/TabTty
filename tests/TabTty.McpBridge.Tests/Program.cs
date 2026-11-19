@@ -11,11 +11,7 @@ using var app = Process.Start(new ProcessStartInfo(Path.Combine(directory, "TabT
 }) ?? throw new InvalidOperationException("TabTty did not start.");
 try
 {
-    using var bridge = Process.Start(new ProcessStartInfo(Path.Combine(directory, "TabTty.McpBridge.exe"), "--stdio")
-    {
-        UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
-        RedirectStandardOutput = true, RedirectStandardError = true,
-    }) ?? throw new InvalidOperationException("Bridge did not start.");
+    using var bridge = StartBridge();
     try
     {
         var client = new { name = "Independent test client", version = "1" };
@@ -31,6 +27,12 @@ try
             structured.GetProperty("pairing_code").GetString()?.Length == 8);
         using var mirror = JsonDocument.Parse(list.GetProperty("content")[0].GetProperty("text").GetString()!);
         Check(JsonElement.DeepEquals(structured, mirror.RootElement));
+        string originalId = structured.GetProperty("counterpart_id").GetString()!;
+        string originalCode = structured.GetProperty("pairing_code").GetString()!;
+        string secondId = await CheckFreshAttachment();
+        string restartedId = await CheckFreshAttachment();
+        Check(secondId != restartedId);
+        Console.WriteLine("PASS McpPackagedBridgesHaveSeparateAttachments");
         var unknown = (await Request(4, "tools/call", new { name = "tabtty_read_state", arguments = new { session = "foreign" } }))
             .GetProperty("result");
         Check(unknown.GetProperty("isError").GetBoolean() &&
@@ -69,29 +71,69 @@ try
         }
         Check(sawBusy);
         var returned = (await Request(220, "tools/call", new { name = "tabtty_return_control",
-            arguments = new { session = "unshared", control = "unknown" } })).GetProperty("result");
+            arguments = new { session = "unshared", control = "unknown",
+                reason = string.Concat(Enumerable.Repeat("🌱", 256)) } })).GetProperty("result");
         Check(returned.GetProperty("structuredContent").GetProperty("error").GetProperty("code").GetString() == "not_shared");
+        var oversized = (await Request(221, "tools/call", new { name = "tabtty_return_control",
+            arguments = new { session = "unshared", control = "unknown", reason = new string('a', 16 * 1024) } }))
+            .GetProperty("result").GetProperty("structuredContent");
+        Check(oversized.GetProperty("error").GetProperty("code").GetString() == "resource_limit");
         bridge.StandardInput.Close();
         await bridge.WaitForExitAsync(deadline.Token);
         Check(bridge.ExitCode == 0 && !app.HasExited);
         Console.WriteLine("PASS McpBridgeLegacyModernAndUnsharedDiscovery");
 
-        async Task<JsonElement> Request(int id, string method, object parameters)
+        // A second copy must forward to the same verified GUI even after the
+        // MCP attachment closes. A forwarding error would show an error dialog.
+        for (int i = 0; i < 2; i++)
         {
-            await Write(new { jsonrpc = "2.0", id, method, @params = parameters });
-            JsonElement response = await Read();
+            using var second = Process.Start(new ProcessStartInfo(Path.Combine(directory, "TabTty.exe"))
+                { UseShellExecute = false, CreateNoWindow = true })!;
+            try { await second.WaitForExitAsync(deadline.Token); }
+            finally { if (!second.HasExited) second.Kill(); }
+            Check(second.ExitCode == 0 && !app.HasExited);
+        }
+        Console.WriteLine("PASS VerifiedGuiActivation");
+
+        async Task<string> CheckFreshAttachment()
+        {
+            using var peer = StartBridge();
+            try
+            {
+                await Request(1, "initialize", new { protocolVersion = "2025-11-25", capabilities = new { }, clientInfo = client }, peer);
+                await Write(new { jsonrpc = "2.0", method = "notifications/initialized" }, peer);
+                var reply = await Request(2, "tools/call", new { name = "tabtty_list_shared_sessions", arguments = new { } }, peer);
+                var listing = reply.GetProperty("result").GetProperty("structuredContent");
+                string id = listing.GetProperty("counterpart_id").GetString()!;
+                string code = listing.GetProperty("pairing_code").GetString()!;
+                Check(id.Length == 32 && id != originalId && code.Length == 8 && code != originalCode &&
+                    listing.GetProperty("sessions").GetArrayLength() == 0 && !bridge.HasExited);
+                peer.StandardInput.Close();
+                await peer.WaitForExitAsync(deadline.Token);
+                Check(peer.ExitCode == 0);
+                return id;
+            }
+            finally { if (!peer.HasExited) peer.Kill(); }
+        }
+
+        async Task<JsonElement> Request(int id, string method, object parameters, Process? peer = null)
+        {
+            await Write(new { jsonrpc = "2.0", id, method, @params = parameters }, peer);
+            JsonElement response = await Read(peer);
             Check(response.GetProperty("id").GetInt32() == id);
             return response;
         }
-        async Task Write(object message)
+        async Task Write(object message, Process? peer = null)
         {
-            await bridge.StandardInput.WriteLineAsync(JsonSerializer.Serialize(message));
-            await bridge.StandardInput.FlushAsync(deadline.Token);
+            var input = (peer ?? bridge).StandardInput;
+            await input.WriteLineAsync(JsonSerializer.Serialize(message));
+            await input.FlushAsync(deadline.Token);
         }
-        async Task<JsonElement> Read()
+        async Task<JsonElement> Read(Process? peer = null)
         {
-            string? line = await bridge.StandardOutput.ReadLineAsync(deadline.Token);
-            if (line is null) throw new IOException("Bridge closed stdout: " + await bridge.StandardError.ReadToEndAsync(deadline.Token));
+            var process = peer ?? bridge;
+            string? line = await process.StandardOutput.ReadLineAsync(deadline.Token);
+            if (line is null) throw new IOException("Bridge closed stdout: " + await process.StandardError.ReadToEndAsync(deadline.Token));
             using var message = JsonDocument.Parse(line);
             return message.RootElement.Clone();
         }
@@ -109,11 +151,7 @@ finally
     catch (TimeoutException) { if (!app.HasExited) app.Kill(); }
 }
 
-using (var unavailable = Process.Start(new ProcessStartInfo(Path.Combine(directory, "TabTty.McpBridge.exe"), "--stdio")
-{
-    UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
-    RedirectStandardOutput = true, RedirectStandardError = true,
-}) ?? throw new InvalidOperationException("Bridge did not start."))
+using (var unavailable = StartBridge())
 {
     try
     {
@@ -128,6 +166,12 @@ using (var unavailable = Process.Start(new ProcessStartInfo(Path.Combine(directo
         if (!unavailable.HasExited) unavailable.Kill();
     }
 }
+
+Process StartBridge() => Process.Start(new ProcessStartInfo(Path.Combine(directory, "TabTty.McpBridge.exe"), "--stdio")
+{
+    UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
+    RedirectStandardOutput = true, RedirectStandardError = true,
+}) ?? throw new InvalidOperationException("Bridge did not start.");
 
 static void Check(bool condition)
 {

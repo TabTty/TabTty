@@ -185,10 +185,14 @@ internal sealed partial class MainWindow
 
     internal void RefreshBroadcast()
     {
-        foreach (var tab in AllTabs) tab.UpdateBroadcast(app.Broadcast.IsActive(this), app.Broadcast.CanSelect(this));
+        bool visible = app.Broadcast.IsActive(this);
+        bool editable = app.Broadcast.CanSelect(this);
+        foreach (var tab in AllTabs) tab.UpdateBroadcast(visible, editable);
         string status = app.Broadcast.Status(this);
         broadcastStatus.Text = status;
-        broadcastBand.Visibility = status.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+        var visibility = status.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+        if (visibility == broadcastBand.Visibility) return;
+        broadcastBand.Visibility = visibility;
         UpdateGroupChrome();
     }
 

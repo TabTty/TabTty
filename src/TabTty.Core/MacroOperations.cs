@@ -128,10 +128,9 @@ internal sealed partial class MacroRun
         try
         {
             MacroLimits.Unicode(path);
-            if (path.Length == 0 || Path.IsPathRooted(path) && !Path.IsPathFullyQualified(path)) throw new ArgumentException();
-            return Path.GetFullPath(path, baseDirectory);
+            return OrdinaryWindowsPath.Resolve(path, baseDirectory);
         }
-        catch (Exception error) when (error is ArgumentException or NotSupportedException or PathTooLongException or MacroError)
+        catch (Exception error) when (error is InvalidDataException or ArgumentException or NotSupportedException or PathTooLongException or MacroError)
         { throw new MacroError(MacroErrorCode.Path); }
     }
 

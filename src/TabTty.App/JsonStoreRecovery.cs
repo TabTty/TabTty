@@ -6,46 +6,104 @@ using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Win32;
+using TabTty.Core;
 using static TabTty.App.App;
 
 namespace TabTty.App;
 
 internal static class JsonStoreRecovery
 {
-    internal sealed record Store(string Name, string Path, Action<string> Validate, Action Reload, Func<byte[]> Defaults);
+    internal sealed record Store(string Name, string Path, Action<string> Validate, Action Reload, Func<byte[]> Defaults,
+        Func<string, Adoption>? PrepareAdoption = null);
+
+    internal sealed record Adoption(IDisposable? Reservation, Action Apply);
 
     public static void Show(App app, MainWindow owner, IReadOnlyList<Store> stores) => owner.OpenForm("RecoverStores", form =>
     {
+        form.ShowFileOperationStatus();
         var choice = new ComboBox { ItemsSource = stores, DisplayMemberPath = nameof(Store.Name), SelectedIndex = 0 };
         form.AddField("RecoveryStore", choice);
+        form.AddAsyncAction("RecheckFilePublication", async () =>
+        {
+            if (choice.SelectedItem is not Store store) return;
+            Adoption? adoption = null;
+            try
+            {
+                var outcome = await Task.Run(() => VerifiedFilePublication.Reconcile(store.Path, candidate =>
+                {
+                    if (store.PrepareAdoption is { } prepare)
+                        adoption = app.Dispatcher.Invoke(() => prepare(candidate));
+                    else store.Validate(candidate);
+                }));
+                if (outcome is null)
+                {
+                    var stages = await Task.Run(() => VerifiedFilePublication.ReinspectRetainedStages(store.Path));
+                    if (!ShowRetainedStages(app, form, stages))
+                        app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow, Text("NoFilePublicationToRecheck"), Text("RecoverStores")));
+                    return;
+                }
+                if (outcome.Status != FilePublicationStatus.Verified)
+                    throw new FilePublicationException(Text("StoreSaveUnverified"), outcome);
+                if (adoption is null) store.Reload();
+                else adoption.Apply();
+                ShowRetainedStages(app, form, VerifiedFilePublication.GetRetainedStagePaths(store.Path));
+            }
+            finally { adoption?.Reservation?.Dispose(); }
+        });
         form.AddAsyncAction("RestoreStoreBackup", async () =>
         {
             if (choice.SelectedItem is not Store store) return;
             var picker = new OpenFileDialog { Filter = Text("RecoveryFileFilter"),
                 InitialDirectory = LocalState.DirectoryPath, FileName = System.IO.Path.GetFileName(store.Path) + ".bak" };
-            if (app.Modal(() => picker.ShowDialog(form.OwnerWindow)) != true || !Confirm(store)) return;
-            await RunAsync(store, () => Restore(store.Path, picker.FileName, store.Validate));
+            if (app.Modal(() => picker.ShowDialog(form.OwnerWindow)) != true) return;
+            byte[]? original = await Task.Run(() => FileDigest(store.Path));
+            if (!form.IsLoaded || !Confirm(store)) return;
+            await RunAsync(store, validate => Restore(store.Path, picker.FileName, original, validate));
         });
         form.AddAsyncAction("RecreateStore", async () =>
         {
-            if (choice.SelectedItem is not Store store || !Confirm(store)) return;
-            await RunAsync(store, () => Commit(store.Path, store.Defaults(), FileDigest(store.Path), recovery: true,
-                store.Validate));
+            if (choice.SelectedItem is not Store store) return;
+            byte[]? original = await Task.Run(() => FileDigest(store.Path));
+            if (!form.IsLoaded || !Confirm(store)) return;
+            await RunAsync(store, validate => Commit(store.Path, store.Defaults(), original, recovery: true,
+                validate));
         });
         bool Confirm(Store store) => app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow,
             $"{Text("StoreRecoveryWarning")}\n\n{store.Name}\n{store.Path}", Text("RecoverStores"),
             MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No)) == MessageBoxResult.Yes;
 
-        async Task RunAsync(Store store, Action action)
+        async Task RunAsync(Store store, Action<Action<string>> action)
         {
-            await Task.Run(action);
-            store.Reload();
+            Adoption? adoption = null;
+            try
+            {
+                await Task.Run(() => action(candidate =>
+                {
+                    if (store.PrepareAdoption is { } prepare)
+                        adoption = app.Dispatcher.Invoke(() => prepare(candidate));
+                    else store.Validate(candidate);
+                }));
+                if (adoption is null) store.Reload();
+                else adoption.Apply();
+                ShowRetainedStages(app, form, VerifiedFilePublication.GetRetainedStagePaths(store.Path));
+            }
+            finally { adoption?.Reservation?.Dispose(); }
         }
     });
 
-    public static void Restore(string path, string backup, Action<string> validate)
+    internal static bool ShowRetainedStages(App app, FormView form, string[] stages)
     {
-        byte[]? original = FileDigest(path);
+        if (stages.Length == 0) return false;
+        app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow,
+            Text("PublicationRetainedStages") + "\n\n" + string.Join("\n", stages), Text("RecoverStores")));
+        return true;
+    }
+
+    public static void Restore(string path, string backup, Action<string> validate) =>
+        Restore(path, backup, FileDigest(path), validate);
+
+    private static void Restore(string path, string backup, byte[]? original, Action<string> validate)
+    {
         using var input = File.OpenRead(backup);
         if (input.Length is <= 0 or > 16 * 1024 * 1024) throw new InvalidDataException(Text("StoreRecoveryInvalid"));
         byte[] bytes = new byte[(int)input.Length];
@@ -54,8 +112,12 @@ internal static class JsonStoreRecovery
         Commit(path, bytes, original, recovery: true, validate);
     }
 
-    public static void Save(string path, byte[] bytes, byte[]? original) =>
-        Commit(path, bytes, original is null ? null : SHA256.HashData(original), recovery: false);
+    public static void Save(string path, byte[] bytes, byte[]? original, Action<string> validate) =>
+        RequireVerified(BeginSave(path, bytes, original, validate).ObserveAsync().GetAwaiter().GetResult());
+
+    internal static FilePublicationOperation BeginSave(string path, byte[] bytes, byte[]? original, Action<string> validate,
+        Action<string, string, string?>? issue = null, CancellationToken beforeIssue = default) =>
+        Begin(path, bytes, original is null ? null : SHA256.HashData(original), recovery: false, validate, issue, beforeIssue);
 
     public static JsonObject ParseObject(ReadOnlySpan<byte> bytes)
     {
@@ -89,50 +151,44 @@ internal static class JsonStoreRecovery
         }
     }
 
-    private static byte[]? FileDigest(string path)
-    {
-        try { using var stream = File.OpenRead(path); return SHA256.HashData(stream); }
-        catch (FileNotFoundException) { return null; }
-        catch (DirectoryNotFoundException) { return null; }
-    }
+    private const int MaximumStoreBytes = 16 * 1024 * 1024;
+
+    private static byte[]? FileDigest(string path) => VerifiedFilePublication.ReadDigest(path, MaximumStoreBytes);
 
     private static void Commit(string path, byte[] bytes, byte[]? expected, bool recovery, Action<string>? validate = null)
+        => RequireVerified(Begin(path, bytes, expected, recovery, validate).ObserveAsync().GetAwaiter().GetResult());
+
+    private static FilePublicationOperation Begin(string path, byte[] bytes, byte[]? expected, bool recovery,
+        Action<string>? validate, Action<string, string, string?>? issue = null, CancellationToken beforeIssue = default)
     {
-        string directory = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(path))!;
-        Directory.CreateDirectory(directory);
-        string candidate = System.IO.Path.Combine(directory, "recovery-" + Guid.NewGuid().ToString("N") + ".tmp");
-        bool owns = false;
-        try
+        string? preservation = expected is null ? null :
+            recovery ? path + ".recovery-" + Guid.NewGuid().ToString("N") : path + ".bak";
+        return VerifiedFilePublication.Begin(new(path, bytes, expected, preservation, MaximumStoreBytes,
+            Validate: validate, Recovery: recovery, CreateDirectory: true, Issue: issue), beforeIssue);
+    }
+
+    internal static void RequireVerified(FilePublicationResult result)
+    {
+        if (result.Status != FilePublicationStatus.Verified)
+            throw new FilePublicationException(DescribeFailure(result), result);
+    }
+
+    internal static string DescribeFailure(FilePublicationResult result)
+    {
+        string key = result.Status switch
         {
-            using (var output = new FileStream(candidate, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-            {
-                owns = true;
-                output.Write(bytes);
-                output.Flush(flushToDisk: true);
-            }
-            validate?.Invoke(candidate);
-            byte[]? actual = FileDigest(path);
-            if (expected is null ? actual is not null : actual is null || !actual.AsSpan().SequenceEqual(expected))
-                throw new IOException(Text("StoreChanged"));
-            Exception? replacementError = null;
-            try
-            {
-                if (expected is null) File.Move(candidate, path, overwrite: false);
-                else File.Replace(candidate, path, recovery ? path + ".recovery-" + Guid.NewGuid().ToString("N") : path + ".bak");
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { replacementError = exception; }
-            try { actual = FileDigest(path); }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                owns = false;
-                throw new IOException(Text("StoreSaveUnverified"), exception);
-            }
-            if (actual is not null && actual.AsSpan().SequenceEqual(SHA256.HashData(bytes))) return;
-            if (replacementError is not null && (expected is null ? actual is null :
-                actual is not null && actual.AsSpan().SequenceEqual(expected))) throw new IOException(Text("StoreSaveFailed"), replacementError);
-            owns = false;
-            throw new IOException(Text("StoreSaveUnverified"), replacementError);
-        }
-        finally { if (owns && File.Exists(candidate)) File.Delete(candidate); }
+            FilePublicationStatus.Unchanged => "StoreSaveFailed",
+            FilePublicationStatus.Conflict when result.Error is null && result.Candidate == FileImageStatus.Unavailable
+                => "StoreChanged",
+            _ => "StoreSaveUnverified",
+        };
+        var lines = new List<string> { Text(key), Describe(result.TargetPath, result.Target) };
+        if (result.PreservationPath is { } preservation) lines.Add(Describe(preservation, result.Preservation));
+        if (result.Candidate is not (FileImageStatus.Missing or FileImageStatus.Unavailable))
+            lines.Add(Describe(result.CandidatePath, result.Candidate));
+        if (result.CleanupError is not null) lines.Add(Text("PublicationCleanupFailed"));
+        return string.Join("\n\n", lines);
+
+        static string Describe(string path, FileImageStatus state) => $"{Text($"PublishedImage{state}")}\n{path}";
     }
 }

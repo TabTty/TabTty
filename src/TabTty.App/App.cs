@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Windows;
+using TabTty.Core;
 
 namespace TabTty.App;
 
@@ -27,6 +28,10 @@ public sealed class App : Application
     private int modalDepth;
     private bool exitCommitted;
     private bool started;
+    private SettingsPublication? settingsPublication;
+    private readonly Action<string, string, string?>? issueSettings;
+    internal Action<string, string, string?>? IssueMasterPassword { get; }
+    internal VaultFileHooks? VaultFiles { get; }
     private readonly HashSet<Task> cleanupOwners = [];
 
     internal string LanguageChoice => settings["language"]!.GetValue<string>();
@@ -36,6 +41,8 @@ public sealed class App : Application
     internal double TerminalFontSize => settings["defaultTerminalFont"]!["sizePoints"]!.GetValue<double>();
     internal int RetainedRows => settings["defaultRetainedRows"]!.GetValue<int>();
     internal bool AutoCloseDisconnectedTabs => settings["autoCloseDisconnectedTabs"]?.GetValue<bool>() ?? DefaultAutoCloseDisconnectedTabs;
+    internal long MaxPasteTextBytes => settings["maxPasteTextBytes"]?.GetValue<long>() ??
+        TabTty.Core.TerminalPaste.DefaultMaxSourceBytes;
     internal bool BroadcastAcrossWindows => settings["broadcastAcrossWindows"]?.GetValue<bool>() ?? false;
     internal BroadcastInput Broadcast { get; }
     internal AiCollaboration Ai { get; }
@@ -51,15 +58,22 @@ public sealed class App : Application
 
     public App() : this(DefaultSettingsPath) { }
 
-    internal App(string settingsPath)
+    internal App(string settingsPath, Action<string, string, string?>? issueSettings = null,
+        Action<string, string, string?>? issueMasterPassword = null, Action<string, string, string?>? issueProfiles = null,
+        VaultFileHooks? vaultFiles = null, Action<string, string, string?>? issueOtherStores = null,
+        Action<string>? validateProfileStage = null)
     {
         Broadcast = new BroadcastInput(this);
         Ai = new AiCollaboration(this);
         this.settingsPath = settingsPath;
+        this.issueSettings = issueSettings;
+        IssueMasterPassword = issueMasterPassword;
+        VaultFiles = vaultFiles;
         Vault = new VaultController(this);
-        HostTrust = new SshHostTrust(this);
-        Highlights = new HighlightCatalog(this);
-        Profiles = new ProfileCatalog(this);
+        string storeDirectory = Path.GetDirectoryName(Path.GetFullPath(settingsPath))!;
+        HostTrust = new SshHostTrust(this, Path.Combine(storeDirectory, "host-keys.json"), issueOtherStores);
+        Highlights = new HighlightCatalog(this, Path.Combine(storeDirectory, "highlighting.json"), issueOtherStores);
+        Profiles = new ProfileCatalog(this, issueProfiles, validateProfileStage);
     }
 
     protected override void OnExit(ExitEventArgs e)
@@ -85,7 +99,7 @@ public sealed class App : Application
             }
         }
         catch (Exception exception) when (exception is IOException or ArgumentException or OperationCanceledException
-            or UnauthorizedAccessException)
+            or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
         {
             ShowActivationError(exception.Message);
             return;
@@ -122,7 +136,6 @@ public sealed class App : Application
 
     private void Start(InstanceLaunch[] paths)
     {
-        started = true;
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
         try
         {
@@ -145,10 +158,15 @@ public sealed class App : Application
 
         ApplySettings();
         if (!LocalState.Initialize() || !Highlights.Initialize()) { Shutdown(); return; }
-        ProfileFileAssociation.RegisterOnStartup();
         string? previousVault = LocalState.Read()["selectedVaultPath"]?.GetValue<string>();
         if (!string.IsNullOrWhiteSpace(previousVault) && Path.IsPathFullyQualified(previousVault))
             legacyVaultPath = previousVault;
+        OpenInitialWindows(paths);
+    }
+
+    internal void OpenInitialWindows(InstanceLaunch[] paths)
+    {
+        started = true;
         Activate(paths);
     }
 
@@ -257,7 +275,7 @@ public sealed class App : Application
                 pendingActivations.Dequeue();
                 window.RestoreMacroHost();
                 window.Activate();
-                if (launch is { IsMacro: true }) await window.OpenMacroAsync(launch.Path, launch.Arguments);
+                if (launch is { IsMacro: true }) await window.OpenExternalMacroAsync(launch);
                 else if (launch is not null) window.OpenProfile(launch.Path);
             }
         }
@@ -294,18 +312,38 @@ public sealed class App : Application
     private void ShutdownIfFinished(Window? closedEditor = null)
     {
         if (!started || Dispatcher.HasShutdownStarted ||
-            drainingActivations || pendingActivations.Count != 0 || windowOrder.Count != 0 || HasEditor(closedEditor)) return;
+            drainingActivations || pendingActivations.Count != 0 || windowOrder.Count != 0 || HasEditor(closedEditor) ||
+            settingsPublication is not null || Vault.HasActiveOperations) return;
         CommitExit();
         Shutdown();
+    }
+
+    internal void VaultWorkSettled() => ShutdownIfFinished();
+
+    private SettingsPublication ReserveSettingsPublication(string priorPath, string nextPath)
+    {
+        if (settingsPublication is not null) throw new InvalidOperationException(Text("VaultBusy"));
+        return settingsPublication = new(this, Vault.ReservePathChange(priorPath, nextPath));
+    }
+
+    private sealed class SettingsPublication(App app, IDisposable? selection) : IDisposable
+    {
+        public void Dispose()
+        {
+            if (!ReferenceEquals(app.settingsPublication, this)) return;
+            selection?.Dispose();
+            app.settingsPublication = null;
+            app.ShutdownIfFinished();
+        }
     }
 
     private string VaultPathFor(JsonObject state) => state.ContainsKey("credentialVaultPath")
         ? state["credentialVaultPath"]?.GetValue<string>() ?? DefaultVaultPath
         : legacyVaultPath ?? DefaultVaultPath;
 
-    internal void SaveSettings(string languageChoice, string themeChoice, string bellChoice,
+    internal async Task SaveSettingsAsync(string languageChoice, string themeChoice, string bellChoice,
         string terminalFontFamily, double terminalFontSize, int retainedRows, bool autoCloseDisconnectedTabs,
-        string vaultPath, int revision, bool? broadcastAcrossWindows = null)
+        string vaultPath, int revision, bool? broadcastAcrossWindows = null, long? maxPasteTextBytes = null)
     {
         if (revision != SettingsRevision)
             throw new InvalidOperationException(Text("ManagementTabOutdated"));
@@ -314,11 +352,16 @@ public sealed class App : Application
         string priorVaultPath = VaultPath;
         vaultPath = vaultPath == priorVaultPath ? priorVaultPath : NormalizeVaultPath(vaultPath);
         bool vaultChanged = !string.Equals(priorVaultPath, vaultPath, StringComparison.Ordinal);
-        if (vaultChanged) Vault.CheckPathChange(priorVaultPath, vaultPath);
+        using var publication = ReserveSettingsPublication(priorVaultPath, vaultPath);
         FontCatalog.Validate(terminalFontFamily, TerminalFontFamily);
         var candidate = (JsonObject)settings.DeepClone();
         bool scopeChanged = broadcastAcrossWindows is { } scope && scope != BroadcastAcrossWindows;
         if (broadcastAcrossWindows is { } savedScope) candidate["broadcastAcrossWindows"] = savedScope;
+        if (maxPasteTextBytes is { } maximum)
+        {
+            if (maximum <= 0) throw new ArgumentException(Text("InvalidPasteSourceMaximum"));
+            candidate["maxPasteTextBytes"] = maximum;
+        }
         candidate["language"] = languageChoice;
         candidate["theme"] = themeChoice;
         candidate["bell"] = bellChoice;
@@ -330,11 +373,13 @@ public sealed class App : Application
             candidate["credentialVaultPath"] = vaultPath;
         byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(candidate, new JsonSerializerOptions { WriteIndented = true });
         if (bytes.Length > 65536) throw new InvalidDataException("Settings exceed 64 KiB.");
-        JsonStoreRecovery.Save(settingsPath, bytes, settingsOriginal);
+        var operation = JsonStoreRecovery.BeginSave(settingsPath, bytes, settingsOriginal,
+            path => _ = ReadSettings(path, out _), issueSettings);
+        JsonStoreRecovery.RequireVerified(await operation.ObserveAsync());
         settingsOriginal = bytes;
         settings = candidate;
-        if (scopeChanged) Broadcast.ScopeChanged();
         if (vaultChanged) Vault.SelectionChanged(priorVaultPath);
+        if (scopeChanged) Broadcast.ScopeChanged();
         SettingsRevision++;
         ApplySettings();
         UpdateWindowLabels();
@@ -342,18 +387,26 @@ public sealed class App : Application
 
     internal void ShowStoreRecovery(MainWindow owner) => JsonStoreRecovery.Show(this, owner,
     [
-        new JsonStoreRecovery.Store(Text("Settings"), settingsPath, path => _ = ReadSettings(path, out _), () =>
+        new JsonStoreRecovery.Store(Text("Settings"), settingsPath, path => _ = ReadSettings(path, out _),
+            () => { }, () => JsonSerializer.SerializeToUtf8Bytes(Defaults()), candidate =>
         {
             string priorVaultPath = VaultPath;
             bool priorScope = BroadcastAcrossWindows;
-            settings = ReadSettings(settingsPath, out settingsOriginal);
-            if (priorScope != BroadcastAcrossWindows) Broadcast.ScopeChanged();
-            if (!string.Equals(priorVaultPath, VaultPath, StringComparison.Ordinal)) Vault.SelectionChanged(priorVaultPath);
-            settingsReadOnly = false;
-            SettingsRevision++;
-            ApplySettings();
-            UpdateWindowLabels();
-        }, () => JsonSerializer.SerializeToUtf8Bytes(Defaults())),
+            JsonObject prepared = ReadSettings(candidate, out byte[] preparedBytes);
+            var reservation = ReserveSettingsPublication(priorVaultPath, VaultPathFor(prepared));
+            return new JsonStoreRecovery.Adoption(reservation, () =>
+            {
+                settings = prepared;
+                settingsOriginal = preparedBytes;
+                settingsReadOnly = false;
+                SettingsRevision++;
+                if (!string.Equals(priorVaultPath, VaultPath, StringComparison.Ordinal))
+                    Vault.SelectionChanged(priorVaultPath);
+                if (priorScope != BroadcastAcrossWindows) Broadcast.ScopeChanged();
+                ApplySettings();
+                UpdateWindowLabels();
+            });
+        }),
         Highlights.RecoveryStore(), LocalState.RecoveryStore(), HostTrust.RecoveryStore(),
     ]);
 
@@ -397,14 +450,11 @@ public sealed class App : Application
     internal static string NormalizeVaultPath(string path)
     {
         if (string.IsNullOrWhiteSpace(path)) return DefaultVaultPath;
-        if (path.Length > 32760 || !Path.IsPathFullyQualified(path) || path.StartsWith(@"\\?\", StringComparison.Ordinal) ||
-            path.StartsWith(@"\\.\", StringComparison.Ordinal) ||
-            path.AsSpan().ContainsAny('\0', '*', '?') ||
-            path.AsSpan(path.Length > 1 && path[1] == ':' && char.IsAsciiLetter(path[0]) ? 2 : 0).Contains(':') ||
+        if (!OrdinaryWindowsPath.IsValid(path) || !Path.IsPathFullyQualified(path) ||
             !string.Equals(Path.GetExtension(path), ".tttykey", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException(Text("InvalidVaultPath"));
         string full = Path.GetFullPath(path);
-        if (full.Length > 32760 || !string.Equals(Path.GetExtension(full), ".tttykey", StringComparison.OrdinalIgnoreCase))
+        if (!OrdinaryWindowsPath.IsValid(full) || !string.Equals(Path.GetExtension(full), ".tttykey", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException(Text("InvalidVaultPath"));
         return full;
     }
@@ -428,6 +478,9 @@ public sealed class App : Application
             font["family"]!.GetValue<string>().Any(char.IsControl) ||
             font["sizePoints"]?.GetValue<double>() is not (>= 6 and <= 72) ||
             parsed["defaultRetainedRows"]?.GetValue<int>() is not (>= 100 and <= 100000) ||
+            (parsed.ContainsKey("maxPasteTextBytes") &&
+                (parsed["maxPasteTextBytes"] is not JsonValue maxPaste || !maxPaste.TryGetValue<long>(out long maximum) ||
+                 maximum <= 0)) ||
             (parsed.ContainsKey("broadcastAcrossWindows") &&
                 (parsed["broadcastAcrossWindows"] is not JsonValue broadcast || !broadcast.TryGetValue<bool>(out _))) ||
             (parsed.ContainsKey("autoCloseDisconnectedTabs") &&

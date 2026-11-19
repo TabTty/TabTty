@@ -17,6 +17,7 @@ internal sealed class ProfileEditorWindow : Window
         this.app = app;
         TitleKey = titleKey;
         Identity = identity;
+        Icon = WindowIcons.App;
         Width = 940;
         Height = 720;
         MinWidth = 520;
@@ -44,7 +45,7 @@ internal sealed class ProfileEditorWindow : Window
     {
         base.OnClosing(e);
         if (e.Cancel) return;
-        e.Cancel = !form.CanClose(() => app.Modal(() => ThemedMessageBox.Show(this, Text("DiscardChangesAndCloseWindow"),
+        e.Cancel = !form.CanClose(() => app.Modal(() => ThemedMessageBox.Show(this, form.ClosePrompt("DiscardChangesAndCloseWindow"),
             Title, MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No)) == MessageBoxResult.Yes);
     }
 

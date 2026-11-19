@@ -9,7 +9,7 @@ public sealed class TerminalSnapshot : IReadOnlyList<string>
     internal readonly record struct Row(long Id, long LogicalId, long LogicalOffset, string Text,
         bool SoftWrapToNext, ReadOnlyMemory<TerminalCell> EagerCells,
         ResourceReservation? TextMemory, ResourceReservation? CellMemory, long DisplayRevision,
-        CompactTerminalCells? DeferredCells = null)
+        CompactTerminalCells? DeferredCells = null, int[]? SpanEnds = null, int SpanCount = 0)
     {
         public ReadOnlyMemory<TerminalCell> Cells => DeferredCells is null ? EagerCells : DeferredCells.GetCells();
     }
@@ -29,6 +29,16 @@ public sealed class TerminalSnapshot : IReadOnlyList<string>
     public TerminalCursorShape CursorShape { get; }
     public bool CursorBlink { get; }
     public TerminalMouseMode Mouse { get; }
+    internal (int Start, int End) StoredSpanAt(int row, int offset)
+    {
+        var content = rows[row];
+        if (offset >= content.Text.Length) return (offset, offset);
+        if (content.SpanEnds is not { } ends) return (offset, offset + 1);
+        int index = Array.BinarySearch(ends, 0, content.SpanCount, offset);
+        index = index < 0 ? ~index : index + 1;
+        return (index == 0 ? 0 : ends[index - 1], ends[index]);
+    }
+
     public bool IsSoftWrapped(int row) => rows[row].SoftWrapToNext;
     public ReadOnlyMemory<TerminalCell> GetCells(int row) => rows[row].Cells;
     internal (long Id, long Revision) DisplayIdentity(int row) => (rows[row].Id, rows[row].DisplayRevision);

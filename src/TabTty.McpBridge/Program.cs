@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 
@@ -17,7 +18,8 @@ internal static class Program
         try
         {
             var endpoint = new AiPipe();
-            using var launcher = AiPipe.OpenLauncher();
+            using var self = Process.GetCurrentProcess();
+            using var launcher = endpoint.OpenLauncher(self.SafeHandle, out _, out _);
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             using var pipe = await endpoint.ConnectAsync(deadline.Token).ConfigureAwait(false);
             using var gui = endpoint.VerifyPeer(pipe, server: true, "TabTty.exe", out _);
@@ -29,8 +31,9 @@ internal static class Program
             await new McpStdio(channel, input, output).RunAsync().ConfigureAwait(false);
             return 0;
         }
-        catch (Exception error) when (error is IOException or Win32Exception or OperationCanceledException or JsonException or
-            InvalidOperationException or ArgumentException or KeyNotFoundException or UnauthorizedAccessException)
+        catch (Exception error) when (error is IOException or InvalidDataException or Win32Exception or
+            OperationCanceledException or JsonException or InvalidOperationException or ArgumentException or
+            FormatException or KeyNotFoundException or UnauthorizedAccessException)
         {
             Console.Error.WriteLine(attached ? "bridge_attachment_ended" :
                 error is InvalidDataException or JsonException ? "bridge_version_mismatch" : "tabtty_unavailable");

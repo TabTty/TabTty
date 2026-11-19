@@ -73,10 +73,49 @@ internal static class HistoryProofs
             throw new InvalidOperationException("A complete cluster exceeded the explicit text limit.");
         }
         catch (HistoryException error) when (error.Message == "resource_limit") { }
+        VerifyMaximumSpan();
         Write(deep, "A\rB\r\u001b[K");
         // The requested range ends at the empty last row, so suffix-only appends
         // preserve its zero-width endpoint even when later overwritten.
         Equal(Validate(deep, result.Dependencies, default), null);
+    }
+
+    private static void VerifyMaximumSpan()
+    {
+        var model = new TerminalOutput(columns: 8, retainedRowLimit: 100, screenRows: 3);
+        try
+        {
+            string retained = "👩" + new string('\u0301', 254) + "\u200D";
+            Write(model, retained + "💻😀");
+            Warm(model);
+            int capacity = System.Text.Encoding.UTF8.GetByteCount(retained);
+            var entire = Read(model, default, null, null, 1, capacity + 4, PageOutputBudget, default).Range ??
+                throw new InvalidOperationException("The fixture did not capture both stored spans.");
+            try
+            {
+                _ = Read(model, default, entire, entire.Start, 1, capacity - 1, PageOutputBudget, default);
+                throw new InvalidOperationException("A maximum stored span was cut at the history byte limit.");
+            }
+            catch (HistoryException error) when (error.Message == "resource_limit") { }
+            var first = Read(model, default, entire, entire.Start, 1, capacity, PageOutputBudget, default);
+            if (first.Fragments is not [{ text: var text }] || text != retained || first.Range is null || first.Next is null)
+                throw new InvalidOperationException("History did not return the exact first stored span and a continuation.");
+            Write(model, "\u001b[?1049halternate");
+            Warm(model);
+            var next = Read(model, default, first.Range, first.Next, 1, capacity, PageOutputBudget, default);
+            if (next.Fragments is not [{ text: "😀" }])
+                throw new InvalidOperationException("Parked normal history lost the next span while alternate output was active.");
+            Write(model, "\u001b[?1049l");
+            model.Resize(4, 3);
+            Warm(model);
+            Equal(Validate(model, [first.Range], default), null);
+            for (int row = 0; row < 120; row++) Write(model, "\r\nline");
+            Warm(model);
+            Equal(Validate(model, [first.Range], default), "range_evicted");
+            if (first.Fragments[0].text != retained)
+                throw new InvalidOperationException("Retiring history mutated an already owned page.");
+        }
+        finally { model.ReleaseNativeState(); }
     }
 
     private static void Write(TerminalOutput model, string text) =>

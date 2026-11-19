@@ -2,8 +2,9 @@ param([string]$PerlExecutable)
 $ErrorActionPreference = 'Stop'
 $repository = Split-Path $PSScriptRoot -Parent
 $artifacts = Join-Path $repository 'artifacts'
-$version = '3.5.9'
-$sourceHash = '603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a'
+$pin = [xml](Get-Content -LiteralPath (Join-Path $PSScriptRoot 'OpenSslSource.props') -Raw)
+$version = $pin.Project.PropertyGroup.OpenSslSourceVersion
+$sourceHash = $pin.Project.PropertyGroup.OpenSslSourceSha256
 if (-not $PerlExecutable) {
     $portable = Join-Path $artifacts 'build-tools/strawberry/perl/bin/perl.exe'
     if (Test-Path -LiteralPath $portable) { $PerlExecutable = $portable }

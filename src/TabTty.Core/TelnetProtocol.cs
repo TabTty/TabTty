@@ -49,7 +49,10 @@ public sealed class TelnetProtocol
         return output.ToArray();
     }
 
-    public (byte[] Payload, byte[] Reply) Receive(ReadOnlySpan<byte> bytes)
+    public (byte[] Payload, byte[] Reply) Receive(ReadOnlySpan<byte> bytes) => Receive(bytes, null);
+
+    internal (byte[] Payload, byte[] Reply) Receive(ReadOnlySpan<byte> bytes,
+        Action<byte[], bool>? echoBoundary)
     {
         List<byte> payload = [];
         List<byte> reply = [];
@@ -65,8 +68,14 @@ public sealed class TelnetProtocol
                     ReadCommand(value, payload);
                     break;
                 case ParseState.Option:
+                    bool previousEcho = RemoteEcho;
                     Negotiate(value, payload, reply);
                     state = ParseState.Data;
+                    if (echoBoundary is not null && previousEcho != RemoteEcho)
+                    {
+                        echoBoundary(payload.ToArray(), RemoteEcho);
+                        payload.Clear();
+                    }
                     break;
                 case ParseState.Subnegotiation:
                     if (value == Iac) state = ParseState.SubnegotiationCommand;
@@ -103,7 +112,9 @@ public sealed class TelnetProtocol
         return [13];
     }
 
-    public byte[] EncodeInput(ReadOnlySpan<byte> input)
+    public byte[] EncodeInput(ReadOnlySpan<byte> input) => EncodeInput(input, default);
+
+    internal byte[] EncodeInput(ReadOnlySpan<byte> input, Span<int> boundaries)
     {
         bool binary = local[Binary] == OptionState.Enabled;
         int length = input.Length;
@@ -115,7 +126,7 @@ public sealed class TelnetProtocol
                 length++;
         }
         byte[] output = new byte[length];
-        int position = 0;
+        int position = 0, boundary = 0;
         for (int index = 0; index < input.Length; index++)
         {
             byte value = input[index];
@@ -123,6 +134,8 @@ public sealed class TelnetProtocol
             if (value == Iac) output[position++] = Iac;
             if (!binary && value == 13 && (index + 1 == input.Length || input[index + 1] != 10))
                 output[position++] = 0;
+            if (boundary < boundaries.Length && boundaries[boundary] == index + 1)
+                boundaries[boundary++] = position;
         }
         return output;
     }

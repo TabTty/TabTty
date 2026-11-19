@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
@@ -14,8 +13,8 @@ internal sealed class McpStdio(AiPrivateChannel channel, Stream input, Stream ou
     private const int MaxQueued = 8 * 1024 * 1024;
     private int queued, nextId;
     private bool legacyInitialized, legacyReady;
-    private double requestsLeft = 40;
-    private long refilledAt = Stopwatch.GetTimestamp();
+    private readonly AiRateLimit ordinaryCalls = AiRateLimit.OrdinaryCalls(Environment.TickCount64);
+    private readonly AiRateLimit controlReturns = AiRateLimit.ControlReturns(Environment.TickCount64);
     private sealed record Pending(int Id, JsonElement PublicId, string Key, bool Modern, bool Ordinary);
     private sealed record Outgoing(byte[] Bytes, int? Request = null);
     private readonly Dictionary<int, (string? Session, bool Listing)> queuedReplies = [];
@@ -103,10 +102,11 @@ internal sealed class McpStdio(AiPrivateChannel channel, Stream input, Stream ou
         }
         string? tool = method == "tools/call" && Get(parameters, "name") is { ValueKind: JsonValueKind.String } name
             ? name.GetString() : null;
-        if (tool != "tabtty_return_control" && !TakeRequest())
+        var budget = tool == "tabtty_return_control" ? controlReturns : ordinaryCalls;
+        if (!budget.Take(Environment.TickCount64, out int retryAfter))
         {
-            if (method == "tools/call") ToolResult(id.Value, modern, ErrorBody("busy", 50));
-            else Error(id, -31001, "Busy", new { retry_after_ms = 50 });
+            if (method == "tools/call") ToolResult(id.Value, modern, ErrorBody("busy", retryAfter));
+            else Error(id, -31001, "Busy", new { retry_after_ms = retryAfter });
             return;
         }
         if (method is "initialize" or "ping" or "server/discover" or "tools/list")
@@ -158,8 +158,14 @@ internal sealed class McpStdio(AiPrivateChannel channel, Stream input, Stream ou
                     if (pending.Count >= 18 || ordinary && pending.Values.Count(value => value.Ordinary) >= 16)
                     { ToolResult(id.Value, modern, ErrorBody("busy", 50)); return; }
                     int internalId = checked(++nextId);
-                    pending.Add(internalId, new Pending(internalId, id.Value, key, modern, ordinary));
-                    if (!channel.TrySend(new { id = internalId, name = tool, arguments = args }, priority: !ordinary))
+                    byte[] frame = AiFrames.Serialize(new { id = internalId, name = tool, arguments = args });
+                    if (!ordinary && frame.Length > AiPrivateChannel.MaxControlFrame)
+                    { ToolResult(id.Value, modern, ErrorBody("resource_limit")); return; }
+                    // A child JsonElement keeps its entire document alive. Retain only the
+                    // bounded ID while waiting for a GUI reply or a writable stdout.
+                    var publicId = JsonSerializer.SerializeToElement(id.Value);
+                    pending.Add(internalId, new Pending(internalId, publicId, key, modern, ordinary));
+                    if (!channel.TrySend(frame, priority: !ordinary))
                     {
                         pending.Remove(internalId);
                         ToolResult(id.Value, modern, ErrorBody("busy", 50));
@@ -176,16 +182,16 @@ internal sealed class McpStdio(AiPrivateChannel channel, Stream input, Stream ou
     {
         try
         {
-            if (McpProtocol.ClientName(info) is { } name && name != lastClientName)
+            if (McpProtocol.ClientName(info) is { Length: > 0 } name && !clientNameAnnounced)
             {
-                if (channel.TrySend(new { client_name = name })) lastClientName = name;
+                if (channel.TrySend(new { client_name = name })) clientNameAnnounced = true;
             }
             return true;
         }
         catch (JsonException) { Error(id, -32602, "Invalid client information"); return false; }
     }
 
-    private string? lastClientName;
+    private bool clientNameAnnounced;
 
     private async Task<int> AdmitProtocolCallAsync()
     {
@@ -297,16 +303,6 @@ internal sealed class McpStdio(AiPrivateChannel channel, Stream input, Stream ou
             }
             finally { Interlocked.Add(ref queued, -response.Bytes.Length); }
         }
-    }
-
-    private bool TakeRequest()
-    {
-        long now = Stopwatch.GetTimestamp();
-        requestsLeft = Math.Min(40, requestsLeft + Stopwatch.GetElapsedTime(refilledAt, now).TotalSeconds * 20);
-        refilledAt = now;
-        if (requestsLeft < 1) return false;
-        requestsLeft--;
-        return true;
     }
 
     private static bool ValidId(JsonElement id) => id.ValueKind == JsonValueKind.String && id.GetString()!.Length <= 256 ||

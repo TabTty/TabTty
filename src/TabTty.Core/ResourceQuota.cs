@@ -79,6 +79,24 @@ internal sealed class ResourceReservation(ResourceQuota quota) : IDisposable
         }
     }
 
+    internal void Absorb(ResourceReservation source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        if (ReferenceEquals(source, this)) return;
+        if (!ReferenceEquals(quota, source.Quota))
+            throw new InvalidOperationException("The reservations use different quotas.");
+        // The owning session orders both reservations.
+        lock (this)
+        lock (source)
+        {
+            ObjectDisposedException.ThrowIf(disposed || source.disposed, this);
+            size = checked(size + source.size);
+            source.size = 0;
+        }
+    }
+
+    private ResourceQuota Quota => quota;
+
     public void Dispose()
     {
         Release();

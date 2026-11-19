@@ -6,7 +6,9 @@ if (-not $OutputDirectory) {
 }
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 if (Test-Path -LiteralPath $OutputDirectory) { throw 'Choose a new publish directory.' }
-$openssl = Join-Path $repository 'artifacts/OpenSSL-MSVC-win-x64-3.5.9'
+$pin = [xml](Get-Content -LiteralPath (Join-Path $PSScriptRoot 'OpenSslSource.props') -Raw)
+$pinnedSource = $pin.Project.PropertyGroup
+$openssl = Join-Path $repository ('artifacts/OpenSSL-MSVC-win-x64-' + $pinnedSource.OpenSslSourceVersion)
 $helper = Join-Path $repository 'artifacts/native-win-x64'
 & dotnet publish (Join-Path $repository 'src/TabTty.App/TabTty.App.csproj') -c Release -r win-x64 --self-contained true `
     -m:1 -p:UseSharedCompilation=false -p:RequireBundledOpenSsl=true -p:RequireBundledTerminalCore=true `
@@ -22,8 +24,16 @@ $terminalBuild = Get-Content -LiteralPath (Join-Path $OutputDirectory 'terminal-
 if ((Get-FileHash -LiteralPath (Join-Path $OutputDirectory 'tabtty_terminal.dll')).Hash -ne $terminalBuild.librarySha256) {
     throw 'The terminal runtime does not match its build metadata.'
 }
-if (Test-Path -LiteralPath (Join-Path $openssl 'native-build.json')) {
-    Copy-Item -LiteralPath (Join-Path $openssl 'native-build.json') -Destination $OutputDirectory
+Copy-Item -LiteralPath (Join-Path $openssl 'native-build.json') -Destination $OutputDirectory
+$nativeBuild = Get-Content -LiteralPath (Join-Path $OutputDirectory 'native-build.json') -Raw | ConvertFrom-Json
+if ($nativeBuild.opensslVersion -cne $pinnedSource.OpenSslSourceVersion -or
+        $nativeBuild.sourceSha256 -ine $pinnedSource.OpenSslSourceSha256) {
+    throw 'The native build record does not match the pinned OpenSSL source.'
+}
+$cryptoHash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $OutputDirectory 'libcrypto-3-x64.dll')).Hash
+$helperHash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $OutputDirectory 'TabTty.Native.dll')).Hash
+if ($cryptoHash -ine $nativeBuild.librarySha256 -or $helperHash -ine $nativeBuild.helperSha256) {
+    throw 'The packaged cryptographic libraries do not match the native build record.'
 }
 $deps = Get-Content -LiteralPath (Join-Path $OutputDirectory 'TabTty.deps.json') -Raw | ConvertFrom-Json
 $assets = Get-Content -LiteralPath (Join-Path $repository 'src/TabTty.App/obj/project.assets.json') -Raw | ConvertFrom-Json
