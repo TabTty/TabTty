@@ -8,7 +8,7 @@ internal enum MacroRunState { Running, Waiting, PauseRequested, Paused, Stopping
 [Flags]
 internal enum MacroHold { None = 0, UserPause = 1, RecordingFailure = 2, RecordingReady = 4, HistoryLoss = 8, CloseReview = 16 }
 internal sealed record MacroRunStatus(MacroRunState State, MacroHold Holds, string Operation, MacroPosition Position,
-    string? Result, long HistoryLossRevision, bool PlaintextNotice);
+    string? Result, long HistoryLossRevision, bool PlaintextNotice, string? DisplayDetail);
 
 internal interface IMacroHost
 {
@@ -36,6 +36,7 @@ internal sealed partial class MacroRun : IDisposable
     private MacroHold holds;
     private MacroRunState state = MacroRunState.Running;
     private string operation = "", reason = "Stopped";
+    private string? displayDetail;
     private MacroPosition position;
     private long generation, receivedRevision, pausedTicks, pauseStarted;
     private bool inFlight, worker, ready, connectAttempted, admitted = true, disposed, plaintextNotice;
@@ -80,7 +81,7 @@ internal sealed partial class MacroRun : IDisposable
     public event Action? Changed;
     public MacroRunStatus Status
     {
-        get { lock (gate) return new(state, holds, operation, position, state is MacroRunState.Failed or MacroRunState.Stopped ? reason : null, history.LossRevision, plaintextNotice); }
+        get { lock (gate) return new(state, holds, operation, position, state is MacroRunState.Failed or MacroRunState.Stopped ? reason : null, history.LossRevision, plaintextNotice, displayDetail); }
     }
     public bool IsActive { get { lock (gate) return state is not (MacroRunState.Completed or MacroRunState.Stopped or MacroRunState.Failed); } }
     public CancellationToken StopToken => stop.Token;
@@ -114,6 +115,7 @@ internal sealed partial class MacroRun : IDisposable
                 else
                 {
                     reason = error.Code.ToString();
+                    displayDetail = error.DisplayDetail;
                     position = error.Position;
                     state = MacroRunState.Failed;
                 }

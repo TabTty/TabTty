@@ -25,6 +25,8 @@ public sealed class App : Application
     private bool drainingActivations;
     private readonly List<MainWindow> windowOrder = [];
     private MainWindow? lastActive;
+    internal MainWindow? LastTabWindow => lastActive is { CanAcceptTabs: true } selected
+        ? selected : windowOrder.LastOrDefault(candidate => candidate.CanAcceptTabs);
     private int modalDepth;
     private bool exitCommitted;
     private bool started;
@@ -260,9 +262,7 @@ public sealed class App : Application
                     continue;
                 }
 
-                MainWindow? window = lastActive is { CanAcceptTabs: true } selected
-                    ? selected
-                    : windowOrder.LastOrDefault(candidate => candidate.CanAcceptTabs);
+                MainWindow? window = LastTabWindow;
                 if (window is null)
                 {
                     // Loaded schedules the next drain for a window that is still initializing.

@@ -33,6 +33,10 @@ const server = new Server({ hostKeys: [key], algorithms }, client => {
   client.on('error', error => console.error(error.message));
   client.on('authentication', ctx => {
     username = ctx.username;
+    if (username === 'tabtty-auth-fallback') {
+      if (ctx.method === 'password' && ctx.password === 'local-test-password') return ctx.accept();
+      return ctx.reject(['publickey', 'password']);
+    }
     if (ctx.username === 'tabtty-key') {
       if (ctx.method !== 'publickey' || !ctx.key.data.equals(publicBlob)) {
         if (ctx.method === 'publickey') console.error('Fixture public key mismatch', ctx.key.algo, ctx.key.data.length, publicBlob.length);

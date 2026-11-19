@@ -144,7 +144,6 @@
   <data name="ArchiveVault" xml:space="preserve"><value>Archive vault and start over…</value></data>
   <data name="ArchiveVaultConfirm" xml:space="preserve"><value>Move the current vault to a new file in the same folder? Existing credential references will need to be selected again after you create a new vault.</value></data>
   <data name="VaultArchived" xml:space="preserve"><value>The vault was moved to the path below. Unlock or manage the vault to set a new master password.</value></data>
-  <data name="VaultFileMissing" xml:space="preserve"><value>The vault is missing or empty. Choose Create or initialize vault in vault management.</value></data>
   <data name="AddVaultPassword" xml:space="preserve"><value>Add password</value></data>
   <data name="VaultEntries" xml:space="preserve"><value>Vault entries</value></data>
   <data name="VaultEntryList" xml:space="preserve"><value>Saved credentials</value></data>
@@ -263,7 +262,6 @@
   <data name="ImportPrivateKey" xml:space="preserve"><value>Import private key…</value></data>
   <data name="SelectPrivateKey" xml:space="preserve"><value>Choose private key</value></data>
   <data name="PublicKey" xml:space="preserve"><value>Public key</value></data>
-  <data name="TertiarySshMethod" xml:space="preserve"><value>Third authentication method</value></data>
   <data name="CredentialName" xml:space="preserve"><value>Credential name</value></data>
   <data name="VisualBell" xml:space="preserve"><value>Visual indication</value></data>
   <data name="Off" xml:space="preserve"><value>Off</value></data>
@@ -285,9 +283,38 @@
   <data name="DeleteCredential" xml:space="preserve"><value>Delete credential</value></data>
   <data name="ReplacePassword" xml:space="preserve"><value>Replace password</value></data>
   <data name="DeleteCredentialWarning" xml:space="preserve"><value>Delete this credential? Referring profiles will require another credential before their next authentication.</value></data>
-  <data name="UpdateCredentialWarning" xml:space="preserve"><value>Replace this shared password for future authentication?</value></data>
+  <data name="UpdateCredentialWarning" xml:space="preserve"><value>Update this shared credential for future authentication? If the username changes, select the credential again in profiles that use it.</value></data>
+  <data name="InvalidVaultUsername" xml:space="preserve"><value>Enter a valid SSH username for this credential.</value></data>
+  <data name="AddSshMethod" xml:space="preserve"><value>Add authentication method</value></data>
+  <data name="SshAdvancedAuthentication" xml:space="preserve"><value>Advanced authentication</value></data>
+  <data name="AllowKeyboardInteractive" xml:space="preserve"><value>Allow keyboard-interactive authentication</value></data>
+  <data name="ReselectSshCredential" xml:space="preserve"><value>The saved credential belongs to a different SSH account. Select the intended credential again in the profile editor.</value></data>
+  <data name="SshCredentialsDifferentAccounts" xml:space="preserve"><value>Enabled saved credentials must use the same SSH username.</value></data>
+  <data name="VaultUnavailableMissing" xml:space="preserve"><value>The configured vault is missing. {0}</value></data>
+  <data name="VaultUnavailableEmpty" xml:space="preserve"><value>The configured vault is a zero-byte file. {0}</value></data>
+  <data name="SelectOrRestoreVault" xml:space="preserve"><value>Select the original vault or restore its backup to use this credential.</value></data>
+  <data name="ImportKeyBeforeConnecting" xml:space="preserve"><value>Use Manage vault to import the intended private key.</value></data>
+  <data name="OpenVaultManagementToCreate" xml:space="preserve"><value>Choose Manage vault in the vault menu to create it, or restore a backup.</value></data>
+  <data name="SavedPrivateKeyMissing" xml:space="preserve"><value>The private key selected in the profile is missing from the vault.</value></data>
+  <data name="SshCredentialMissing" xml:space="preserve"><value>The saved credential is missing. Select the intended credential again in the profile editor.</value></data>
+  <data name="NoEligiblePrivateKey" xml:space="preserve"><value>The vault has no private key for this SSH username.</value></data>
+  <data name="TryAnotherSshMethod" xml:space="preserve"><value>Try another authentication method</value></data>
+  <data name="CancelSshConnection" xml:space="preserve"><value>Cancel connection</value></data>
   <data name="KnownCredentialReferences" xml:space="preserve"><value>Referring registered profiles</value></data>
   <data name="ReferenceScanScope" xml:space="preserve"><value>Only readable registered profiles were checked. Other profile files may also refer to this credential.</value></data>
+  <data name="DuplicateCredentialName" xml:space="preserve"><value>A credential with this name already exists in this vault.</value></data>
+  <data name="InvalidCredentialName" xml:space="preserve"><value>Enter a credential name of 1 to 256 Unicode characters.</value></data>
+  <data name="RenameCredentialWarning" xml:space="preserve"><value>Rename {0} to {1}? Profile and macro references using the old name will stop finding this credential. Edit macros and other profile files manually.</value></data>
+  <data name="RenameCredentialProfileScope" xml:space="preserve"><value>You can update the registered profiles listed below.</value></data>
+  <data name="RenameAndUpdateProfiles" xml:space="preserve"><value>Rename and update registered profiles</value></data>
+  <data name="RenameCredentialOnly" xml:space="preserve"><value>Rename only</value></data>
+  <data name="NoKnownCredentialReferences" xml:space="preserve"><value>None found.</value></data>
+  <data name="CredentialRenameUpdatedProfiles" xml:space="preserve"><value>The credential was renamed. Registered profiles updated: {0}.</value></data>
+  <data name="CredentialRenameProfileProblems" xml:space="preserve"><value>These profiles could not be updated:</value></data>
+  <data name="CredentialRenameUnregistered" xml:space="preserve"><value>The profile is no longer registered.</value></data>
+  <data name="CredentialRenameProfileChanged" xml:space="preserve"><value>The profile file changed after the review.</value></data>
+  <data name="CredentialRenamePendingProfileEdits" xml:space="preserve"><value>The profile editor has unsaved changes or a pending save.</value></data>
+  <data name="CredentialRenameProfileReadTimedOut" xml:space="preserve"><value>Reading the profile timed out.</value></data>
   <data name="ReferenceScanUnavailable" xml:space="preserve"><value>{0} registered profiles could not be checked.</value></data>
   <data name="RestoreVault" xml:space="preserve"><value>Restore vault backup</value></data>
   <data name="RestoreVaultWarning" xml:space="preserve"><value>Replace the current contents with this backup from the same vault? A recovery copy of the current encrypted file will be preserved. Enter the backup master password next. Old backups remain usable with their own passwords.</value></data>
@@ -574,8 +601,6 @@ The host can send keys and multiple lines of commands without asking again, with
   <data name="PastePreviousPage" xml:space="preserve"><value>Previous page</value></data>
   <data name="PasteNextPage" xml:space="preserve"><value>Next page</value></data>
   <data name="PastePreviewPage" xml:space="preserve"><value>Page {0} of {1}</value></data>
-  <data name="CreateVault" xml:space="preserve"><value>Create or initialize vault</value></data>
-  <data name="VaultAlreadyExists" xml:space="preserve"><value>The selected vault already exists and is not empty.</value></data>
   <data name="VaultRescueCopyExplanation" xml:space="preserve"><value>Copy the retained authenticated vault generation to another file? The selected file will not be changed.</value></data>
   <data name="ProfileTrustReview" xml:space="preserve"><value>Review connection profile</value></data>
   <data name="ProfileConnectOnce" xml:space="preserve"><value>Connect once</value></data>

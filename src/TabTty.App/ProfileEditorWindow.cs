@@ -34,6 +34,7 @@ internal sealed class ProfileEditorWindow : Window
 
     public string TitleKey { get; private set; }
     public string? Identity { get; private set; }
+    internal bool HasPendingEdits => form.HasUnsavedChanges || form.IsBusy || form.UnresolvedPublication is not null;
 
     public void UpdateLabels()
     {

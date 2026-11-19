@@ -141,17 +141,21 @@ internal static partial class Program
                 CheckFileOperations(settingsDirectory).GetAwaiter().GetResult();
                 return 0;
             }
-            if (args is ["--native-utf8-baseline" or "--terminal-tab-close" or "--broadcast-splits" or "--macro-launch" or "--profile-trust"] or
+            if (args is ["--native-utf8-baseline" or "--disconnected-tabs" or "--terminal-tab-close" or "--broadcast-splits" or
+                "--macro-launch" or "--profile-trust" or "--vault-first-use" or "--vault-rename"] or
                 ["--transfer-window-close" or "--fullscreen-vim" or "--overload-controls" or "--sftp-batch", _])
             {
                 var integrationFrame = new DispatcherFrame();
                 Task run = application.Dispatcher.InvokeAsync(() => args[0] switch
                 {
                     "--native-utf8-baseline" => TerminalReceivesWhilePresentationIsPaused(verifyNativeResidency: true),
+                    "--disconnected-tabs" => DisconnectedTabsRespectSettingsAndBulkClose(application, settingsPath),
                     "--terminal-tab-close" => CheckTerminalClosure(application, settingsDirectory),
                     "--broadcast-splits" => BroadcastAndSplitViews(application, settingsDirectory),
                     "--macro-launch" => MacroLaunchAndDialog(application, settingsDirectory),
                     "--profile-trust" => CheckProfileTrustAsync(application, settingsDirectory),
+                    "--vault-first-use" => CheckVaultFirstUseAsync(application, settingsDirectory),
+                    "--vault-rename" => CheckVaultRenameAsync(application, settingsDirectory),
                     "--fullscreen-vim" => CheckFullScreenApplicationAsync(application, settingsDirectory, args[1]),
                     "--overload-controls" => CheckOverloadControlsAsync(application, settingsDirectory, args[1]),
                     "--sftp-batch" => SftpBatchCopiesFolderTrees(int.Parse(args[1]), settingsDirectory),
@@ -502,9 +506,10 @@ internal static partial class Program
             }
             finally { dialog.Close(); }
 
-            var key = new VaultEntryInfo(Guid.NewGuid(), "Team key", null, "privateKey", "ssh-ed25519", "SHA256:fixture");
-            var password = new VaultEntryInfo(Guid.NewGuid(), "Team\u2028password", "operator\tA");
-            VaultEntryInfo[] entries = [key, password, password with { Id = Guid.NewGuid() }];
+            var key = new VaultEntryInfo("Team key", "operator\u200B", "privateKey", "ssh-ed25519", "SHA256:fixture");
+            var password = new VaultEntryInfo("Team\u2028password", "operator\tA");
+            VaultEntryInfo[] entries = [key, password, password with { Name = "Another password" },
+                key with { Name = "Another key", Username = "other" }];
             var request = new SshPrivateKeyRequest(destination, "operator\u200B", null);
             var (keyPicker, keys) = VaultFileController.CreateCredentialPicker(editor, entries, "privateKey", request);
             try
@@ -513,7 +518,8 @@ internal static partial class Program
                 if (!fields.Contains(destination.ToString()) || !fields.Contains("operator<U+200B>") ||
                     keys.SelectedIndex != -1 || keys.Items.Count != 1 ||
                     !keys.Items[0].ToString()!.Split('\n').Contains(key.Fingerprint) ||
-                    !FindControls<Button>(keyPicker).Any(button => button.IsDefault && button.IsCancel))
+                    !FindControls<Button>(keyPicker).Any(button => button.IsDefault && button.IsCancel &&
+                        Equals(button.Content, App.Text("CancelSshConnection"))))
                     throw new InvalidOperationException("Private-key selection must identify the SSH recipient and key before authentication.");
             }
             finally { keyPicker.Close(); }
@@ -522,9 +528,9 @@ internal static partial class Program
             try
             {
                 string[][] rows = passwords.Items.Cast<object>().Select(item => item.ToString()!.Split('\n')).ToArray();
-                if (rows.Length != 2 || rows.Any(row => !row.Contains("Team<U+2028>password") || !row.Contains("operator<U+0009>A")) ||
-                    !rows[0].Contains(password.Id.ToString("D")) || !rows[1].Contains(entries[2].Id.ToString("D")))
-                    throw new InvalidOperationException("The credential picker must distinguish same-name, same-account password entries.");
+                if (rows.Length != 2 || rows.Any(row => !row.Contains("operator<U+0009>A")) ||
+                    !rows[0].Contains("Team<U+2028>password") || !rows[1].Contains("Another password"))
+                    throw new InvalidOperationException("The credential picker must identify same-account passwords by their distinct names.");
             }
             finally { passwordPicker.Close(); }
         }

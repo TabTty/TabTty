@@ -28,17 +28,19 @@ internal sealed class VaultUnlockInteraction(Action? onIdle = null, Action<Crede
         public bool AcceptingResult;
     }
 
-    internal sealed class UnlockHosts(Func<Window?> select)
+    internal sealed class UnlockHosts(Func<bool, Window?> select)
     {
-        internal Window? Current => select();
+        internal Window? Current => select(false);
+        internal Window? InitializationHost => select(true);
         internal event Action? Changed;
         internal void NotifyChanged() => Changed?.Invoke();
     }
 
-    private sealed class Consumer(Window? host, CancellationToken token)
+    private sealed class Consumer(Window? host, CancellationToken token, bool allowInitialization)
     {
         internal Window? Host { get; } = host;
         internal CancellationToken Token { get; } = token;
+        internal bool AllowInitialization { get; } = allowInitialization;
     }
 
     internal sealed class Interest(Task<CredentialVault?> result, CancellationTokenSource lifetime) : IDisposable
@@ -69,13 +71,14 @@ internal sealed class VaultUnlockInteraction(Action? onIdle = null, Action<Crede
         WaitAsync(null, (_, _) => start(), token);
 
     public async Task<CredentialVault?> WaitAsync(Window? host,
-        Func<UnlockHosts, CancellationToken, Task<CredentialVault?>> start, CancellationToken token = default)
+        Func<UnlockHosts, CancellationToken, Task<CredentialVault?>> start, CancellationToken token = default,
+        bool allowInitialization = false)
     {
         using var hostLifetime = CancellationTokenSource.CreateLinkedTokenSource(token);
         if (host is not null) host.Closed += StopInterest;
         try
         {
-            using var interest = Admit(host, start, hostLifetime.Token);
+            using var interest = Admit(host, start, hostLifetime.Token, allowInitialization);
             return await interest.ObserveAsync().ConfigureAwait(true);
         }
         catch (OperationCanceledException) when (!token.IsCancellationRequested && hostLifetime.IsCancellationRequested)
@@ -91,7 +94,7 @@ internal sealed class VaultUnlockInteraction(Action? onIdle = null, Action<Crede
     }
 
     internal Interest Admit(Window? host, Func<UnlockHosts, CancellationToken, Task<CredentialVault?>> start,
-        CancellationToken stop = default)
+        CancellationToken stop = default, bool allowInitialization = false)
     {
         stop.ThrowIfCancellationRequested();
         var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
@@ -104,7 +107,7 @@ internal sealed class VaultUnlockInteraction(Action? onIdle = null, Action<Crede
             }
             admittedConsumers++;
         }
-        return new(WaitOwnedAsync(new Consumer(host, lifetime.Token), start, lifetime.Token), lifetime);
+        return new(WaitOwnedAsync(new Consumer(host, lifetime.Token, allowInitialization), start, lifetime.Token), lifetime);
     }
 
     private async Task<CredentialVault?> WaitOwnedAsync(Consumer consumer,
@@ -159,10 +162,11 @@ internal sealed class VaultUnlockInteraction(Action? onIdle = null, Action<Crede
         }
     }
 
-    private Window? SelectHost(Interaction interaction)
+    private Window? SelectHost(Interaction interaction, bool forInitialization)
     {
         Window?[] hosts;
-        lock (gate) hosts = interaction.Consumers.Where(consumer => !consumer.Token.IsCancellationRequested)
+        lock (gate) hosts = interaction.Consumers.Where(consumer => !consumer.Token.IsCancellationRequested &&
+                (!forInitialization || consumer.AllowInitialization))
             .Select(consumer => consumer.Host).ToArray();
         return hosts.FirstOrDefault(host => host?.IsVisible == true);
     }
@@ -172,7 +176,7 @@ internal sealed class VaultUnlockInteraction(Action? onIdle = null, Action<Crede
     {
         CredentialVault? result = null;
         Exception? failure = null;
-        interaction.Hosts = new(() => SelectHost(interaction));
+        interaction.Hosts = new(eligible => SelectHost(interaction, eligible));
         try { result = await start(interaction.Hosts, interaction.Lifetime.Token); }
         catch (OperationCanceledException) when (interaction.Lifetime.IsCancellationRequested) { }
         catch (Exception exception) { failure = exception; }

@@ -13,7 +13,9 @@ internal sealed class CredentialLookupException(MacroErrorCode code, string mess
 
 internal sealed class CredentialVaultStaleException(string message) : IOException(message);
 
-public sealed record VaultEntryInfo(Guid Id, string Name, string? Username, string Kind = "password",
+internal sealed class DuplicateCredentialNameException() : ArgumentException("A credential with this name already exists.");
+
+public sealed record VaultEntryInfo(string Name, string Username, string Kind = "password",
     string? PublicType = null, string? Fingerprint = null);
 
 public sealed class VaultSecret : IDisposable
@@ -45,8 +47,9 @@ internal static class VaultPayload
         ValidateEntry(entry.Name, entry.Username);
         if (entry.Kind == "password") ValidatePassword(secret);
         var entries = Read(payload, vaultId, null, out _, out int insertion);
+        if (entries.Any(candidate => candidate.Name == entry.Name)) throw new DuplicateCredentialNameException();
         if (entries.Count == MaxEntries) throw new InvalidDataException("The credential vault has reached its entry limit.");
-        int capacity = checked(payload.Length + 4096 + 6 * (entry.Name.Length + (entry.Username?.Length ?? 0)) +
+        int capacity = checked(payload.Length + 4096 + 6 * (entry.Name.Length + entry.Username.Length) +
             Base64.GetMaxEncodedToUtf8Length(secret.Length));
         var buffer = new OwnedBuffer(capacity);
         try
@@ -63,21 +66,23 @@ internal static class VaultPayload
         finally { buffer.Clear(); }
     }
 
-    public static byte[] UpdateEntry(byte[] payload, Guid vaultId, Guid entryId, string name, string? username,
+    public static byte[] UpdateEntry(byte[] payload, Guid vaultId, string originalName, string name, string username,
         ReadOnlySpan<byte> password, bool changePassword)
     {
-        var entries = Read(payload, vaultId, entryId, out byte[]? oldSecret, out _);
+        var entries = Read(payload, vaultId, originalName, out byte[]? oldSecret, out _);
         try
         {
-            var entry = entries.SingleOrDefault(entry => entry.Id == entryId)
+            var entry = entries.SingleOrDefault(entry => entry.Name == originalName)
                 ?? throw new KeyNotFoundException("The credential entry is missing.");
             ValidateEntry(name, username);
+            if (name != originalName && entries.Any(candidate => candidate.Name == name))
+                throw new DuplicateCredentialNameException();
             if (changePassword)
             {
                 if (entry.Kind != "password") throw new ArgumentException("The selected entry is not a password.");
                 ValidatePassword(password);
             }
-            var (start, end) = Locate(payload, entryId);
+            var (start, end) = Locate(payload, originalName);
             var buffer = new OwnedBuffer(payload.Length + 16384 + Base64.GetMaxEncodedToUtf8Length(password.Length));
             try
             {
@@ -96,11 +101,11 @@ internal static class VaultPayload
         }
     }
 
-    public static byte[] DeleteEntry(byte[] payload, Guid vaultId, Guid entryId)
+    public static byte[] DeleteEntry(byte[] payload, Guid vaultId, string originalName)
     {
-        if (!Read(payload, vaultId, null, out _, out _).Any(entry => entry.Id == entryId))
+        if (!Read(payload, vaultId, null, out _, out _).Any(entry => entry.Name == originalName))
             throw new KeyNotFoundException("The credential entry is missing.");
-        var (start, end) = Locate(payload, entryId);
+        var (start, end) = Locate(payload, originalName);
         int before = start;
         while (before > 0 && payload[before - 1] is 9 or 10 or 13 or 32) before--;
         if (before > 0 && payload[before - 1] == ',') start = before - 1;
@@ -116,7 +121,7 @@ internal static class VaultPayload
         return result;
     }
 
-    private static (int Start, int End) Locate(ReadOnlySpan<byte> payload, Guid entryId)
+    private static (int Start, int End) Locate(ReadOnlySpan<byte> payload, string originalName)
     {
         var reader = new Utf8JsonReader(payload);
         int start = 0;
@@ -129,10 +134,10 @@ internal static class VaultPayload
                 selected = false;
             }
             else if (reader.CurrentDepth == 3 && reader.TokenType == JsonTokenType.PropertyName &&
-                reader.ValueTextEquals("entryId"u8))
+                reader.ValueTextEquals("name"u8))
             {
                 reader.Read();
-                selected = reader.GetGuid() == entryId;
+                selected = reader.GetString() == originalName;
             }
             else if (reader.CurrentDepth == 2 && reader.TokenType == JsonTokenType.EndObject && selected)
                 return (start, checked((int)reader.BytesConsumed));
@@ -143,7 +148,6 @@ internal static class VaultPayload
     private static void WriteEntry(Utf8JsonWriter writer, VaultEntryInfo entry, ReadOnlySpan<byte> secret)
     {
         writer.WriteStartObject();
-        writer.WriteString("entryId", entry.Id);
         writer.WriteString("kind", entry.Kind);
         writer.WriteString("name", entry.Name);
         writer.WriteString("username", entry.Username);
@@ -157,7 +161,7 @@ internal static class VaultPayload
         writer.WriteEndObject();
     }
 
-    public static IReadOnlyList<VaultEntryInfo> Read(ReadOnlySpan<byte> payload, Guid vaultId, Guid? wanted,
+    public static IReadOnlyList<VaultEntryInfo> Read(ReadOnlySpan<byte> payload, Guid vaultId, string? wanted,
         out byte[]? selected, out int insertion)
     {
         selected = null;
@@ -168,7 +172,7 @@ internal static class VaultPayload
             ReadToken(ref reader, JsonTokenType.StartObject);
             var fields = new HashSet<string>(StringComparer.Ordinal);
             var entries = new List<VaultEntryInfo>();
-            var ids = new HashSet<Guid>();
+            var names = new HashSet<string>(StringComparer.Ordinal);
             while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
             {
                 string name = Property(ref reader, fields);
@@ -187,7 +191,7 @@ internal static class VaultPayload
                         {
                             if (entries.Count == MaxEntries) throw InvalidPayload();
                             VaultEntryInfo entry = ReadEntry(ref reader, wanted, ref selected);
-                            if (!ids.Add(entry.Id)) throw InvalidPayload();
+                            if (!names.Add(entry.Name)) throw InvalidPayload();
                             entries.Add(entry);
                         }
                         if (reader.TokenType != JsonTokenType.EndArray) throw InvalidPayload();
@@ -210,10 +214,9 @@ internal static class VaultPayload
         }
     }
 
-    private static VaultEntryInfo ReadEntry(ref Utf8JsonReader reader, Guid? wanted, ref byte[]? selected)
+    private static VaultEntryInfo ReadEntry(ref Utf8JsonReader reader, string? wanted, ref byte[]? selected)
     {
         var fields = new HashSet<string>(StringComparer.Ordinal);
-        Guid id = Guid.Empty;
         string? name = null, username = null, kind = null, publicType = null, fingerprint = null;
         byte[]? secret = null;
         bool isKey = false;
@@ -223,11 +226,10 @@ internal static class VaultPayload
             {
                 switch (Property(ref reader, fields))
                 {
-                    case "entryId": id = ReadId(ref reader); break;
                     case "kind": kind = ReadText(ref reader, 32); break;
                     case "name": name = ReadText(ref reader, 6144); break;
                     case "username":
-                        if (reader.TokenType != JsonTokenType.Null) username = ReadText(ref reader, 6144);
+                        username = ReadText(ref reader, 6144);
                         break;
                     case "passwordUtf8":
                         if (secret is not null) throw InvalidPayload();
@@ -245,8 +247,8 @@ internal static class VaultPayload
             }
 
             if (reader.TokenType != JsonTokenType.EndObject || name is null || secret is null ||
-                !fields.Contains("username") || id == Guid.Empty || kind != (isKey ? "privateKey" : "password") ||
-                fields.Count != (isKey ? 7 : 5))
+                !fields.Contains("username") || kind != (isKey ? "privateKey" : "password") ||
+                fields.Count != (isKey ? 6 : 4))
                 throw InvalidPayload();
             ValidateEntry(name, username);
             if (isKey)
@@ -256,12 +258,12 @@ internal static class VaultPayload
                 if (key.Fingerprint != fingerprint || key.Algorithm != publicType) throw InvalidPayload();
             }
             else ValidatePassword(secret);
-            if (id == wanted && selected is null)
+            if (name == wanted && selected is null)
             {
                 selected = secret;
                 secret = null;
             }
-            return new VaultEntryInfo(id, name, username, kind, publicType, fingerprint);
+            return new VaultEntryInfo(name, username!, kind, publicType, fingerprint);
         }
         finally
         {
@@ -324,12 +326,19 @@ internal static class VaultPayload
 
     private static void ValidateEntry(string name, string? username)
     {
-        if (name.Length == 0 || name.EnumerateRunes().Count() > 256)
-            throw new ArgumentException("Invalid credential name.");
-        _ = VaultContainer.StrictUtf8.GetByteCount(name);
-        if (username is not null && VaultContainer.StrictUtf8.GetByteCount(username) > 1024)
-            throw new ArgumentException("Credential username exceeds its size limit.");
+        if (!IsValidName(name)) throw new ArgumentException("Invalid credential name.");
+        if (!IsValidUsername(username)) throw new ArgumentException("Invalid credential username.");
     }
+
+    internal static bool IsValidName(string? name)
+    {
+        if (string.IsNullOrEmpty(name) || name.EnumerateRunes().Count() > 256) return false;
+        try { return VaultContainer.StrictUtf8.GetByteCount(name) > 0; }
+        catch (EncoderFallbackException) { return false; }
+    }
+
+    internal static bool IsValidUsername(string? username) => !string.IsNullOrWhiteSpace(username) &&
+        !username.Any(char.IsControl) && VaultContainer.StrictUtf8.GetByteCount(username) <= 1024;
 
     private static void ValidatePassword(ReadOnlySpan<byte> value)
     {

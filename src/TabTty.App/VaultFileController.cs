@@ -15,12 +15,18 @@ internal sealed record VaultFileHooks(Action<VaultInitializationStep, string, st
     Func<Task>? BeforeCredentialHandoff = null, Func<Window, string?>? SelectRestoreFile = null,
     Action<string, string, string?>? IssueRestore = null, Action<string, string>? MoveForArchive = null);
 
+internal sealed class VaultFileUnavailableException(string message) : IOException(message);
+
 internal sealed class VaultFileController(App app, string filePath, Action changed, Action<VaultFileController> idle) : IDisposable
 {
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     private readonly SemaphoreSlim operation = new(1);
     private VaultUnlockInteraction? interaction;
-    private VaultUnlockInteraction unlockInteraction => interaction ??= new(() => idle(this), opened => vault = opened);
+    private VaultUnlockInteraction unlockInteraction => interaction ??= new(() => idle(this), opened =>
+    {
+        vault = opened;
+        RefreshManagement();
+    });
     private CredentialVault? vault;
     private long managementRevision = -1;
     public IReadOnlyList<VaultEntryInfo> ManagementEntries { get; private set; } = [];
@@ -31,29 +37,34 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
     public bool IsStale => vault?.IsStale == true;
     private bool disposed;
     private bool archiving;
+    private Window? initializationHost;
     private Window? masterChangeHost;
     private int credentialReads;
 
     internal bool CanDismissMasterChange(Window host) => ReferenceEquals(masterChangeHost, host);
 
+    internal bool IsInitializingFor(Window host) => ReferenceEquals(initializationHost, host);
+
     private static string Filter => $"{Text("VaultFiles")} (*.tttykey)|*.tttykey";
 
     public Task UnlockFromMenuAsync(MainWindow owner) => RunAsync(owner, async () =>
     {
-        if (await UnlockFileAsync(owner) is not null && owner.IsLoaded)
+        bool wasLocked = vault is null;
+        if (await UnlockFileAsync(owner, allowInitialization: true) is { } opened && owner.IsLoaded)
         {
-            RefreshManagement();
-            if (!owner.IsLoaded) return;
-            app.Modal(() => ThemedMessageBox.ShowVault(owner, Text("VaultUnlocked"), Text("Vault")));
+            if (wasLocked && opened.InitializationResult is not null) owner.OpenForm("ManageVault", app.Vault.BuildManagement);
+            else app.Modal(() => ThemedMessageBox.ShowVault(owner, Text("VaultUnlocked"), Text("Vault")));
         }
     });
 
     public Task ManageAsync(MainWindow owner) => RunAsync(owner, async () =>
     {
         if (!owner.IsLoaded) return;
-        if (vault is not { HasUnverifiedPublication: true } && !VerifiedFilePublication.IsUnresolved(FilePath) &&
-            await Task.Run(() => Inspect(FilePath)) == VaultFileState.Existing &&
-            await UnlockFileAsync(owner) is not null) RefreshManagement();
+        if (vault is not { HasUnverifiedPublication: true } && !VerifiedFilePublication.IsUnresolved(FilePath))
+        {
+            if (await UnlockFileAsync(owner, allowInitialization: true) is null &&
+                await Task.Run(() => Inspect(FilePath)) != VaultFileState.Existing) return;
+        }
         if (owner.IsLoaded) owner.OpenForm("ManageVault", app.Vault.BuildManagement);
     });
 
@@ -177,6 +188,7 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
             {
                 CredentialVaultStaleException => Text(app.Vault.MustRestart(this) ? "SelectedVaultStale" : "EditorVaultStale"),
                 ResourceLimitException => Text("VaultBusy"),
+                DuplicateCredentialNameException => Text("DuplicateCredentialName"),
                 CryptographicException => Text("VaultAuthenticationFailed"),
                 DllNotFoundException or EntryPointNotFoundException => Text("VaultCryptoUnavailable"),
                 FilePublicationException publication => JsonStoreRecovery.DescribeFailure(publication.Result),
@@ -197,15 +209,58 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         }
     }
 
-    public Task<VaultSecret?> ReadSavedPasswordAsync(Window owner, CredentialReference reference,
+    public Task<SshCredentialAvailability> CheckSshCredentialsAsync(Window owner, SshSavedCredentialRequest request,
         CancellationToken token) => ReadCredentialAsync(async () =>
+    {
+        long epoch = app.Vault.SelectionEpoch;
+        var unavailable = new Dictionary<string, string>(StringComparer.Ordinal);
+        CredentialVault unlocked;
+        try
+        {
+            unlocked = await UnlockFileAsync(owner, token, sshPrompt: true) ?? throw new SshInteractionCancelledException();
+        }
+        catch (VaultFileUnavailableException error)
+        {
+            if (!IsCurrentSelection(epoch)) throw new SshCredentialFailureException(Text("ManagementTabOutdated"));
+            string reason = error.Message + "\n" + Text("SelectOrRestoreVault");
+            if (request.Password is not null) unavailable.Add("password", reason);
+            if (request.PrivateKey is not null) unavailable.Add("publicKey", reason);
+            return new SshCredentialAvailability(unavailable);
+        }
+
+        var (revision, entries) = await unlocked.ReadMetadataAsync(token);
+        token.ThrowIfCancellationRequested();
+        if (!CanHandOffCredential(owner, unlocked, epoch, revision))
+            throw new SshCredentialFailureException(Text("ManagementTabOutdated"));
+        if (request.Password is { } password)
+            CredentialVault.MatchCredential(entries, password.Name, "password", request.Username);
+        if (request.PrivateKey is { } key)
+        {
+            try { CredentialVault.MatchCredential(entries, key.Name, "privateKey", request.Username); }
+            catch (CredentialLookupException error) when (error.Code == MacroErrorCode.CredentialUnavailable)
+            { unavailable.Add("publicKey", Text("SavedPrivateKeyMissing")); }
+        }
+        return new SshCredentialAvailability(unavailable);
+    });
+
+    public Task<VaultSecret?> ReadSavedPasswordAsync(Window owner, CredentialReference reference,
+        CancellationToken token, string? username = null) => ReadCredentialAsync<VaultSecret?>(async () =>
     {
         if (reference.Kind != "password")
             throw new CredentialLookupException(MacroErrorCode.CredentialKindMismatch, Text("VaultCredentialKindMismatch"));
         long epoch = app.Vault.SelectionEpoch;
-        if (await UnlockFileAsync(owner, token, sshPrompt: true) is not { } unlocked) return null;
+        CredentialVault? unlocked;
+        try { unlocked = await UnlockFileAsync(owner, token, sshPrompt: true); }
+        catch (VaultFileUnavailableException error) when (username is not null)
+        {
+            if (!IsCurrentSelection(epoch)) throw new SshCredentialFailureException(Text("ManagementTabOutdated"));
+            throw new SshMethodUnavailableException(error.Message + "\n" + Text("SelectOrRestoreVault"), forAttempt: true);
+        }
+        if (unlocked is null) return null;
         long revision = unlocked.Revision;
-        return await KeepSelectedSecretAsync(await unlocked.GetPasswordAsync(reference.VaultId, reference.EntryId, token),
+        var material = username is null ? await unlocked.GetPasswordAsync(reference.Name, token) :
+            await unlocked.GetSshSecretAsync(reference, username, token);
+        return await KeepSelectedSecretAsync(material,
             owner, unlocked, epoch, revision, token);
     });
 
@@ -219,34 +274,47 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         }
         catch (CredentialLookupException error) { throw new MacroError(error.Code); }
         catch (CredentialVaultStaleException) { throw new MacroError(MacroErrorCode.VaultStale); }
+        catch (VaultFileUnavailableException error)
+        { throw new MacroError(MacroErrorCode.CredentialUnavailable, error.Message + "\n" + Text("SelectOrRestoreVault")); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or CryptographicException)
         { throw new MacroError(MacroErrorCode.CredentialUnavailable); }
     }
 
     public Task<VaultSecret?> ReadPrivateKeyAsync(Window owner, SshPrivateKeyRequest request,
-        CancellationToken token) => ReadCredentialAsync(async () =>
+        CancellationToken token) => ReadCredentialAsync<VaultSecret?>(async () =>
     {
         CredentialReference? reference = request.SavedKey;
         if (reference is { Kind: not "privateKey" })
             throw new CredentialLookupException(MacroErrorCode.CredentialKindMismatch, Text("VaultCredentialKindMismatch"));
         long epoch = app.Vault.SelectionEpoch;
-        if (await UnlockFileAsync(owner, token, sshPrompt: true) is not { } unlocked) return null;
+        CredentialVault? unlocked;
+        try { unlocked = await UnlockFileAsync(owner, token, sshPrompt: true); }
+        catch (VaultFileUnavailableException error)
+        {
+            if (!IsCurrentSelection(epoch)) throw new SshCredentialFailureException(Text("ManagementTabOutdated"));
+            throw new SshMethodUnavailableException(error.Message + "\n" +
+                Text(reference is null ? "ImportKeyBeforeConnecting" : "SelectOrRestoreVault"), forAttempt: true);
+        }
+        if (unlocked is null) return null;
         if (reference is null)
         {
             await app.SshPrompts.WaitAsync(token);
             try
             {
                 if (await PickEntryAsync(owner, unlocked, "privateKey", token, request) is not { } entry) return null;
-                reference = new CredentialReference(unlocked.Id, entry.Id, "privateKey");
+                reference = new CredentialReference(entry.Name, "privateKey");
             }
             finally { app.SshPrompts.Release(); }
         }
         long revision = unlocked.Revision;
-        return await KeepSelectedSecretAsync(await unlocked.GetPrivateKeyAsync(reference.VaultId, reference.EntryId, token),
-            owner, unlocked, epoch, revision, token);
+        VaultSecret material;
+        try { material = await unlocked.GetSshSecretAsync(reference, request.Username, token); }
+        catch (CredentialLookupException error) when (error.Code == MacroErrorCode.CredentialUnavailable)
+        { throw new SshMethodUnavailableException(Text("SavedPrivateKeyMissing"), forAttempt: true); }
+        return await KeepSelectedSecretAsync(material, owner, unlocked, epoch, revision, token);
     });
 
-    private async Task<VaultSecret?> ReadCredentialAsync(Func<Task<VaultSecret?>> read)
+    private async Task<T> ReadCredentialAsync<T>(Func<Task<T>> read)
     {
         credentialReads++;
         try { return await read(); }
@@ -264,10 +332,7 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         try
         {
             if (app.VaultFiles?.BeforeCredentialHandoff is { } before) await before();
-            accepted = !token.IsCancellationRequested && host.IsVisible && !app.Vault.IsSelectionReserved(this) &&
-                app.Vault.SelectionEpoch == epoch && app.Vault.IsSelected(this) &&
-                !archiving && !unlocked.IsStale && !unlocked.HasUnverifiedPublication &&
-                ReferenceEquals(vault, unlocked) && unlocked.Revision == revision;
+            accepted = !token.IsCancellationRequested && CanHandOffCredential(host, unlocked, epoch, revision);
             return accepted ? secret : null;
         }
         finally
@@ -276,29 +341,49 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         }
     }
 
-    public Task ChooseCredentialAsync(Window owner, string kind, Action<CredentialReference, string> choose) =>
-        RunAsync(owner, async () =>
+    private bool CanHandOffCredential(Window host, CredentialVault unlocked, long epoch, long revision) =>
+        host.IsVisible && IsCurrentSelection(epoch) && !archiving && !unlocked.IsStale && !unlocked.HasUnverifiedPublication &&
+        ReferenceEquals(vault, unlocked) && unlocked.Revision == revision;
+
+    private bool IsCurrentSelection(long epoch) => !app.Vault.IsSelectionReserved(this) &&
+        app.Vault.SelectionEpoch == epoch && app.Vault.IsSelected(this);
+
+    public async Task ChooseCredentialAsync(Window owner, string kind, Action<string, string> choose)
+    {
+        bool manage = false;
+        await RunAsync(owner, async () =>
         {
-            if (await UnlockFileAsync(owner) is not { } unlocked || !owner.IsLoaded) return;
-            if (await PickEntryAsync(owner, unlocked, kind, CancellationToken.None) is { } entry)
-                choose(new CredentialReference(unlocked.Id, entry.Id, kind), $"{PermissionDisplay.Literal(entry.Name)} ({entry.Id:D})");
+            if (await UnlockFileAsync(owner, allowInitialization: true) is not { } unlocked || !owner.IsLoaded) return;
+            if (await PickEntryAsync(owner, unlocked, kind, CancellationToken.None, manage: () => manage = true) is { } entry)
+                choose(entry.Name, entry.Username);
         });
+        if (manage && owner.IsLoaded && app.Vault.IsSelected(this)) await app.Vault.ShowManagementFromPickerAsync(owner);
+    }
 
     private async Task<VaultEntryInfo?> PickEntryAsync(Window owner, CredentialVault unlocked, string kind,
-        CancellationToken token, SshPrivateKeyRequest? request = null)
+        CancellationToken token, SshPrivateKeyRequest? request = null, Action? manage = null)
     {
         var entries = await unlocked.ListEntriesAsync(token);
         if (!owner.IsLoaded) return null;
         var (form, list) = CreateCredentialPicker(owner, entries, kind, request);
-        return SshHostTrust.ShowCancellable(app, form, token) == true
-            ? ((CredentialChoice)list.SelectedItem).Entry : null;
+        bool skip = false;
+        if (request is not null && list.Items.Count == 0)
+            throw new SshMethodUnavailableException(Text("NoEligiblePrivateKey"));
+        if (request?.CanTryAnotherMethod == true)
+            form.AddAction("TryAnotherSshMethod", () => { skip = true; form.DialogResult = false; });
+        if (manage is not null)
+            form.AddAction("ManageVault", () => { manage(); form.DialogResult = false; });
+        bool selected = SshHostTrust.ShowCancellable(app, form, token) == true;
+        token.ThrowIfCancellationRequested();
+        if (skip) throw new SshMethodUnavailableException(null);
+        return selected ? ((CredentialChoice)list.SelectedItem).Entry : null;
     }
 
     private sealed record CredentialChoice(VaultEntryInfo Entry)
     {
         public override string ToString() => string.Join('\n', new[] { PermissionDisplay.Literal(Entry.Name),
-            Entry.Username is { Length: > 0 } user ? PermissionDisplay.Literal(user) : null,
-            Entry.PublicType, Entry.Fingerprint, Entry.Id.ToString("D") }.Where(value => value is not null));
+            PermissionDisplay.Literal(Entry.Username),
+            Entry.PublicType, Entry.Fingerprint }.Where(value => value is not null));
     }
 
     internal static (MainWindow.FormWindow Form, ListBox Entries) CreateCredentialPicker(Window owner,
@@ -312,14 +397,16 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
             form.AddField("SshUsername", new TextBox { IsReadOnly = true, Text = PermissionDisplay.Literal(request.Username) });
         }
         if (kind == "password") form.AddNotice("SshSavedPasswordDestinationNotice");
-        var list = new ListBox { ItemsSource = entries.Where(entry => entry.Kind == kind)
+        var list = new ListBox { ItemsSource = entries.Where(entry => entry.Kind == kind &&
+                (request is null || string.Equals(entry.Username, request.Username, StringComparison.Ordinal)))
                 .Select(entry => new CredentialChoice(entry)).ToArray(),
             MinHeight = 120, MaxHeight = 350 };
         form.AddField("VaultEntries", list);
         form.AddButtons(() =>
         {
             if (list.SelectedItem is not CredentialChoice) throw new ArgumentException(Text(title));
-        }, acceptKey: request is null ? title : "Authenticate", cancelDefault: request is not null);
+        }, acceptKey: request is null ? title : "Authenticate", cancelDefault: request is not null,
+            cancelKey: request is null ? "Cancel" : "CancelSshConnection");
         return (form, list);
     }
 
@@ -331,15 +418,20 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         if (app.Modal(() => dialog.ShowDialog(owner)) != true) return;
         var form = new MainWindow.FormWindow(owner, Text("ImportPrivateKey"), WindowIcons.Vault);
         var name = new TextBox { Text = Path.GetFileName(dialog.FileName), MaxLength = 512 };
+        var username = new TextBox { MaxLength = 1024 };
         form.AddField("CredentialName", name);
+        form.AddField("VaultUsername", username);
         form.AddAsyncButtons(async () =>
         {
+            ValidateUsername(username.Text);
+            ValidateCredentialName(unlocked, name.Text);
             using var source = await Task.Run(() => CredentialVault.ReadPrivateKeySource(dialog.FileName));
             return await ImportAsync(source);
         });
         async Task<bool> ImportAsync(CredentialVault.PrivateKeySource source)
         {
             string keyName = name.Text;
+            string account = username.Text;
             try { await ImportReviewedAsync(); }
             catch (PrivateKeyPassphraseRequiredException)
             {
@@ -370,23 +462,32 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
             RefreshManagement();
             return true;
 
-            Task<Guid> ImportReviewedAsync(ReadOnlyMemory<byte>? passphrase = null)
+            Task<string> ImportReviewedAsync(ReadOnlyMemory<byte>? passphrase = null)
             {
                 if (!ReferenceEquals(vault, unlocked) || unlocked.Revision != revision)
                     throw new InvalidOperationException(Text("ManagementTabOutdated"));
-                return unlocked.ImportPrivateKeySourceAsync(keyName, source, passphrase, revision);
+                return unlocked.ImportPrivateKeySourceAsync(keyName, account, source, passphrase, revision);
             }
         }
         app.Modal(form.ShowDialog);
     }
 
-    private Task<CredentialVault?> UnlockFileAsync(Window owner, CancellationToken token = default, bool sshPrompt = false)
+    private async Task<CredentialVault?> UnlockFileAsync(Window owner, CancellationToken token = default, bool sshPrompt = false,
+        bool allowInitialization = false)
     {
         CheckAvailable();
         if (archiving) throw new InvalidOperationException(Text("VaultBusy"));
         if (vault is { HasUnverifiedPublication: true }) throw new IOException(Text("StoreSaveUnverified"));
-        if (vault is not null) return Task.FromResult<CredentialVault?>(vault);
-        return unlockInteraction.WaitAsync(owner, async (hosts, sharedToken) =>
+        if (vault is not null) return vault;
+        if (!allowInitialization)
+        {
+            if (VerifiedFilePublication.IsUnresolved(FilePath)) throw new IOException(Text("StoreSaveUnverified"));
+            VaultFileState state = await Task.Run(() => Inspect(FilePath), token);
+            CheckAvailable();
+            if (vault is not null) return vault;
+            if (state != VaultFileState.Existing) throw UnavailableVault(owner, state);
+        }
+        return await unlockInteraction.WaitAsync(owner, async (hosts, sharedToken) =>
         {
             if (sshPrompt) await app.SshPrompts.WaitAsync(sharedToken);
             try
@@ -399,13 +500,41 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
                 }, sharedToken);
                 if (disposed || hosts.Current is not { } host) return null;
                 sharedToken.ThrowIfCancellationRequested();
-                if (evidence is null || evidence.Length == 0)
-                    throw new InvalidDataException(Text(host is VaultEditorWindow ?
-                        "VaultEditorNeedsExistingFile" : "VaultFileMissing"));
-                return await UnlockAsync(host, path, VaultFileState.Existing, sharedToken, evidence, hosts);
+                if (evidence is { Length: > 0 })
+                    return await UnlockAsync(host, path, VaultFileState.Existing, sharedToken, evidence, hosts);
+
+                var state = evidence is null ? VaultFileState.Missing : VaultFileState.Empty;
+                if (hosts.InitializationHost is not { } initializer || !app.Vault.IsSelected(this))
+                    throw UnavailableVault(host, state);
+                var initialized = await UnlockAsync(initializer, path, state, sharedToken, evidence, hosts);
+                try
+                {
+                    if (initialized is not null && hosts.InitializationHost is { } currentHost)
+                        ReportInitializationCleanup(currentHost, initialized);
+                    return initialized;
+                }
+                catch
+                {
+                    initialized?.Dispose();
+                    throw;
+                }
             }
             finally { if (sshPrompt) app.SshPrompts.Release(); }
-        }, token);
+        }, token, allowInitialization);
+    }
+
+    private VaultFileUnavailableException UnavailableVault(Window owner, VaultFileState state) => new(
+        owner is VaultEditorWindow ? Text("VaultEditorNeedsExistingFile") :
+            string.Format(Text(state == VaultFileState.Missing ? "VaultUnavailableMissing" : "VaultUnavailableEmpty"), FilePath));
+
+    internal async Task<string?> DescribeMissingTargetAsync(Window host)
+    {
+        if (vault is not null || VerifiedFilePublication.IsUnresolved(FilePath)) return null;
+        VaultFileState state;
+        try { state = await Task.Run(() => Inspect(FilePath)); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return null; }
+        if (disposed || vault is not null || state == VaultFileState.Existing) return null;
+        return UnavailableVault(host, state).Message + "\n" + Text("OpenVaultManagementToCreate");
     }
 
     private void CheckAvailable()
@@ -430,27 +559,15 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
 
     private enum VaultFileState { Missing, Empty, Existing }
 
-    internal async Task InitializeAsync(Window owner)
+    private void ReportInitializationCleanup(Window owner, CredentialVault initialized)
     {
-        CheckAvailable();
-        if (owner is VaultEditorWindow || unlockInteraction.IsPending)
-            throw new InvalidOperationException(Text("VaultBusy"));
-        string path = FilePath;
-        if (VerifiedFilePublication.IsUnresolved(path)) throw new IOException(Text("StoreSaveUnverified"));
-        var evidence = await Task.Run(() => CredentialVault.InspectFile(path));
-        if (!owner.IsLoaded || disposed) return;
-        if (evidence?.Length > 0) throw new IOException(Text("VaultAlreadyExists"));
-        var initialized = await UnlockAsync(owner, path, evidence is null ? VaultFileState.Missing : VaultFileState.Empty,
-            CancellationToken.None, evidence);
-        if (initialized is null) return;
-        RefreshManagement();
         if (initialized.InitializationResult is { CleanupError: not null, PreservationPath: { } parked })
             app.Modal(() => ThemedMessageBox.ShowVault(owner, $"{Text("PublicationCleanupFailed")}\n\n{parked}",
                 Text("InitializeVault"), icon: MessageBoxImage.Warning));
     }
 
     private async Task<CredentialVault?> UnlockAsync(Window owner, string path, VaultFileState state,
-        CancellationToken token, VaultFileEvidence? evidence = null, VaultUnlockInteraction.UnlockHosts? hosts = null)
+        CancellationToken token, VaultFileEvidence? evidence, VaultUnlockInteraction.UnlockHosts hosts)
     {
         bool create = state != VaultFileState.Existing;
         string? explanation = state switch
@@ -462,6 +579,7 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         char[]? password = PromptMaster(owner, create ? "InitializeVault" : "UnlockVault", confirm: create, token,
             path: path, hosts: hosts, explanation: explanation);
         if (password is null) return null;
+        if (create) initializationHost = hosts.InitializationHost ?? owner;
         try
         {
             CredentialVault unlocked = await (state switch
@@ -476,10 +594,13 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
                 unlocked.Dispose();
                 return null;
             }
-            if (hosts is null) vault = unlocked;
             return unlocked;
         }
-        finally { Array.Clear(password); }
+        finally
+        {
+            if (create) initializationHost = null;
+            Array.Clear(password);
+        }
     }
 
     public async Task AddPasswordAsync(Window owner)
@@ -493,7 +614,11 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         form.AddField("CredentialName", name);
         form.AddField("VaultUsername", username);
         form.AddField("VaultPassword", password);
-        form.AddButtons(() => { });
+        form.AddButtons(() =>
+        {
+            ValidateCredentialName(unlocked, name.Text);
+            ValidateUsername(username.Text);
+        });
         try
         {
             if (app.Modal(form.ShowDialog) != true) return;
@@ -507,7 +632,7 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
                 {
                     StrictUtf8.GetBytes(input, bytes);
                     Array.Clear(input);
-                    await unlocked.AddPasswordAsync(name.Text, username.Text.Length == 0 ? null : username.Text, bytes, revision);
+                    await unlocked.AddPasswordAsync(name.Text, username.Text, bytes, revision);
                     RefreshManagement();
                 }
                 finally { CryptographicOperations.ZeroMemory(bytes); }
@@ -521,15 +646,15 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
     {
         CheckAvailable();
         if (vault is not { } unlocked || unlocked.HasUnverifiedPublication || unlocked.Revision != managementRevision ||
-            !ManagementEntries.Any(entry => entry.Id == requested.Id && entry.Kind == requested.Kind))
+            !ManagementEntries.Any(entry => ReferenceEquals(entry, requested)))
             throw new InvalidOperationException(Text("ManagementTabOutdated"));
         return (unlocked, managementRevision);
     }
 
-    internal CredentialReference EntryReference(VaultEntryInfo entry)
+    internal string CurrentCredentialName(VaultEntryInfo entry)
     {
-        var (unlocked, _) = CurrentEntry(entry);
-        return new(unlocked.Id, entry.Id, entry.Kind);
+        CurrentEntry(entry);
+        return entry.Name;
     }
 
     public async Task DeleteEntryAsync(Window owner, VaultEntryInfo entry)
@@ -537,7 +662,7 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         var (unlocked, revision) = CurrentEntry(entry);
         if (await ConfirmImpactAsync(owner, unlocked, entry, "DeleteCredentialWarning"))
         {
-            await unlocked.DeleteEntryAsync(entry.Id, revision);
+            await unlocked.DeleteEntryAsync(entry.Name, revision);
             RefreshManagement();
         }
     }
@@ -547,7 +672,7 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         var (unlocked, revision) = CurrentEntry(entry);
         var form = new MainWindow.FormWindow(owner, Text("EditCredential"), WindowIcons.Vault);
         var name = new TextBox { Text = entry.Name, MaxLength = 512 };
-        var username = new TextBox { Text = entry.Username ?? "", MaxLength = 1024 };
+        var username = new TextBox { Text = entry.Username, MaxLength = 1024 };
         var replace = new CheckBox();
         var password = new PasswordBox { MaxLength = 16 * 1024, IsEnabled = false };
         replace.Checked += (_, _) => password.IsEnabled = true;
@@ -561,19 +686,38 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         }
         form.AddAsyncButtons(async () =>
         {
-            if (replace.IsChecked == true &&
-                !await ConfirmImpactAsync(form, unlocked, entry, "UpdateCredentialWarning")) return false;
+            string account = username.Text;
+            string newName = name.Text;
+            ValidateUsername(account);
+            ValidateCredentialName(unlocked, newName, entry.Name);
+            bool accountOrPasswordChanged = replace.IsChecked == true || account != entry.Username;
+            ProfileCatalog.CredentialImpact? update = null;
+            if (newName != entry.Name)
+            {
+                long epoch = app.Vault.SelectionEpoch;
+                bool selected = app.Vault.IsSelected(this);
+                var impact = await FindImpactAsync(entry);
+                if (!form.IsLoaded) return false;
+                string warning = string.Format(Text("RenameCredentialWarning"),
+                    PermissionDisplay.Literal(entry.Name), PermissionDisplay.Literal(newName));
+                if (selected) warning += "\n\n" + Text("RenameCredentialProfileScope");
+                if (accountOrPasswordChanged) warning += "\n\n" + Text("UpdateCredentialWarning");
+                MessageBoxResult choice = ConfirmRename(form, selected ? ImpactMessage(warning, impact) : warning, selected);
+                if (choice == MessageBoxResult.Cancel) return false;
+                if (selected != app.Vault.IsSelected(this) || selected && !IsCurrentSelection(epoch))
+                    throw new InvalidOperationException(Text("ManagementTabOutdated"));
+                if (choice == MessageBoxResult.Yes) update = impact;
+            }
+            else if (accountOrPasswordChanged && !await ConfirmImpactAsync(form, unlocked, entry, "UpdateCredentialWarning"))
+                return false;
             char[] characters = replace.IsChecked == true ? ReadPassword(password) : [];
             byte[]? bytes = null;
             try
             {
                 if (replace.IsChecked == true) bytes = StrictUtf8.GetBytes(characters);
                 Array.Clear(characters);
-                await unlocked.UpdateEntryAsync(entry.Id, name.Text,
-                    username.Text.Length == 0 ? null : username.Text,
+                await unlocked.UpdateEntryAsync(entry.Name, newName, account,
                     bytes is null ? null : new ReadOnlyMemory<byte>(bytes), revision);
-                RefreshManagement();
-                return true;
             }
             finally
             {
@@ -581,24 +725,78 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
                 if (bytes is not null) CryptographicOperations.ZeroMemory(bytes);
                 password.Clear();
             }
+            RefreshManagement();
+            if (update is not null)
+            {
+                var outcome = await app.Profiles.UpdateCredentialReferencesAsync(update, entry.Kind, newName);
+                if (form.IsLoaded)
+                {
+                    string report = string.Format(Text("CredentialRenameUpdatedProfiles"), outcome.Updated);
+                    if (outcome.Problems.Count != 0)
+                        report += "\n\n" + Text("CredentialRenameProfileProblems") + "\n" + string.Join("\n\n", outcome.Problems);
+                    if (update.Unavailable != 0)
+                        report += "\n\n" + string.Format(Text("ReferenceScanUnavailable"), update.Unavailable);
+                    bool incomplete = update.Unavailable != 0 || outcome.Problems.Count != 0;
+                    app.Modal(() => ThemedMessageBox.ShowVault(form, report, Text("Vault"),
+                        MessageBoxButton.OK, incomplete ? MessageBoxImage.Warning : MessageBoxImage.Information));
+                }
+            }
+            return true;
         });
         try { app.Modal(form.ShowDialog); }
         finally { password.Clear(); }
+    }
+
+    private MessageBoxResult ConfirmRename(Window owner, string message, bool selected)
+    {
+        var choice = MessageBoxResult.Cancel;
+        Window dialog = ThemedMessageBox.Create(owner, message, Text("EditCredential"),
+            selected ? MessageBoxButton.YesNoCancel : MessageBoxButton.OKCancel,
+            MessageBoxImage.Warning, MessageBoxResult.Cancel,
+            result => choice = result == MessageBoxResult.OK ? MessageBoxResult.No : result,
+            label: result => Text(result switch
+            {
+                MessageBoxResult.Yes => "RenameAndUpdateProfiles",
+                MessageBoxResult.No or MessageBoxResult.OK => "RenameCredentialOnly",
+                _ => "Cancel",
+            }), windowIcon: WindowIcons.Vault);
+        dialog.Width = 620;
+        app.Modal(dialog.ShowDialog);
+        return choice;
+    }
+
+    private static void ValidateCredentialName(CredentialVault unlocked, string name, string? originalName = null)
+    {
+        if (!VaultPayload.IsValidName(name)) throw new ArgumentException(Text("InvalidCredentialName"));
+        if (name != originalName && unlocked.ReadCommittedMetadata().Entries.Any(entry => entry.Name == name))
+            throw new ArgumentException(Text("DuplicateCredentialName"));
+    }
+
+    private Task<ProfileCatalog.CredentialImpact> FindImpactAsync(VaultEntryInfo entry) => app.Vault.IsSelected(this)
+        ? app.Profiles.FindCredentialReferencesAsync(entry)
+        : Task.FromResult(ProfileCatalog.CredentialImpact.Empty);
+
+    private static string ImpactMessage(string warning, ProfileCatalog.CredentialImpact impact)
+    {
+        string message = $"{warning}\n\n{Text("KnownCredentialReferences")}\n" +
+            (impact.Profiles.Count == 0 ? Text("NoKnownCredentialReferences") :
+                string.Join("\n", impact.Paths.Select(path => PermissionDisplay.Literal(path)))) +
+            "\n\n" + Text("ReferenceScanScope");
+        if (impact.Unavailable != 0)
+            message += "\n" + string.Format(Text("ReferenceScanUnavailable"), impact.Unavailable);
+        return message;
     }
 
     private async Task<bool> ConfirmImpactAsync(Window owner, CredentialVault unlocked, VaultEntryInfo entry,
         string warning)
     {
         long revision = unlocked.Revision;
-        var impact = await app.Profiles.FindCredentialReferencesAsync(unlocked.Id, entry.Id, entry.Kind);
+        var impact = await FindImpactAsync(entry);
         if (!owner.IsLoaded) return false;
-        string message = $"{Text(warning)}\n\n{Text("KnownCredentialReferences")}\n" +
-            string.Join("\n", impact.Paths) + "\n\n" + Text("ReferenceScanScope");
-        if (impact.Unavailable != 0)
-            message += "\n" + string.Format(Text("ReferenceScanUnavailable"), impact.Unavailable);
+        string message = ImpactMessage(Text(warning), impact);
         if (app.Modal(() => ThemedMessageBox.ShowVault(owner, message, Text("Vault"), MessageBoxButton.YesNo,
             MessageBoxImage.Warning, MessageBoxResult.No)) != MessageBoxResult.Yes) return false;
-        var current = await app.Profiles.FindCredentialReferencesAsync(unlocked.Id, entry.Id, entry.Kind);
+        var current = await FindImpactAsync(entry);
         if (!ReferenceEquals(vault, unlocked) || unlocked.Revision != revision ||
             current.Unavailable != impact.Unavailable || !current.Paths.SequenceEqual(impact.Paths, StringComparer.Ordinal))
             throw new InvalidOperationException(Text("ManagementTabOutdated"));
@@ -704,7 +902,7 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         form.AddButtons(() =>
         {
             if (hosts is not null && (token.IsCancellationRequested ||
-                host?.IsVisible != true || !ReferenceEquals(hosts.Current, host)))
+                host?.IsVisible != true || !ReferenceEquals(CurrentHost(), host)))
                 throw new InvalidOperationException(Text("VaultBusy"));
             char[] first = ReadPassword(password);
             try
@@ -752,7 +950,7 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
             form.Dispatcher.BeginInvoke(() =>
             {
                 if (!form.IsVisible) return;
-                Window? next = hosts!.Current;
+                Window? next = CurrentHost();
                 if (next is null || token.IsCancellationRequested)
                 {
                     form.Close();
@@ -765,6 +963,8 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
                 password.Focus();
             });
         }
+
+        Window? CurrentHost() => confirm ? hosts?.InitializationHost : hosts?.Current;
 
         void PositionAtHost()
         {
@@ -785,6 +985,11 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         try { Marshal.Copy(pointer, result, 0, result.Length); }
         finally { Marshal.ZeroFreeGlobalAllocUnicode(pointer); }
         return result;
+    }
+
+    private static void ValidateUsername(string value)
+    {
+        if (!VaultPayload.IsValidUsername(value)) throw new ArgumentException(Text("InvalidVaultUsername"));
     }
 
 }

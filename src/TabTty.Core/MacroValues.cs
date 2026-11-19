@@ -7,7 +7,7 @@ internal enum MacroErrorCode
     InvalidArgument, NumericOverflow, DivideByZero, NumberFormat, Format, IndexOutOfRange,
     CollectionModified, NoTextValue, ProfileLoad, ConnectionAlreadyAttempted, ConnectionFailed,
     UserCancelled, NotConnected, Path, MissingProfilePassword, CredentialUnavailable,
-    CredentialKindMismatch, VaultMismatch, VaultStale, VaultUnlockCancelled, WaitTimeout,
+    CredentialKindMismatch, VaultStale, VaultUnlockCancelled, WaitTimeout,
     EndOfInput, InvalidPattern, RegexTimeout, ZeroLengthMatch, CaptureLimit, MatchWorkLimit,
     Encoding, PayloadLimit, PatternLimit, OperationUnavailable,
 }
@@ -20,10 +20,11 @@ internal sealed class MacroSourceException(string code, MacroPosition position) 
     public MacroPosition Position { get; } = position;
 }
 
-internal sealed class MacroError(MacroErrorCode code) : Exception(code.ToString())
+internal sealed class MacroError(MacroErrorCode code, string? displayDetail = null) : Exception(code.ToString())
 {
     public MacroErrorCode Code { get; } = code;
     public MacroPosition Position { get; set; }
+    internal string? DisplayDetail { get; } = displayDetail;
 }
 
 internal sealed class MacroTermination(string reason) : Exception(reason)
@@ -33,7 +34,6 @@ internal sealed class MacroTermination(string reason) : Exception(reason)
 
 internal enum MacroDialogButtons { OK, OKCancel, YesNo, YesNoCancel }
 internal enum MacroDialogButton { OK, Cancel, Yes, No }
-internal enum MacroCredentialKind { Password, PrivateKey }
 internal sealed record MacroDialogRequest(string Title, string Message, MacroDialogButtons Buttons,
     bool InputEnabled, string InitialText);
 internal sealed record MacroDialogResult(MacroDialogButton Button, bool HasText, string Text);
@@ -50,9 +50,9 @@ internal sealed record MacroType(string Name, MacroType? Element = null)
     public bool Accepts(MacroType other) => this == other || this == Double && other == Long;
     public override string ToString() => Element is null ? Name : $"List<{Element}>";
     public static readonly string[] ValueNames = ["bool", "long", "double", "string", "Instant",
-        "CredentialRef", "WaitPattern", "WaitMatch", "CaptureGroup", "DialogResult", "MacroError",
-        "ErrorCode", "CredentialKind", "DialogButtons", "DialogButton"];
-    public static readonly string[] EnumNames = ["ErrorCode", "CredentialKind", "DialogButtons", "DialogButton"];
+        "WaitPattern", "WaitMatch", "CaptureGroup", "DialogResult", "MacroError",
+        "ErrorCode", "DialogButtons", "DialogButton"];
+    public static readonly string[] EnumNames = ["ErrorCode", "DialogButtons", "DialogButton"];
 }
 
 internal sealed class MacroList(MacroType element, IEnumerable<object> values)
@@ -108,7 +108,7 @@ internal static class MacroLimits
         long n => n.ToString(CultureInfo.InvariantCulture),
         double d => d.ToString("R", CultureInfo.InvariantCulture),
         DateTimeOffset t => t.ToString("yyyy-MM-dd'T'HH:mm:ss.fffffffzzz", CultureInfo.InvariantCulture),
-        MacroDialogButtons or MacroDialogButton or MacroCredentialKind or MacroErrorCode => value.ToString()!,
+        MacroDialogButtons or MacroDialogButton or MacroErrorCode => value.ToString()!,
         _ => throw new MacroError(MacroErrorCode.InvalidArgument),
     };
 }

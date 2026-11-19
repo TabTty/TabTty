@@ -19,7 +19,7 @@ internal static partial class Program
         CredentialReference reference = Task.Run(async () =>
         {
             using var created = await CredentialVault.CreateAsync(path, oldMaster.AsMemory(), token);
-            return new CredentialReference(created.Id, await created.AddPasswordAsync("close test", null, expectedSecret, token),
+            return new CredentialReference(await created.AddPasswordAsync("close test", "operator", expectedSecret, token),
                 "password");
         }, token).GetAwaiter().GetResult();
         byte[] original = File.ReadAllBytes(path);
@@ -144,12 +144,12 @@ internal static partial class Program
         Task.Run(async () =>
         {
             using var current = await CredentialVault.UnlockAsync(inspectionPath, newMaster.AsMemory(), token);
-            using var currentSecret = await current.GetPasswordAsync(reference.VaultId, reference.EntryId, token);
+            using var currentSecret = await current.GetPasswordAsync(reference.Name, token);
             if (!currentSecret.Bytes.Span.SequenceEqual(expectedSecret))
                 throw new InvalidOperationException("The exact installed candidate lost the expected credential.");
             if (!preserved) return;
             using var prior = await CredentialVault.UnlockAsync(path + ".bak", oldMaster.AsMemory(), token);
-            using var priorSecret = await prior.GetPasswordAsync(reference.VaultId, reference.EntryId, token);
+            using var priorSecret = await prior.GetPasswordAsync(reference.Name, token);
             if (!priorSecret.Bytes.Span.SequenceEqual(expectedSecret))
                 throw new InvalidOperationException("The verified candidate or preserved generation lost the expected credential.");
         }, token).GetAwaiter().GetResult();

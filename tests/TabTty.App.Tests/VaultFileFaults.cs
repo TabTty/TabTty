@@ -6,6 +6,218 @@ using TabTty.Core;
 
 internal static partial class Program
 {
+    private static async Task CheckVaultFirstUseAsync(App app, string directory)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var host = new MainWindow(app) { ShowActivated = false, ShowInTaskbar = false };
+        host.Show();
+        try
+        {
+            await CheckAsync(empty: false);
+            await CheckAsync(empty: true);
+        }
+        finally { host.Close(); }
+
+        async Task CheckAsync(bool empty)
+        {
+            string path = Path.Combine(directory, empty ? "first-use-empty.tttykey" : "first-use-missing.tttykey");
+            if (empty) File.WriteAllBytes(path, []);
+            var original = CredentialVault.InspectFile(path);
+            await app.SaveSettingsAsync(app.LanguageChoice, app.ThemeChoice, app.BellChoice,
+                app.TerminalFontFamily, app.TerminalFontSize, app.RetainedRows, app.AutoCloseDisconnectedTabs, path, app.SettingsRevision);
+
+            Task cancelled = host.Dispatcher.InvokeAsync(UseVault).Task.Unwrap();
+            var prompt = await FindDialogAsync("InitializeVault");
+            prompt.Close();
+            await cancelled.WaitAsync(deadline.Token);
+            if (CredentialVault.InspectFile(path) != original)
+                throw new InvalidOperationException("Cancelling first use changed the missing or empty file.");
+
+            Task accepted = host.Dispatcher.InvokeAsync(UseVault).Task.Unwrap();
+            prompt = await FindDialogAsync("InitializeVault");
+            string explanation = App.Text(empty ? "InitializeEmptyVaultDescription" : "CreateMissingVaultDescription");
+            var fields = FindControls<PasswordBox>(prompt).ToArray();
+            bool showsPath = FindControls<TextBox>(prompt).Any(field => field.Text == ProfileLocation.Normalize(path));
+            bool showsExplanation = FindControls<TextBlock>(prompt).Any(label => label.Text.Contains(explanation, StringComparison.Ordinal));
+            if (fields.Length != 2 || !showsPath || !showsExplanation)
+            {
+                prompt.Close();
+                throw new InvalidOperationException(
+                    $"Vault setup fields: {fields.Length} passwords, target path shown: {showsPath}, explanation shown: {showsExplanation}.");
+            }
+            foreach (var field in fields) field.Password = "fixture password for vault first use";
+            var save = FindControls<Button>(prompt).Single(button => Equals(button.Content, App.Text("Save")));
+            save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            if (empty)
+            {
+                var picker = await FindDialogAsync("SelectSavedPassword");
+                if (!FindControls<Button>(picker).Any(button => Equals(button.Content, App.Text("ManageVault"))))
+                    throw new InvalidOperationException("An empty profile credential picker must offer vault management.");
+                picker.Close();
+            }
+            await accepted.WaitAsync(deadline.Token);
+            if (CredentialVault.InspectFile(path) is not { Length: > 0 } ||
+                (!empty && !FindControls<Button>(host).Any(button => Equals(button.Content, App.Text("AddVaultPassword")))))
+                throw new InvalidOperationException("First use did not publish the new vault.");
+
+            Task choose = host.Dispatcher.InvokeAsync(ChooseSavedPassword).Task.Unwrap();
+            (await FindDialogAsync("SelectSavedPassword")).Close();
+            await choose.WaitAsync(deadline.Token);
+
+            Task UseVault() => empty ? ChooseSavedPassword() : app.Vault.UnlockFromMenuAsync(host);
+        }
+
+        Task ChooseSavedPassword() => app.Vault.ChoosePasswordAsync(host, (_, _) =>
+            throw new InvalidOperationException("A new vault had a saved password."));
+
+        async Task<Window> FindDialogAsync(string title)
+        {
+            Window? dialog;
+            while ((dialog = app.Windows.Cast<Window>().SingleOrDefault(window => window != host && window.IsVisible)) is null)
+                await Task.Delay(15, deadline.Token);
+            if (dialog.Title == App.Text(title)) return dialog;
+            string actual = dialog.Title;
+            dialog.Close();
+            throw new InvalidOperationException($"Expected vault dialog {title}, got {actual}.");
+        }
+    }
+
+    private static async Task CheckVaultRenameAsync(App app, string directory)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+        var token = deadline.Token;
+        const string master = "vault rename master password";
+        const string original = "Team password";
+        const string renamed = "Renamed team password";
+        string vaultPath = Path.Combine(directory, "rename.tttykey");
+        using (var vault = await CredentialVault.CreateAsync(vaultPath, master.AsMemory(), token))
+            await vault.AddPasswordAsync(original, "operator", "fixture secret"u8.ToArray(), token);
+        await app.SaveSettingsAsync(app.LanguageChoice, app.ThemeChoice, app.BellChoice, app.TerminalFontFamily,
+            app.TerminalFontSize, app.RetainedRows, app.AutoCloseDisconnectedTabs, vaultPath, app.SettingsRevision);
+        string saved = await MakeProfileAsync("Saved", register: true);
+        string changed = await MakeProfileAsync("Changed", register: true);
+        string pending = await MakeProfileAsync("Pending", register: true);
+        string unregistered = await MakeProfileAsync("Unregistered", register: false);
+
+        var host = app.CreateWindow(restorePlacement: false);
+        host.Show();
+        var before = await ConnectionProfile.LoadAsync(saved, token);
+        var editor = new ProfileEditorWindow(app, "EditProfile", pending, await ConnectionProfile.LoadAsync(pending, token),
+            creating: false);
+        editor.Show();
+        var draftName = FindControls<TextBox>(editor).Single(field => field.Text == "Pending");
+        draftName.Text = "Unsaved draft";
+        try
+        {
+            Task management = host.Dispatcher.InvokeAsync(() => app.Vault.ManageAsync(host)).Task.Unwrap();
+            var unlock = await FindDialogAsync("UnlockVault", form: true);
+            FindControls<PasswordBox>(unlock).Single().Password = master;
+            Click(unlock, "UnlockVault");
+            await management.WaitAsync(token);
+            ListBox? list;
+            while ((list = FindControls<ListBox>(host).FirstOrDefault(control => control.Items.OfType<VaultEntryInfo>().Any())) is null)
+                await Task.Delay(15, token);
+
+            var (edit, confirm) = await OpenRenameAsync(renamed);
+            var warning = FindControls<TextBlock>(confirm).Single(block => block.Text.Contains(original, StringComparison.Ordinal));
+            if (!warning.Text.Contains(renamed, StringComparison.Ordinal) ||
+                !warning.Text.Contains(saved, StringComparison.OrdinalIgnoreCase) ||
+                warning.Text.Contains(unregistered, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Rename confirmation did not show the requested names and registered scope.");
+            Click(confirm, "Cancel");
+            while (!FindControls<Button>(edit).Any(button => button.IsEnabled && Equals(button.Content, App.Text("Save"))))
+                await Task.Delay(15, token);
+            edit.Close();
+            await WaitIdleAsync();
+            if (list.Items.OfType<VaultEntryInfo>().Single().Name != original)
+                throw new InvalidOperationException("Cancelling renamed the vault credential.");
+
+            (edit, confirm) = await OpenRenameAsync(renamed);
+            File.AppendAllText(changed, "\n");
+            Click(confirm, "RenameAndUpdateProfiles");
+            var report = await FindDialogAsync("Vault", form: false);
+            var outcome = FindControls<TextBlock>(report).Single(block =>
+                block.Text.Contains(string.Format(App.Text("CredentialRenameUpdatedProfiles"), 1), StringComparison.Ordinal));
+            if (!outcome.Text.Contains(App.Text("CredentialRenameProfileChanged"), StringComparison.Ordinal) ||
+                !outcome.Text.Contains(App.Text("CredentialRenamePendingProfileEdits"), StringComparison.Ordinal))
+                throw new InvalidOperationException("The rename report lost the reasons for skipped profiles.");
+            Click(report, "OK");
+            await WaitIdleAsync();
+
+            var after = await ConnectionProfile.LoadAsync(saved, token);
+            if (after.ToEditorJson() != before.ToEditorJson().Replace(original, renamed, StringComparison.Ordinal) ||
+                list.Items.OfType<VaultEntryInfo>().Single().Name != renamed)
+                throw new InvalidOperationException("The rename changed more than the credential name or failed to save it.");
+            foreach (string path in new[] { changed, pending, unregistered })
+                if ((await ConnectionProfile.LoadAsync(path, token)).SshPassword?.Name != original)
+                    throw new InvalidOperationException("The rename overwrote a profile outside the reviewed save basis.");
+            if (draftName.Text != "Unsaved draft")
+                throw new InvalidOperationException("The rename replaced an unsaved profile draft.");
+
+            (_, confirm) = await OpenRenameAsync("Final password");
+            Click(confirm, "RenameCredentialOnly");
+            await WaitIdleAsync();
+            if (list.Items.OfType<VaultEntryInfo>().Single().Name != "Final password" ||
+                (await ConnectionProfile.LoadAsync(saved, token)).SshPassword?.Name != renamed)
+                throw new InvalidOperationException("Rename only also changed the registered profile.");
+            Console.WriteLine("PASS VaultRenameUpdatesOnlyReviewedRegisteredProfiles");
+
+            async Task<(Window Edit, Window Confirm)> OpenRenameAsync(string newName)
+            {
+                list.SelectedIndex = 0;
+                _ = host.Dispatcher.BeginInvoke(() => Click(host, "EditCredential"));
+                var edit = await FindDialogAsync("EditCredential", form: true);
+                FindControls<TextBox>(edit).Single(field => field.Text == ((VaultEntryInfo)list.SelectedItem).Name).Text = newName;
+                _ = edit.Dispatcher.BeginInvoke(() => Click(edit, "Save"));
+                return (edit, await FindDialogAsync("EditCredential", form: false));
+            }
+        }
+        finally
+        {
+            foreach (Window dialog in app.Windows.OfType<Window>().Where(window => window != host && window != editor).ToArray())
+                dialog.Close();
+            draftName.Text = "Pending";
+            editor.Close();
+            host.Close();
+        }
+
+        async Task<string> MakeProfileAsync(string name, bool register)
+        {
+            var profile = ConnectionProfile.CreateSsh(name, "localhost", "operator", password: new(original, "password"),
+                methods: ["publicKey"]);
+            string path = Path.Combine(directory, name + ".ttty");
+            await profile.SaveNewAsync(path, token);
+            path = await ProfileCatalog.NormalizeLocationAsync(path, token);
+            if (register)
+                LocalState.Change(state => state["registrations"]!.AsArray().Add(new System.Text.Json.Nodes.JsonObject
+                {
+                    ["registrationId"] = Guid.NewGuid(), ["path"] = path, ["displayPath"] = path,
+                    ["favorite"] = false, ["lastUsed"] = null,
+                }));
+            return path;
+        }
+
+        async Task<Window> FindDialogAsync(string title, bool form)
+        {
+            while (true)
+            {
+                if (app.Windows.OfType<Window>().FirstOrDefault(window => window.IsVisible &&
+                    window.Title == App.Text(title) && (window is MainWindow.FormWindow) == form) is { } found)
+                    return found;
+                await Task.Delay(15, token);
+            }
+        }
+
+        static void Click(Window window, string key) => FindControls<Button>(window)
+            .Single(button => Equals(button.Content, App.Text(key)))
+            .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
+        async Task WaitIdleAsync()
+        {
+            while (app.Vault.HasActiveOperations) await Task.Delay(15, token);
+        }
+    }
+
     private sealed class VaultFileFaultFixture
     {
         internal readonly TaskCompletionSource<string> Installing = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -51,10 +263,10 @@ internal static partial class Program
         CredentialReference reference;
         using (var owned = await CredentialVault.CreateAsync(first, master.AsMemory(), token))
         {
-            Guid entry = await owned.AddPasswordAsync("prior metadata", null, "prior fixture secret"u8.ToArray(), token);
-            reference = new(owned.Id, entry, "password");
+            string entry = await owned.AddPasswordAsync("prior metadata", "operator", "prior fixture secret"u8.ToArray(), token);
+            reference = new(entry, "password");
             await owned.BackupAsync(backup, token);
-            await owned.UpdateEntryAsync(entry, "later metadata", null, "later fixture secret"u8.ToArray(), token);
+            await owned.UpdateEntryAsync(entry, "later metadata", "operator", "later fixture secret"u8.ToArray(), token);
         }
         fixture.RestoreSource = backup;
         var host = app.CreateWindow(restorePlacement: false);
@@ -62,11 +274,9 @@ internal static partial class Program
         try
         {
             await SelectAsync(empty);
-            await app.Vault.ManageAsync(host);
-            await UntilAsync(() => CurrentButton("CreateVault") is not null);
             using (VaultController.ManagementDeliveries.Reserve(VaultController.ManagementDeliveryLimit))
             {
-                Start("CreateVault");
+                StartManagement();
                 var busy = await FindDialogAsync("Vault", form: false);
                 EnsureMessage(busy, App.Text("VaultBusy"));
                 Click(busy, "OK");
@@ -76,20 +286,21 @@ internal static partial class Program
             }
             Console.WriteLine("PASS VaultManagementDeliveryAdmission");
 
-            Start("CreateVault");
+            StartManagement();
             (await FindDialogAsync("InitializeVault", form: true)).Close();
             await UntilIdleAsync();
             if (fixture.Installing.Task.IsCompleted || CredentialVault.InspectFile(empty) != originalEmpty)
                 throw new InvalidOperationException("Dismissed initialization input changed the empty file.");
 
-            Start("CreateVault");
+            StartManagement();
             await AcceptPasswordAsync("InitializeVault", "Save", "InitializeEmptyVaultDescription");
             string stage = await fixture.Installing.Task.WaitAsync(token);
             string parked = Directory.GetFiles(directory, ".tabtty-empty-*.tmp").Single();
+            if (!app.Vault.HasActiveOperations || File.Exists(empty) || CredentialVault.InspectFile(parked) != originalEmpty)
+                throw new InvalidOperationException("Initialization lost its operation or parked file before the window close.");
             host.Close();
-            if (!host.IsVisible || !app.Vault.HasActiveOperations || File.Exists(empty) ||
-                CredentialVault.InspectFile(parked) != originalEmpty)
-                throw new InvalidOperationException("The visible initialization did not retain its original owner and parked file.");
+            if (!host.IsVisible)
+                throw new InvalidOperationException("The issuing window closed while vault initialization was publishing.");
             try
             {
                 await VerifiedFilePublication.Begin(new(empty, "competing writer"u8.ToArray(), null, null, 1024)).ObserveAsync(token);
@@ -100,8 +311,8 @@ internal static partial class Program
             File.WriteAllBytes(empty, collision);
             fixture.ReleaseInstallation.SetResult();
             var problem = await FindDialogAsync("Vault", form: false);
-            EnsureMessage(problem, parked);
-            EnsureMessage(problem, stage);
+            EnsureMessage(problem, parked, StringComparison.OrdinalIgnoreCase);
+            EnsureMessage(problem, stage, StringComparison.OrdinalIgnoreCase);
             EnsureMessage(problem, App.Text("PublishedImageOther"));
             Click(problem, "OK");
             await UntilIdleAsync();
@@ -109,6 +320,8 @@ internal static partial class Program
                 throw new InvalidOperationException("Initialization overwrote the competing file or lost its restriction.");
             File.Move(empty, Path.Combine(directory, "external-file.tttykey"));
             File.Move(stage, empty);
+            await app.Vault.ManageAsync(host);
+            await UntilAsync(() => CurrentButton("RecheckFilePublication") is not null);
             Start("RecheckFilePublication");
             await AcceptPasswordAsync("RecheckFilePublication", "UnlockVault");
             await UntilIdleAsync();
@@ -144,13 +357,13 @@ internal static partial class Program
                 File.Delete(preservation);
                 hold.Dispose();
                 problem = await FindDialogAsync("Vault", form: false);
-                EnsureMessage(problem, preservation);
+                EnsureMessage(problem, preservation, StringComparison.OrdinalIgnoreCase);
                 EnsureMessage(problem, App.Text("PublishedImageMissing"));
                 Click(problem, "OK");
                 await UntilIdleAsync();
                 Start("RecheckFilePublication");
                 problem = await FindDialogAsync("Vault", form: false);
-                EnsureMessage(problem, preservation);
+                EnsureMessage(problem, preservation, StringComparison.OrdinalIgnoreCase);
                 EnsureMessage(problem, App.Text("PublishedImageMissing"));
                 Click(problem, "OK");
                 await UntilIdleAsync();
@@ -204,7 +417,7 @@ internal static partial class Program
             catch (IOException) when (!File.Exists(first)) { }
             fixture.ReleaseArchive.SetResult();
             var acknowledged = await FindDialogAsync("ArchiveVault", form: false);
-            EnsureMessage(acknowledged, archive);
+            EnsureMessage(acknowledged, archive, StringComparison.OrdinalIgnoreCase);
             EnsureMessage(acknowledged, App.Text("VaultArchived"));
             if (!archiveEditor.IsVisible) throw new InvalidOperationException("The archive editor closed before acknowledgement.");
             Click(acknowledged, "OK");
@@ -229,6 +442,8 @@ internal static partial class Program
 
         Button? CurrentButton(string key) => FindControls<Button>(host).SingleOrDefault(button =>
             button.IsVisible && Equals(button.Content, App.Text(key)));
+
+        void StartManagement() => _ = app.Dispatcher.BeginInvoke(async () => await app.Vault.ManageAsync(host));
 
         void Start(string key) => _ = app.Dispatcher.BeginInvoke(() =>
             CurrentButton(key)!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)));
@@ -257,10 +472,10 @@ internal static partial class Program
             Click(dialog, button);
         }
 
-        static void EnsureMessage(Window dialog, string expected)
+        static void EnsureMessage(Window dialog, string expected, StringComparison comparison = StringComparison.Ordinal)
         {
-            if (!FindControls<TextBlock>(dialog).Any(text => text.Text.Contains(expected, StringComparison.Ordinal)))
-                throw new InvalidOperationException("The vault dialog omitted an expected publication fact.");
+            if (!FindControls<TextBlock>(dialog).Any(text => text.Text.Contains(expected, comparison)))
+                throw new InvalidOperationException($"The vault dialog omitted the expected publication fact '{expected}'.");
         }
 
         static void Click(Window dialog, string key) => FindControls<Button>(dialog)

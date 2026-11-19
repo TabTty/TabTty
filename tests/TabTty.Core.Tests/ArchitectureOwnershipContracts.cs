@@ -368,7 +368,7 @@ internal static partial class ArchitectureOwnershipContracts
         const string oldPassword = "original-master-fixture";
         const string newPassword = "replacement-master-fixture";
         using var vault = await CredentialVault.CreateAsync(path, oldPassword.AsMemory(), token);
-        Guid entry = await vault.AddPasswordAsync("fixture", null, "verified secret payload"u8.ToArray(), token);
+        string entry = await vault.AddPasswordAsync("fixture", "operator", "verified secret payload"u8.ToArray(), token);
         byte[] original = await File.ReadAllBytesAsync(path, token);
         long revision = vault.Revision;
         var before = await vault.ReadMetadataAsync(token);
@@ -395,7 +395,7 @@ internal static partial class ArchitectureOwnershipContracts
             throw new InvalidOperationException("The partial operation did not retain its original root and evidence.");
         try
         {
-            using VaultSecret secret = await vault.GetPasswordAsync(vault.Id, entry, token);
+            using VaultSecret secret = await vault.GetPasswordAsync(entry, token);
             throw new InvalidOperationException("A partial publication delivered a credential.");
         }
         catch (IOException) { }
@@ -411,7 +411,7 @@ internal static partial class ArchitectureOwnershipContracts
         if (!await vault.ReconcilePublicationAsync() || vault.Revision != revision + 1 || issues != 1 ||
             vault.HasUnverifiedPublication || !(await File.ReadAllBytesAsync(path, token)).AsSpan().SequenceEqual(candidate))
             throw new InvalidOperationException("Reconciliation rewrote the candidate or failed to adopt its exact generation.");
-        using VaultSecret after = await vault.GetPasswordAsync(vault.Id, entry, token);
+        using VaultSecret after = await vault.GetPasswordAsync(entry, token);
         var metadata = await vault.ReadMetadataAsync(token);
         if (!after.Bytes.Span.SequenceEqual("verified secret payload"u8))
             throw new InvalidOperationException("The newly adopted root did not retrieve the existing entry.");

@@ -11,15 +11,14 @@ internal static class MacroApi
         var d = MacroType.Double; var b = MacroType.Bool; var t = new MacroType("T");
         var list = MacroType.List(t); var strings = MacroType.List(s);
         var pattern = new MacroType("WaitPattern"); var match = new MacroType("WaitMatch");
-        var credential = new MacroType("CredentialRef"); var instant = new MacroType("Instant");
+        var instant = new MacroType("Instant");
         var result = new Dictionary<string, MacroSignature[]>(StringComparer.Ordinal);
         void Add(string name, MacroSignature first, MacroSignature? second = null) =>
             result.Add(name, second is null ? [first] : [first, second]);
         Add("Connect", new(v, s)); Add("SetBaseDirectory", new(v, s));
         Add("ResetBaseDirectory", new(v)); Add("BaseDirectory", new(s));
         Add("Write", new(v, s)); Add("WriteLine", new(v, s));
-        Add("Credential", new(credential, s, s, new("CredentialKind")));
-        Add("WritePassword", new(v), new(v, credential)); Add("WritePasswordLine", new(v), new(v, credential));
+        Add("WritePassword", new(v), new(v, s)); Add("WritePasswordLine", new(v), new(v, s));
         Add("MarkReceiveBoundary", new(v));
         Add("Literal", new(pattern, s), new(pattern, s, b)); Add("Regex", new(pattern, s), new(pattern, s, b));
         foreach (string name in new[] { "WaitLine", "WaitPrompt" }) Add(name, new(match, pattern), new(match, pattern, n));
@@ -67,7 +66,6 @@ internal static class MacroApi
     {
         "DialogButtons" => Enum.TryParse<MacroDialogButtons>(name, out var a) && Enum.GetName(a) == name ? a : null,
         "DialogButton" => Enum.TryParse<MacroDialogButton>(name, out var b) && Enum.GetName(b) == name ? b : null,
-        "CredentialKind" => Enum.TryParse<MacroCredentialKind>(name, out var c) && Enum.GetName(c) == name ? c : null,
         "ErrorCode" => Enum.TryParse<MacroErrorCode>(name, out var e) && Enum.GetName(e) == name ? e : null,
         _ => null,
     };

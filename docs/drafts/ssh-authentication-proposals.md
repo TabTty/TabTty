@@ -14,6 +14,11 @@ Transport KEX/cipher/MAC/compression choices are accepted in
 
 ## Q133: Configured authentication methods and retries
 
+The current [SSH authentication contract](../specification/transports-and-authentication.md#authentication-and-user-facing-messages)
+sets keyboard-interactive eligibility separately from the profile's ordered
+password and public-key methods and defines the continuation rules for missing
+vaults and keys. The original decision is recorded below.
+
 Use a profile allowlist of Password, Public key, and Keyboard-interactive,
 with an explicit priority order. Enable Password only in a new profile; the
 user can enable additional methods when needed. The initial suggested priority

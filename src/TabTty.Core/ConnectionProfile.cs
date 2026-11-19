@@ -10,7 +10,7 @@ public sealed record JapaneseSettings(string KanjiIn = "B", string KanjiOut = "B
 public sealed record SerialSettings(string PortName, uint BaudRate = 9600, int DataBits = 8,
     string Parity = "none", int StopBits = 1, string FlowControl = "none", bool Dtr = true, bool Rts = true);
 
-public sealed record CredentialReference(Guid VaultId, Guid EntryId, string Kind);
+public sealed record CredentialReference(string Name, string Kind);
 
 public sealed class ConnectionProfile
 {
@@ -38,6 +38,8 @@ public sealed class ConnectionProfile
     public CredentialReference? SshPrivateKey => ReadCredential(Connection.GetProperty("authentication"), "privateKey");
     public IReadOnlyList<string> SshMethods => Connection.GetProperty("authentication").GetProperty("methods")
         .EnumerateArray().Select(static value => value.GetString()!).ToArray();
+    public bool SshAllowsKeyboardInteractive => Connection.GetProperty("authentication")
+        .GetProperty("allowKeyboardInteractive").GetBoolean();
     public bool SshLivenessEnabled => Connection.GetProperty("liveness").GetProperty("enabled").GetBoolean();
     public int SshLivenessInterval => Connection.GetProperty("liveness").GetProperty("intervalSeconds").GetInt32();
     public SerialSettings Serial => new(Connection.GetProperty("portName").GetString()!,
@@ -113,20 +115,16 @@ public sealed class ConnectionProfile
         CredentialReference? password = null, bool recordRaw = false, string receiveEncoding = "utf-8",
         string? transmitEncoding = null, JapaneseSettings? japanese = null, int ambiguousWidth = 1,
         bool recordText = false, bool recordTerminal = false, Guid? highlightSetId = null,
-        IReadOnlyList<string>? methods = null, CredentialReference? privateKey = null) => Create(name, new
+        IReadOnlyList<string>? methods = null, CredentialReference? privateKey = null,
+        bool allowKeyboardInteractive = true) => Create(name, new
         {
             type = "ssh", waitSeconds = 30, host, port, username,
             authentication = new
             {
                 methods = methods ?? ["password"],
-                privateKey = privateKey is null ? null : new
-                {
-                    vaultId = privateKey.VaultId, entryId = privateKey.EntryId, kind = privateKey.Kind,
-                },
-                password = password is null ? null : new
-                {
-                    vaultId = password.VaultId, entryId = password.EntryId, kind = password.Kind,
-                },
+                allowKeyboardInteractive,
+                privateKey = privateKey?.Name,
+                password = password?.Name,
             },
             liveness = new { enabled = false, intervalSeconds = 30, unansweredWindows = 3 },
         }, "cr", "del", "off", recordRaw, receiveEncoding, transmitEncoding, japanese, ambiguousWidth,
@@ -336,10 +334,11 @@ public sealed class ConnectionProfile
                 throw new InvalidDataException("Invalid SSH username.");
             var authentication = Field(connection, "authentication", JsonValueKind.Object);
             var methods = Field(authentication, "methods", JsonValueKind.Array);
-            if (methods.GetArrayLength() is < 1 or > 3 || methods.EnumerateArray().Any(static method =>
-                method.ValueKind != JsonValueKind.String || method.GetString() is not ("publicKey" or "password" or "keyboardInteractive")) ||
+            if (methods.GetArrayLength() is < 1 or > 2 || methods.EnumerateArray().Any(static method =>
+                method.ValueKind != JsonValueKind.String || method.GetString() is not ("publicKey" or "password")) ||
                 methods.EnumerateArray().Select(static method => method.GetString()).Distinct().Count() != methods.GetArrayLength())
                 throw new InvalidDataException("Invalid SSH authentication methods.");
+            Boolean(authentication, "allowKeyboardInteractive");
             _ = ReadCredential(authentication, "privateKey");
             _ = ReadCredential(authentication, "password");
             var liveness = Field(connection, "liveness", JsonValueKind.Object);
@@ -420,11 +419,9 @@ public sealed class ConnectionProfile
         if (!authentication.TryGetProperty(key, out var reference))
             throw new InvalidDataException("Missing SSH credential reference.");
         if (reference.ValueKind == JsonValueKind.Null) return null;
-        if (reference.ValueKind != JsonValueKind.Object || Text(reference, "kind", 16) != key ||
-            !Guid.TryParseExact(Text(reference, "vaultId", 36), "D", out Guid vault) || vault == Guid.Empty ||
-            !Guid.TryParseExact(Text(reference, "entryId", 36), "D", out Guid entry) || entry == Guid.Empty)
-            throw new InvalidDataException("Invalid SSH credential reference.");
-        return new CredentialReference(vault, entry, key);
+        string? name = reference.ValueKind == JsonValueKind.String ? reference.GetString() : null;
+        if (!VaultPayload.IsValidName(name)) throw new InvalidDataException("Invalid SSH credential name.");
+        return new CredentialReference(name!, key);
     }
 
     internal static bool IsComPortName(string name) =>

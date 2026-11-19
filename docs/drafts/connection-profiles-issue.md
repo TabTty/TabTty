@@ -3,6 +3,7 @@
 > The [profile trust specification](../specification/profile-trust.md) supersedes the historical rules below for trusting a profile on activation and registering it on open.
 
 > The 2026-11-10 baseline was consolidated in the [persistence and windows contract](../specification/persistence-and-windows.md). See [implementation status](../specification/implementation-status.md) for validation evidence.
+> The current [tab closure rule](../specification/persistence-and-windows.md) supersedes Q192 for manual, automatic, and bulk tab closure.
 
 Working issue-body draft. Confirmed requirements are agreed; remaining choices
 are listed explicitly. This document does not authorize implementation.

@@ -144,7 +144,6 @@
   <data name="ArchiveVault" xml:space="preserve"><value>vault を退避して作り直す…</value></data>
   <data name="ArchiveVaultConfirm" xml:space="preserve"><value>現在の vault を同じフォルダーの別ファイルに移動しますか？ 新しい vault を作成した後、プロファイルで認証情報を選び直してください。</value></data>
   <data name="VaultArchived" xml:space="preserve"><value>次のパスに vault を退避しました。解除または管理を選ぶと、新しいマスターパスワードを設定できます。</value></data>
-  <data name="VaultFileMissing" xml:space="preserve"><value>vault が存在しないか、空です。vault の管理画面で作成・初期化を選択してください。</value></data>
   <data name="AddVaultPassword" xml:space="preserve"><value>パスワードを追加</value></data>
   <data name="VaultEntries" xml:space="preserve"><value>vault の項目</value></data>
   <data name="VaultEntryList" xml:space="preserve"><value>保存済みの認証情報</value></data>
@@ -263,7 +262,6 @@
   <data name="ImportPrivateKey" xml:space="preserve"><value>秘密鍵を取り込む…</value></data>
   <data name="SelectPrivateKey" xml:space="preserve"><value>秘密鍵を選択</value></data>
   <data name="PublicKey" xml:space="preserve"><value>公開鍵認証</value></data>
-  <data name="TertiarySshMethod" xml:space="preserve"><value>３番目の認証方式</value></data>
   <data name="CredentialName" xml:space="preserve"><value>認証情報の名前</value></data>
   <data name="VisualBell" xml:space="preserve"><value>視覚的に通知</value></data>
   <data name="Off" xml:space="preserve"><value>オフ</value></data>
@@ -285,9 +283,38 @@
   <data name="DeleteCredential" xml:space="preserve"><value>認証情報を削除</value></data>
   <data name="ReplacePassword" xml:space="preserve"><value>パスワードを置き換える</value></data>
   <data name="DeleteCredentialWarning" xml:space="preserve"><value>この認証情報を削除しますか。参照するプロファイルは、次回認証時に別の認証情報が必要になります。</value></data>
-  <data name="UpdateCredentialWarning" xml:space="preserve"><value>今後の認証に使用する共有パスワードを置き換えますか。</value></data>
+  <data name="UpdateCredentialWarning" xml:space="preserve"><value>今後の接続に使う共有認証情報を更新しますか。ユーザー名を変更した場合は、この認証情報を使うプロファイルで選び直してください。</value></data>
+  <data name="InvalidVaultUsername" xml:space="preserve"><value>この認証情報に有効な SSH ユーザー名を入力してください。</value></data>
+  <data name="AddSshMethod" xml:space="preserve"><value>認証方式を追加</value></data>
+  <data name="SshAdvancedAuthentication" xml:space="preserve"><value>認証の詳細設定</value></data>
+  <data name="AllowKeyboardInteractive" xml:space="preserve"><value>キーボード対話認証を許可</value></data>
+  <data name="ReselectSshCredential" xml:space="preserve"><value>保存済み認証情報の SSH ユーザー名が一致しません。プロファイルの編集画面で意図した認証情報を選び直してください。</value></data>
+  <data name="SshCredentialsDifferentAccounts" xml:space="preserve"><value>有効な方式の保存済み認証情報には、同じ SSH ユーザー名を指定してください。</value></data>
+  <data name="VaultUnavailableMissing" xml:space="preserve"><value>設定先に vault ファイルがありません。{0}</value></data>
+  <data name="VaultUnavailableEmpty" xml:space="preserve"><value>設定先の vault ファイルが 0 バイトです。{0}</value></data>
+  <data name="SelectOrRestoreVault" xml:space="preserve"><value>この認証情報を使うには、元の vault を選択するか、バックアップを復元してください。</value></data>
+  <data name="ImportKeyBeforeConnecting" xml:space="preserve"><value>［vault の管理］で使用する秘密鍵を取り込んでください。</value></data>
+  <data name="OpenVaultManagementToCreate" xml:space="preserve"><value>vault メニューの［vault の管理］から作成するか、バックアップを復元してください。</value></data>
+  <data name="SavedPrivateKeyMissing" xml:space="preserve"><value>プロファイルで指定した秘密鍵が vault にありません。</value></data>
+  <data name="SshCredentialMissing" xml:space="preserve"><value>保存済み認証情報が見つかりません。プロファイルの編集画面で選び直してください。</value></data>
+  <data name="NoEligiblePrivateKey" xml:space="preserve"><value>この SSH ユーザー名で選べる秘密鍵が vault にありません。</value></data>
+  <data name="TryAnotherSshMethod" xml:space="preserve"><value>別の認証方式を試す</value></data>
+  <data name="CancelSshConnection" xml:space="preserve"><value>接続をキャンセル</value></data>
   <data name="KnownCredentialReferences" xml:space="preserve"><value>参照している登録済みプロファイル</value></data>
   <data name="ReferenceScanScope" xml:space="preserve"><value>読み取れる登録済みプロファイルを確認しました。ほかのプロファイルファイルから参照されている可能性もあります。</value></data>
+  <data name="DuplicateCredentialName" xml:space="preserve"><value>この vault には同じ名前の認証情報がすでにあります。</value></data>
+  <data name="InvalidCredentialName" xml:space="preserve"><value>認証情報名を 1～256 Unicode 文字で入力してください。</value></data>
+  <data name="RenameCredentialWarning" xml:space="preserve"><value>{0} を {1} に改名しますか。古い名前を使うプロファイルやマクロからは、この認証情報を参照できなくなります。マクロやその他のプロファイルファイルは手動で更新してください。</value></data>
+  <data name="RenameCredentialProfileScope" xml:space="preserve"><value>以下の登録済みプロファイルは一括で更新できます。</value></data>
+  <data name="RenameAndUpdateProfiles" xml:space="preserve"><value>改名して登録済みプロファイルを更新</value></data>
+  <data name="RenameCredentialOnly" xml:space="preserve"><value>改名のみ</value></data>
+  <data name="NoKnownCredentialReferences" xml:space="preserve"><value>該当なし。</value></data>
+  <data name="CredentialRenameUpdatedProfiles" xml:space="preserve"><value>認証情報を改名しました。登録済みプロファイルを {0} 件更新しました。</value></data>
+  <data name="CredentialRenameProfileProblems" xml:space="preserve"><value>以下のプロファイルを更新できませんでした。</value></data>
+  <data name="CredentialRenameUnregistered" xml:space="preserve"><value>プロファイルの登録が解除されています。</value></data>
+  <data name="CredentialRenameProfileChanged" xml:space="preserve"><value>確認後にプロファイルファイルが変更されました。</value></data>
+  <data name="CredentialRenamePendingProfileEdits" xml:space="preserve"><value>プロファイルの編集画面に未保存の変更があるか、保存処理中です。</value></data>
+  <data name="CredentialRenameProfileReadTimedOut" xml:space="preserve"><value>プロファイルの読み込みがタイムアウトしました。</value></data>
   <data name="ReferenceScanUnavailable" xml:space="preserve"><value>登録済みプロファイル {0} 件を確認できませんでした。</value></data>
   <data name="RestoreVault" xml:space="preserve"><value>vault のバックアップを復元</value></data>
   <data name="RestoreVaultWarning" xml:space="preserve"><value>同じ vault のバックアップで現在の内容を置き換えますか。現在の暗号化ファイルは復旧用コピーとして保持します。続いてバックアップのマスターパスワードを入力してください。古いバックアップは、それぞれのパスワードで引き続き開くことができます。</value></data>
@@ -574,8 +601,6 @@ AI アプリは個別の確認なしでキーや複数行のコマンドを入�
   <data name="PastePreviousPage" xml:space="preserve"><value>前のページ</value></data>
   <data name="PasteNextPage" xml:space="preserve"><value>次のページ</value></data>
   <data name="PastePreviewPage" xml:space="preserve"><value>{0} / {1} ページ</value></data>
-  <data name="CreateVault" xml:space="preserve"><value>vault の作成・初期化</value></data>
-  <data name="VaultAlreadyExists" xml:space="preserve"><value>選択した vault はすでに存在し、空ではありません。</value></data>
   <data name="VaultRescueCopyExplanation" xml:space="preserve"><value>保持している認証済みの vault を別のファイルにコピーしますか？ 選択中のファイルは変更されません。</value></data>
   <data name="ProfileTrustReview" xml:space="preserve"><value>接続プロファイルの確認</value></data>
   <data name="ProfileConnectOnce" xml:space="preserve"><value>今回だけ接続</value></data>

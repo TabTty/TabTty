@@ -233,7 +233,15 @@ internal sealed partial class TerminalTab : UserControl
                 {
                     if (ReferenceEquals(stop, generation)) sshMessages.Add(message);
                 }), RequestSshChallengeAsync,
-                RequestSshPrivateKeyAsync, app.HostTrust.ApprovedFormats);
+                RequestSshPrivateKeyAsync, app.HostTrust.ApprovedFormats,
+                (request, token) => OnSshPromptAsync((application, owner) =>
+                    application.Vault.CheckSshCredentialsAsync(owner, request, token), token, serialize: false),
+                message => Dispatcher.BeginInvoke(() =>
+                {
+                    if (!ReferenceEquals(stop, generation) || stop.IsCancellationRequested) return;
+                    sshMessages.Add(message);
+                    if (statusKey == "Connecting") SetStatus("Connecting", message);
+                }));
             string fontFamily = app.TerminalFontFamily;
             double fontSize = app.TerminalFontSize;
             int retention = app.RetainedRows;
@@ -308,12 +316,26 @@ internal sealed partial class TerminalTab : UserControl
         {
             ready?.TrySetException(exception);
             if (stop.IsCancellationRequested) SetStatus("Disconnected");
-            else SetStatus("Failed", exception switch
+            else
             {
-                OperationCanceledException => Text("TimedOut"),
-                DllNotFoundException or EntryPointNotFoundException => Text("VaultCryptoUnavailable"),
-                _ => Macro is null ? exception.Message : Text("MacroErrorConnectionFailed"),
-            });
+                string? credentialError = exception switch
+                {
+                    SshCredentialFailureException => exception.Message,
+                    SshCredentialAccountException => Text("ReselectSshCredential"),
+                    CredentialLookupException { Code: MacroErrorCode.CredentialKindMismatch } => Text("VaultCredentialKindMismatch"),
+                    CredentialLookupException { Code: MacroErrorCode.CredentialUnavailable } => Text("SshCredentialMissing"),
+                    _ => null,
+                };
+                SetStatus("Failed", credentialError ?? (exception switch
+                {
+                    OperationCanceledException => Text("TimedOut"),
+                    DllNotFoundException or EntryPointNotFoundException => Text("VaultCryptoUnavailable"),
+                    _ => Macro is null ? exception.Message : Text("MacroErrorConnectionFailed"),
+                }));
+                if (credentialError is not null && (MacroWindow ?? Window.GetWindow(this)) is { IsVisible: true } owner)
+                    ((App)Application.Current).Modal(() => ThemedMessageBox.ShowVault(owner, credentialError,
+                        Text("Vault"), icon: MessageBoxImage.Error));
+            }
         }
         finally
         {
@@ -450,7 +472,7 @@ internal sealed partial class TerminalTab : UserControl
     private Task<VaultSecret?> RequestSshPasswordAsync(SshPasswordRequest request, CancellationToken token)
     {
         if (request.Attempt == 1 && request.SavedPassword is { } reference)
-            return OnSshPromptAsync((app, owner) => app.Vault.ReadSavedPasswordAsync(owner, reference, token),
+            return OnSshPromptAsync((app, owner) => app.Vault.ReadSavedPasswordAsync(owner, reference, token, request.Username),
                 token, serialize: false);
         return OnSshPromptAsync<VaultSecret?>((app, owner) =>
         {

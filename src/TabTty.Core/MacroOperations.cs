@@ -51,12 +51,8 @@ internal sealed partial class MacroRun
                     return true;
                 }).ConfigureAwait(false);
                 return VoidValue;
-            case "Credential":
-                if (!Guid.TryParseExact(S(0), "D", out var vault) || !Guid.TryParseExact(S(1), "D", out var entry))
-                    throw new MacroError(MacroErrorCode.InvalidArgument);
-                return new CredentialReference(vault, entry, (MacroCredentialKind)args[2] == MacroCredentialKind.Password ? "password" : "privateKey");
             case "WritePassword": case "WritePasswordLine":
-                await PasswordAsync(args.Length == 0 ? null : (CredentialReference)args[0], name == "WritePasswordLine").ConfigureAwait(false);
+                await PasswordAsync(args.Length == 0 ? null : S(0), name == "WritePasswordLine").ConfigureAwait(false);
                 return VoidValue;
             case "Literal": case "Regex": return new MacroPattern(S(0), name == "Regex", args.Length > 1 && (bool)args[1]);
             case "WaitLine": case "WaitPrompt":
@@ -144,11 +140,13 @@ internal sealed partial class MacroRun
         }
     }
 
-    private async Task PasswordAsync(CredentialReference? explicitReference, bool line)
+    private async Task PasswordAsync(string? explicitName, bool line)
     {
         TerminalSession active = RequireSession();
-        CredentialReference reference = explicitReference ?? profilePassword ?? throw new MacroError(MacroErrorCode.MissingProfilePassword);
-        if (reference.Kind != "password") throw new MacroError(MacroErrorCode.CredentialKindMismatch);
+        if (explicitName is not null && !VaultPayload.IsValidName(explicitName))
+            throw new MacroError(MacroErrorCode.InvalidArgument);
+        CredentialReference reference = explicitName is not null ? new(explicitName, "password") :
+            profilePassword ?? throw new MacroError(MacroErrorCode.MissingProfilePassword);
         if (transport is "telnet" or "serial")
         { lock (gate) plaintextNotice = true; Notify(); }
         await HostOperationAsync(line ? "WritePasswordLine" : "WritePassword", async () =>

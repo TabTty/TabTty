@@ -35,7 +35,7 @@ internal static class MacroContracts
     {
         using var directory = new TemporaryDirectory();
         string profilePath = Path.Combine(directory.Path, "ssh.ttty");
-        var configured = new CredentialReference(Guid.NewGuid(), Guid.NewGuid(), "password");
+        var configured = new CredentialReference("profile password", "password");
         await ConnectionProfile.CreateSsh("SSH", "127.0.0.1", "tabtty-interop", port, configured, recordRaw: true)
             .SaveNewAsync(profilePath);
         var interaction = new SshInteraction((_, _) => Task.FromResult(true),
@@ -232,12 +232,13 @@ internal static class MacroContracts
         var host = new Host();
         using var run = new MacroRun(Parse("""
             Connect("profile.ttty");
-            var ref1 = Credential("11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222", CredentialKind.Password);
+            var ref1 = "Team \u65E5\uD83D\uDD11 \"operations\"";
             WritePasswordLine(ref1);
             WritePassword(ref1);
             """), [], host);
         run.Start();
         await run.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+        Check(host.LastCredential == new CredentialReference("Team 日🔑 \"operations\"", "password"), "The exact macro name was lost.");
         Check(run.Status.PlaintextNotice, "Explicit Telnet password produced no nonblocking notice.");
         Check(Encoding.UTF8.GetString(host.Wire.Bytes.ToArray()) == "secret1\r\nsecret2", "The password was cached or the Enter bytes differed.");
         Check(!(await host.Session!.GetOutputAsync()).Any(line => line.Contains("secret")), "Password appeared as local echo.");

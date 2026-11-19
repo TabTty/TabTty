@@ -125,12 +125,58 @@ Explain this in the SSH profile editor and password picker. Explorer's Edit
 action opens the profile for inspection. The connection-time trust decision
 is specified for a future implementation. [Profile trust](profile-trust.md)
 
-When the user chooses a key during SSH authentication, show the verified host
-and port and the requested SSH username in the picker before offering the key.
-Identify vault choices by name, optional username and stable entry ID. For keys
-also show the public-key type and SHA-256 fingerprint. Render control and
-formatting characters visibly in names and usernames so that the user can
-distinguish entries with similar labels. [RFC 4252 §7](https://www.rfc-editor.org/rfc/rfc4252.html#section-7)
+Each saved SSH credential pairs its required username with one password or
+imported private key. All vault entries referenced by enabled authentication
+methods must have exactly the same username. An explicit selection supplies the
+profile's expected SSH account, which is read-only while an enabled method uses
+a vault reference. With no such reference the user enters the username in the
+profile. References for disabled methods do not determine the account. Compare
+usernames exactly, without trimming, case folding, or Unicode normalization.
+[Profile fields](persistence-and-windows.md#profile-v1-fields)
+
+After host key verification, check all enabled saved references before the
+first SSH user authentication request, including `none`. For each available
+credential, validate the exact name in the selected vault, the expected kind,
+and the account in the captured profile. A mismatched kind or username ends
+the attempt with an explanation and guidance to correct the
+selection. Keep the captured account fixed throughout the attempt, including
+when a credential is unavailable and during partial success and interactive
+authentication. At handoff, recheck the account and credential against the
+same vault revision as the secret under the existing handoff rules.
+[RFC 4252 §5](https://www.rfc-editor.org/rfc/rfc4252.html#section-5)
+
+If the selected vault is needed and its file is confirmed missing or zero
+bytes, mark all methods that require it unavailable for the attempt. Show the
+configured path and observed state. For a saved reference, explain how to
+choose the intended vault or restore its backup. For connection-time key
+selection, direct the user to **Manage vault** to import the intended key. If the
+selected valid vault lacks the named saved key,
+report the missing key and mark public-key authentication unavailable for the
+attempt. Leave the configured path, file, and references as observed.
+
+After reporting either condition, continue with the next available method
+allowed by the profile and currently offered by the server. For example, a
+password method already configured for manual entry can continue while a
+saved password that requires the same missing vault remains unavailable. If
+no method can continue, show an error dialog and end the attempt. Existing
+handling for mismatch, cancellation, and other vault failures applies.
+
+When the profile has no saved key reference and the user chooses a key during
+SSH authentication, show the verified host, port, and fixed SSH username. Offer
+only vault keys with that username, and recheck the match before offering the
+public key to the server. If the vault is valid and no matching key is available,
+report that no eligible private key is saved for the account. Treat public-key
+authentication as unavailable for that stage and continue with the next method
+allowed by the profile and currently offered by the server. End the attempt if
+there is no such method. When keys are available, offer **Try another
+authentication method** in the picker only when another eligible method can
+continue the current stage. That action skips public-key authentication for the
+stage. **Cancel connection** ends the attempt. Identify vault choices by unique
+name and username. For keys also show the public-key type and SHA-256
+fingerprint. Render control and formatting characters visibly in names and
+usernames so that the user can distinguish entries with similar labels.
+[RFC 4252 §5.1](https://www.rfc-editor.org/rfc/rfc4252.html#section-5.1),
+[RFC 4252 §7](https://www.rfc-editor.org/rfc/rfc4252.html#section-7)
 
 The first-use and changed-host-key dialogs ask the user to compare the fingerprint
 with one obtained independently from the administrator before accepting. During
@@ -141,8 +187,15 @@ TabTty vault master password for local vault operations. The submit button
 explicitly sends the answers to the server. [RFC 4256, section 3.3](https://www.rfc-editor.org/rfc/rfc4256.html#section-3.3)
 
 Enter ssh-userauth service only after encryption and host verification. Dispatch
-method-specific message 60 against the outstanding method/request. Follow the
-saved method allowlist/order, one selected key, and Password-only default.
+method-specific message 60 against the outstanding method/request. At each
+authentication stage, try the configured password and public-key methods in
+profile order when the server offers them and existing attempt limits allow.
+Use one selected key. Keyboard-interactive is enabled by default and has the
+lowest priority among methods available at that stage. Use it immediately if it
+is the sole eligible method offered, including at the first stage. If disabled
+in advanced settings, exclude it at every stage.
+[RFC 4252 §4](https://www.rfc-editor.org/rfc/rfc4252.html#section-4)
+
 Use server-sig-algs when present; absent that extension, RSA probes try SHA-512
 then SHA-256 once each for the selected key, never SHA-1. PK_OK is not success.
 Do not retry identical key/signature probes without a changed authentication
@@ -536,6 +589,28 @@ maximum size, initial/simultaneous rekey, host replacement, MFA rounds, stderr
 interleaving/EOF, low-window behavior, Telnet option-loop/CR/IAC fragment cases,
 and serial busy/unplug/handshake/overrun. Independent SSH/security review is a
 release gate. No such testing or review is claimed by this document.
+
+Verify that selecting a vault entry sets the read-only account. Matching
+password and key entries must use that account in every SSH authentication
+request. Exercise a mixed-account profile, a shared entry whose account was
+edited, and an externally edited profile whose account differs from the vault.
+In each case the mismatch must stop the attempt before the first user
+authentication request. Verify manual account entry without enabled vault
+references and matching-account filtering in the connection-time key picker.
+Exercise missing and zero-byte targets for both a saved reference and
+connection-time key selection, and an absent saved key entry in the intended
+vault. Check the visible reason, continuation with an allowed server-offered
+method using the same account, and failure when none remains. Verify that a
+saved password in the same missing vault cannot be used and that a kind or
+username mismatch stops authentication even when another method is
+available. Exercise a valid vault with no eligible key, with and without an
+alternative method offered by the server. Verify that
+**Try another authentication method** advances the current attempt, **Cancel
+connection** ends it, and SSH leaves vault initialization to user management.
+Verify that a new profile starts with only the password row and can add the key
+row. Check configured priority when both are offered, keyboard-interactive at
+the first stage when it is the only offered eligible method, keyboard-interactive
+after a partial success, and its exclusion when disabled.
 
 References: [OpenSSH PROTOCOL](https://github.com/openssh/openssh-portable/blob/master/PROTOCOL),
 [strict KEX draft](https://datatracker.ietf.org/doc/html/draft-ietf-sshm-strict-kex-02),

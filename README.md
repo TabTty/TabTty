@@ -115,9 +115,10 @@ WaitPrompt(Literal("$ "));
 Use the macro controls to pause, resume, or stop. A stopped macro leaves a
 healthy connection available for manual input. After a recording failure,
 retry recording and then explicitly resume the macro. If receive history was
-lost, the tab offers a choice to continue or stop. Password operations resolve
-vault references at the time of use. To obtain one, select an entry and use
-**Copy macro reference** in vault management. See the
+lost, the tab offers a choice to continue or stop. To send a saved password,
+pass its exact vault entry name to `WritePassword` or `WritePasswordLine`.
+Select a password entry and use **Copy macro reference** in vault management
+to copy the quoted name. See the
 [macro language reference](drafts/macro-language.md).
 
 ## Broadcast input
@@ -175,17 +176,27 @@ inner splits.
 
 ## Credentials and host keys
 
-The shared `.tttykey` vault holds passwords and imported SSH private keys.
-Set its path in Settings, then choose Credential vault → Unlock vault or
-Manage vault from the Tools menu. If the file is missing or empty, set a
-master password of 14–1024 Unicode scalars to initialize it. Unlocking applies
+The shared `.tttykey` vault pairs each SSH username with a password or an
+imported private key. Set its path in Settings, then choose Credential vault →
+Unlock vault or Manage vault from the Tools menu. If the file is missing or
+zero bytes, these commands open master password setup and show the management
+tab after creation. Set a password of 14–1024 Unicode scalars and choose Save
+to create or initialize the vault. Unlocking applies
 across all profiles and windows until TabTty exits or you change or archive
 the selected vault. Copy the vault
-with profile files when moving to another PC. Profiles contain credential IDs.
+with profile files when moving to another PC. Profiles refer to vault entries
+by their exact, case-sensitive names.
 Use encrypted backups before changing credentials. A backup retains the master
 password used when that backup was made. Open **Manage vault** to add or import
 credentials, select an entry to edit or delete it, and
 use the Vault file section for backups, restore, and master-password changes.
+When renaming an entry, you can also update the registered profiles that use it.
+
+The profile's saved-credential picker also opens **Manage vault**. Reopen the
+picker after adding an entry. A selected vault credential provides the SSH
+username and makes the username field read-only while that method is enabled.
+During a connection, TabTty reports a missing or zero-byte vault or a missing
+key and continues only if a permitted authentication method is still available.
 
 Private-key import supports the agreed OpenSSH, PKCS#8, RSA and EC envelopes.
 Encrypted source-key passphrases use UTF-8 and are discarded after import.

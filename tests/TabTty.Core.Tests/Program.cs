@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using TabTty.Core;
 
@@ -23,6 +24,20 @@ try
     {
         await IndependentOpenSsh.RunAsync(int.Parse(port), username, userKey, hostFingerprint, sharedDirectory);
         Console.WriteLine("PASS IndependentOpenSshTerminalAndSftp");
+        return 0;
+    }
+    if (args is ["--vault-ssh-auth"] or ["--vault-ssh-auth", _])
+    {
+        await VaultEditsUseNamesAndRestoreAnOlderPasswordGeneration();
+        await VaultImportsAnIndependentEd25519Key();
+        Console.WriteLine("PASS VaultUsernameBinding");
+        if (args.Length == 2)
+        {
+            int authPort = int.Parse(args[1]);
+            await SshVaultFallbackUsesAllowedMethodsAsync(authPort);
+            await SshKeyboardInteractiveUsesEachChallenge(authPort);
+            Console.WriteLine("PASS SshFallbackAndKeyboardInteractive");
+        }
         return 0;
     }
     NativeTerminalContracts.Run();
@@ -167,8 +182,8 @@ try
         Console.WriteLine("PASS OpenSslCiphersMatchIndependentVectors");
         await VaultCopyUnlocksAndRejectsTampering();
         Console.WriteLine("PASS VaultCopyUnlocksAndRejectsTampering");
-        await VaultEditsKeepIdsAndRestoreAnOlderPasswordGeneration();
-        Console.WriteLine("PASS VaultEditsKeepIdsAndRestoreAnOlderPasswordGeneration");
+        await VaultEditsUseNamesAndRestoreAnOlderPasswordGeneration();
+        Console.WriteLine("PASS VaultEditsUseNamesAndRestoreAnOlderPasswordGeneration");
         await VaultRecoveryVerifiesBackupBeforeReplacingDamage();
         Console.WriteLine("PASS VaultRecoveryVerifiesBackupBeforeReplacingDamage");
         await VaultInitializesAnEmptyFileAndArchivesItsEncryptedContents();
@@ -196,6 +211,8 @@ try
         Console.WriteLine("PASS SshKeyboardInteractiveUsesEachChallenge");
         await SshPublicKeySignatureIsVerifiedByThePeer(sshPort);
         Console.WriteLine("PASS SshPublicKeySignatureIsVerifiedByThePeer");
+        await SshVaultFallbackUsesAllowedMethodsAsync(sshPort);
+        Console.WriteLine("PASS SshVaultFallbackUsesAllowedMethods");
         if (Environment.GetEnvironmentVariable("TABTTY_INTEROP_SFTP") is not null)
         {
             await SftpUsesTheSameSshConnectionWithoutRecordingFileData(sshPort);
@@ -391,7 +408,7 @@ static async Task SshKeyboardInteractiveUsesEachChallenge(int port)
     using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
     string path = Path.Combine(folder.Path, "interactive.ttty");
     await ConnectionProfile.CreateSsh("SSH", "127.0.0.1", "tabtty-interactive", port,
-        methods: ["keyboardInteractive"]).SaveNewAsync(path);
+        methods: ["password"]).SaveNewAsync(path);
     int rounds = 0;
     var interaction = new SshInteraction((_, _) => Task.FromResult(true),
         (_, _) => throw new InvalidOperationException("Interactive authentication requested a stored password."),
@@ -431,27 +448,83 @@ static async Task SshPublicKeySignatureIsVerifiedByThePeer(int port)
     if (keys != 1) throw new InvalidOperationException("The SSH client retrieved a key more than once.");
 }
 
-static async Task VaultEditsKeepIdsAndRestoreAnOlderPasswordGeneration()
+static async Task VaultEditsUseNamesAndRestoreAnOlderPasswordGeneration()
 {
     using var folder = new TemporaryDirectory();
     string path = Path.Combine(folder.Path, "edit-vault.tttykey");
     string backup = Path.Combine(folder.Path, "backup.tttykey");
     const string oldMaster = "Original vault master passphrase";
     const string newMaster = "Test master 14";
-    Guid first;
-    Guid third;
+    const string renamed = "Renamed";
+    const string third = "Third";
+    Guid vaultId = Guid.NewGuid();
+    byte[] duplicatePayload = JsonSerializer.SerializeToUtf8Bytes(new
+    {
+        schemaVersion = 1, vaultId, entries = Enumerable.Repeat(new
+        {
+            kind = "password", name = renamed, username = "operator", passwordUtf8 = "b25l",
+        }, 2),
+    });
+    try
+    {
+        _ = VaultPayload.Read(duplicatePayload, vaultId, null, out _, out _);
+        throw new InvalidOperationException("An authenticated payload could contain multiple entries with the same name.");
+    }
+    catch (InvalidDataException) { }
     using (var vault = await CredentialVault.CreateAsync(path, oldMaster.AsMemory()))
     {
-        first = await vault.AddPasswordAsync("First", null, "one"u8.ToArray());
-        Guid second = await vault.AddPasswordAsync("Second", null, "two"u8.ToArray());
-        third = await vault.AddPasswordAsync("Third", null, "three"u8.ToArray());
+        try
+        {
+            await vault.AddPasswordAsync("Invalid", " ", "unused"u8.ToArray());
+            throw new InvalidOperationException("A blank vault username was accepted.");
+        }
+        catch (ArgumentException) { }
+        string first = await vault.AddPasswordAsync("First", "operator", "one"u8.ToArray());
+        string second = await vault.AddPasswordAsync("Second", "operator", "two"u8.ToArray());
+        await vault.AddPasswordAsync(third, "operator", "three"u8.ToArray());
+        try
+        {
+            await vault.UpdateEntryAsync(first, third, "operator");
+            throw new InvalidOperationException("A rename accepted a duplicate name.");
+        }
+        catch (DuplicateCredentialNameException) { }
         await vault.DeleteEntryAsync(second);
-        await vault.UpdateEntryAsync(first, "Renamed", "operator", "new-one"u8.ToArray());
+        long preRenameRevision = vault.Revision;
+        await vault.UpdateEntryAsync(first, renamed, "operator", "new-one"u8.ToArray());
+        try
+        {
+            using var missing = await vault.GetPasswordAsync(first);
+            throw new InvalidOperationException("The old name still resolved after rename.");
+        }
+        catch (CredentialLookupException error) when (error.Code == MacroErrorCode.CredentialUnavailable) { }
+        await vault.AddPasswordAsync(first, "operator", "new item at old name"u8.ToArray());
+        using (VaultSecret replacement = await vault.GetPasswordAsync(first))
+            ExpectBytes(replacement.Bytes.ToArray(), "new item at old name"u8.ToArray());
+        try
+        {
+            await vault.DeleteEntryAsync(first, preRenameRevision);
+            throw new InvalidOperationException("A stale operation affected a new item with the same name.");
+        }
+        catch (InvalidOperationException error) when (error.Message.Contains("revision", StringComparison.Ordinal)) { }
+        await vault.DeleteEntryAsync(first);
+        await vault.AddPasswordAsync("renamed", "operator", "lowercase"u8.ToArray());
+        using (VaultSecret lower = await vault.GetPasswordAsync("renamed"))
+            ExpectBytes(lower.Bytes.ToArray(), "lowercase"u8.ToArray());
+        await vault.DeleteEntryAsync("renamed");
         var entries = await vault.ListEntriesAsync();
-        if (!entries.Select(entry => entry.Id).SequenceEqual(new[] { first, third }) || entries[0].Name != "Renamed")
-            throw new InvalidOperationException("Vault edits changed identity or entry order.");
-        using (VaultSecret secret = await vault.GetPasswordAsync(vault.Id, first))
+        if (!entries.Select(entry => entry.Name).SequenceEqual(new[] { renamed, third }))
+            throw new InvalidOperationException("Vault edits did not preserve the expected names and entry order.");
+        using (VaultSecret secret = await vault.GetPasswordAsync(renamed))
             ExpectBytes(secret.Bytes.ToArray(), "new-one"u8.ToArray());
+        var reference = new CredentialReference(renamed, "password");
+        using (VaultSecret secret = await vault.GetSshSecretAsync(reference, "operator", CancellationToken.None))
+            ExpectBytes(secret.Bytes.ToArray(), "new-one"u8.ToArray());
+        try
+        {
+            using var secret = await vault.GetSshSecretAsync(reference, "Operator", CancellationToken.None);
+            throw new InvalidOperationException("A credential was handed off for a different account.");
+        }
+        catch (SshCredentialAccountException) { }
         await vault.BackupAsync(backup);
         await vault.ChangeMasterPasswordAsync(newMaster.AsMemory());
     }
@@ -463,15 +536,71 @@ static async Task VaultEditsKeepIdsAndRestoreAnOlderPasswordGeneration()
     catch (CryptographicException) { }
     using (var vault = await CredentialVault.UnlockAsync(path, newMaster.AsMemory()))
     {
-        await vault.DeleteEntryAsync(first);
+        await vault.DeleteEntryAsync(renamed);
         await vault.RestoreAsync(backup, oldMaster.AsMemory());
-        using VaultSecret secret = await vault.GetPasswordAsync(vault.Id, first);
+        using VaultSecret secret = await vault.GetPasswordAsync(renamed);
         ExpectBytes(secret.Bytes.ToArray(), "new-one"u8.ToArray());
     }
     using var restored = await CredentialVault.UnlockAsync(path, oldMaster.AsMemory());
-    if (!(await restored.ListEntriesAsync()).Select(entry => entry.Id).SequenceEqual(new[] { first, third }) ||
+    if (!(await restored.ListEntriesAsync()).Select(entry => entry.Name).SequenceEqual(new[] { renamed, third }) ||
         Directory.GetFiles(folder.Path, "*.recovery-*.tttykey").Length != 1)
         throw new InvalidOperationException("Restore did not preserve the previous encrypted generation.");
+}
+
+static async Task SshVaultFallbackUsesAllowedMethodsAsync(int port)
+{
+    using var folder = new TemporaryDirectory();
+    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+    var token = timeout.Token;
+    string path = Path.Combine(folder.Path, "fallback.ttty");
+    const string account = "tabtty-auth-fallback";
+    var profile = ConnectionProfile.CreateSsh("Fallback", "127.0.0.1", account, port,
+        methods: ["publicKey", "password"], allowKeyboardInteractive: false);
+    await profile.SaveNewAsync(path, token);
+    int passwords = 0, pickers = 0, notices = 0;
+    var interaction = new SshInteraction((_, _) => Task.FromResult(true), (request, _) =>
+    {
+        if (request.Username != account || request.SavedPassword is not null || request.Attempt != 1)
+            throw new InvalidOperationException("SSH fallback changed the account or the configured password source.");
+        passwords++;
+        return Task.FromResult<VaultSecret?>(new VaultSecret("local-test-password"u8.ToArray()));
+    }, RequestPrivateKey: (request, _) =>
+    {
+        if (!request.CanTryAnotherMethod) throw new InvalidOperationException("The offered password was not available as an alternative.");
+        pickers++;
+        throw new SshMethodUnavailableException("No eligible private key");
+    }, CredentialNotice: _ => notices++);
+
+    await using (var session = await TerminalSession.ConnectAsync(path, token, interaction)) session.Disconnect();
+    if (passwords != 1 || pickers != 1 || notices != 1)
+        throw new InvalidOperationException("A locally unavailable key did not advance the same SSH attempt.");
+
+    string savedPath = Path.Combine(folder.Path, "fallback-saved.ttty");
+    var reference = new CredentialReference("configured test key", "privateKey");
+    await ConnectionProfile.CreateSsh("Fallback saved", "127.0.0.1", account, port,
+        methods: ["publicKey", "password"], privateKey: reference).SaveNewAsync(savedPath, token);
+    var missing = interaction with
+    {
+        CheckSavedCredentials = (request, _) =>
+        {
+            if (request.PrivateKey != reference || request.Username != account)
+                throw new InvalidOperationException("SSH did not preflight the profile's exact key and account.");
+            return Task.FromResult(new SshCredentialAvailability(new Dictionary<string, string> { ["publicKey"] = "Vault missing" }));
+        }
+    };
+    await using (var session = await TerminalSession.ConnectAsync(savedPath, token, missing)) session.Disconnect();
+    if (passwords != 2 || pickers != 1 || notices != 2)
+        throw new InvalidOperationException("A saved key with an unavailable vault was still requested.");
+
+    try
+    {
+        await using var session = await TerminalSession.ConnectAsync(savedPath, token, missing with
+        { CheckSavedCredentials = (_, _) => throw new SshCredentialAccountException() });
+        throw new InvalidOperationException("An SSH account mismatch was accepted.");
+    }
+    catch (SshCredentialAccountException) { }
+    if (passwords != 2 || pickers != 1)
+        throw new InvalidOperationException("An SSH account mismatch allowed a different method to try.");
 }
 
 static async Task VaultRecoveryVerifiesBackupBeforeReplacingDamage()
@@ -481,11 +610,11 @@ static async Task VaultRecoveryVerifiesBackupBeforeReplacingDamage()
     string backup = Path.Combine(folder.Path, "backup.tttykey");
     const string master = "Recovery test master passphrase";
     Guid id;
-    Guid entry;
+    string entry;
     using (var original = await CredentialVault.CreateAsync(path, master.AsMemory()))
     {
         id = original.Id;
-        entry = await original.AddPasswordAsync("Test", null, "value"u8.ToArray());
+        entry = await original.AddPasswordAsync("Test", "operator", "value"u8.ToArray());
         await original.BackupAsync(backup);
     }
     byte[] newer = await File.ReadAllBytesAsync(path);
@@ -509,7 +638,8 @@ static async Task VaultRecoveryVerifiesBackupBeforeReplacingDamage()
     ExpectBytes(await File.ReadAllBytesAsync(path), damaged);
     using (var recovered = await CredentialVault.RecoverAsync(path, backup, master.AsMemory()))
     {
-        using VaultSecret secret = await recovered.GetPasswordAsync(id, entry);
+        if (recovered.Id != id) throw new InvalidOperationException("Recovery changed the vault identity.");
+        using VaultSecret secret = await recovered.GetPasswordAsync(entry);
         ExpectBytes(secret.Bytes.ToArray(), "value"u8.ToArray());
     }
     ExpectBytes(await File.ReadAllBytesAsync(path), await File.ReadAllBytesAsync(backup));
@@ -529,12 +659,13 @@ static async Task VaultInitializesAnEmptyFileAndArchivesItsEncryptedContents()
     }
     catch (ArgumentException) { }
     await File.WriteAllBytesAsync(path, []);
-    Guid vaultId, entryId;
+    Guid vaultId;
+    string entryName;
     VaultFileEvidence originalEmpty = CredentialVault.InspectFile(path)!;
     using (var initialized = await CredentialVault.InitializeEmptyAsync(path, master.AsMemory(), originalEmpty))
     {
         vaultId = initialized.Id;
-        entryId = await initialized.AddPasswordAsync("Test", null, "test-secret"u8.ToArray());
+        entryName = await initialized.AddPasswordAsync("Test", "operator", "test-secret"u8.ToArray());
     }
     byte[] encrypted = await File.ReadAllBytesAsync(path);
     try
@@ -551,7 +682,7 @@ static async Task VaultInitializesAnEmptyFileAndArchivesItsEncryptedContents()
     ExpectBytes(await File.ReadAllBytesAsync(archived), encrypted);
     using (var preserved = await CredentialVault.UnlockAsync(archived, "\u00e9abcdefghijklm".AsMemory()))
     {
-        using VaultSecret secret = await preserved.GetPasswordAsync(vaultId, entryId);
+        using VaultSecret secret = await preserved.GetPasswordAsync(entryName);
         ExpectBytes(secret.Bytes.ToArray(), "test-secret"u8.ToArray());
     }
     using var replacement = await CredentialVault.CreateAsync(path, master.AsMemory());
@@ -566,17 +697,17 @@ static async Task VaultImportsAnEncryptedOpenSshKey(string fixture)
     using var vault = await CredentialVault.CreateAsync(path, "OpenSSH key test master password".AsMemory());
     try
     {
-        await vault.ImportPrivateKeyAsync("OpenSSH fixture", fixture);
+        await vault.ImportPrivateKeyAsync("OpenSSH fixture", "operator", fixture);
         throw new InvalidOperationException("Encrypted OpenSSH import did not request its passphrase.");
     }
     catch (PrivateKeyPassphraseRequiredException) { }
-    Guid id = await vault.ImportPrivateKeyAsync("OpenSSH fixture", fixture, passphrase: "import-test-passphrase"u8.ToArray());
+    string entryName = await vault.ImportPrivateKeyAsync("OpenSSH fixture", "operator", fixture, passphrase: "import-test-passphrase"u8.ToArray());
     var entry = (await vault.ListEntriesAsync()).Single();
     string[] publicFile = (await File.ReadAllTextAsync(fixture + ".pub")).Split(' ', StringSplitOptions.RemoveEmptyEntries);
     string expected = "SHA256:" + Convert.ToBase64String(SHA256.HashData(Convert.FromBase64String(publicFile[1]))).TrimEnd('=');
-    if (entry.Id != id || entry.Fingerprint != expected)
+    if (entry.Name != entryName || entry.Fingerprint != expected)
         throw new InvalidOperationException("OpenSSH import changed the independently generated key.");
-    using VaultSecret material = await vault.GetPrivateKeyAsync(vault.Id, id);
+    using VaultSecret material = await vault.GetPrivateKeyAsync(entryName);
     if (material.Bytes.IsEmpty) throw new InvalidOperationException("OpenSSH import did not retain the key.");
 }
 
@@ -590,21 +721,27 @@ static async Task VaultImportsAnEncryptedIndependentPrivateKey(string fixture)
     using var vault = await CredentialVault.CreateAsync(path, "Encrypted key test master password".AsMemory());
     try
     {
-        await vault.ImportPrivateKeyAsync("Fixture", source);
+        await vault.ImportPrivateKeyAsync("Fixture", "operator", source);
         throw new InvalidOperationException("Encrypted-key import did not request its passphrase.");
     }
     catch (PrivateKeyPassphraseRequiredException) { }
     try
     {
-        await vault.ImportPrivateKeyAsync("Fixture", source, passphrase: "wrong-passphrase"u8.ToArray());
+        await vault.ImportPrivateKeyAsync("Fixture", "operator", source, passphrase: "wrong-passphrase"u8.ToArray());
         throw new InvalidOperationException("Encrypted-key import accepted a wrong passphrase.");
     }
     catch (CryptographicException) { }
     if ((await vault.ListEntriesAsync()).Count != 0)
         throw new InvalidOperationException("A failed import changed the vault.");
-    Guid entry = await vault.ImportPrivateKeyAsync("Fixture", source, passphrase: "import-test-passphrase"u8.ToArray());
+    string entry = await vault.ImportPrivateKeyAsync("Fixture", "operator", source, passphrase: "import-test-passphrase"u8.ToArray());
     File.Delete(source);
-    using VaultSecret material = await vault.GetPrivateKeyAsync(vault.Id, entry);
+    try
+    {
+        await vault.AddPasswordAsync(entry, "operator", "duplicate name"u8.ToArray());
+        throw new InvalidOperationException("A password reused a private-key name.");
+    }
+    catch (DuplicateCredentialNameException) { }
+    using VaultSecret material = await vault.GetPrivateKeyAsync(entry);
     var imported = (await vault.ListEntriesAsync()).Single();
     string expected = "SHA256:" + Convert.ToBase64String(
         SHA256.HashData(await File.ReadAllBytesAsync(fixture + ".pubblob"))).TrimEnd('=');
@@ -622,26 +759,26 @@ static async Task VaultImportsAnIndependentEd25519Key()
         "302E020100300506032B6570042204209D61B19DEFFD5A60BA844AF492EC2CC44449C5697B326919703BAC031CAE7F60");
     await File.WriteAllBytesAsync(source, der);
     const string master = "Portable key test passphrase";
-    Guid entry;
+    string entry;
     using (var vault = await CredentialVault.CreateAsync(path, master.AsMemory()))
     {
         using var acquired = CredentialVault.ReadPrivateKeySource(source);
         long reviewedRevision = vault.Revision;
         await File.WriteAllBytesAsync(source, "incompatible external replacement"u8.ToArray());
-        Guid other = await vault.AddPasswordAsync("Other entry", null, "test password"u8.ToArray());
+        string other = await vault.AddPasswordAsync("Other entry", "operator", "test password"u8.ToArray());
         try
         {
-            await vault.ImportPrivateKeySourceAsync("Stale key", acquired, expectedRevision: reviewedRevision);
+            await vault.ImportPrivateKeySourceAsync("Stale key", "operator", acquired, expectedRevision: reviewedRevision);
             throw new InvalidOperationException("Import accepted an obsolete vault revision.");
         }
         catch (InvalidOperationException error) when (error.Message == "The reviewed vault revision changed before the operation.") { }
-        entry = await vault.ImportPrivateKeySourceAsync("Fixture key", acquired, expectedRevision: vault.Revision);
+        entry = await vault.ImportPrivateKeySourceAsync("Fixture key", "operator", acquired, expectedRevision: vault.Revision);
         if (!(await File.ReadAllBytesAsync(source)).AsSpan().SequenceEqual("incompatible external replacement"u8))
             throw new InvalidOperationException("Import mutated the external source file.");
         await vault.DeleteEntryAsync(other);
         try
         {
-            using var deleted = await vault.GetPasswordAsync(vault.Id, other);
+            using var deleted = await vault.GetPasswordAsync(other);
             throw new InvalidOperationException("A deleted reference still resolved after import.");
         }
         catch (CredentialLookupException) { }
@@ -649,11 +786,11 @@ static async Task VaultImportsAnIndependentEd25519Key()
     }
     using var reopened = await CredentialVault.UnlockAsync(path, master.AsMemory());
     var saved = (await reopened.ListEntriesAsync()).Single();
-    if (saved.Id != entry || saved.Kind != "privateKey" || saved.PublicType != "ssh-ed25519" ||
+    if (saved.Name != entry || saved.Kind != "privateKey" || saved.PublicType != "ssh-ed25519" ||
         saved.Fingerprint != "SHA256:" + Convert.ToBase64String(SHA256.HashData(Convert.FromHexString(
             "0000000B7373682D6564323535313900000020D75A980182B10AB7D54BFED3C964073A0EE172F3DAA62325AF021A68F707511A"))).TrimEnd('='))
         throw new InvalidOperationException("Imported key metadata does not match the independent public-key vector.");
-    using VaultSecret key = await reopened.GetPrivateKeyAsync(reopened.Id, entry);
+    using VaultSecret key = await reopened.GetPrivateKeyAsync(entry);
     ExpectBytes(key.Bytes.ToArray(), der);
 
     using (var file = new FileStream(source, FileMode.CreateNew)) file.SetLength(1024 * 1024);
@@ -681,7 +818,7 @@ static async Task VaultCopyUnlocksAndRejectsTampering()
     string path = Path.Combine(folder.Path, "vault.tttykey");
     string copy = Path.Combine(folder.Path, "portable.tttykey");
     const string master = "A portable vault passphrase";
-    Guid entry;
+    string entry;
     using (var vault = await CredentialVault.CreateAsync(path, master.AsMemory()))
     {
         entry = await vault.AddPasswordAsync("Test credential", "test-user", "sécret"u8.ToArray());
@@ -689,7 +826,7 @@ static async Task VaultCopyUnlocksAndRejectsTampering()
     }
     File.Delete(path);
     using (var vault = await CredentialVault.UnlockAsync(copy, master.AsMemory()))
-    using (var secret = await vault.GetPasswordAsync(vault.Id, entry))
+    using (var secret = await vault.GetPasswordAsync(entry))
         ExpectBytes(secret.Bytes.ToArray(), "sécret"u8.ToArray());
     byte[] damaged = await File.ReadAllBytesAsync(copy);
     damaged[^1] ^= 1;
@@ -990,7 +1127,7 @@ static async Task SavedSshProfileKeepsTheCredentialReference()
 {
     using var folder = new TemporaryDirectory();
     string path = Path.Combine(folder.Path, "ssh.ttty");
-    var reference = new CredentialReference(Guid.NewGuid(), Guid.NewGuid(), "password");
+    var reference = new CredentialReference("運用 Password", "password");
     await ConnectionProfile.CreateSsh("SSH console", "Example.COM", "operator", password: reference,
         receiveEncoding: "cp932").SaveNewAsync(path);
     ConnectionProfile saved = await ConnectionProfile.LoadAsync(path);

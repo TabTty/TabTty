@@ -158,8 +158,12 @@ internal sealed partial class ProfileCatalog
         if (profile.Type == "ssh")
         {
             lines.Add(PermissionDisplay.Literal(profile.SshUsername));
-            lines.Add(string.Join(", ", profile.SshMethods.Select(PermissionDisplay.Literal)));
-            foreach (var reference in new[] { profile.SshPassword, profile.SshPrivateKey })
+            var methods = profile.SshMethods;
+            var names = methods.Select(method => Text(method == "publicKey" ? "PublicKey" : "VaultPassword"));
+            if (profile.SshAllowsKeyboardInteractive) names = names.Append(Text("KeyboardInteractive"));
+            lines.Add(string.Join(", ", names));
+            foreach (var reference in new[] { methods.Contains("password") ? profile.SshPassword : null,
+                methods.Contains("publicKey") ? profile.SshPrivateKey : null })
                 if (reference is not null) lines.Add(PermissionDisplay.Literal(reference.ToString()));
         }
         if (destination is not null)

@@ -80,6 +80,13 @@ also identify the macro. Reading an externally supplied network file can itself
 contact a share. Obtain permission to read that source before making such a
 request. That permission covers reading the file only.
 
+For an SSH profile with a saved credential, use the expected account from the
+captured profile in this review. After host key verification and before the
+first SSH user authentication request, compare it with the account of each
+available saved credential. Any allowed continuation without an unavailable
+credential keeps the approved account from the captured profile.
+[Saved SSH credentials](transports-and-authentication.md#authentication-and-user-facing-messages)
+
 Use the approved snapshot for recording, macro profile-password selection and
 the transport. Wait for the connection decision before accessing the log
 destination, resolving the terminal host, opening a port or using a credential.

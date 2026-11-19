@@ -812,7 +812,7 @@ internal sealed partial class MainWindow : Window
     {
         base.OnClosing(e);
         if (e.Cancel) return;
-        if (AllTabs.Any(tab => tab.Content is FormView { BlocksClose: true }))
+        if (app.Vault.IsInitializingFor(this) || AllTabs.Any(tab => tab.Content is FormView { BlocksClose: true }))
         {
             e.Cancel = true;
             return;

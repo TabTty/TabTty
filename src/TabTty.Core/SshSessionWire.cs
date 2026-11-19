@@ -7,9 +7,12 @@ namespace TabTty.Core;
 
 public sealed record SshPasswordRequest(SshDestination Destination, string Username,
     CredentialReference? SavedPassword, int Attempt);
-public sealed record SshPrivateKeyRequest(SshDestination Destination, string Username, CredentialReference? SavedKey);
+public sealed record SshPrivateKeyRequest(SshDestination Destination, string Username, CredentialReference? SavedKey,
+    bool CanTryAnotherMethod = false);
 public sealed record SshPrompt(string Text, bool Echo);
 public sealed record SshChallenge(SshDestination Destination, string Name, string Instruction, SshPrompt[] Prompts);
+public sealed record SshSavedCredentialRequest(string Username, CredentialReference? Password, CredentialReference? PrivateKey);
+public sealed record SshCredentialAvailability(IReadOnlyDictionary<string, string> Unavailable);
 
 public sealed record SshInteraction(
     Func<SshHostKey, CancellationToken, Task<bool>> ApproveHost,
@@ -17,9 +20,18 @@ public sealed record SshInteraction(
     Action<string>? Message = null,
     Func<SshChallenge, CancellationToken, Task<VaultSecret[]?>>? RequestChallenge = null,
     Func<SshPrivateKeyRequest, CancellationToken, Task<VaultSecret?>>? RequestPrivateKey = null,
-    Func<SshDestination, IReadOnlyList<string>>? ApprovedHostFormats = null);
+    Func<SshDestination, IReadOnlyList<string>>? ApprovedHostFormats = null,
+    Func<SshSavedCredentialRequest, CancellationToken, Task<SshCredentialAvailability>>? CheckSavedCredentials = null,
+    Action<string>? CredentialNotice = null);
 
 public sealed class SshInteractionCancelledException() : OperationCanceledException("SSH interaction was cancelled.");
+internal sealed class SshCredentialAccountException() : IOException("The saved credential belongs to a different SSH account.");
+internal sealed class SshCredentialFailureException(string message, Exception? source = null) : IOException(message, source);
+internal sealed class SshMethodUnavailableException(string? reason, bool forAttempt = false) : Exception(reason)
+{
+    internal string? Reason { get; } = reason;
+    internal bool ForAttempt { get; } = forAttempt;
+}
 
 internal sealed partial class SshSessionWire : ISessionWire
 {
@@ -133,6 +145,24 @@ internal sealed partial class SshSessionWire : ISessionWire
 
     private async Task AuthenticateAsync(ConnectionProfile profile, CancellationToken token)
     {
+        string username = profile.SshUsername;
+        IReadOnlyList<string> preferred = profile.SshMethods;
+        if (profile.SshAllowsKeyboardInteractive) preferred = [.. preferred, "keyboardInteractive"];
+        var unavailable = new HashSet<string>(StringComparer.Ordinal);
+        string? unavailableReason = null;
+        var saved = new SshSavedCredentialRequest(username,
+            preferred.Contains("password") ? profile.SshPassword : null,
+            preferred.Contains("publicKey") ? profile.SshPrivateKey : null);
+        if ((saved.Password is not null || saved.PrivateKey is not null) && interaction.CheckSavedCredentials is { } check)
+        {
+            foreach (var (methodName, reason) in (await check(saved, token).ConfigureAwait(false)).Unavailable)
+            {
+                unavailable.Add(methodName);
+                ReportUnavailable(reason);
+            }
+        }
+        if (preferred.All(unavailable.Contains)) throw new SshCredentialFailureException(unavailableReason!);
+
         using var serviceDeadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         serviceDeadline.CancelAfter(wait);
         using (var service = new SshWriter())
@@ -145,11 +175,11 @@ internal sealed partial class SshSessionWire : ISessionWire
         accepted.Expect(6);
         if (!accepted.String().SequenceEqual("ssh-userauth"u8)) throw new InvalidDataException("Unexpected SSH service.");
         accepted.End();
-        using (var probe = AuthenticationRequest(profile.SshUsername, "none"))
+        using (var probe = AuthenticationRequest(username, "none"))
             await SendAuthenticationAsync(probe.Memory, token).ConfigureAwait(false);
 
         string[] allowed = [];
-        IReadOnlyList<string> preferred = profile.SshMethods;
+        var skipped = new HashSet<string>(StringComparer.Ordinal);
         string method = "none";
         int passwords = 0, conversations = 0, rounds = 0, stages = 0;
         bool usedPassword = false, needsChange = false;
@@ -179,7 +209,7 @@ internal sealed partial class SshSessionWire : ISessionWire
                             !result.String().SequenceEqual(privateKey.PublicBlob))
                             throw new InvalidDataException("Unexpected SSH public-key approval.");
                         result.End();
-                        using var request = AuthenticationRequest(profile.SshUsername, "publickey");
+                        using var request = AuthenticationRequest(username, "publickey");
                         request.Byte(1);
                         request.Text(userSignature!);
                         request.String(privateKey.PublicBlob);
@@ -225,75 +255,100 @@ internal sealed partial class SshSessionWire : ISessionWire
                             privateKey = null;
                         }
                         passwords = conversations = 0;
+                        skipped.Clear();
                     }
                 }
                 else throw new InvalidDataException("Unexpected SSH authentication response.");
 
-                method = preferred.FirstOrDefault(candidate => candidate switch
+                while (true)
                 {
-                    "password" => !usedPassword && passwords < 3 && allowed.Contains("password"),
-                    "keyboardInteractive" => conversations < 3 && interaction.RequestChallenge is not null &&
-                        allowed.Contains("keyboard-interactive"),
-                    "publicKey" => !usedKey && keyProbes < 8 && (signatureAlgorithms is null ||
-                        keyProbes < signatureAlgorithms.Length) &&
-                        interaction.RequestPrivateKey is not null && allowed.Contains("publickey"),
-                    _ => false,
-                }) ?? throw new IOException(needsChange ? "The SSH server requires a password change." :
-                    "SSH authentication failed or requires an unavailable method.");
+                    string[] candidates = preferred.Where(candidate => !unavailable.Contains(candidate) &&
+                        !skipped.Contains(candidate) && (candidate switch
+                        {
+                            "password" => !usedPassword && passwords < 3 && allowed.Contains("password"),
+                            "keyboardInteractive" => conversations < 3 && interaction.RequestChallenge is not null &&
+                                allowed.Contains("keyboard-interactive"),
+                            "publicKey" => !usedKey && keyProbes < 8 && (signatureAlgorithms is null ||
+                                keyProbes < signatureAlgorithms.Length) && interaction.RequestPrivateKey is not null &&
+                                allowed.Contains("publickey"),
+                            _ => false,
+                        })).ToArray();
+                    if (candidates.Length == 0)
+                    {
+                        if (unavailableReason is not null) throw new SshCredentialFailureException(unavailableReason);
+                        throw new IOException(needsChange ? "The SSH server requires a password change." :
+                            "SSH authentication failed or requires an unavailable method.");
+                    }
+                    method = candidates[0];
 
-                if (method == "publicKey")
-                {
-                    if (privateKey is null)
+                    try
                     {
-                        using VaultSecret material = await interaction.RequestPrivateKey!(
-                            new SshPrivateKeyRequest(destination, profile.SshUsername, profile.SshPrivateKey), token)
-                            .ConfigureAwait(false) ?? throw new SshInteractionCancelledException();
-                        privateKey = SshPrivateKey.FromPkcs8(material.Bytes.Span);
-                        signatureAlgorithms = privateKey.Algorithm == "ssh-rsa"
-                            ? new[] { "rsa-sha2-512", "rsa-sha2-256" }
-                                .Where(name => serverSignatureAlgorithms is null || serverSignatureAlgorithms.Contains(name)).ToArray()
-                            : serverSignatureAlgorithms is null || serverSignatureAlgorithms.Contains(privateKey.Algorithm)
-                                ? [privateKey.Algorithm] : [];
+                        if (method == "publicKey")
+                        {
+                            if (privateKey is null)
+                            {
+                                using VaultSecret material = await interaction.RequestPrivateKey!(
+                                    new SshPrivateKeyRequest(destination, username, profile.SshPrivateKey, candidates.Length > 1), token)
+                                    .ConfigureAwait(false) ?? throw new SshInteractionCancelledException();
+                                privateKey = SshPrivateKey.FromPkcs8(material.Bytes.Span);
+                                signatureAlgorithms = privateKey.Algorithm == "ssh-rsa"
+                                    ? new[] { "rsa-sha2-512", "rsa-sha2-256" }
+                                        .Where(name => serverSignatureAlgorithms is null || serverSignatureAlgorithms.Contains(name)).ToArray()
+                                    : serverSignatureAlgorithms is null || serverSignatureAlgorithms.Contains(privateKey.Algorithm)
+                                        ? [privateKey.Algorithm] : [];
+                            }
+                            if (signatureAlgorithms!.Length == 0)
+                            {
+                                allowed = allowed.Where(name => name != "publickey").ToArray();
+                                continue;
+                            }
+                            userSignature = signatureAlgorithms[keyProbes++];
+                            signedKey = false;
+                            using var probe = AuthenticationRequest(username, "publickey");
+                            probe.Byte(0);
+                            probe.Text(userSignature);
+                            probe.String(privateKey.PublicBlob);
+                            await SendAuthenticationAsync(probe.Memory, token).ConfigureAwait(false);
+                        }
+                        else if (method == "password")
+                        {
+                            var request = new SshPasswordRequest(destination, username, profile.SshPassword, ++passwords);
+                            using VaultSecret secret = await interaction.RequestPassword(request, token).ConfigureAwait(false)
+                                ?? throw new SshInteractionCancelledException();
+                            if (secret.Bytes.Length > 16 * 1024) throw new InvalidDataException("The SSH password exceeds its size limit.");
+                            _ = VaultContainer.StrictUtf8.GetCharCount(secret.Bytes.Span);
+                            using var password = AuthenticationRequest(username, "password", secret.Bytes.Length);
+                            password.Byte(0);
+                            password.String(secret.Bytes.Span);
+                            await SendAuthenticationAsync(password.Memory, token, padCredentials: true).ConfigureAwait(false);
+                        }
+                        else
+                        {
+                            conversations++;
+                            rounds = 0;
+                            using var interactive = AuthenticationRequest(username, "keyboard-interactive");
+                            interactive.String([]);
+                            interactive.String([]);
+                            await SendAuthenticationAsync(interactive.Memory, token).ConfigureAwait(false);
+                        }
+                        break;
                     }
-                    if (signatureAlgorithms!.Length == 0)
+                    catch (SshMethodUnavailableException exception)
                     {
-                        allowed = allowed.Where(name => name != "publickey").ToArray();
-                        using var none = AuthenticationRequest(profile.SshUsername, "none");
-                        await SendAuthenticationAsync(none.Memory, token).ConfigureAwait(false);
-                        continue;
+                        (exception.ForAttempt ? unavailable : skipped).Add(method);
+                        if (exception.Reason is { } reason) ReportUnavailable(reason);
                     }
-                    userSignature = signatureAlgorithms[keyProbes++];
-                    signedKey = false;
-                    using var probe = AuthenticationRequest(profile.SshUsername, "publickey");
-                    probe.Byte(0);
-                    probe.Text(userSignature);
-                    probe.String(privateKey.PublicBlob);
-                    await SendAuthenticationAsync(probe.Memory, token).ConfigureAwait(false);
-                }
-                else if (method == "password")
-                {
-                    var request = new SshPasswordRequest(destination, profile.SshUsername, profile.SshPassword, ++passwords);
-                    using VaultSecret secret = await interaction.RequestPassword(request, token).ConfigureAwait(false)
-                        ?? throw new SshInteractionCancelledException();
-                    if (secret.Bytes.Length > 16 * 1024) throw new InvalidDataException("The SSH password exceeds its size limit.");
-                    _ = VaultContainer.StrictUtf8.GetCharCount(secret.Bytes.Span);
-                    using var password = AuthenticationRequest(profile.SshUsername, "password", secret.Bytes.Length);
-                    password.Byte(0);
-                    password.String(secret.Bytes.Span);
-                    await SendAuthenticationAsync(password.Memory, token, padCredentials: true).ConfigureAwait(false);
-                }
-                else
-                {
-                    conversations++;
-                    rounds = 0;
-                    using var interactive = AuthenticationRequest(profile.SshUsername, "keyboard-interactive");
-                    interactive.String([]);
-                    interactive.String([]);
-                    await SendAuthenticationAsync(interactive.Memory, token).ConfigureAwait(false);
                 }
             }
         }
         finally { privateKey?.Dispose(); }
+
+        void ReportUnavailable(string reason)
+        {
+            if (reason == unavailableReason) return;
+            unavailableReason = reason;
+            interaction.CredentialNotice?.Invoke(reason);
+        }
     }
 
     private SshChallenge ParseChallenge(ref SshReader reader)

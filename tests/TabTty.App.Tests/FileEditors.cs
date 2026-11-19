@@ -263,7 +263,7 @@ internal static partial class Program
             var expected = "host-transfer-test-data"u8.ToArray();
             CredentialReference reference;
             using (var created = await CredentialVault.CreateAsync(transferPath, master.AsMemory()))
-                reference = new(created.Id, await created.AddPasswordAsync("fixture", null, expected), "password");
+                reference = new(await created.AddPasswordAsync("fixture", "operator", expected), "password");
             await SelectVault(transferPath);
 
             var firstHost = new Window { Width = 320, Height = 240 };

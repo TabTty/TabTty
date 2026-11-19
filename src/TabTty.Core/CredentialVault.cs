@@ -227,45 +227,61 @@ public sealed class CredentialVault : IDisposable
     internal Task<(long Revision, IReadOnlyList<VaultEntryInfo> Entries)> ReadMetadataAsync(CancellationToken token = default) =>
         RunAsync(_ => (metadata.Revision, metadata.Entries), token);
 
-    public Task<VaultSecret> GetPasswordAsync(Guid vaultId, Guid entryId, CancellationToken cancellationToken = default) =>
-        GetSecretAsync(vaultId, entryId, "password", cancellationToken);
+    public Task<VaultSecret> GetPasswordAsync(string name, CancellationToken cancellationToken = default) =>
+        GetSecretAsync(name, "password", cancellationToken);
 
-    public Task<VaultSecret> GetPrivateKeyAsync(Guid vaultId, Guid entryId, CancellationToken cancellationToken = default) =>
-        GetSecretAsync(vaultId, entryId, "privateKey", cancellationToken);
+    public Task<VaultSecret> GetPrivateKeyAsync(string name, CancellationToken cancellationToken = default) =>
+        GetSecretAsync(name, "privateKey", cancellationToken);
 
-    private Task<VaultSecret> GetSecretAsync(Guid vaultId, Guid entryId, string expected, CancellationToken cancellationToken)
+    internal Task<VaultSecret> GetSshSecretAsync(CredentialReference reference, string username,
+        CancellationToken token) => GetSecretAsync(reference.Name, reference.Kind, token, username);
+
+    internal static VaultEntryInfo MatchCredential(IReadOnlyList<VaultEntryInfo> entries, string name,
+        string expected, string? username = null)
     {
-        if (vaultId != Id) throw new CredentialLookupException(MacroErrorCode.VaultMismatch, "The selected vault does not match the credential reference.");
+        var entry = entries.FirstOrDefault(candidate => candidate.Name == name) ??
+            throw new CredentialLookupException(MacroErrorCode.CredentialUnavailable, "The credential entry is missing.");
+        if (entry.Kind != expected)
+            throw new CredentialLookupException(MacroErrorCode.CredentialKindMismatch, "The credential entry has a different kind.");
+        if (username is not null && !string.Equals(entry.Username, username, StringComparison.Ordinal))
+            throw new SshCredentialAccountException();
+        return entry;
+    }
+
+    private Task<VaultSecret> GetSecretAsync(string name, string expected,
+        CancellationToken cancellationToken, string? username = null)
+    {
         return UseAsync((plaintext, token) =>
         {
             token.ThrowIfCancellationRequested();
-            var entries = VaultPayload.Read(plaintext, Id, entryId, out byte[]? secret, out _);
-            if (secret is null) throw new CredentialLookupException(MacroErrorCode.CredentialUnavailable, "The credential entry is missing.");
-            if (!entries.Any(entry => entry.Id == entryId && entry.Kind == expected))
+            var entries = VaultPayload.Read(plaintext, Id, name, out byte[]? secret, out _);
+            try
             {
-                CryptographicOperations.ZeroMemory(secret);
-                throw new CredentialLookupException(MacroErrorCode.CredentialKindMismatch, "The credential entry has a different kind.");
+                MatchCredential(entries, name, expected, username);
+                token.ThrowIfCancellationRequested();
+                return new VaultSecret(secret!);
             }
-            if (!token.IsCancellationRequested) return new VaultSecret(secret);
-            CryptographicOperations.ZeroMemory(secret);
-            throw new OperationCanceledException(token);
+            catch
+            {
+                if (secret is not null) CryptographicOperations.ZeroMemory(secret);
+                throw;
+            }
         }, cancellationToken);
     }
 
-    public Task<Guid> AddPasswordAsync(string name, string? username, ReadOnlyMemory<byte> password,
+    public Task<string> AddPasswordAsync(string name, string username, ReadOnlyMemory<byte> password,
         CancellationToken cancellationToken = default) => AddPasswordAsync(name, username, password, null, cancellationToken);
 
-    internal Task<Guid> AddPasswordAsync(string name, string? username, ReadOnlyMemory<byte> password,
+    internal Task<string> AddPasswordAsync(string name, string username, ReadOnlyMemory<byte> password,
         long? expectedRevision, CancellationToken cancellationToken = default) =>
         WithSecretInputAsync(password, owned => UseAsync((plaintext, token) =>
         {
-        RequireRevision(expectedRevision);
-            Guid id = OpenSsl.NewId();
-            byte[] payload = VaultPayload.AddEntry(plaintext, Id, new VaultEntryInfo(id, name, username),
+            RequireRevision(expectedRevision);
+            byte[] payload = VaultPayload.AddEntry(plaintext, Id, new VaultEntryInfo(name, username),
                 owned.GetValueOrDefault().Span);
             try { CommitEntries(payload, token); }
             finally { CryptographicOperations.ZeroMemory(payload); }
-            return id;
+            return name;
         }, cancellationToken));
 
     internal sealed class PrivateKeySource(byte[] image, ResourceReservation ownership) : IDisposable
@@ -307,20 +323,21 @@ public sealed class CredentialVault : IDisposable
         }
     }
 
-    public async Task<Guid> ImportPrivateKeyAsync(string name, string source, CancellationToken cancellationToken = default,
+    public async Task<string> ImportPrivateKeyAsync(string name, string username, string source, CancellationToken cancellationToken = default,
         ReadOnlyMemory<byte>? passphrase = null)
     {
         using var acquired = await Task.Run(() => ReadPrivateKeySource(source), cancellationToken).ConfigureAwait(false);
-        return await ImportPrivateKeySourceAsync(name, acquired, passphrase, cancellationToken: cancellationToken).ConfigureAwait(false);
+        return await ImportPrivateKeySourceAsync(name, username, acquired, passphrase, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
-    internal Task<Guid> ImportPrivateKeySourceAsync(string name, PrivateKeySource source,
+    internal Task<string> ImportPrivateKeySourceAsync(string name, string username, PrivateKeySource source,
         ReadOnlyMemory<byte>? passphrase = null, long? expectedRevision = null, CancellationToken cancellationToken = default) =>
-        WithSecretInputAsync(passphrase, owned => ImportOwnedAsync(name, source, owned, expectedRevision, cancellationToken));
+        WithSecretInputAsync(passphrase, owned => ImportOwnedAsync(name, username, source, owned, expectedRevision, cancellationToken));
 
-    private async Task<Guid> ImportOwnedAsync(string name, PrivateKeySource source,
+    private async Task<string> ImportOwnedAsync(string name, string username, PrivateKeySource source,
         ReadOnlyMemory<byte>? passphrase, long? expectedRevision, CancellationToken cancellationToken)
     {
+        if (!VaultPayload.IsValidUsername(username)) throw new ArgumentException("Invalid credential username.");
         using var request = DerivationCapacity.Reserve(1);
         await DerivationWorker.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -333,12 +350,11 @@ public sealed class CredentialVault : IDisposable
                 byte[] pkcs8 = key.ExportPkcs8();
                 try
                 {
-                    Guid id = OpenSsl.NewId();
-                    var entry = new VaultEntryInfo(id, name, null, "privateKey", key.Algorithm, key.Fingerprint);
+                    var entry = new VaultEntryInfo(name, username, "privateKey", key.Algorithm, key.Fingerprint);
                     byte[] payload = VaultPayload.AddEntry(plaintext, Id, entry, pkcs8);
                     try { CommitEntries(payload, token); }
                     finally { CryptographicOperations.ZeroMemory(payload); }
-                    return id;
+                    return name;
                 }
                 finally { CryptographicOperations.ZeroMemory(pkcs8); }
             }, cancellationToken).ConfigureAwait(false);
@@ -382,30 +398,30 @@ public sealed class CredentialVault : IDisposable
 
     internal static VaultFileEvidence? InspectFile(string path) => VaultFileEvidence.Read(path, MaximumVaultBytes);
 
-    public Task UpdateEntryAsync(Guid entryId, string name, string? username, ReadOnlyMemory<byte>? password = null,
+    public Task UpdateEntryAsync(string originalName, string name, string username, ReadOnlyMemory<byte>? password = null,
         CancellationToken cancellationToken = default) =>
-        UpdateEntryAsync(entryId, name, username, password, null, cancellationToken);
+        UpdateEntryAsync(originalName, name, username, password, null, cancellationToken);
 
-    internal Task UpdateEntryAsync(Guid entryId, string name, string? username, ReadOnlyMemory<byte>? password,
+    internal Task UpdateEntryAsync(string originalName, string name, string username, ReadOnlyMemory<byte>? password,
         long? expectedRevision, CancellationToken cancellationToken = default) =>
         WithSecretInputAsync(password, owned => UseAsync((plaintext, token) =>
         {
             RequireRevision(expectedRevision);
-            byte[] updated = VaultPayload.UpdateEntry(plaintext, Id, entryId, name, username,
+            byte[] updated = VaultPayload.UpdateEntry(plaintext, Id, originalName, name, username,
                 owned.GetValueOrDefault().Span, owned.HasValue);
             try { CommitEntries(updated, token); }
             finally { CryptographicOperations.ZeroMemory(updated); }
             return true;
         }, cancellationToken));
 
-    public Task DeleteEntryAsync(Guid entryId, CancellationToken cancellationToken = default) =>
-        DeleteEntryAsync(entryId, null, cancellationToken);
+    public Task DeleteEntryAsync(string originalName, CancellationToken cancellationToken = default) =>
+        DeleteEntryAsync(originalName, null, cancellationToken);
 
-    internal Task DeleteEntryAsync(Guid entryId, long? expectedRevision, CancellationToken cancellationToken = default) =>
+    internal Task DeleteEntryAsync(string originalName, long? expectedRevision, CancellationToken cancellationToken = default) =>
         UseAsync((plaintext, token) =>
         {
             RequireRevision(expectedRevision);
-            byte[] updated = VaultPayload.DeleteEntry(plaintext, Id, entryId);
+            byte[] updated = VaultPayload.DeleteEntry(plaintext, Id, originalName);
             try { CommitEntries(updated, token); }
             finally { CryptographicOperations.ZeroMemory(updated); }
             return true;
@@ -586,7 +602,7 @@ public sealed class CredentialVault : IDisposable
         {
             var parsed = VaultPayload.Read(plaintext, id, null, out _, out _);
             long bytes = 256 + parsed.Sum(entry => entryCharge + 2L * (entry.Name.Length +
-                (entry.Username?.Length ?? 0) + entry.Kind.Length + (entry.PublicType?.Length ?? 0) +
+                entry.Username.Length + entry.Kind.Length + (entry.PublicType?.Length ?? 0) +
                 (entry.Fingerprint?.Length ?? 0)));
             charge.Resize(bytes);
             return new VaultMetadata(parsed, charge);

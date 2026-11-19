@@ -226,23 +226,8 @@ internal sealed class ProfileEditor
             else
             {
                 if (blank) connection["username"] = "";
-                String(connection, "username", "SshUsername");
-                var auth = connection["authentication"]!.AsObject();
-                string[] methods = ["password", "publicKey", "keyboardInteractive", ""];
-                string[] labels = [Text("VaultPassword"), Text("PublicKey"), Text("KeyboardInteractive"), Text("None")];
-                string[] fields = ["PrimarySshMethod", "SecondarySshMethod", "TertiarySshMethod"];
-                var choices = new List<ComboBox>();
-                for (int index = 0; index < 3; index++)
-                {
-                    string selected = index < profile.SshMethods.Count ? profile.SshMethods[index] : "";
-                    var box = Selection(fields[index], methods, labels, selected);
-                    choices.Add(box);
-                }
-                apply.Add(() => auth["methods"] = new JsonArray(choices.Select(box => (string)box.SelectedValue)
-                    .Where(method => method.Length != 0).Select(method => (JsonNode?)JsonValue.Create(method)).ToArray()));
-                Credential(auth, "password", "SelectSavedPassword", app);
-                form.AddNotice("SshSavedPasswordDestinationNotice");
-                Credential(auth, "privateKey", "SelectPrivateKey", app);
+                var username = String(connection, "username", "SshUsername");
+                ConfigureSshAuthentication(connection["authentication"]!.AsObject(), profile, username, app);
                 var live = connection["liveness"]!.AsObject();
                 var enabled = Boolean(live, "enabled", "SshLiveness");
                 var interval = Number(live, "intervalSeconds", "SshLivenessInterval");
@@ -257,6 +242,78 @@ internal sealed class ProfileEditor
         string[] echo = profile.Type switch { "serial" => ["off", "on"], "telnet" => ["off", "followRemote"], _ => ["off"] };
         Choice(terminal, "localEcho", "LocalEcho", echo, echo.Select(value => Text(value switch
             { "off" => "Off", "on" => "On", _ => "FollowRemote" })).ToArray());
+    }
+
+    private void ConfigureSshAuthentication(JsonObject auth, ConnectionProfile profile, TextBox username, App app)
+    {
+        string[] methods = ["password", "publicKey"];
+        string[] labels = [Text("VaultPassword"), Text("PublicKey")];
+        var savedMethods = profile.SshMethods;
+        var primary = Selection("PrimarySshMethod", methods, labels, savedMethods[0]);
+        ComboBox secondary = null!;
+        var secondaryRow = form.AddSection(_ => secondary = Selection("SecondarySshMethod", [.. methods, ""],
+            [.. labels, Text("None")], savedMethods.Count == 2 ? savedMethods[1] : ""));
+        var addMethod = form.AddAction("AddSshMethod", () => secondary.SelectedValue = OtherMethod((string)primary.SelectedValue));
+        var accountWarning = form.AddSection(_ => form.AddNotice("ReselectSshCredential"));
+        primary.SelectionChanged += (_, _) =>
+        {
+            if (secondary.SelectedValue is string { Length: > 0 } second && Equals(primary.SelectedValue, second))
+                secondary.SelectedValue = OtherMethod(second);
+            Update();
+        };
+        secondary.SelectionChanged += (_, _) =>
+        {
+            if (secondary.SelectedValue is string { Length: > 0 } second && Equals(primary.SelectedValue, second))
+                primary.SelectedValue = OtherMethod(second);
+            Update();
+        };
+        form.AddGroup("SshAdvancedAuthentication", () => Boolean(auth, "allowKeyboardInteractive", "AllowKeyboardInteractive"));
+        apply.Add(() =>
+        {
+            if (AccountMismatch("password") || AccountMismatch("privateKey"))
+                throw new ArgumentException(Text("ReselectSshCredential"));
+            auth["methods"] = secondary.SelectedValue is string { Length: > 0 } second
+                ? new JsonArray((string)primary.SelectedValue, second) : new JsonArray((string)primary.SelectedValue);
+        });
+        Credential(auth, "password", "SelectSavedPassword", app, OnChosen, Update);
+        form.AddNotice("SshSavedPasswordDestinationNotice");
+        Credential(auth, "privateKey", "SelectPrivateKey", app, OnChosen, Update);
+        Update();
+
+        static string OtherMethod(string value) => value == "password" ? "publicKey" : "password";
+
+        bool Enabled(string kind)
+        {
+            string method = kind == "password" ? "password" : "publicKey";
+            return Equals(primary.SelectedValue, method) || Equals(secondary.SelectedValue, method);
+        }
+
+        string? KnownUsername(string kind) => auth[kind]?.GetValue<string>() is { } name
+            ? app.Vault.KnownUsername(name, kind) : null;
+
+        bool AccountMismatch(string kind) => Enabled(kind) && KnownUsername(kind) is { } account &&
+            !string.Equals(account, username.Text, StringComparison.Ordinal);
+
+        void OnChosen(string kind, string account)
+        {
+            if (!Enabled(kind)) return;
+            string other = kind == "password" ? "privateKey" : "password";
+            if (Enabled(other) && KnownUsername(other) is { } otherAccount &&
+                !string.Equals(account, otherAccount, StringComparison.Ordinal))
+                throw new ArgumentException(Text("SshCredentialsDifferentAccounts"));
+            username.Text = account;
+        }
+
+        void Update()
+        {
+            bool hasSecondary = secondary.SelectedValue is string { Length: > 0 };
+            secondaryRow.Visibility = hasSecondary ? Visibility.Visible : Visibility.Collapsed;
+            addMethod.Visibility = hasSecondary ? Visibility.Collapsed : Visibility.Visible;
+            username.IsReadOnly = (Enabled("password") && auth["password"] is not null) ||
+                (Enabled("privateKey") && auth["privateKey"] is not null);
+            accountWarning.Visibility = AccountMismatch("password") || AccountMismatch("privateKey")
+                ? Visibility.Visible : Visibility.Collapsed;
+        }
     }
 
     private void InheritedFont(JsonObject font, App app)
@@ -310,21 +367,26 @@ internal sealed class ProfileEditor
         });
     }
 
-    private void Credential(JsonObject auth, string kind, string key, App app)
+    private void Credential(JsonObject auth, string kind, string key, App app, Action<string, string> onChosen,
+        Action changed)
     {
-        var value = new TextBox { IsReadOnly = true, Text = auth[kind]?["entryId"]?.GetValue<string>() ?? Text("AskAtConnect") };
+        var value = new TextBox { IsReadOnly = true, Text = auth[kind]?.GetValue<string>() is { } savedName
+            ? PermissionDisplay.Literal(savedName) : Text("AskAtConnect") };
         Add(kind == "password" ? "SshPasswordSource" : "PublicKey", value);
         form.TrackValue(() => (Reference: auth[kind], Label: value.Text), saved =>
         {
             auth[kind] = saved.Reference?.DeepClone();
             value.Text = saved.Label;
+            changed();
         }, (saved, current) => JsonNode.DeepEquals(saved.Reference, current.Reference));
         form.AddAsyncAction(key, async () =>
         {
-            void Chosen(CredentialReference reference, string name)
+            void Chosen(string name, string username)
             {
-                auth[kind] = new JsonObject { ["vaultId"] = reference.VaultId, ["entryId"] = reference.EntryId, ["kind"] = reference.Kind };
-                value.Text = name;
+                onChosen(kind, username);
+                auth[kind] = name;
+                value.Text = PermissionDisplay.Literal(name);
+                changed();
             }
             if (kind == "password") await app.Vault.ChoosePasswordAsync(form.OwnerWindow, Chosen);
             else await app.Vault.ChoosePrivateKeyAsync(form.OwnerWindow, Chosen);
@@ -333,6 +395,7 @@ internal sealed class ProfileEditor
         {
             auth[kind] = null;
             value.Text = Text("AskAtConnect");
+            changed();
         });
     }
 

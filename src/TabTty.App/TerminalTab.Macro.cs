@@ -72,8 +72,8 @@ internal sealed partial class TerminalTab
         if (state.Operation.Length != 0) label += " · " + MacroOperationLabel(state.Operation);
         if (state.Result is { } result)
             label += "\n" + (state.Position.Line > 0
-                ? string.Format(Text("MacroLocation"), state.Position.Line, state.Position.Column, MacroErrorLabel(result))
-                : MacroErrorLabel(result));
+                ? string.Format(Text("MacroLocation"), state.Position.Line, state.Position.Column, state.DisplayDetail ?? MacroErrorLabel(result))
+                : state.DisplayDetail ?? MacroErrorLabel(result));
         if (state.Holds.HasFlag(MacroHold.HistoryLoss)) label += "\n" + Text("MacroHistoryLost");
         if (state.Holds.HasFlag(MacroHold.RecordingFailure)) label += "\n" + Text("MacroRecordingFailed");
         if (state.Holds.HasFlag(MacroHold.RecordingReady)) label += "\n" + Text("MacroRecordingReady");

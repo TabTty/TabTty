@@ -40,8 +40,8 @@ otherwise. Defaults describe newly created profiles, not missing-field repair.
 | Root | `schemaVersion`, `requiredFeatures`, `profileId`, `displayName`, `connection`, `terminal`, `logging` |
 | connection | `type`: `ssh`, `telnet`, or `serial`; `waitSeconds`: 30, allowed 1-300; exactly the applicable transport fields below |
 | SSH | `host`, `port`: 22, `username`, `authentication`, `liveness` |
-| authentication | `methods`: ordered unique subset of `publicKey`, `password`, `keyboardInteractive`, initially `[password]`; `privateKey`: null or credential reference; `password`: null or credential reference; unavailable unsaved input is requested at authentication |
-| Credential reference | `vaultId`, `entryId`, `kind`: `privateKey` or `password`; no secret/path/source passphrase |
+| authentication | `methods`: one or two distinct values in priority order from `publicKey` and `password`, initially `[password]`; `allowKeyboardInteractive`: boolean, initially true; `privateKey` and `password`: null or credential reference; request unsaved input during authentication when needed |
+| Credential reference | A string containing the exact entry name in the selected vault, such as `"privateKey": "Production SSH key"`. The field determines the kind. |
 | liveness | `enabled`: false; `intervalSeconds`: 30, range 1-3600; `unansweredWindows`: 3, fixed in v1 |
 | Telnet | `host`, `port`: 23, `initiateBinary`: false; no username, credential, or login-matching fields |
 | Serial | `portName`, `baudRate`: 9600, `dataBits`: 8 (7/8), `parity`: `none` (`odd/even/mark/space`), `stopBits`: 1 (1/2), `flowControl`: `none` (`xonXoff/rtsCts/dsrDtr`), `dtr`: true, `rts`: true |
@@ -50,6 +50,19 @@ otherwise. Defaults describe newly created profiles, not missing-field repair.
 | font | `mode`: `inherit` or `override`; `family`: null when inherited, otherwise requested installed-font name; `sizePoints`: null when inherited, otherwise 6-72 |
 | retainedRows | `mode`: `inherit` or `override`; `value`: null when inherited, otherwise integer 100-100000 |
 | logging | `raw`: false, `text`: false, `terminal`: false, `directory`: `Logs` |
+
+The selected vault's rename dialog can update reviewed registered profiles. The update uses the ordinary verified edit path and changes the matching name field. Connection trust is evaluated for the resulting file revision. See [Vault format and operations](vault-format.md).
+
+SSH requires `connection.username`. With an enabled vault reference it holds
+the expected account copied from the selected credential for connection
+review. Otherwise it holds the name entered in the profile. The resolved vault
+account must match the expected account during authentication.
+[Saved SSH credentials](transports-and-authentication.md#authentication-and-user-facing-messages)
+
+Show one row per configured SSH method. **Add authentication method** offers
+only supported methods not already in the list. Keep at least one configured
+method and let the user set their order when both are configured. Expose
+**Allow keyboard-interactive authentication** separately in advanced settings.
 
 `enter` is `cr` (SSH/serial default), `lf`, or `crlf` (Telnet default).
 `backspace` is `del` (SSH/Telnet default) or `bs` (serial default), as accepted
@@ -412,12 +425,25 @@ TabTty's profile creation and editing use top-level windows. Edit from Explorer
 uses the same profile form, layout, validation, and explicit save workflow as
 TabTty's existing-file editor. An Explorer edit saves in place and leaves
 profile registration and connection startup to Open. Selecting a saved
-credential explicitly may unlock the existing selected vault and select a
-reference. Opening or saving the profile does not unlock a vault. Every credential
-picker reports a missing/empty vault without creating it. Ordinary Unlock and
-authentication retrieval also do not initialize. Creation or guarded empty-file
-initialization requires an explicit vault-management operation under the
-[complete vault contract](vault-format.md#complete-vault-management-operations).
+credential explicitly may unlock the selected vault and select a reference.
+Show the expected account in the read-only SSH username field while an enabled
+method uses a vault reference, including while the vault is locked. Reject an
+explicit selection that conflicts with another enabled credential. If enabling
+a retained reference reveals an account mismatch, ask the user to select the
+intended credential again. Check any account the editor could not verify at
+connection time. Opening or saving the profile does not unlock a vault. When
+the user opens the password or private-key picker and the selected vault path
+is missing or zero bytes, show master password setup first. After verified
+initialization, open the ordinary picker with its empty list. Cancellation
+returns to the editor with its draft intact.
+[Vault initialization](vault-format.md#complete-vault-management-operations)
+
+In both profile credential pickers, show **Manage vault** with any number of
+entries. Choosing it closes the picker, preserves the profile draft, and
+opens or activates the management tab in an available main window. If only
+the profile editor is open, show the standalone vault editor for the selected
+vault. When the user returns to the profile and opens the picker again, load
+the latest committed entries so they can explicitly select the intended one.
 
 Use one standalone editor window per normalized opened location within each
 file type. Repeat requests restore and activate that window, preserving its
@@ -434,6 +460,19 @@ with connections. A different file uses its own unlock and operations, leaving
 the selected vault setting intact. Report missing, empty, malformed, and
 unsupported files without initializing them on Explorer launch. Valid encrypted
 manual backups with the `.tttykey` extension open as ordinary files.
+
+When the user chooses **Manage vault** and the selected file is missing or zero
+bytes, prompt for a master password before opening the tab. Show the tab after
+verified creation or guarded initialization. On cancellation, keep the current
+view. The tab has no separate create command. If archive or a settings change
+leaves the open management tab with a missing or zero-byte target, show that
+state. The next **Manage vault** command offers setup. Keep
+**Restore vault backup** available in the vault menu so a backup can be restored
+before creating a new vault.
+
+When **Unlock vault** creates or initializes the file, open or activate the
+management tab in the issuing main window after success. An ordinary unlock
+of an existing vault continues to show the completion notification.
 
 When Settings changes the selected vault, any open vault editor keeps its
 target; the management tab and subsequent connections use the new selection.
@@ -526,6 +565,10 @@ final-exit rules. No hidden lifetime or session-recording timeout is introduced.
 | Reopen a profile under edit from the other entry point | Restore and activate the existing editor with its draft. A copy at a different location opens separately. |
 | One profile in a multi-selection fails to load | Report that path's error. The other admitted file actions proceed. |
 | Open or edit one `.tttykey`, or select multiple vault files | Single-file verbs open one editor. A vault invocation carrying multiple paths is rejected before opening or unlocking a file. |
+| Choose **Manage vault** with a missing or zero-byte target | Cancelling setup keeps the current view. Verified initialization opens the management tab. The backup restore command remains available in the vault menu before setup. |
+| Archive the selected vault or switch to a missing or zero-byte target while its management tab is open | Show the resulting state without prompting. The next **Manage vault** command offers setup. |
+| Choose **Unlock vault** with a missing, zero-byte, or existing valid target | Verified creation or initialization opens the management tab. Ordinary unlock of the existing target shows the completion notification. |
+| Choose **Manage vault** in the profile password or key picker | The action is present with an empty or populated list. Preserve the draft, close the picker, and use the standalone vault editor if no main window is open. Reopening the picker shows current committed entries. |
 | Change a selected vault entry in a standalone window | The in-app management view and the next credential lookup see the same committed revision without another unlock. |
 | Edit a copy of the selected vault at another path | Save to the copy. Connections keep using the selected file. Closing the copy's editor releases its unlock. |
 | Switch the selected vault from A to B while both are open | A and B keep their targets. The tab and subsequent connections use B's existing unlock. |

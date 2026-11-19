@@ -24,30 +24,76 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
         MainWindow.ShowError(owner, new IOException(Text("LocalStateInvalid")));
     }
 
-    public async Task<(IReadOnlyList<string> Paths, int Unavailable)> FindCredentialReferencesAsync(
-        Guid vaultId, Guid entryId, string kind)
+    internal sealed record CredentialProfileMatch(Guid RegistrationId, string Path, string Version);
+    internal sealed record CredentialImpact(IReadOnlyList<CredentialProfileMatch> Profiles, int Unavailable)
     {
-        string[] locations = LocalState.Read()["registrations"]!.AsArray().OfType<JsonObject>()
-            .Select(item => item["path"]!.GetValue<string>()).ToArray();
-        var matches = new List<string>();
+        internal static readonly CredentialImpact Empty = new([], 0);
+        internal IEnumerable<string> Paths => Profiles.Select(profile => profile.Path);
+    }
+
+    internal async Task<CredentialImpact> FindCredentialReferencesAsync(VaultEntryInfo entry)
+    {
+        var matches = new List<CredentialProfileMatch>();
         int unavailable = 0;
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        foreach (string location in locations)
+        foreach (var registration in ReadRegistrations().OrderBy(registration => registration.Path, StringComparer.Ordinal))
         {
             if (timeout.IsCancellationRequested) { unavailable++; continue; }
             try
             {
                 using var itemTimeout = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
                 itemTimeout.CancelAfter(TimeSpan.FromSeconds(1));
-                ConnectionProfile profile = await ConnectionProfile.LoadAsync(location, itemTimeout.Token);
-                var expected = new CredentialReference(vaultId, entryId, kind);
-                if (profile.Type == "ssh" && (profile.SshPassword == expected || profile.SshPrivateKey == expected))
-                    matches.Add(location);
+                ConnectionProfile profile = await ConnectionProfile.LoadAsync(registration.Path, itemTimeout.Token);
+                if (profile.Type == "ssh" && (entry.Kind == "password" ? profile.SshPassword : profile.SshPrivateKey)?.Name == entry.Name)
+                    matches.Add(new(registration.Id, registration.Path, profile.TrustVersion));
             }
             catch (Exception exception) when (IsFileProblem(exception) || exception is OperationCanceledException)
             { unavailable++; }
         }
-        return (matches, unavailable);
+        return new(matches, unavailable);
+    }
+
+    internal async Task<(int Updated, IReadOnlyList<string> Problems)> UpdateCredentialReferencesAsync(
+        CredentialImpact impact, string kind, string newName)
+    {
+        int updated = 0;
+        var problems = new List<string>();
+        foreach (var match in impact.Profiles)
+        {
+            string path = PermissionDisplay.Literal(match.Path);
+            try
+            {
+                ConnectionProfile profile;
+                using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(1)))
+                    profile = await ConnectionProfile.LoadAsync(match.Path, timeout.Token);
+                if (ReadTrust(match.Path).Registration != match.RegistrationId)
+                    throw new IOException(Text("CredentialRenameUnregistered"));
+                if (profile.TrustVersion != match.Version)
+                    throw new IOException(Text("CredentialRenameProfileChanged"));
+                if (app.Windows.OfType<ProfileEditorWindow>().Any(window => window.TitleKey == "EditProfile" &&
+                    window.HasPendingEdits && string.Equals(window.Identity, match.Path, StringComparison.Ordinal)))
+                    throw new IOException(Text("CredentialRenamePendingProfileEdits"));
+
+                var draft = JsonNode.Parse(profile.ToEditorJson())!.AsObject();
+                draft["connection"]!["authentication"]![kind] = newName;
+                await profile.Edit(draft.ToJsonString()).BeginSaveEdit(issueProfiles, validateProfileStage).ObserveAsync();
+                updated++;
+            }
+            catch (FilePublicationException exception)
+            {
+                problems.Add($"{path}\n{JsonStoreRecovery.DescribeFailure(exception.Result)}");
+            }
+            catch (OperationCanceledException)
+            {
+                problems.Add($"{path}\n{Text("CredentialRenameProfileReadTimedOut")}");
+            }
+            catch (Exception exception) when (IsFileProblem(exception))
+            {
+                problems.Add($"{path}\n{exception.Message}");
+            }
+        }
+        if (updated != 0) ProfileSaved?.Invoke();
+        return (updated, problems);
     }
 
     public async Task<string> RememberAsync(string path, ConnectionProfile profile, bool used)

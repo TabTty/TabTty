@@ -107,6 +107,14 @@ does not introduce session sharing or automatic reconnection.
 
 ## Q111: Shared credential entries and migration
 
+The current [vault format](../specification/vault-format.md#encrypted-payload-schema-and-limits)
+supersedes the historical lookup rules below. Credential references resolve
+unique entry names in the selected vault.
+
+The [vault editing contract](../specification/vault-format.md#complete-vault-management-operations)
+extends shared-entry impact review to account changes and requires reselection
+when the account in a profile and the vault differ.
+
 Use stable `(vault ID, entry ID)` references with an expected credential
 kind. Entry names are human-readable labels and may be duplicated. Do not resolve
 by label, file ordering, or the first available entry.

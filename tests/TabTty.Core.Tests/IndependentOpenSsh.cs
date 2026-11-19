@@ -13,7 +13,7 @@ internal static class IndependentOpenSsh
             methods: ["publicKey"], recordRaw: true).SaveNewAsync(profile, token);
         using var vault = await CredentialVault.CreateAsync(Path.Combine(local.Path, "test.tttykey"),
             "Independent OpenSSH fixture vault".AsMemory(), cancellationToken: token);
-        Guid entry = await vault.ImportPrivateKeyAsync("Generated SSH test key", userKey, token);
+        string entry = await vault.ImportPrivateKeyAsync("Generated SSH test key", username, userKey, token);
         int verifiedKeys = 0;
         var interaction = new SshInteraction((key, _) =>
         {
@@ -21,7 +21,7 @@ internal static class IndependentOpenSsh
             if (approved) verifiedKeys++;
             return Task.FromResult(approved);
         }, (_, _) => throw new InvalidOperationException("The public-key fixture requested a password."),
-            RequestPrivateKey: async (_, cancellation) => await vault.GetPrivateKeyAsync(vault.Id, entry, cancellation));
+            RequestPrivateKey: async (_, cancellation) => await vault.GetPrivateKeyAsync(entry, cancellation));
 
         const string marker = "TABTTY_INDEPENDENT_SSH_TERMINAL";
         byte[] payload = [.. "TABTTY_SFTP_ONLY"u8, .. Enumerable.Range(0, 70_000).Select(value => (byte)value)];

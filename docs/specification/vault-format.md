@@ -102,25 +102,38 @@ reliably distinguish a wrong password from altered/corrupt input.
 
 ## Encrypted payload schema and limits
 
-UTF-8 JSON without a BOM, one object, no duplicate properties/IDs or comments:
+UTF-8 JSON without a BOM, one object, no duplicate properties or comments:
 `schemaVersion: 1`, `vaultId` (canonical UUID string), and `entries` (array).
 No unknown properties in this private v1 schema; future fields require a new
 supported schema/container rule. Array order is the user's entry order.
 
-Each entry has `entryId`, `kind` (`password` or `privateKey`), `name`, `username`
-(string or null), and exactly its applicable secret field: `passwordUtf8`
+Each entry has `kind` (`password` or `privateKey`), `name`, a required
+`username` string, and exactly its applicable secret field: `passwordUtf8`
 (canonical padded Base64 of unnormalized strict UTF-8), or `privateKeyPkcs8`
 (canonical padded Base64 of validated unencrypted PKCS#8 DER). Key entries also
 store the public type and SHA-256 fingerprint, recomputed/checked when loaded.
 No source key path, source passphrase, remembered encoding, or opaque external
-file dependency is stored. UUIDs never derive from entry names or secrets.
+file dependency is stored. The vault ID is generated independently of its
+entries and remains part of the container's authentication and recovery rules.
 
 Initial defensive limits, not measured capacity claims: N <= 16 MiB, whole file
 <= 16 MiB + 200 bytes, at most 1,024 entries, JSON depth <= 8, names <= 256
 Unicode scalars, usernames <= 1,024 UTF-8 bytes, password material <= 16 KiB,
 and canonical private-key DER <= 64 KiB. Enforce encoded and decoded lengths
-before Base64 allocation, then validate content. Entry IDs are unique within
-the vault. References require exact vault ID, entry ID, and expected kind.
+before Base64 allocation, then validate content. Names are unique across all
+entries in a vault. Compare names ordinally and case-sensitively with no trimming
+or Unicode normalization. Reject duplicate names on load, add, import, and
+rename. A reference resolves the exact name in the selected vault and checks
+the expected kind. Later operations resolve the current contents under that
+name, including after deletion and reuse or after changing the selected vault.
+
+The username is the SSH account for both entry kinds. Require strict UTF-8,
+at least one non-whitespace character, and no control characters. Validate it
+on load, add, edit, and key import. A missing, null, or invalid username is a
+schema error. The initial release assumes existing entries have usernames and
+requires no compatibility mode or migration.
+[SSH authentication](transports-and-authentication.md#authentication-and-user-facing-messages),
+[OWASP input validation](https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html#implementing-input-validation)
 
 ## Imported keys
 
@@ -293,9 +306,9 @@ accepted operation ID/view or typed rejection without waiting for filesystem or
 native work. Rejection changes no files and transfers no input ownership.
 Acceptance transfers only explicitly accepted inputs, not authority to bypass
 later validation. Deferred execution retains the target, operation kind and
-entry anchor: binding, vault/entry IDs, expected kind and observed revision.
+entry anchor: binding, original entry name, expected kind, and observed revision.
 The per-file owner orders conflicting work. Reject obsolete anchors/contexts
-without a same-named substitute, new editing basis or automatic rebase. Queued
+even if an entry with that name exists in a later revision. Queued
 inputs, unlock participation and acquired images remain owned and charged.
 
 An ordinary caller awaits one initial observation; it need not run a monitoring
@@ -322,17 +335,44 @@ and truthful on-disk generation facts defined above.
 | Unlock existing file | Authenticate and validate one bounded acquired image, then publish the shared unlocked state and metadata for that attempt. Do not publish a file, initialize implicitly or cache all plaintext entries. |
 | Create at a missing path | Publish a new validated encrypted vault with a new identity/root without overwriting, then adopt only after target and applicable preservation proof. A newly appearing target is a collision. |
 | Initialize an empty file | Revalidate the confirmed same regular file, preserve its exact empty original through guarded initialization and adopt only after target and required preservation proof. Parking the original is a physical effect even if installation fails. |
-| Add/edit/delete entry | Enforce exact identity/kind/revision and the existing known-profile impact confirmation for secret-changing/destructive operations. A kind change creates a new entry. Complete publication precedes revision/metadata adoption; deletion leaves references unresolved without rewriting profiles or disconnecting authenticated sessions. |
+| Add/edit/delete entry | Enforce the exact name, expected kind, and revision. Apply known-profile impact confirmation to username changes, secret changes, and destructive operations. A kind change creates a new entry. Publish the complete result before adopting its revision and metadata. An existing reference resolves while its exact name is present. Renaming requires the confirmation described below. Established sessions retain their authenticated connection. An account mismatch requires the intended credential to be selected again in the profile before a later connection can authenticate. |
 | Import private key | Use one bounded acquired source image and its matching passphrase interaction; enforce the accepted envelope allowlist and actual key validation. Publish only canonical validated PKCS#8, keep native buffers through actual completion, and leave the source intact without retaining its path/passphrase as an authentication dependency. |
 | Change master password | Apply the existing input rules and fresh root/wrapper/payload encryption. Complete proof precedes root/snapshot/metadata adoption. Retain needed old/candidate roots only within their established lifetime and report an observed on-disk candidate truthfully; old copies retain their old password. |
 | Encrypted backup | Copy the exact authenticated encrypted generation to a separately selected non-overwriting destination and verify it. Do not change the source revision or re-encrypt to an implied new password. |
 | Explicit restore | Independently authenticate/validate the separate backup, enforce the identity conditions below, preserve exact original target bytes where present and verify target plus required recovery copy before snapshot/root adoption. Keep the editor's target path. |
 | Archive | Move only the confirmed source to a unique sibling without overwriting and verify actual source/destination effects. Completion ends the old usable owner state without creating a vault or changing selected path, profiles or `.bak`. Show the archive path and close a standalone editor after acknowledgment. |
 
-Creation and zero-byte initialization are explicit management operations only.
-Management may explain a missing/empty target and offer initialization. Plain
-Unlock, authentication retrieval and every credential picker report the condition
-and direct the user to management. Explorer editors refuse initialization.
+Before renaming an entry, show its old and new names and explain that existing
+profile and macro references will stop finding the entry. For the selected vault,
+list the readable registered profiles that refer to the exact old name in the
+matching credential field, including references in disabled methods. Show the
+number of registered profiles the scan could not check. Offer **Rename and update
+registered profiles**, **Rename only**, and **Cancel**. A standalone editor for a
+vault outside the current selection offers rename only or cancel.
+
+Update profiles only after the vault rename has been verified. Each reviewed
+registration must still exist, its file bytes must still match the reviewed
+revision, and its editor must have no unsaved changes or pending save. Change only
+the matching credential field through the normal verified profile save. Report
+the count updated and identify profiles that could not be saved. Each save has
+its own outcome. The vault rename and verified profile writes remain in effect
+if another write fails. Macros and unregistered files are updated manually.
+
+The **Manage vault** command offers master password setup when the selected
+vault path is missing or zero bytes. Use the shared initialization prompt,
+which identifies the configured path and the observed file state. Saving
+confirms creation or guarded initialization, and cancelling leaves the target
+as observed. Open the management tab only after that initialization succeeds.
+The management tab has no separate creation command. Manual unlock and
+credential selection in the profile editor also use the shared prompt for
+missing and zero-byte targets. The [vault window rules](persistence-and-windows.md#file-explorer-and-editors)
+define the destination after setup and how the profile picker opens management.
+SSH authentication reports either state and can continue using only an
+eligible method independent of the unavailable vault.
+[SSH authentication](transports-and-authentication.md#authentication-and-user-facing-messages)
+Macro password sends report either state through the
+[macro credential error contract](../drafts/macro-specification.md#profile-password-and-explicit-references).
+Explorer editors require an existing, nonempty vault.
 Bind confirmation to the opened location and observed missing/empty state. For
 an empty target, establish the identity and zero length of the same regular file
 before changing it. A replacement, nonempty file or unavailable prerequisite
@@ -434,7 +474,8 @@ facts. Changed prerequisites yield stale-review/conflict, not automatic rebase
 or confirmation loops. Present only the existing required confirmations. Profile
 owners supply exact known registered-reference impact and unavailable/scope
 information. Unknown files are not a frozen global inventory. A known change
-invalidating displayed impact requires fresh review, never profile rewriting.
+invalidating displayed impact requires fresh review. Only the explicit rename
+choice authorizes edits to the reviewed registered profiles.
 
 The adapter owns controls and unaccepted replies; the operation owns accepted
 inputs. Define one acceptance/cleanup handoff so late/duplicate replies are
@@ -527,6 +568,13 @@ shared unlock/hosting, stale replies, role and selection races, native cleanup,
 initialization/archive/restore guards, partial publication, notification failure,
 reconciliation/reopen restrictions and all capacity thresholds. Q12-Q16 establish
 design readiness, not authorization to implement or a claim that these tests ran.
+
+Verify that both password and private-key entries require a valid username and
+that adding, editing, importing, and opening a vault enforce the same rule.
+Verify duplicate-name rejection across kinds when adding, importing, renaming,
+and opening an authenticated vault. Verify that renaming leaves the old name
+unresolved, that a later same-name replacement resolves by name, and that an
+editing operation captured before the replacement still fails its revision check.
 
 After implementation authorization, verify Argon2/HKDF/GCM known-answer vectors,
 cross-PC unlock, every header field's AAD coverage, wrong password, truncation,
