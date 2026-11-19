@@ -492,9 +492,10 @@
   <data name="MacroErrorConstantsDeclaration" xml:space="preserve"><value>定数ファイルの宣言が正しくありません。</value></data>
   <data name="MacroErrorConstantsAlias" xml:space="preserve"><value>定数ファイルの別名が別の名前と重複しています。</value></data>
   <data name="MacroErrorConstantsLimit" xml:space="preserve"><value>宣言した定数が上限を超えています。</value></data>
-  <data name="MacroErrorConstantsJson" xml:space="preserve"><value>定数ファイルには正しい JSON オブジェクトを一つ記述してください。</value></data>
+  <data name="MacroErrorConstantsDefinition" xml:space="preserve"><value>var または単一値の型で定数を宣言し、初期値とセミコロンを指定してください。</value></data>
+  <data name="MacroErrorConstantsLiteral" xml:space="preserve"><value>定数の初期値には、文字列、真偽値、または数値のリテラルを指定してください。</value></data>
   <data name="MacroErrorConstantsName" xml:space="preserve"><value>定数名が重複しているか、使用できない名前です。</value></data>
-  <data name="MacroErrorConstantsType" xml:space="preserve"><value>定数に使用できない型または数値が含まれています。</value></data>
+  <data name="MacroErrorConstantsType" xml:space="preserve"><value>リテラルが宣言された定数の型に一致しません。</value></data>
   <data name="MacroErrorConstantsRead" xml:space="preserve"><value>定数ファイルを読み込めませんでした。</value></data>
   <data name="MacroErrorConstantFile" xml:space="preserve"><value>宣言した定数ファイルを利用できません。</value></data>
   <data name="MacroErrorMemoryLimit" xml:space="preserve"><value>マクロのメモリ上限に達しました。</value></data>

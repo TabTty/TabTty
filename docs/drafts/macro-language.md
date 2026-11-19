@@ -100,7 +100,7 @@ No `ref`, `out`, optional parameters, named arguments or user overloads initiall
 A macro declares each constants file on its own line. A version-1 reader that
 predates this extension rejects the unknown directive before execution. Write
 the alias and a literal path, separated by spaces or tabs. Use an ordinary or
-verbatim macro string on that line. For example, `#constants Site @"C:\Ops\site.json"`
+verbatim macro string on that line. For example, `#constants Site @"C:\Ops\site.tttyc"`
 preserves the backslashes in a Windows path. After the literal, allow spaces or
 tabs and an optional `//` comment, followed by the line ending or EOF. A
 semicolon, interpolation, or a computed path is a source error. The directive
@@ -125,26 +125,25 @@ initialized from a constant can be reassigned under the usual type rules.
 Decode each file independently using the macro source encoding rules. Match the
 longest BOM first. Accept strict UTF-8 with or without a BOM and strict
 BOM-marked UTF-16LE, UTF-16BE, UTF-32LE and UTF-32BE. An unmarked file uses
-UTF-8. Authors can use the conventional `.json` extension. The reader applies
-the following format to every declared file regardless of its name.
-The decoded text must contain exactly one JSON object, with optional JSON
-whitespace around it. An empty object is valid. Comments, trailing commas,
-duplicate members and malformed Unicode are file errors. Compare member names
-after JSON escape decoding, so `"A"` and `"\u0041"` are duplicates. JSON string
-escapes apply to keys and values. A surrogate pair denotes one Unicode scalar
-and an unpaired surrogate escape is a file error.
+UTF-8. The examples use the `.tttyc` extension. The reader identifies a constants
+file by its declaration in the macro and accepts other filenames.
 
-| JSON value | Macro type and accepted values |
-| --- | --- |
-| String | `string` containing the decoded text |
-| `true` or `false` | `bool` |
-| Number with integer spelling | `long` parsed directly from the signed decimal spelling within the full signed 64-bit range |
-| Number with a fraction or exponent | `double` parsed as invariant binary64 with the macro's finite-result and underflow rules |
+The file contains zero or more declarations of the form
+`type Name = literal;` or `var Name = literal;`. It has no version directive.
+Whitespace and the macro's line and block comments can appear between tokens.
+The same case-sensitive name rules apply to definitions. A repeated name is a
+file error.
 
-For example, `1000` is a `long` and `1e3` is a `double`. An out-of-range
-integer is a file error even if the value would fit in a `double`. Arrays,
-nested objects and `null` are file errors. A string such as `"1 + 2"` has its
-literal text value. Supply non-secret data in these files.
+The four scalar types are `string`, `bool`, `long` and `double`. An initializer
+can be an ordinary or verbatim string, `true`, `false` or a numeric literal
+with an optional leading sign. It follows the macro's scalar literal spelling,
+range and escape rules. Interpolation, operators other than the numeric sign,
+name references, calls, and executable statements are outside the file grammar.
+`var` infers the literal's type. An explicit type follows the usual macro
+assignment rules, including widening from `long` to `double`. For example,
+`var Timeout = 1000;` defines a `long` and `double Rate = 1;` defines a
+`double`. An integer outside the signed 64-bit range is a file error.
+Supply non-secret data in these files.
 
 Check every member of every declared file, including unused members, then
 resolve and type-check every macro reference, including those in unused
@@ -156,22 +155,20 @@ capture and checking.
 
 ### Two macros using one file
 
-An operator keeps `common.json` alongside two macros. Each uses its own profile
+An operator keeps `common.tttyc` alongside two macros. Each uses its own profile
 and the same timeout.
 
-```json
-{
-  "Prompt": "Ready>",
-  "ReadyLine": "Service ready",
-  "TimeoutMs": 5000
-}
+```csharp
+string Prompt = "Ready>";
+string ReadyLine = "Service ready";
+long TimeoutMs = 5000;
 ```
 
 `inspect.tttym` uses the shared prompt from a helper.
 
 ```csharp
 #tttym 1
-#constants Common "common.json"
+#constants Common "common.tttyc"
 
 void AwaitPrompt()
 {
@@ -186,7 +183,7 @@ AwaitPrompt();
 
 ```csharp
 #tttym 1
-#constants Common "common.json"
+#constants Common "common.tttyc"
 
 Connect("startup.ttty");
 WaitLine(Literal(Common.ReadyLine), Common.TimeoutMs);

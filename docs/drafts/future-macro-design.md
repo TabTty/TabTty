@@ -58,7 +58,8 @@ readable source with a required language-version declaration and execution of
 one validated snapshot. These future-feature decisions do not add macro
 execution, an editor or macro-file activation to the initial release.
 
-Macros may declare external JSON files of named, read-only scalar values.
+Macros may declare external files of named, read-only scalar values. These
+files use the macro's initialized declaration syntax with literal values.
 Each launch checks the complete set of definitions and uses the captured
 values through the end of that run. The declaration and access syntax are in
 the [language contract](macro-language.md#shared-macro-constants).

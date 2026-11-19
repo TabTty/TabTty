@@ -80,12 +80,12 @@ internal sealed class MacroProgram : IDisposable
                     if (captured is null) return null;
                     bytesRemaining -= captured.ByteCount;
 
-                    // Reserve for UTF-8 JSON tokens and temporary string decoding. Retained
-                    // string values and keys fit in the original UTF-16 character count.
+                    // Reserve for temporary lexer tokens and string decoding. Retained
+                    // string values and names fit in the original UTF-16 character count.
                     using var scratch = quota.Reserve(512 + captured.Text.Length * 6L);
                     retained.Add(128 + captured.Text.Length * 2L);
                     file = MacroConstantsFile.Parse(fullPath, captured.Digest, captured.Text,
-                        membersRemaining, count => retained.Add(224L * count));
+                        membersRemaining, () => retained.Add(224));
                     files.Add(fullPath, file);
                     membersRemaining -= file.Values.Count;
                     foreach (var value in file.Values.Values)

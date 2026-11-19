@@ -6,7 +6,7 @@ source bytes, the ordered arguments and the exact bytes of every declared
 constants file. The user reviews the same snapshots that the run consumes.
 
 Byte identity lets a user recognize and restore a previously reviewed version
-without depending on JSON normalization or which branches the macro will take.
+without depending on normalization or which branches the macro will take.
 A formatting edit therefore requires review if that combination is new.
 Identical copies of the complete set share the decision on the same PC.
 Macros with zero constants declarations keep their existing trust records.

@@ -1,6 +1,3 @@
-using System.Text;
-using System.Text.Json;
-
 namespace TabTty.Core;
 
 internal sealed record MacroConstantsDeclaration(string Alias, string Path, MacroPosition Position);
@@ -12,91 +9,65 @@ internal sealed record MacroConstantsFile(string FullPath, string Digest, string
     internal const int MaxMembers = 4096;
 
     internal static MacroConstantsFile Parse(string fullPath, string digest, string source, int remainingMembers,
-        Action<int>? admitMember = null)
+        Action admitMember)
     {
-        byte[] json = Encoding.UTF8.GetBytes(source);
-        var reader = new Utf8JsonReader(json);
         var values = new Dictionary<string, object>(StringComparer.Ordinal);
+        var lexer = new MacroLexer(source, new(1, 1), allowInterpolation: false);
         try
         {
-            if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
-                throw Error("ConstantsJson", reader.TokenStartIndex);
-            while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+            for (MacroToken type = lexer.Next(); type.Kind != "end"; type = lexer.Next())
             {
-                if (values.Count >= remainingMembers) throw Error("ConstantsLimit", reader.TokenStartIndex);
-                admitMember?.Invoke(1);
-                string name = ReadString(ref reader);
-                if (!IsIdentifier(name) || MacroChecker.IsReserved(name) || values.ContainsKey(name))
-                    throw Error("ConstantsName", reader.TokenStartIndex);
-                if (!reader.Read()) throw Error("ConstantsJson", reader.BytesConsumed);
-                object value;
-                switch (reader.TokenType)
+                if (type.Text is not ("var" or "bool" or "long" or "double" or "string"))
+                    throw new MacroSourceException("ConstantsDefinition", type.Position);
+                if (values.Count >= remainingMembers)
+                    throw new MacroSourceException("ConstantsLimit", type.Position);
+                admitMember();
+
+                MacroToken name = lexer.Next();
+                if (name.Kind != "id" || MacroChecker.IsReserved(name.Text) || values.ContainsKey(name.Text))
+                    throw new MacroSourceException("ConstantsName", name.Position);
+                MacroToken assignment = lexer.Next();
+                if (assignment.Text != "=") throw new MacroSourceException("ConstantsDefinition", assignment.Position);
+
+                MacroToken initializer = lexer.Next();
+                object value = ReadLiteral(initializer, lexer);
+                MacroToken end = lexer.Next();
+                if (end.Text != ";")
+                    throw new MacroSourceException(end.Kind == "end" ? "ConstantsDefinition" : "ConstantsLiteral", end.Position);
+
+                values.Add(name.Text, type.Text switch
                 {
-                    case JsonTokenType.String: value = ReadString(ref reader); break;
-                    case JsonTokenType.True: value = true; break;
-                    case JsonTokenType.False: value = false; break;
-                    case JsonTokenType.Number:
-                        if (reader.ValueSpan.IndexOfAny((byte)'.', (byte)'e', (byte)'E') < 0)
-                        {
-                            if (!reader.TryGetInt64(out long integer)) throw Error("ConstantsType", reader.TokenStartIndex);
-                            value = integer;
-                        }
-                        else
-                        {
-                            if (!reader.TryGetDouble(out double number) || !double.IsFinite(number))
-                                throw Error("ConstantsType", reader.TokenStartIndex);
-                            value = number;
-                        }
-                        break;
-                    default: throw Error("ConstantsType", reader.TokenStartIndex);
-                }
-                values.Add(name, value);
+                    "var" => value,
+                    "bool" when value is bool => value,
+                    "long" when value is long => value,
+                    "double" when value is double => value,
+                    "double" when value is long integer => (double)integer,
+                    "string" when value is string => value,
+                    _ => throw new MacroSourceException("ConstantsType", initializer.Position),
+                });
             }
-            if (reader.TokenType != JsonTokenType.EndObject || reader.Read())
-                throw Error("ConstantsJson", reader.BytesConsumed);
         }
-        catch (JsonException error)
+        catch (MacroSourceException error)
         {
-            // The JSON reader counts UTF-8 bytes and separates lines at LF.
-            long offset = 0;
-            for (long i = 0; i < error.LineNumber.GetValueOrDefault(); i++)
-            {
-                int next = Array.IndexOf(json, (byte)'\n', (int)offset);
-                if (next < 0) break;
-                offset = next + 1;
-            }
-            throw Error("ConstantsJson", offset + error.BytePositionInLine.GetValueOrDefault());
+            throw new MacroSourceException(error.Code, error.Position, fullPath);
         }
         return new(fullPath, digest, source, values.AsReadOnly());
-
-        string ReadString(ref Utf8JsonReader input)
-        {
-            try { return input.GetString()!; }
-            catch (InvalidOperationException) // Includes an unpaired surrogate in a JSON escape.
-            { throw Error("ConstantsJson", input.TokenStartIndex); }
-        }
-
-        MacroSourceException Error(string code, long byteOffset)
-        {
-            var prefix = json.AsSpan(0, (int)Math.Min(byteOffset, json.Length));
-            int line = 1;
-            int lineStart = 0;
-            for (int i = 0; i < prefix.Length; i++)
-            {
-                if (prefix[i] is not ((byte)'\r' or (byte)'\n')) continue;
-                if (prefix[i] == '\r' && i + 1 < prefix.Length && prefix[i + 1] == '\n') i++;
-                line++;
-                lineStart = i + 1;
-            }
-            return new(code, new(line, 1 + Encoding.UTF8.GetCharCount(prefix[lineStart..])), fullPath);
-        }
     }
 
-    private static bool IsIdentifier(string name)
+    private static object ReadLiteral(MacroToken initializer, MacroLexer lexer)
     {
-        if (name.Length == 0 || !(char.IsAsciiLetter(name[0]) || name[0] == '_')) return false;
-        foreach (char c in name.AsSpan(1))
-            if (!(char.IsAsciiLetterOrDigit(c) || c == '_')) return false;
-        return true;
+        if (initializer.Kind == "str") return initializer.Value!;
+        if (initializer.Text is "true" or "false") return initializer.Text == "true";
+
+        bool negative = initializer.Text == "-";
+        MacroToken number = initializer.Text is "+" or "-" ? lexer.Next() : initializer;
+        if (number.Kind != "num") throw new MacroSourceException("ConstantsLiteral", number.Position);
+        return number.Value switch
+        {
+            long integer => (object)(negative ? -integer : integer),
+            double real => negative ? -real : real,
+            ulong when negative => long.MinValue,
+            _ => throw new MacroSourceException("NumericLiteral", number.Position),
+        };
     }
 }

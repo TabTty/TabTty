@@ -34,7 +34,7 @@ Use a TabTty-owned interpreter with whole-source checking and explicit runtime
 pause/Stop checkpoints (Q62, ADR 0004). The language is C#-style, not full C#.
 It does not expose arbitrary .NET members, local files, processes, network
 clients, clipboard access, custom classes, source imports, user threads/tasks,
-or AI/SFTP control. The application reads explicitly declared JSON files of
+or AI/SFTP control. The application reads explicitly declared files of
 non-secret, read-only shared macro constants during launch. Required profile
 reads, vault retrieval and session recording are also application operations.
 No untrusted-code sandbox or safety of arbitrary remote commands is promised.
@@ -121,12 +121,12 @@ distinctions in case-sensitive directories. Enforce the bounds as files are
 loaded. [Admission and accounting](macro-validation.md#admission-and-accounting)
 Decode each file independently using the same strict BOM rules as the macro
 source. Hash the exact bytes of each file, including any BOM and original
-line endings. Parse the entire object and bind the read-only values to their
+line endings. Parse all definitions and bind the read-only values to their
 declared aliases. Check every member, including members unused by this macro.
 A missing or unreadable file, detected change during its read, decoding
 error, invalid definition, unknown reference or type error ends the launch
 before execution review or run/tab creation. Identify the file and, where
-available, the error location. See the [language and JSON contract](macro-language.md).
+available, the error location. See the [constants file grammar](macro-language.md#constants-file-format).
 
 Capture the files individually. The set can contain versions written at
 different times. Bind the exact captured combination for validation, review
@@ -181,7 +181,7 @@ that produces the same parsed strings gives the same match.
 
 Show the full source digest, normalized absolute path and all ordered arguments
 on the review screen. For each declared file, show its alias, resolved path
-and full SHA-256 digest and allow inspection of the captured JSON. Show the
+and full SHA-256 digest and allow inspection of the captured declarations. Show the
 combined constants version digest defined below so the user can identify
 this version in Settings. Render quotes, control characters, empty strings
 and an empty argument list unambiguously. Let the user inspect the captured
@@ -249,7 +249,7 @@ scoped to the current Windows user on this PC (`CRED_TYPE_GENERIC`,
 name. Verify the bounded record's version, source digest, fingerprint,
 decision and, for v3, constants version digest against the lookup before
 using it. Store the fixed-size digests and decision metadata. Keep paths,
-source text, JSON contents, argument values and passwords out of the record.
+source text, constants file contents, argument values and passwords out of the record.
 Individual removal and reset cover both formats. Trust survives sign-out.
 Copying a macro, settings, profile or portable vault to another PC does not
 transfer its approval. Windows protects this store at the user-account boundary.

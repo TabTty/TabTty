@@ -51,7 +51,14 @@ Connect(@"profiles\server.ttty");
 WaitPrompt(Literal("$ "));
 ```
 
-値を共有するには、`{"Prompt":"$ ","TimeoutMs":5000}` のような JSON オブジェクトを `common.json` に保存します。各マクロのバージョン行の後に `#constants Common "common.json"` を追加すると、接続後に `WaitPrompt(Literal(Common.Prompt), Common.TimeoutMs)` と指定できます。実行中は起動時の値を使い続けます。次回起動時には、整形だけの変更も実行許可の照合に反映されます。パスワードは vault に保存してください。
+値を共有するには、次のように宣言を `common.tttyc` に保存します。
+
+```csharp
+string Prompt = "$ ";
+long TimeoutMs = 5000;
+```
+
+各マクロのバージョン行の後に `#constants Common "common.tttyc"` を追加すると、接続後に `WaitPrompt(Literal(Common.Prompt), Common.TimeoutMs)` と指定できます。実行中は起動時の値を使い続けます。次回起動時には、整形だけの変更も実行許可の照合に反映されます。パスワードは vault に保存してください。
 
 マクロの操作ボタンで、一時停止、再開、終了ができます。マクロを終了した時点で接続が正常なら、そのまま手動で入力できます。記録に失敗した場合は、記録を再試行したあと、マクロを明示的に再開します。受信履歴に欠落があった場合は、タブで継続か終了を選べます。保存済みパスワードを送信するときは、vault の項目名を `WritePassword` または `WritePasswordLine` に指定します。vault の管理画面でパスワード項目を選び、**マクロ用参照をコピー** を使うと、引用符付きの項目名をコピーできます。[マクロ言語リファレンス](docs/drafts/macro-language.md)を参照してください。
 

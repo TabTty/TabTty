@@ -13,13 +13,13 @@ internal static partial class Program
     {
         string folder = Directory.CreateDirectory(Path.Combine(directory, "constants-trust")).FullName;
         string source = Path.Combine(folder, "review.tttym");
-        string first = Path.Combine(folder, "first.json"), second = Path.Combine(folder, "second.json");
-        const string text = "#tttym 1\n#constants First \"first.json\"\n#constants Second \"second.json\"\n" +
-            "#constants Repeated \"first.json\"\nif (First.Delay != 3 || Second.Delay != 7 || Repeated.Delay != 3) { var fail = 1 / 0; }";
-        const string a = "{\"Delay\":3}", b = "{\"Delay\":7}";
+        string first = Path.Combine(folder, "first.tttyc"), second = Path.Combine(folder, "second.tttyc");
+        const string text = "#tttym 1\n#constants First \"first.tttyc\"\n#constants Second \"second.tttyc\"\n" +
+            "#constants Repeated \"first.tttyc\"\nif (First.Delay != 3 || Second.Delay != 7 || Repeated.Delay != 3) { var fail = 1 / 0; }";
+        const string a = "long Delay = 3;", b = "long Delay = 7;";
         // SHA-256 fixtures for the declaration sequences [a,b,a] and [b,a,b].
-        const string original = "6815B761AE1303122312075D268F4C724582D17A8492D6ADEF28AEF8DF2CBB21";
-        const string swapped = "4FB406930BB8041F695B0E56E8CC444FD17F402810C53112BA34FC7CBFEE355C";
+        const string original = "9067AC8DB57FBD2C3930AC511B0E7F25BD47035F1EC4931FFCBD34AA0584B8B2";
+        const string swapped = "B1F0FE6ACA90C4F39C9EE84A306C9BF664DAB03A4047C0EEB89FDA0E3907986F";
         void WriteInputs(string firstJson, string secondJson)
         {
             File.WriteAllText(source, text);
@@ -59,7 +59,7 @@ internal static partial class Program
                 var inspect = dialog.Dispatcher.InvokeAsync(() =>
                 {
                     var contents = app.Windows.OfType<Window>().Single(w => w.Owner == dialog && w.IsVisible);
-                    try { CheckMacroLaunch(FindControls<TextBox>(contents).Any(box => box.Text == b), "Inspection did not use captured JSON."); }
+                    try { CheckMacroLaunch(FindControls<TextBox>(contents).Any(box => box.Text == b), "Inspection did not use the captured definitions."); }
                     finally { contents.Close(); }
                 }, DispatcherPriority.ContextIdle);
                 Click(dialog, "MacroInspectConstants");
@@ -87,7 +87,7 @@ internal static partial class Program
             await window.OpenExternalMacroAsync(launch with { Path = Path.Combine(copy, Path.GetFileName(source)) }).WaitAsync(TimeSpan.FromSeconds(6));
             CheckMacroLaunch(window.TerminalTabs.Count() == ++before, "An identical copy of the macro and dependencies lost its decision.");
             await SetLanguage("ja");
-            foreach (var edit in new[] { a + " ", "{\"Delay\":3,\"Unused\":true}", a + "\r\n" })
+            foreach (var edit in new[] { a + " ", a + " bool Unused = true;", a + "\r\n" })
             {
                 File.WriteAllText(first, edit);
                 request = window.OpenExternalMacroAsync(launch);

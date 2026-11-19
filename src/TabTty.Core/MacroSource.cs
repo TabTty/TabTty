@@ -36,7 +36,7 @@ internal sealed class MacroSyntaxBudget(ResourceReservation? tokens = null, Reso
 internal sealed record MacroToken(string Kind, string Text, object? Value, MacroPosition Position, int Offset, int EndOffset = -1);
 internal sealed record MacroStringExpression(string Source, MacroPosition Position);
 
-internal sealed class MacroLexer(string source, MacroPosition origin)
+internal sealed class MacroLexer(string source, MacroPosition origin, bool allowInterpolation = true)
 {
     private int offset;
     private int line = origin.Line, column = origin.Column;
@@ -60,6 +60,7 @@ internal sealed class MacroLexer(string source, MacroPosition origin)
                 else throw Error("StringPrefix", at);
             }
             if (Peek() != '"') throw Error("StringExpected", at);
+            if (interpolated && !allowInterpolation) throw Error("ConstantsLiteral", at);
             return ReadString(at, start, interpolated, verbatim);
         }
         if (char.IsAsciiLetter(c) || c == '_')

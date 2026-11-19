@@ -382,8 +382,8 @@ explains the effect of editing a shared file.
 | Q78 — Shared data | An external file defines named, read-only, non-secret values that macro statements and helpers can use. The file supplies data only. |
 | Q79 — Explicit selection | Each consuming macro declares the file it uses. Several macros can declare the same file. |
 | Q80 — Lifetime and approval | Read and hold the constants for one launch. Edits affect subsequent launches. Remembered execution decisions cover the macro source, ordered invocation arguments, and the captured constants. A change to the constants selects the decision for the resulting combination. |
-| Q81 — File format and encoding | Each constants file contains one JSON object with unique member names. Decode each file independently using the macro source rules. Without a BOM, read strict UTF-8. With a BOM, accept UTF-8, UTF-16LE/BE or UTF-32LE/BE, matching the longest BOM first. Reject malformed input. |
-| Q82 — Value types | Accept JSON strings, booleans and numbers. An integer spelling denotes a signed 64-bit `long`. A fraction or exponent denotes a finite `double`. Arrays, objects as values and `null` are invalid. |
+| Q81 — File format and encoding | The user corrected the format to a sequence of macro-style initialized declarations with unique names. Decode each file independently using the macro source rules. Without a BOM, read strict UTF-8. With a BOM, accept UTF-8, UTF-16LE/BE or UTF-32LE/BE, matching the longest BOM first. Reject malformed input. |
+| Q82 — Value types | Accept `var` or the scalar types `string`, `bool`, `long` and `double`. Initializers are scalar literals using the macro's numeric and string syntax. |
 | Q83 — Declarations and names | At the top of the macro, declare each file with `#constants Alias "path"`. Use `Alias.Name` in statements and helpers. Different aliases can expose the same member name. |
 | Q84 — File location | Accept absolute paths and resolve relative paths against the directory of the macro source. Apply the [remote read confirmation rules](macro-specification.md#loading-launch-and-source-identity) to each dependency before any potential remote access. |
 | Q85 — Content identity | Include every declared file's exact encoded bytes in the execution decision. A change to a BOM, encoding, whitespace or line ending selects the decision for the resulting combination, even when all parsed values are equal. |
@@ -392,18 +392,16 @@ explains the effect of editing a shared file.
 | Q88 — Reviewing and forgetting decisions | At launch, show each declared file's alias and resolved path and let the user inspect its captured contents. In Settings, distinguish earlier and later constants versions for the same macro and arguments. The user can forget one decision even after deleting the original files. |
 
 For example, both a startup macro and a diagnostic macro can declare
-`#constants Common "common.json"`. Given the file below, both can call
+`#constants Common "common.tttyc"`. Given the file below, both can call
 `WaitPrompt(Literal(Common.Prompt), Common.TimeoutMs)` after connecting.
 
-```json
-{
-  "Prompt": "Ready>",
-  "TimeoutMs": 5000
-}
+```csharp
+string Prompt = "Ready>";
+long TimeoutMs = 5000;
 ```
 
 The macro and its constants file may use different encodings. A UTF-8 macro
-can read a UTF-16LE JSON file with a BOM. Saving that file as UTF-8 keeps
+can read a UTF-16LE constants file with a BOM. Saving that file as UTF-8 keeps
 `Common.TimeoutMs` equal to 5000 and changes the content covered by approval.
 
 ## Historical branch inventory

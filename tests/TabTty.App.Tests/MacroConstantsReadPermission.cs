@@ -16,7 +16,7 @@ internal static partial class Program
             string? mappedDrive = Environment.GetEnvironmentVariable("TABTTY_MACRO_TEST_MAPPED_DRIVE");
             if (mappedDrive is not null)
             {
-                string fixture = Path.Combine(directory, "remote-constants.json");
+                string fixture = Path.Combine(directory, "remote-constants.tttyc");
                 await SharedConstantsReadPermission(app, window, directory, liveSmb: true, mappedDrive + fixture[2..]);
                 Console.WriteLine("PASS SharedConstantsMappedDriveReadPermission");
             }
@@ -34,11 +34,11 @@ internal static partial class Program
         string? protectedPath = null)
     {
         string source = Path.Combine(directory, "remote-constants.tttym");
-        string dependency = Path.Combine(directory, "remote-constants.json");
+        string dependency = Path.Combine(directory, "remote-constants.tttyc");
         string remote = protectedPath ?? @"\\localhost\" + dependency[0] + "$" + dependency[2..];
         if (liveSmb)
         {
-            File.WriteAllText(dependency, """{"TimeoutMs": 0, "Marker": "fixture"}""");
+            File.WriteAllText(dependency, """long TimeoutMs = 0; string Marker = "fixture";""");
             CheckMacroLaunch(File.ReadAllText(remote) == File.ReadAllText(dependency),
                 "The protected file fixture is unavailable.");
         }

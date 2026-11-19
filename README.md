@@ -117,9 +117,14 @@ Connect(@"profiles\server.ttty");
 WaitPrompt(Literal("$ "));
 ```
 
-To share values across macros, save a JSON object such as
-`{"Prompt":"$ ","TimeoutMs":5000}` in `common.json`. Add
-`#constants Common "common.json"` after the version line in each macro.
+To share values across macros, save these declarations in `common.tttyc`.
+
+```csharp
+string Prompt = "$ ";
+long TimeoutMs = 5000;
+```
+
+Add `#constants Common "common.tttyc"` after the version line in each macro.
 After connecting, use `WaitPrompt(Literal(Common.Prompt), Common.TimeoutMs)`.
 The run keeps the captured values through completion. An edit to a declared
 file, including a formatting edit, selects the decision for the new contents.

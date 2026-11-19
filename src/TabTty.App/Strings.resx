@@ -492,9 +492,10 @@
   <data name="MacroErrorConstantsDeclaration" xml:space="preserve"><value>Invalid constants declaration.</value></data>
   <data name="MacroErrorConstantsAlias" xml:space="preserve"><value>The constants file alias conflicts with another name.</value></data>
   <data name="MacroErrorConstantsLimit" xml:space="preserve"><value>The declared constants exceed the permitted limit.</value></data>
-  <data name="MacroErrorConstantsJson" xml:space="preserve"><value>The constants file must contain one valid JSON object.</value></data>
+  <data name="MacroErrorConstantsDefinition" xml:space="preserve"><value>Use a var or scalar type declaration with an initializer and a semicolon.</value></data>
+  <data name="MacroErrorConstantsLiteral" xml:space="preserve"><value>A constant initializer must be a string, Boolean, or numeric literal.</value></data>
   <data name="MacroErrorConstantsName" xml:space="preserve"><value>A constant has a duplicate, reserved or invalid name.</value></data>
-  <data name="MacroErrorConstantsType" xml:space="preserve"><value>A constant has an unsupported type or numeric value.</value></data>
+  <data name="MacroErrorConstantsType" xml:space="preserve"><value>The literal does not match the declared constant type.</value></data>
   <data name="MacroErrorConstantsRead" xml:space="preserve"><value>The constants file could not be read.</value></data>
   <data name="MacroErrorConstantFile" xml:space="preserve"><value>The declared constants file is unavailable.</value></data>
   <data name="MacroErrorMemoryLimit" xml:space="preserve"><value>There is insufficient memory available within the macro limits.</value></data>
