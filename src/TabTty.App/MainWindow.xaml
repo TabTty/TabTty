@@ -1,6 +1,7 @@
 <Window x:Class="TabTty.App.MainWindow" x:ClassModifier="internal"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:TabTty.App"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         Title="TabTty" Width="1000" Height="700" MinHeight="320"
         WindowStyle="None" ResizeMode="CanResize"
@@ -23,14 +24,21 @@
             <Setter Property="FontFamily" Value="Segoe MDL2 Assets" />
             <Setter Property="FontSize" Value="13" />
         </Style>
+        <Style x:Key="ApplicationMenuSurface" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource ContextMenuBackground}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ContextMenuBorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="0,3" />
+            <Setter Property="SnapsToDevicePixels" Value="True" />
+        </Style>
         <ControlTemplate x:Key="TabGroupTemplate" TargetType="TabControl">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" MinHeight="43" />
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
-                        <Border x:Name="tabStripRow" Margin="{TemplateBinding Padding}" Background="Transparent"
-                                BorderThickness="0,0,0,1">
+                        <Border x:Name="tabStripRow" Margin="{TemplateBinding Padding}" Background="Transparent">
                             <Border.ContextMenu>
                                 <ContextMenu Opened="OnTabStripMenuOpened">
                                     <MenuItem Click="CloseDisconnectedTabs" />
@@ -97,61 +105,102 @@
                 <TextBlock Style="{StaticResource WindowGlyph}" Text="&#xE8BB;" />
             </Button>
         </StackPanel>
-        <Border x:Name="mainMenuPanel" Visibility="Collapsed" HorizontalAlignment="Right"
-                VerticalAlignment="Top" Margin="8,43,8,8" MinWidth="220"
-                Background="{DynamicResource WindowBackground}" BorderBrush="{DynamicResource WindowForeground}"
-                BorderThickness="1">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
-                <Menu x:Name="mainMenu" IsMainMenu="False" Background="Transparent"
-                      Foreground="{DynamicResource WindowForeground}"
-                      FocusManager.IsFocusScope="True"
-                      AutomationProperties.Name="{Binding (AutomationProperties.Name), ElementName=menuButton}"
-                      KeyboardNavigation.DirectionalNavigation="Cycle">
-                    <Menu.ItemsPanel>
-                        <ItemsPanelTemplate><StackPanel /></ItemsPanelTemplate>
-                    </Menu.ItemsPanel>
-                    <Menu.Resources>
-                        <Style x:Key="ApplicationMenuItem" TargetType="MenuItem">
-                            <Setter Property="Template">
-                                <Setter.Value>
-                                    <ControlTemplate TargetType="MenuItem">
-                                        <StackPanel>
-                                            <Border x:Name="header" Background="Transparent" Padding="10,5"
-                                                    TextElement.Foreground="{DynamicResource WindowForeground}">
-                                                <DockPanel>
-                                                    <TextBlock x:Name="submenuArrow" DockPanel.Dock="Right"
-                                                               Margin="12,0,0,0" Text="›" Visibility="Collapsed" />
-                                                    <ContentPresenter ContentSource="Header" RecognizesAccessKey="True" />
-                                                </DockPanel>
-                                            </Border>
-                                            <ItemsPresenter x:Name="submenu" Margin="14,0,0,0" Visibility="Collapsed" />
-                                        </StackPanel>
-                                        <ControlTemplate.Triggers>
-                                            <Trigger Property="HasItems" Value="True">
-                                                <Setter TargetName="submenuArrow" Property="Visibility" Value="Visible" />
-                                            </Trigger>
-                                            <Trigger Property="IsSubmenuOpen" Value="True">
-                                                <Setter TargetName="submenu" Property="Visibility" Value="Visible" />
-                                                <Setter TargetName="submenuArrow" Property="Text" Value="⌄" />
-                                            </Trigger>
-                                            <Trigger Property="IsHighlighted" Value="True">
-                                                <Setter TargetName="header" Property="Background"
-                                                        Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
-                                                <Setter TargetName="header" Property="TextElement.Foreground"
-                                                        Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
-                                            </Trigger>
-                                            <Trigger Property="IsEnabled" Value="False">
-                                                <Setter TargetName="header" Property="TextElement.Foreground"
-                                                        Value="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" />
-                                            </Trigger>
-                                        </ControlTemplate.Triggers>
-                                    </ControlTemplate>
-                                </Setter.Value>
-                            </Setter>
-                        </Style>
-                    </Menu.Resources>
-                </Menu>
-            </ScrollViewer>
-        </Border>
+        <Menu x:Name="mainMenu" IsMainMenu="False" Visibility="Collapsed"
+              Foreground="{DynamicResource WindowForeground}"
+              FocusManager.IsFocusScope="True"
+              AutomationProperties.Name="{Binding (AutomationProperties.Name), ElementName=menuButton}"
+              KeyboardNavigation.DirectionalNavigation="Cycle">
+            <Menu.Template>
+                <ControlTemplate TargetType="Menu">
+                    <AdornerDecorator>
+                        <Grid x:Name="menuOverlay">
+                            <Border x:Name="mainMenuPanel" HorizontalAlignment="Right" VerticalAlignment="Top"
+                                    Margin="8,43,0,8" MinWidth="164" Style="{StaticResource ApplicationMenuSurface}">
+                                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                              CanContentScroll="False" Focusable="False">
+                                    <ItemsPresenter />
+                                </ScrollViewer>
+                            </Border>
+                        </Grid>
+                    </AdornerDecorator>
+                </ControlTemplate>
+            </Menu.Template>
+            <Menu.ItemsPanel>
+                <ItemsPanelTemplate><StackPanel /></ItemsPanelTemplate>
+            </Menu.ItemsPanel>
+            <Menu.Resources>
+                <Style x:Key="ApplicationMenuItem" TargetType="MenuItem">
+                    <EventSetter Event="MouseEnter" Handler="OnApplicationMenuItemEntered" />
+                    <Setter Property="shell:WindowChrome.IsHitTestVisibleInChrome" Value="True" />
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                    <Setter Property="Foreground" Value="{DynamicResource ContextMenuForeground}" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="MenuItem">
+                                <Grid>
+                                    <Border x:Name="header" Background="Transparent" Padding="8,6"
+                                            Margin="4,1" CornerRadius="4" MinHeight="28"
+                                            TextElement.Foreground="{TemplateBinding Foreground}">
+                                        <DockPanel>
+                                            <TextBlock x:Name="submenuArrow" DockPanel.Dock="Left" Margin="0,0,12,0"
+                                                       FontFamily="Segoe MDL2 Assets" FontSize="10"
+                                                       Text="&#xE76B;" VerticalAlignment="Center" Visibility="Collapsed" />
+                                            <ContentPresenter x:Name="icon" ContentSource="Icon" Margin="0,0,6,0"
+                                                              DockPanel.Dock="Left" VerticalAlignment="Center" />
+                                            <TextBlock x:Name="checkmark" Margin="0,0,6,0" Text="✓" Visibility="Collapsed"
+                                                       DockPanel.Dock="Left" VerticalAlignment="Center" />
+                                            <TextBlock x:Name="gesture" DockPanel.Dock="Left" Margin="0,0,16,0"
+                                                       Text="{TemplateBinding InputGestureText}" VerticalAlignment="Center" />
+                                            <ContentPresenter x:Name="label" ContentSource="Header" RecognizesAccessKey="True"
+                                                              HorizontalAlignment="Right" VerticalAlignment="Center" />
+                                        </DockPanel>
+                                    </Border>
+                                    <local:ApplicationSubmenu x:Name="submenu" IsOpen="{TemplateBinding IsSubmenuOpen}">
+                                        <Border Style="{StaticResource ApplicationMenuSurface}" MinWidth="164"
+                                                shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                                            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                                          CanContentScroll="False" Focusable="False">
+                                                <ItemsPresenter x:Name="ItemsPresenter" />
+                                            </ScrollViewer>
+                                        </Border>
+                                    </local:ApplicationSubmenu>
+                                </Grid>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="Icon" Value="{x:Null}">
+                                        <Setter TargetName="icon" Property="Visibility" Value="Collapsed" />
+                                    </Trigger>
+                                    <Trigger Property="IsChecked" Value="True">
+                                        <Setter TargetName="checkmark" Property="Visibility" Value="Visible" />
+                                    </Trigger>
+                                    <Trigger Property="InputGestureText" Value="">
+                                        <Setter TargetName="gesture" Property="Visibility" Value="Collapsed" />
+                                    </Trigger>
+                                    <Trigger Property="HasItems" Value="True">
+                                        <Setter TargetName="submenuArrow" Property="Visibility" Value="Visible" />
+                                        <Setter TargetName="gesture" Property="Visibility" Value="Collapsed" />
+                                    </Trigger>
+                                    <Trigger Property="IsSubmenuOpen" Value="True">
+                                        <Setter TargetName="header" Property="Background"
+                                                Value="{DynamicResource MenuBarItemBackgroundSelected}" />
+                                    </Trigger>
+                                    <Trigger Property="IsHighlighted" Value="True">
+                                        <Setter TargetName="header" Property="Background"
+                                                Value="{DynamicResource MenuBarItemBackgroundSelected}" />
+                                    </Trigger>
+                                    <Trigger Property="IsKeyboardFocused" Value="True">
+                                        <Setter TargetName="header" Property="Background"
+                                                Value="{DynamicResource MenuBarItemBackgroundSelected}" />
+                                    </Trigger>
+                                    <Trigger Property="IsEnabled" Value="False">
+                                        <Setter TargetName="header" Property="TextElement.Foreground"
+                                                Value="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" />
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+            </Menu.Resources>
+        </Menu>
     </Grid>
 </Window>

@@ -83,8 +83,8 @@ default. To keep their output available after disconnect, turn off Automatically
 close disconnected tabs in Settings. A broken-link icon beside the connection
 name marks a retained disconnected tab. To close the disconnected
 tabs already in the current window, right-click its tab bar and choose Close all
-disconnected tabs. Removing the last tab closes its window. Settings and editor
-tabs count as tabs. Empty groups remain available while the window has a tab.
+disconnected tabs. Closing the last tab leaves the window open for new tabs.
+Moving the last tab to another window closes the source window.
 
 ## Macros
 

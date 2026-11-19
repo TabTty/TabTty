@@ -327,13 +327,11 @@ peer loss preserves transfer results when the terminal tab is retained. The
 [closure design](tab-and-window-closure.md) records these pending implementation
 changes.
 
-Q192 closes a window after removal of its final tab of any kind, including
-automatic/bulk removal or committed transfer. Settings/editor tabs keep the
-window alive; empty groups do not. Initial window construction before initial
-content is attached is not final-tab removal. Transfer establishes a surviving
-destination before this check, so detaching the last tab does not exit the app
-or clear its vault unlock state. Terminal and standalone editor windows count
-toward the [application lifetime](persistence-and-windows.md#windows-activation-and-modal-order).
+Closing tabs leaves the window and its tab groups open, including after manual,
+automatic, or bulk closure of the final tab. Moving the final tab to another
+window closes the source after the destination commits, preserving the
+application run and the vault unlock state. Terminal and standalone editor
+windows count toward the [application lifetime](persistence-and-windows.md#windows-activation-and-modal-order).
 
 ## Two split layouts
 
@@ -346,7 +344,7 @@ may move to any group but have no inner split operation.
 
 Removing an inner pane only removes that view and collapses its split branch;
 the last pane cannot be removed this way. Closing a tab remains separate.
-Empty groups persist while any tab remains in the window. New tabs use its
+Empty groups persist until explicitly removed. New tabs use the window's
 active group. External profile connection requests use the last active group
 of the destination terminal window. Each new terminal window starts with one
 group and no inner splits. Both layouts are run-local.
@@ -450,7 +448,7 @@ keep the existing layout usable. See [resource limits](resources-and-validation.
 | Split creation/removal | Both axes and both levels work recursively; outer creates empty group, inner shares session; removal never disconnects. Q198 offers a destination, appends tabs in order, focuses it, preserves checks, and prohibits removal of the last group. |
 | Grid versus view | Inner split/focus/scroll leaves grid unchanged; outer resize/shared zoom can resize; per-pane offsets/selections/current matches remain independent. |
 | IME | Same-tab cross-pane focus cancels uncommitted text; commit once, later Enter normal; menus/dialogs retain Windows semantics. |
-| Empty lifetime | Empty groups survive while a terminal or settings tab exists; final removal by each path closes the window. Initial construction remains valid. |
+| Empty lifetime | Manual, automatic, and bulk closure leave the window and its groups open when the last tab closes. The empty groups accept new tabs. |
 | Size pressure | Too-small new split disabled; existing layout remains reachable by scrolling after resize/font/DPI changes; no automatic merge or lost tab. |
 | Accessibility/localization | Keyboard-only and Narrator reach all groups/panes/targets, command labels distinguish actions in English/Japanese, theme does not change fixed terminal defaults. |
 | Resource fairness | More visible panes do not duplicate terminal state, expand retention/input limits, or starve hidden receiving/logging sessions. |

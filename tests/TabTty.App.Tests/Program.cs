@@ -106,6 +106,7 @@ internal static partial class Program
                     case "menu": MainMenuOpensAndReusesManagementTabs(application); break;
                     case "authentication": AuthenticationDialogsIdentifyTheRecipient(application); break;
                     case "keyboard": MainMenuAcceptsKeyboardCommands(); break;
+                    case "menu-pointer": MainMenuOpensNestedSubmenusWithMouse(); break;
                     case "desktop": RequireDesktopInput(); break;
                     default: throw new ArgumentException("Unknown visual check.", nameof(args));
                 }
@@ -723,6 +724,20 @@ internal static partial class Program
             if (!menu.IsVisible || !ReferenceEquals(PresentationSource.FromVisual(menu), source))
                 throw new InvalidOperationException("The menu did not open inside the window.");
             var group = (MenuItem)menu.Items[0];
+            var nextGroup = (MenuItem)menu.Items[1];
+            var panel = (Border)menu.Template.FindName("mainMenuPanel", menu);
+            double panelRight = panel.TranslatePoint(new Point(panel.ActualWidth, 0), root).X;
+            if (Math.Abs(panelRight - root.ActualWidth) > 1)
+                throw new InvalidOperationException("The root menu did not align with the window's right edge.");
+            var arrow = (TextBlock)group.Template.FindName("submenuArrow", group);
+            var label = (ContentPresenter)group.Template.FindName("label", group);
+            var nextLabel = (ContentPresenter)nextGroup.Template.FindName("label", nextGroup);
+            double labelRight = label.TranslatePoint(new Point(label.ActualWidth, 0), root).X;
+            double nextLabelRight = nextLabel.TranslatePoint(new Point(nextLabel.ActualWidth, 0), root).X;
+            if (!arrow.IsVisible || arrow.Text != "\uE76B" || arrow.TranslatePoint(new Point(arrow.ActualWidth, 0), root).X >
+                label.TranslatePoint(new Point(), root).X || Math.Abs(labelRight - nextLabelRight) > 1)
+                throw new InvalidOperationException("The menu did not align labels to the right with a leftward arrow.");
+            Point nextPosition = nextGroup.TranslatePoint(new Point(), root);
             var command = (MenuItem)group.Items[0];
             group.IsSubmenuOpen = true;
             root.UpdateLayout();
@@ -730,6 +745,14 @@ internal static partial class Program
                 throw new InvalidOperationException($"The submenu did not open inside the window. " +
                     $"Open={group.IsSubmenuOpen}, loaded={group.IsLoaded}, visible={command.IsVisible}, " +
                     $"inline={group.Template.FindName("submenu", group) is not null}.");
+            var category = new Rect(group.TranslatePoint(new Point(), root), group.RenderSize);
+            var row = new Rect(command.TranslatePoint(new Point(), root), command.RenderSize);
+            if (row.Left < 0 || row.Right > category.Left ||
+                nextPosition != nextGroup.TranslatePoint(new Point(), root))
+                throw new InvalidOperationException("The submenu did not open beside its category within the window.");
+            var rowCenter = command.TranslatePoint(new Point(command.ActualWidth / 2, command.ActualHeight / 2), window);
+            if (MainWindow.Ancestor<MenuItem>(window.InputHitTest(rowCenter) as DependencyObject) != command)
+                throw new InvalidOperationException("The displayed submenu command did not receive mouse hit testing.");
             if (group.FontFamily.Source != window.FontFamily.Source ||
                 command.FontFamily.Source != window.FontFamily.Source)
                 throw new InvalidOperationException(
@@ -764,22 +787,89 @@ internal static partial class Program
             Press(Key.Down);
             if (!edit.IsKeyboardFocused) throw new InvalidOperationException("Down did not select the next category.");
             Press(Key.Up);
+            Press(Key.Left);
+            var first = (MenuItem)file.Items[0];
+            if (!file.IsSubmenuOpen || !first.IsKeyboardFocused)
+                throw new InvalidOperationException("Left did not open the category and focus its first command.");
+            Press(Key.Right);
+            if (file.IsSubmenuOpen || !file.IsKeyboardFocused)
+                throw new InvalidOperationException("Right did not return focus to the category.");
+            Press(Key.Up);
+            var tools = (MenuItem)menu.Items[^1];
+            if (!tools.IsKeyboardFocused) throw new InvalidOperationException("Up did not wrap to the last category.");
             Press(Key.Enter);
-            if (!file.IsSubmenuOpen || !file.IsKeyboardFocusWithin)
-                throw new InvalidOperationException("Enter did not open the selected category.");
+            var vault = (MenuItem)tools.Items[0];
+            Press(Key.Left);
+            var unlock = (MenuItem)vault.Items[0];
+            if (!unlock.IsKeyboardFocused)
+                throw new InvalidOperationException("The nested submenu did not receive keyboard focus.");
+            if (unlock.TranslatePoint(new Point(unlock.ActualWidth, 0), window).X > vault.TranslatePoint(new Point(), window).X)
+                throw new InvalidOperationException("The nested submenu did not continue the leftward cascade.");
+            Press(Key.Left);
+            if (!unlock.IsKeyboardFocused)
+                throw new InvalidOperationException("Left moved away from a command without a submenu.");
             Press(Key.Escape);
-            if (menu.IsVisible) Press(Key.Escape);
+            if (!vault.IsKeyboardFocused || vault.IsSubmenuOpen || !tools.IsSubmenuOpen)
+                throw new InvalidOperationException("Escape did not close only the nested submenu.");
+            Press(Key.Escape);
+            if (!tools.IsKeyboardFocused || tools.IsSubmenuOpen || !menu.IsVisible)
+                throw new InvalidOperationException("Escape did not return from the submenu to the main menu.");
+            Press(Key.Escape);
             if (menu.IsVisible || !button.IsKeyboardFocused)
                 throw new InvalidOperationException("Escape did not close the application menu and restore focus.");
+
+            button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, button));
+            WaitForInput();
+            var windowMenu = (MenuItem)menu.Items[3];
+            windowMenu.Focus();
+            Press(Key.Left);
+            var tabGroups = windowMenu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, App.Text("TabGroups")));
+            tabGroups.Focus();
+            Press(Key.Left);
+            var split = (MenuItem)tabGroups.Items[0];
+            if (!split.IsKeyboardFocused || !ReferenceEquals(split.Style, menu.Resources["ApplicationMenuItem"]) ||
+                !ReferenceEquals(PresentationSource.FromVisual(split), PresentationSource.FromVisual(window)))
+                throw new InvalidOperationException("A dynamically populated submenu did not open inside the window.");
+            button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, button));
+
+            window.Width = window.MinWidth;
+            window.Height = window.MinHeight;
+            for (int index = 0; index < 12; index++)
+                file.Items.Add(new MenuItem { Header = $"Fixture command {index}" });
+            button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, button));
+            WaitForInput();
+            Press(Key.Left);
+            var flyout = (ApplicationSubmenu)file.Template.FindName("submenu", file);
+            var scroll = FindControls<ScrollViewer>(flyout.Child!).Single();
+            var last = (MenuItem)file.Items[^1];
+            Press(Key.Up);
+            if (scroll.ScrollableHeight <= 0 || scroll.VerticalOffset <= 0 || !last.IsKeyboardFocused)
+                throw new InvalidOperationException("Keyboard navigation did not scroll the submenu in a small window.");
+            if (!System.Windows.Shell.WindowChrome.GetIsHitTestVisibleInChrome(last))
+                throw new InvalidOperationException("Submenu rows could not receive mouse input over the window caption.");
+            Press(Key.Escape);
+            Press(Key.Up);
+            Press(Key.Left);
+            var settings = tools.Items.OfType<MenuItem>().Single(item => Equals(item.Header, App.Text("Settings")));
+            settings.Focus();
+            Press(Key.Enter);
+            if (menu.IsVisible || ((TabControl)window.FindName("tabs")).SelectedContent is not FormView)
+                throw new InvalidOperationException("Invoking a submenu command did not open its tab and close the menu.");
         }
         finally { window.Close(); }
 
         void Press(Key key)
         {
             var source = PresentationSource.FromVisual(window);
+            var focused = (UIElement)Keyboard.FocusedElement;
             var args = new KeyEventArgs(Keyboard.PrimaryDevice, source, Environment.TickCount, key)
-                { RoutedEvent = Keyboard.KeyDownEvent };
-            ((UIElement)Keyboard.FocusedElement).RaiseEvent(args);
+                { RoutedEvent = Keyboard.PreviewKeyDownEvent };
+            focused.RaiseEvent(args);
+            if (!args.Handled)
+            {
+                args.RoutedEvent = Keyboard.KeyDownEvent;
+                focused.RaiseEvent(args);
+            }
             WaitForInput();
         }
 
@@ -788,6 +878,92 @@ internal static partial class Program
 
     [DllImport("user32.dll", EntryPoint = "GetForegroundWindow", ExactSpelling = true)]
     private static extern nint VisualCheckForegroundWindow();
+
+    private static void MainMenuOpensNestedSubmenusWithMouse()
+    {
+        RequireDesktopInput();
+        var window = new MainWindow((App)Application.Current)
+        {
+            Width = 880, Height = 560, WindowStartupLocation = WindowStartupLocation.CenterScreen,
+        };
+        if (!GetCursorPos(out var original)) throw new InvalidOperationException("The test could not read the mouse position.");
+        try
+        {
+            window.Show();
+            window.Activate();
+            var button = (Button)window.FindName("menuButton");
+            var menu = (Menu)window.FindName("mainMenu");
+            var tools = (MenuItem)menu.Items[^1];
+            var vault = (MenuItem)tools.Items[0];
+            var unlock = (MenuItem)vault.Items[0];
+            CheckCascade();
+            window.Width = window.MinWidth;
+            window.Height = window.MinHeight;
+            window.UpdateLayout();
+            CheckCascade();
+
+            void CheckCascade()
+            {
+                MoveMouseTo(button);
+                button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, button));
+                Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                WaitFor(() => IsDisplayed(tools), "the first level to open");
+                MoveMouseTo(tools);
+                WaitFor(() => IsDisplayed(vault), "the second level to open");
+                MoveMouseTo(vault);
+                WaitFor(() => IsDisplayed(unlock), "the third level to open");
+                MoveMouseTo(unlock);
+                if (!tools.IsSubmenuOpen || !vault.IsSubmenuOpen)
+                    throw new InvalidOperationException("Moving the mouse onto the third level closed its parent menu.");
+                button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, button));
+                WaitFor(() => !menu.IsVisible && Mouse.Captured != menu, "the menu to close and release the mouse");
+            }
+        }
+        finally
+        {
+            window.Close();
+            SetCursorPos(original.X, original.Y);
+        }
+
+        bool IsDisplayed(MenuItem item) => item.IsVisible && item.ActualWidth > 0 && item.ActualHeight > 0 &&
+            ReferenceEquals(PresentationSource.FromVisual(item), PresentationSource.FromVisual(window));
+
+        void MoveMouseTo(FrameworkElement item)
+        {
+            window.UpdateLayout();
+            var center = new Point(item.ActualWidth / 2, item.ActualHeight / 2);
+            var hit = window.InputHitTest(item.TranslatePoint(center, window)) as Visual;
+            if (hit is null || (hit != item && !item.IsAncestorOf(hit)))
+                throw new InvalidOperationException($"The center of {item} was covered by {hit}.");
+            var point = item.PointToScreen(center);
+            if (!SetCursorPos((int)Math.Round(point.X), (int)Math.Round(point.Y)))
+                throw new InvalidOperationException("The test could not move the mouse.");
+            WaitFor(() => Mouse.DirectlyOver is Visual over && (over == item || item.IsAncestorOf(over)), $"the mouse to reach {item}");
+        }
+
+        static void WaitFor(Func<bool> ready, string expected)
+        {
+            var deadline = System.Diagnostics.Stopwatch.StartNew();
+            while (!ready() && deadline.Elapsed < TimeSpan.FromSeconds(3))
+            {
+                Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                Thread.Sleep(10);
+            }
+            if (!ready()) throw new InvalidOperationException(
+                $"Timed out waiting for {expected} (capture: {Mouse.Captured?.GetType().Name}, hit: {Mouse.DirectlyOver?.GetType().Name}).");
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct CursorPosition { internal int X, Y; }
+
+    [DllImport("user32.dll", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetCursorPos(out CursorPosition point);
+
+    [DllImport("user32.dll", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetCursorPos(int x, int y);
 
     private sealed class DesktopInputUnavailableException(string message) : Exception(message);
 
@@ -823,11 +999,16 @@ internal static partial class Program
         if (menuPosition.X <= tabPosition.X + item.ActualWidth || menuPosition.Y > 12 ||
             menu.ActualWidth <= 0 || item.ActualHeight <= 0)
             throw new InvalidOperationException("The menu and window buttons did not fit next to the tabs.");
+        var tabs = (TabControl)window.FindName("tabs");
+        var strip = (Border)tabs.Template.FindName("tabStripRow", tabs);
+        if (strip.BorderThickness.Bottom != 0)
+            throw new InvalidOperationException("The tab strip drew a bottom border.");
         if (menu.Foreground is not SolidColorBrush foreground || window.Background is not SolidColorBrush background ||
             foreground.Color.R <= background.Color.R)
             throw new InvalidOperationException("The menu icon did not contrast with the dark tab strip.");
-        var menuPanel = (Border)window.FindName("mainMenuPanel");
         var applicationMenu = (Menu)window.FindName("mainMenu");
+        applicationMenu.ApplyTemplate();
+        var menuPanel = (Border)applicationMenu.Template.FindName("mainMenuPanel", applicationMenu);
         if (menuPanel.Background is not SolidColorBrush menuBackground ||
             applicationMenu.Foreground is not SolidColorBrush menuForeground ||
             menuBackground.Color.R >= menuForeground.Color.R)
@@ -1166,7 +1347,7 @@ internal static partial class Program
     private static async Task DisconnectedTabsRespectSettingsAndBulkClose(App app, string settingsPath)
     {
         var host = new MainWindow(app);
-        var finalHost = new MainWindow(app);
+        var finalHost = new MainWindow(app) { ShowActivated = false, ShowInTaskbar = false };
         var terminals = new List<TerminalTab>();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -1285,12 +1466,27 @@ internal static partial class Program
             if (tabs.Items.Count != 2 || !active.IsDisconnected)
                 throw new InvalidOperationException("Auto-close did not remove the tab after disconnect.");
 
+            finalHost.Show();
             using TcpClient lastPeer = await Connect(finalHost);
             lastPeer.Client.Shutdown(SocketShutdown.Send);
             await terminals[^1].Completion.WaitAsync(deadline.Token);
-            while (!finalHost.IsClosing) await Task.Delay(15, deadline.Token);
-            if (((TabControl)finalHost.FindName("tabs")).HasItems || !finalHost.IsClosing)
-                throw new InvalidOperationException("Auto-close did not close the window after removing its final tab.");
+            var finalTabs = (TabControl)finalHost.FindName("tabs");
+            var welcome = (FrameworkElement)finalHost.FindName("welcomePanel");
+            while (finalTabs.HasItems) await Task.Delay(15, deadline.Token);
+            if (!finalHost.IsVisible || finalHost.IsClosing || !welcome.IsVisible)
+                throw new InvalidOperationException("Auto-close did not return the window to its welcome screen.");
+
+            OpenSettings(finalHost);
+            if (finalTabs.SelectedItem is not TabItem settingsTab || welcome.IsVisible)
+                throw new InvalidOperationException("The empty window could not open a new tab.");
+            var closeSettings = ((DockPanel)settingsTab.Header).Children.OfType<Button>().Single();
+            closeSettings.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            if (finalTabs.HasItems || !finalHost.IsVisible || finalHost.IsClosing || !welcome.IsVisible)
+                throw new InvalidOperationException("Closing the final settings tab did not keep the window open.");
+
+            finalHost.Close();
+            if (finalHost.IsVisible)
+                throw new InvalidOperationException("An explicit window close did not close the empty window.");
         }
         finally
         {

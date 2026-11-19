@@ -228,9 +228,9 @@ is reported as a failure. Preserve state needed by any view whose final removal
 failed. These rules also apply to Q10's automatic closure.
 
 The [window contract](persistence-and-windows.md) still orders activation,
-closure and move commits. Count settings/editor tabs in the final-tab rule,
-not empty split groups. Keep destination-before-source removal for moves,
-existing settings/editor Save/Cancel behavior, and the final-exit rule.
+closure and move commits. A tab close leaves its window open even after the last
+tab closes. Preserve destination-before-source removal for moves, settings/editor
+Save/Cancel behavior, and the final-exit rule.
 
 ## Verification and implementation readiness
 

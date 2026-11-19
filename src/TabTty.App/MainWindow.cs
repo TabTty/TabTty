@@ -19,7 +19,6 @@ internal sealed partial class MainWindow : Window
     private readonly App app;
     private readonly TerminalClosure terminalClosure;
     private MenuItem? currentMenu;
-    private IInputElement? focusBeforeMenu;
     private bool closing;
     private bool readyToClose;
     private bool closed;
@@ -45,31 +44,7 @@ internal sealed partial class MainWindow : Window
         Icon = WindowIcons.App;
         welcomeIcon.Source = WindowIcons.Welcome;
         MinWidth = WindowPlacement.MinimumWidth;
-        menuButton.Click += (_, _) =>
-        {
-            if (mainMenuPanel.Visibility == Visibility.Visible) CloseApplicationMenu();
-            else OpenApplicationMenu();
-        };
-        menuButton.ContextMenuOpening += (_, args) =>
-        {
-            OpenApplicationMenu();
-            args.Handled = true;
-        };
-        mainMenu.IsKeyboardFocusWithinChanged += (_, _) =>
-        {
-            if (!mainMenu.IsKeyboardFocusWithin) CloseApplicationMenu(restoreFocus: false);
-        };
-        mainMenu.AddHandler(MenuItem.ClickEvent, new RoutedEventHandler((_, _) => CloseApplicationMenu()), handledEventsToo: true);
-        mainMenu.AddHandler(MenuItem.SubmenuOpenedEvent, new RoutedEventHandler((_, args) =>
-        {
-            if (args.OriginalSource is MenuItem parent) ApplyApplicationMenuStyle(parent.Items);
-        }));
-        Deactivated += (_, _) => CloseApplicationMenu(restoreFocus: false);
-        PreviewMouseDown += (_, args) =>
-        {
-            if (mainMenuPanel.Visibility == Visibility.Visible && !mainMenuPanel.IsMouseOver && !menuButton.IsMouseOver)
-                CloseApplicationMenu();
-        };
+        InitializeApplicationMenu();
         minimizeButton.Click += (_, _) => SystemCommands.MinimizeWindow(this);
         maximizeButton.Click += (_, _) =>
         {
@@ -80,51 +55,7 @@ internal sealed partial class MainWindow : Window
         StateChanged += (_, _) => UpdateMaximizeButton();
         NativeKeyState.Attach(this);
         InitializeGroups();
-        PreviewKeyDown += (_, args) =>
-        {
-            if (args.Key == Key.Escape && mainMenuPanel.Visibility == Visibility.Visible &&
-                !mainMenu.Items.OfType<MenuItem>().Any(item => item.IsSubmenuOpen))
-            {
-                CloseApplicationMenu();
-                args.Handled = true;
-                return;
-            }
-            if (Keyboard.Modifiers != ModifierKeys.Alt) return;
-            Key key = args.Key == Key.System ? args.SystemKey : args.Key;
-            MenuItem? item = mainMenu.Items.OfType<MenuItem>().FirstOrDefault(menu => menu.Tag is Key access && access == key);
-            if (item is null) return;
-            OpenApplicationMenu(item);
-            args.Handled = true;
-        };
         UpdateLabels();
-    }
-
-    private void OpenApplicationMenu(MenuItem? category = null)
-    {
-        if (mainMenuPanel.Visibility != Visibility.Visible)
-        {
-            focusBeforeMenu = Keyboard.FocusedElement;
-            mainMenuPanel.Visibility = Visibility.Visible;
-        }
-        var target = category ?? mainMenu.Items.OfType<MenuItem>().First();
-        Dispatcher.BeginInvoke(() =>
-        {
-            if (mainMenuPanel.Visibility != Visibility.Visible || !IsActive || !target.Focus()) return;
-            if (category is not null) target.IsSubmenuOpen = true;
-        }, System.Windows.Threading.DispatcherPriority.Loaded);
-    }
-
-    private void CloseApplicationMenu(bool restoreFocus = true)
-    {
-        if (mainMenuPanel.Visibility != Visibility.Visible) return;
-        var previous = focusBeforeMenu;
-        bool returnFocus = restoreFocus && mainMenu.IsKeyboardFocusWithin;
-        focusBeforeMenu = null;
-        mainMenuPanel.Visibility = Visibility.Collapsed;
-        foreach (MenuItem item in mainMenu.Items.OfType<MenuItem>())
-            item.IsSubmenuOpen = false;
-        if (returnFocus && previous is not null)
-            Keyboard.Focus(previous);
     }
 
     internal void OpenProfile(string path)
@@ -182,7 +113,7 @@ internal sealed partial class MainWindow : Window
         if (item.Content is FormView form) form.TabOwner = this;
         activeGroup.Items.Add(item);
         activeGroup.SelectedItem = item;
-        welcomePanel.Visibility = Visibility.Collapsed;
+        UpdateWelcomePanel();
         app.Broadcast.Refresh();
     }
 
@@ -311,16 +242,6 @@ internal sealed partial class MainWindow : Window
         SetButtonLabel(maximizeButton, restore ? "RestoreWindow" : "MaximizeWindow");
     }
 
-    private void ApplyApplicationMenuStyle(ItemCollection items)
-    {
-        var style = (Style)mainMenu.Resources["ApplicationMenuItem"];
-        foreach (MenuItem item in items.OfType<MenuItem>())
-        {
-            item.Style = style;
-            ApplyApplicationMenuStyle(item.Items);
-        }
-    }
-
     private static void SetButtonLabel(Button button, string key)
     {
         string label = Text(key);
@@ -367,7 +288,7 @@ internal sealed partial class MainWindow : Window
         InvalidOperationException? placementError = null;
         var outcome = app.Broadcast.MoveTerminalTab(this, target, terminal, Place);
         if (placementError is not null) ShowError(this, placementError);
-        if (outcome.Placed) CloseIfEmpty();
+        if (outcome.Placed && this != target && !closed && !closing && !AllTabs.Any()) Close();
         return outcome.Placed;
 
         bool Place()
@@ -389,7 +310,7 @@ internal sealed partial class MainWindow : Window
                 return false;
             }
 
-            target.welcomePanel.Visibility = Visibility.Collapsed;
+            target.UpdateWelcomePanel();
             if (item is WindowTab movedTab) movedTab.Host = target;
             if (terminal is not null)
             {
@@ -865,6 +786,7 @@ internal sealed partial class MainWindow : Window
         app.Ai.EndSharing(terminal);
         terminal.DisposeMacro();
         app.Broadcast.Refresh();
+        UpdateWelcomePanel();
         return (true, release);
     }
 
@@ -874,12 +796,7 @@ internal sealed partial class MainWindow : Window
         group.Items.Remove(item);
         item.Host = null;
         form.TabOwner = null;
-        CloseIfEmpty();
-    }
-
-    private void CloseIfEmpty()
-    {
-        if (!closed && !closing && !AllTabs.Any()) Close();
+        UpdateWelcomePanel();
     }
 
     private void SetWindowCloseControls(bool pending)

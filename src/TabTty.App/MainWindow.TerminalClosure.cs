@@ -143,10 +143,10 @@ internal sealed partial class MainWindow
                 {
                     window.closing = window.readyToClose = false;
                     window.SetWindowCloseControls(pending: false);
+                    window.UpdateWelcomePanel();
                 }
                 if (entireWindow) windowRequest = null;
                 else disconnectedRequest = null;
-                if (!entireWindow) window.CloseIfEmpty();
             }
         }
 
@@ -254,7 +254,6 @@ internal sealed partial class MainWindow
             {
                 Finish(request, new(outcome, adopted, transferOutcome, actualCleanup, outputRelease,
                     target.Terminal.RecordingCloseStatus));
-                window.CloseIfEmpty();
             }
         }
 

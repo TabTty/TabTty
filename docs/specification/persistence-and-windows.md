@@ -119,11 +119,10 @@ existing necessary cleanup, reporting, and wait/loss choices still apply.
 Disconnect or peer loss retains transfer results while the terminal tab is
 retained. See the [closure design](tab-and-window-closure.md); these bulk and
 automatic-removal behavior changes are not yet implemented.
-Q192 (2026-11-14) supersedes the earlier automatic/bulk-closure exception: close
-the window when its final tab is removed, counting terminal and settings/editor
-tabs together. Empty split groups do not count as tabs. A transfer commits the
-destination before closing an empty source window; initial window construction
-is not a final-tab removal.
+Closing the last terminal or settings/editor tab leaves its window open. This
+applies to manual closure, automatic closure on disconnect, and the bulk close
+command. A single-group window returns to its welcome screen. A window with
+split groups retains its layout. The new-tab button remains available.
 Font/retention defaults and profile-resolved values are captured at next
 connection. Store selected values such as `system`, not only resolved OS values.
 Keep paste delays/remember checkbox, temporary zoom/echo, unlock state, and tab
@@ -351,9 +350,8 @@ Standalone editors do not take part in last-active terminal routing.
 
 On initial editor-only activation, display the requested editor windows. If
 only editors are open, a normal launch without a file opens a terminal window
-with profile selection. The final-tab rule closes its containing terminal
-window while other editor windows remain open and keep their drafts. The
-application exits after the last terminal or standalone editor window closes.
+with profile selection. The application exits after the last terminal or
+standalone editor window closes.
 Only terminal and standalone editor windows count toward this lifetime.
 
 Share one pending unlock interaction per vault file. All waiters for that file

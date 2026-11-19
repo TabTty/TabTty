@@ -79,10 +79,7 @@ internal sealed partial class MainWindow
     private void LabelGroups()
     {
         foreach (var group in Groups)
-        {
             AutomationProperties.SetName(group, GroupName(group));
-            MarkActiveGroup(group, group == activeGroup);
-        }
     }
 
     private string GroupName(TabControl group)
@@ -99,7 +96,7 @@ internal sealed partial class MainWindow
         ConfigureGroup(added);
         try { groups.Split(group, added, orientation); }
         catch (ResourceLimitException exception) { ShowError(this, exception); return; }
-        welcomePanel.Visibility = Visibility.Collapsed;
+        UpdateWelcomePanel();
         UpdateGroupChrome();
         ActivateGroup(added);
         added.Focus();
@@ -116,7 +113,7 @@ internal sealed partial class MainWindow
         foreach (var item in source.Items.OfType<WindowTab>().ToArray())
             if (!MoveTab(item, this, destinationGroup: destination)) return;
         groups.Remove(source);
-        if (!Groups.Skip(1).Any() && !AllTabs.Any()) welcomePanel.Visibility = Visibility.Visible;
+        UpdateWelcomePanel();
         UpdateGroupChrome();
         ActivateGroup(destination);
         FocusGroup(destination);
@@ -198,10 +195,6 @@ internal sealed partial class MainWindow
 
     private TabControl? GroupOf(TabItem item) => Groups.FirstOrDefault(group => group.Items.Contains(item));
 
-    private static void MarkActiveGroup(TabControl group, bool isActive)
-    {
-        if (group.Template?.FindName("tabStripRow", group) is not Border strip) return;
-        if (isActive) strip.SetResourceReference(Border.BorderBrushProperty, SystemColors.HighlightBrushKey);
-        else strip.ClearValue(Border.BorderBrushProperty);
-    }
+    private void UpdateWelcomePanel() => welcomePanel.Visibility = !closing && !Groups.Skip(1).Any() && !AllTabs.Any()
+        ? Visibility.Visible : Visibility.Collapsed;
 }
