@@ -142,7 +142,7 @@ internal static partial class Program
                 return 0;
             }
             if (args is ["--native-utf8-baseline" or "--disconnected-tabs" or "--terminal-tab-close" or "--broadcast-splits" or
-                "--macro-launch" or "--profile-trust" or "--vault-first-use" or "--vault-rename"] or
+                "--macro-launch" or "--macro-network" or "--profile-trust" or "--vault-first-use" or "--vault-rename"] or
                 ["--transfer-window-close" or "--fullscreen-vim" or "--overload-controls" or "--sftp-batch", _])
             {
                 var integrationFrame = new DispatcherFrame();
@@ -153,6 +153,7 @@ internal static partial class Program
                     "--terminal-tab-close" => CheckTerminalClosure(application, settingsDirectory),
                     "--broadcast-splits" => BroadcastAndSplitViews(application, settingsDirectory),
                     "--macro-launch" => MacroLaunchAndDialog(application, settingsDirectory),
+                    "--macro-network" => SharedConstantsNetworkAsync(application, settingsDirectory),
                     "--profile-trust" => CheckProfileTrustAsync(application, settingsDirectory),
                     "--vault-first-use" => CheckVaultFirstUseAsync(application, settingsDirectory),
                     "--vault-rename" => CheckVaultRenameAsync(application, settingsDirectory),

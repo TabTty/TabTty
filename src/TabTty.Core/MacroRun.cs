@@ -26,7 +26,7 @@ internal sealed partial class MacroRun : IDisposable
     private readonly TimeProvider clock;
     private readonly long started;
     private readonly CancellationTokenSource stop = new(), attemptStop = new();
-    private readonly ResourceQuota memory = new(MacroLimits.RunBytes, MacroLimits.ApplicationMemory);
+    private readonly ResourceQuota memory;
     private readonly ResourceQuota patterns = new(32);
     private readonly ConditionalWeakTable<object, ResourceReservation> allocations = new();
     private readonly ConditionalWeakTable<MacroPattern, ResourceReservation> patternAllocations = new();
@@ -61,7 +61,7 @@ internal sealed partial class MacroRun : IDisposable
     {
         MacroLimits.ValidateArguments(args);
         if (!MacroLimits.Runs.Wait(0)) throw new MacroSourceException("RunLimit", new(1, 1));
-        try { initialMemory = memory.Reserve(MacroLimits.ReserveBytes + program.Source.Length * 4L + program.NodeCount * 64L); }
+        try { initialMemory = program.AdmitRun(out memory); }
         catch { MacroLimits.Runs.Release(); throw new MacroSourceException("MemoryLimit", new(1, 1)); }
         programSnapshot = program;
         FullPath = program.FullPath;
@@ -430,7 +430,7 @@ internal sealed partial class MacroRun : IDisposable
 
     private void Own(object value)
     {
-        if (value.GetType().IsValueType) return;
+        if (value.GetType().IsValueType || value is string captured && Program.OwnsConstantString(captured)) return;
         long size = value switch
         {
             string text => 32 + text.Length * 2L,

@@ -476,13 +476,28 @@
   <data name="WindowGroupName" xml:space="preserve"><value>ウィンドウ {0} · {1}</value></data>
   <data name="RunMacro" xml:space="preserve"><value>マクロを実行</value></data>
   <data name="MacroReview" xml:space="preserve"><value>マクロの実行を確認</value></data>
-  <data name="MacroTrustNotice" xml:space="preserve"><value>マクロは保存済みプロファイルで接続し、コマンドや保存パスワードを送信できます。許可を記憶すると、同じ内容と引数での外部起動にも適用されます。ファイルの場所によって、相対パスで参照するプロファイルが変わる場合があります。</value></data>
+  <data name="MacroTrustNotice" xml:space="preserve"><value>マクロは保存済みプロファイルで接続し、コマンドや保存パスワードを送信できます。記憶した判断は、マクロ本体・宣言した定数ファイルの内容・引数が同じ場合に、別の場所からの外部起動にも適用されます。マクロを移動すると相対パスで参照するプロファイルが変わる場合があります。</value></data>
   <data name="MacroElevatedNotice" xml:space="preserve"><value>このマクロは管理者権限で実行されます。保存済みプロファイルで接続し、コマンドや保存パスワードを送信できます。今回の管理者権限での実行を意図している場合だけ許可してください。</value></data>
-  <data name="MacroReadRemote" xml:space="preserve"><value>マクロファイルを開く</value></data>
+  <data name="MacroReadRemote" xml:space="preserve"><value>マクロで使うファイルの読み込み</value></data>
   <data name="MacroReadRemoteNotice" xml:space="preserve"><value>このファイルの読み込みで、ネットワーク共有への接続やファイルのダウンロードが発生する場合があります。今回読み込む場合は続行してください。</value></data>
   <data name="MacroReadSource" xml:space="preserve"><value>ファイルを読み込む</value></data>
   <data name="MacroSourceDigest" xml:space="preserve"><value>ファイルの SHA-256</value></data>
   <data name="MacroInspectSource" xml:space="preserve"><value>マクロの内容を確認</value></data>
+  <data name="MacroConstantsVersion" xml:space="preserve"><value>定数の版（SHA-256）</value></data>
+  <data name="MacroConstantsFileDigest" xml:space="preserve"><value>定数ファイルの SHA-256</value></data>
+  <data name="MacroConstantsAlias" xml:space="preserve"><value>定数ファイルの別名</value></data>
+  <data name="MacroReadFilePath" xml:space="preserve"><value>ファイルのパス</value></data>
+  <data name="MacroInspectConstants" xml:space="preserve"><value>定数ファイルの内容を確認</value></data>
+  <data name="MacroShowAllDecisions" xml:space="preserve"><value>このマクロの判断をすべて表示</value></data>
+  <data name="MacroErrorConstantsDeclaration" xml:space="preserve"><value>定数ファイルの宣言が正しくありません。</value></data>
+  <data name="MacroErrorConstantsAlias" xml:space="preserve"><value>定数ファイルの別名が別の名前と重複しています。</value></data>
+  <data name="MacroErrorConstantsLimit" xml:space="preserve"><value>宣言した定数が上限を超えています。</value></data>
+  <data name="MacroErrorConstantsJson" xml:space="preserve"><value>定数ファイルには正しい JSON オブジェクトを一つ記述してください。</value></data>
+  <data name="MacroErrorConstantsName" xml:space="preserve"><value>定数名が重複しているか、使用できない名前です。</value></data>
+  <data name="MacroErrorConstantsType" xml:space="preserve"><value>定数に使用できない型または数値が含まれています。</value></data>
+  <data name="MacroErrorConstantsRead" xml:space="preserve"><value>定数ファイルを読み込めませんでした。</value></data>
+  <data name="MacroErrorConstantFile" xml:space="preserve"><value>宣言した定数ファイルを利用できません。</value></data>
+  <data name="MacroErrorMemoryLimit" xml:space="preserve"><value>マクロのメモリ上限に達しました。</value></data>
   <data name="MacroRunOnce" xml:space="preserve"><value>今回だけ実行</value></data>
   <data name="MacroAlwaysAllow" xml:space="preserve"><value>この引数で常に許可</value></data>
   <data name="MacroAlwaysBlock" xml:space="preserve"><value>この引数で常に拒否</value></data>

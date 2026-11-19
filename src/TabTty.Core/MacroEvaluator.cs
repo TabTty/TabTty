@@ -164,7 +164,7 @@ internal sealed partial class MacroRun
                     var offset = await ValueAsync(index.Index).ConfigureAwait(false);
                     result = target is string text ? text[Index(offset, text.Length)].ToString() : ((MacroList)target).Items[Index(offset, ((MacroList)target).Items.Count)]; break;
                 case MacroMember member:
-                    result = Member(await ValueAsync(member.Target).ConfigureAwait(false), member.Name); break;
+                    result = member.ConstantValue ?? Member(await ValueAsync(member.Target).ConfigureAwait(false), member.Name); break;
                 case MacroInterpolation interpolation:
                     var builder = new System.Text.StringBuilder();
                     foreach (var part in interpolation.Parts)

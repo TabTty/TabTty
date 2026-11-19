@@ -3,7 +3,7 @@ using System.Net.Sockets;
 using System.Text;
 using TabTty.Core;
 
-internal static class MacroContracts
+internal static partial class MacroContracts
 {
     internal static async Task RunAsync()
     {
@@ -11,6 +11,10 @@ internal static class MacroContracts
         Console.WriteLine("PASS MacroRejectsInvalidUnusedCodeBeforeEffects");
         await SourceEncodingsAsync();
         Console.WriteLine("PASS MacroSourceEncodingsAndSnapshot");
+        await SharedConstantsLanguageAsync();
+        Console.WriteLine("PASS SharedConstantsLanguage");
+        await MacroConstantsLoadTests.RunAsync();
+        Console.WriteLine("PASS SharedConstantsLoadAndBudgets");
         await LanguageAsync();
         Console.WriteLine("PASS MacroFixedTypesControlFlowListsAndInvariantValues");
         await ReceiveAsync();

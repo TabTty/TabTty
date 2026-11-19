@@ -1,96 +1,17 @@
 using System.Globalization;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
-using Microsoft.Win32.SafeHandles;
 
 namespace TabTty.Core;
 
-internal sealed class MacroProgram
-{
-    private MacroProgram(string fullPath, string source, MacroBlock body, Dictionary<string, MacroFunction> functions,
-        int nodes)
-    { FullPath = fullPath; Source = source; Body = body; Functions = functions; NodeCount = nodes; }
-    public string FullPath { get; }
-    internal string Source { get; }
-    internal MacroBlock Body { get; }
-    internal Dictionary<string, MacroFunction> Functions { get; }
-    internal int NodeCount { get; }
-    internal string? SourceDigest { get; private set; }
-
-    public static async Task<MacroProgram> LoadAsync(string path, CancellationToken token = default)
-    {
-        path = ResolveSourcePath(path);
-        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read,
-            4096, FileOptions.Asynchronous | FileOptions.SequentialScan);
-        return await LoadAsync(path, stream, token).ConfigureAwait(false);
-    }
-
-    internal static async Task<MacroProgram?> TryLoadLocalAsync(string path, CancellationToken token = default)
-    {
-        path = ResolveSourcePath(path);
-        using SafeFileHandle? handle = LocalMacroFile.TryOpen(path);
-        if (handle is null) return null;
-        await using var stream = new FileStream(handle, FileAccess.Read);
-        return await LoadAsync(path, stream, token).ConfigureAwait(false);
-    }
-
-    internal static string ResolveSourcePath(string path)
-    {
-        try
-        {
-            MacroLimits.Unicode(path);
-            return OrdinaryWindowsPath.Resolve(path);
-        }
-        catch (Exception error) when (error is MacroError or InvalidDataException or ArgumentException or PathTooLongException)
-        { throw SourceError("Path"); }
-    }
-
-    private static async Task<MacroProgram> LoadAsync(string path, FileStream stream, CancellationToken token)
-    {
-        long length = stream.Length;
-        if (length > MacroLimits.SourceBytes) throw SourceError("SourceLimit");
-        DateTime stamp = File.GetLastWriteTimeUtc(stream.SafeFileHandle);
-        byte[] bytes = new byte[(int)length];
-        await stream.ReadExactlyAsync(bytes, token).ConfigureAwait(false);
-        if (stream.Length != length || stream.ReadByte() != -1 || File.GetLastWriteTimeUtc(stream.SafeFileHandle) != stamp)
-            throw SourceError("SourceChanged");
-        Encoding encoding = new UTF8Encoding(false, true);
-        int skip = 0;
-        if (bytes.AsSpan().StartsWith(new byte[] { 0xff, 0xfe, 0, 0 })) { encoding = new UTF32Encoding(false, true, true); skip = 4; }
-        else if (bytes.AsSpan().StartsWith(new byte[] { 0, 0, 0xfe, 0xff })) { encoding = new UTF32Encoding(true, true, true); skip = 4; }
-        else if (bytes.AsSpan().StartsWith(new byte[] { 0xef, 0xbb, 0xbf })) skip = 3;
-        else if (bytes.AsSpan().StartsWith(new byte[] { 0xff, 0xfe })) { encoding = new UnicodeEncoding(false, true, true); skip = 2; }
-        else if (bytes.AsSpan().StartsWith(new byte[] { 0xfe, 0xff })) { encoding = new UnicodeEncoding(true, true, true); skip = 2; }
-        try
-        {
-            var program = Parse(path, encoding.GetString(bytes, skip, bytes.Length - skip));
-            program.SourceDigest = Convert.ToHexString(SHA256.HashData(bytes));
-            return program;
-        }
-        catch (DecoderFallbackException) { throw SourceError("SourceEncoding"); }
-    }
-
-    public static MacroProgram Parse(string path, string source)
-    {
-        if (source.Length > MacroLimits.StringUnits) throw SourceError("SourceLimit");
-        var budget = new MacroSyntaxBudget();
-        var parser = new MacroParser(source, new(1, 1), budget);
-        var (body, functions) = parser.ParseFile();
-        var result = new MacroProgram(Path.GetFullPath(path), source, body, functions, budget.Nodes);
-        new MacroChecker(result).Check();
-        return result;
-    }
-
-    private static MacroSourceException SourceError(string code) => new(code, new(1, 1));
-}
-
-internal sealed class MacroSyntaxBudget
+internal sealed class MacroSyntaxBudget(ResourceReservation? tokens = null, ResourceReservation? retained = null)
 {
     public int Nodes;
     public int Depth;
+    public void Token() => tokens?.Add(96);
     public T Add<T>(T node) where T : MacroNode
     {
+        retained?.Add(64);
         if (++Nodes > 100_000) throw new MacroSourceException("SyntaxLimit", node.Position);
         if (node is MacroExpression expression)
         {
@@ -112,7 +33,7 @@ internal sealed class MacroSyntaxBudget
     }
 }
 
-internal sealed record MacroToken(string Kind, string Text, object? Value, MacroPosition Position, int Offset);
+internal sealed record MacroToken(string Kind, string Text, object? Value, MacroPosition Position, int Offset, int EndOffset = -1);
 internal sealed record MacroStringExpression(string Source, MacroPosition Position);
 
 internal sealed class MacroLexer(string source, MacroPosition origin)
@@ -182,7 +103,7 @@ internal sealed class MacroLexer(string source, MacroPosition origin)
                 if (verbatim && Peek() == '"') { Take(); text.Append('"'); continue; }
                 parts.Add(text.ToString());
                 stringDepth--;
-                return new(interpolated ? "interp" : "str", "", interpolated ? parts : text.ToString(), at, start);
+                return new(interpolated ? "interp" : "str", "", interpolated ? parts : text.ToString(), at, start, offset);
             }
             if (!verbatim && c is '\r' or '\n') throw Error("StringNewline", at);
             if (!verbatim && c == '\\') { AppendEscape(text, at); continue; }
@@ -288,6 +209,8 @@ internal sealed class MacroParser
     private readonly MacroSyntaxBudget budget;
     private readonly string source;
     private int cursor;
+    private readonly List<MacroConstantsDeclaration> constantsDeclarations = [];
+    internal IReadOnlyList<MacroConstantsDeclaration> ConstantsDeclarations => constantsDeclarations;
     public MacroParser(string source, MacroPosition origin, MacroSyntaxBudget budget)
     {
         this.budget = budget;
@@ -296,6 +219,7 @@ internal sealed class MacroParser
         MacroToken token;
         do
         {
+            budget.Token();
             token = lexer.Next(); tokens.Add(token);
             if (tokens.Count > 500_000) throw new MacroSourceException("SyntaxLimit", token.Position);
         } while (token.Kind != "end");
@@ -313,6 +237,7 @@ internal sealed class MacroParser
         MacroToken version = Current;
         Expect("1");
         if (Current.Kind != "end" && Current.Position.Line == version.Position.Line) Fail("VersionLine");
+        while (Current.Text == "#") ParseConstantsDeclaration();
         var statements = new List<MacroStatement>();
         var functions = new Dictionary<string, MacroFunction>(StringComparer.Ordinal);
         while (Current.Kind != "end")
@@ -346,6 +271,34 @@ internal sealed class MacroParser
         }
         return (Add(new MacroBlock(statements.ToArray(), new(1, 1))), functions);
     }
+
+    private void ParseConstantsDeclaration()
+    {
+        MacroToken start = Take();
+        MacroToken keyword = Take();
+        if (keyword.Text != "constants" || keyword.Offset != start.Offset + 1)
+            throw new MacroSourceException("ConstantsDeclaration", start.Position);
+        MacroToken alias = Current;
+        string name = Identifier();
+        MacroToken literal = Current;
+        if (literal.Kind != "str" || !HorizontalSpace(keyword.Offset + keyword.Text.Length, alias.Offset) ||
+            !HorizontalSpace(alias.Offset + name.Length, literal.Offset))
+            throw new MacroSourceException("ConstantsDeclaration", literal.Position);
+        Take();
+        if (source.AsSpan(literal.Offset, literal.EndOffset - literal.Offset).ContainsAny('\r', '\n'))
+            throw new MacroSourceException("ConstantsDeclaration", literal.Position);
+        var trailing = source.AsSpan(literal.EndOffset).TrimStart(" \t");
+        if (!trailing.IsEmpty && trailing[0] is not ('\r' or '\n') && !trailing.StartsWith("//"))
+            throw new MacroSourceException("ConstantsDeclaration", literal.Position);
+        if (MacroChecker.IsReserved(name) || constantsDeclarations.Any(entry => entry.Alias == name))
+            throw new MacroSourceException("ConstantsAlias", alias.Position);
+        if (constantsDeclarations.Count >= MacroConstantsFile.MaxDeclarations)
+            throw new MacroSourceException("ConstantsLimit", start.Position);
+        constantsDeclarations.Add(new(name, (string)literal.Value!, literal.Position));
+    }
+
+    private bool HorizontalSpace(int start, int end) =>
+        end > start && source.AsSpan(start, end - start).IndexOfAnyExcept(' ', '\t') < 0;
 
     private MacroStatement Statement()
     {

@@ -65,6 +65,8 @@ internal static partial class Program
             if (run.Status.State != MacroRunState.Completed || !window.TerminalTabs.Contains(tab))
                 throw new InvalidOperationException("Accepted empty input failed or the preconnection result tab disappeared.");
             await RememberMacroDecisions(app, window, directory);
+            await SharedConstantsTrust(app, window, directory);
+            await SharedConstantsReadPermission(app, window, directory, liveSmb: false);
         }
         finally
         {
@@ -145,7 +147,8 @@ internal static partial class Program
         }
     }
 
-    private static async Task ForgetFromSettings(App app, MainWindow window, MacroTrustKey key)
+    private static async Task ForgetFromSettings(App app, MainWindow window, MacroTrustKey key,
+        Action<Window, ComboBox>? beforeForget = null)
     {
         OpenSettings(window);
         var form = (FormView)((TabControl)window.FindName("tabs")).SelectedContent;
@@ -162,6 +165,7 @@ internal static partial class Program
                 var sources = lists.Single(list => list.Items.Contains(key.SourceDigest));
                 sources.SelectedItem = key.SourceDigest;
                 var pairs = lists.Single(list => list != sources);
+                beforeForget?.Invoke(dialog, pairs);
                 pairs.SelectedItem = pairs.Items.OfType<string>().Single(item => item.StartsWith(key.Fingerprint, StringComparison.Ordinal));
                 FindControls<Button>(dialog).Single(button => Equals(button.Content, App.Text("MacroForgetDecision")))
                     .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));

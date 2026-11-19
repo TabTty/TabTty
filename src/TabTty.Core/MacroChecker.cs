@@ -75,6 +75,8 @@ internal sealed class MacroChecker(MacroProgram program)
 {
     private sealed record Variable(MacroType Type, bool ReadOnly = false);
     private readonly List<Dictionary<string, Variable>> scopes = [];
+    private readonly Dictionary<string, MacroConstantsFile> constants = program.Constants.ToDictionary(
+        binding => binding.Alias, binding => binding.File, StringComparer.Ordinal);
     private readonly Dictionary<string, HashSet<string>> calls = new(StringComparer.Ordinal);
     private string caller = "";
     private MacroType returns = MacroType.Void;
@@ -170,7 +172,7 @@ internal sealed class MacroChecker(MacroProgram program)
         switch (expression)
         {
             case MacroLiteral literal:
-                result = literal.Value switch { bool => MacroType.Bool, long => MacroType.Long, double => MacroType.Double, string => MacroType.String, _ => throw new InvalidOperationException() }; break;
+                result = ScalarType(literal.Value); break;
             case MacroName name:
                 result = name.Name == "Macro" ? MacroType.Meta : MacroType.EnumNames.Contains(name.Name)
                     ? new("$" + name.Name) : Lookup(name.Name, name.Position).Type; break;
@@ -186,6 +188,14 @@ internal sealed class MacroChecker(MacroProgram program)
                 Require(indexed == MacroType.String || indexed.Name == "List", index);
                 result = indexed == MacroType.String ? MacroType.String : indexed.Element!; break;
             case MacroMember member:
+                if (member.Target is MacroName alias && constants.TryGetValue(alias.Name, out var file))
+                {
+                    if (!file.Values.TryGetValue(member.Name, out var value))
+                        throw new MacroSourceException("UnknownMember", member.Position);
+                    member.ConstantValue = value;
+                    result = ScalarType(value);
+                    break;
+                }
                 MacroType owner = Expression(member.Target);
                 if (owner.Name.StartsWith('$'))
                 {
@@ -282,9 +292,22 @@ internal sealed class MacroChecker(MacroProgram program)
         if (++locals > 1024) Fail("LocalLimit", at);
         scopes[^1].Add(name, new(type, readOnly));
     }
-    private static void CheckName(string name, MacroPosition at)
+    private static MacroType ScalarType(object value) => value switch
     {
-        if (Keywords.Contains(name) || MacroType.ValueNames.Contains(name) || MacroApi.Signatures.ContainsKey(name)) Fail("ReservedName", at);
+        bool => MacroType.Bool,
+        long => MacroType.Long,
+        double => MacroType.Double,
+        string => MacroType.String,
+        _ => throw new InvalidOperationException(),
+    };
+
+    internal static bool IsReserved(string name) =>
+        Keywords.Contains(name) || MacroType.ValueNames.Contains(name) || MacroApi.Signatures.ContainsKey(name);
+
+    private void CheckName(string name, MacroPosition at)
+    {
+        if (IsReserved(name)) Fail("ReservedName", at);
+        if (constants.ContainsKey(name)) Fail("ConstantsAlias", at);
     }
     private Variable Lookup(string name, MacroPosition at)
     {

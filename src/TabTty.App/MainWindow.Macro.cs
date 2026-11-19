@@ -42,27 +42,21 @@ internal sealed partial class MainWindow
 
     internal Task OpenExternalMacroAsync(InstanceLaunch launch) => RunMacroAsync(launch.Path, [.. launch.Arguments]);
 
-    private async Task RunMacroAsync(string path, string[]? args)
+    internal async Task RunMacroAsync(string path, string[]? args)
     {
         if (!CanAcceptTabs) return;
         try
         {
-            path = MacroProgram.ResolveSourcePath(path);
-            MacroProgram? program = null;
-            if (args is not null)
-            {
-                program = await Task.Run(() => MacroProgram.TryLoadLocalAsync(path));
-                if (!CanAcceptTabs || program is null && !ConfirmMacroRead(path)) return;
-            }
-            program ??= await Task.Run(() => MacroProgram.LoadAsync(path));
-            if (!CanAcceptTabs) return;
+            using var program = await Task.Run(() => MacroProgram.LoadForLaunchAsync(path, args is null,
+                file => Dispatcher.InvokeAsync(() => CanAcceptTabs && ConfirmMacroRead(file)).Task));
+            if (program is null || !CanAcceptTabs) return;
             args ??= ReadMacroArguments(this, "RunMacro");
             if (args is null || !CanAcceptTabs) return;
             if (!ApproveMacro(program, args) || !CanAcceptTabs) return;
             var terminal = new TerminalTab(program.FullPath);
-            terminal.PrepareMacro(program, args);
             try
             {
+                terminal.PrepareMacro(program, args);
                 AddTerminalTab(terminal);
                 terminal.Macro!.Start();
             }
@@ -74,8 +68,13 @@ internal sealed partial class MainWindow
         }
         catch (MacroSourceException error)
         {
-            if (IsLoaded) ShowMacroLaunchError(string.Format(Text("MacroLocation"), error.Position.Line, error.Position.Column,
-                TerminalTab.MacroErrorLabel(error.Code)));
+            if (IsLoaded)
+            {
+                string detail = TerminalTab.MacroErrorLabel(error.Code);
+                if (error.Position.Line > 0)
+                    detail = string.Format(Text("MacroLocation"), error.Position.Line, error.Position.Column, detail);
+                ShowMacroLaunchError(PermissionDisplay.Literal(error.FilePath ?? path) + Environment.NewLine + detail);
+            }
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
@@ -87,14 +86,14 @@ internal sealed partial class MainWindow
     {
         var review = new FormWindow(this, Text("MacroReadRemote")) { Width = 560 };
         review.AddPinnedNotice(Text("MacroReadRemoteNotice"));
-        review.AddField("MacroSourceFile", ReadOnlyMacroValue(PermissionDisplay.Literal(path)));
+        review.AddField("MacroReadFilePath", ReadOnlyMacroValue(PermissionDisplay.Literal(path)));
         review.AddButtons(() => { }, acceptKey: "MacroReadSource", cancelDefault: true);
         return app.Modal(review.ShowDialog) == true && CanAcceptTabs;
     }
 
     private bool ApproveMacro(MacroProgram program, string[] arguments)
     {
-        var key = MacroTrustKey.Create(program.SourceDigest!, arguments);
+        var key = MacroTrustKey.Create(program.SourceDigest!, arguments, MacroTrustKey.ConstantsVersion(program.Constants));
         try
         {
             MacroTrustDecision? remembered = MacroTrust.Read(key);
@@ -105,7 +104,12 @@ internal sealed partial class MainWindow
                 int.Parse(token.IntegritySid.AsSpan("S-1-16-".Length), CultureInfo.InvariantCulture) >= 0x3000;
             if (remembered == MacroTrustDecision.Allow && !elevated) return true;
 
-            long revision = MacroTrust.Revision;
+            using var pending = MacroTrust.BeginReview(key);
+            // Bound escaped metadata, input/control copies and the active inspection page.
+            long reviewUnits = program.FullPath.Length + arguments.Sum(value => (long)value.Length + 16) +
+                program.Constants.Sum(binding => (long)binding.Alias.Length + binding.File.FullPath.Length + 64);
+            int largestText = program.Constants.Aggregate(program.Source.Length, (length, binding) => Math.Max(length, binding.File.Source.Length));
+            using var reviewMemory = program.ReserveReview(16_384 + 96 * (reviewUnits + Math.Min(largestText, MacroReviewPageUnits + 1)));
             var review = new FormWindow(this, Text("MacroReview")) { Width = 600 };
             review.AddPinnedNotice(Text(elevated ? "MacroElevatedNotice" : "MacroTrustNotice"));
             review.AddField("MacroSourceFile", ReadOnlyMacroValue(PermissionDisplay.Literal(program.FullPath)));
@@ -113,15 +117,27 @@ internal sealed partial class MainWindow
             string values = arguments.Length == 0 ? Text("MacroNoArguments") : string.Join("\n",
                 arguments.Select((value, index) => $"[{index}] \"{PermissionDisplay.Literal(value)}\""));
             review.AddField("MacroArguments", ReadOnlyMacroValue(values));
-            review.AddAction("MacroInspectSource", () =>
+            review.AddAction("MacroInspectSource", () => InspectMacroText(review, "MacroInspectSource", program.Source));
+            if (key.ConstantsDigest is { } constantsDigest)
             {
-                var source = new FormWindow(review, Text("MacroInspectSource")) { Width = 780 };
-                var contents = ReadOnlyMacroValue(PermissionDisplay.PastePage(program.Source));
-                contents.MaxHeight = Math.Max(180, SystemParameters.WorkArea.Height - 220);
-                source.AddField("MacroInspectSource", contents);
-                source.AddButtons(() => { }, acceptKey: "OK");
-                app.Modal(source.ShowDialog);
-            });
+                review.AddField("MacroConstantsVersion", ReadOnlyMacroValue(constantsDigest));
+                var aliases = new ComboBox { ItemsSource = program.Constants.Select(binding => binding.Alias).ToArray() };
+                var path = ReadOnlyMacroValue("");
+                var fileDigest = ReadOnlyMacroValue("");
+                aliases.SelectionChanged += (_, _) =>
+                {
+                    if (aliases.SelectedIndex < 0) return;
+                    var file = program.Constants[aliases.SelectedIndex].File;
+                    path.Text = PermissionDisplay.Literal(file.FullPath);
+                    fileDigest.Text = file.Digest;
+                };
+                aliases.SelectedIndex = 0;
+                review.AddField("MacroConstantsAlias", aliases);
+                review.AddField("MacroReadFilePath", path);
+                review.AddField("MacroConstantsFileDigest", fileDigest);
+                review.AddAction("MacroInspectConstants", () =>
+                    InspectMacroText(review, "MacroInspectConstants", program.Constants[aliases.SelectedIndex].File.Source));
+            }
             MacroTrustDecision? choice = null;
             if (remembered is null)
             {
@@ -130,7 +146,7 @@ internal sealed partial class MainWindow
             }
             review.AddButtons(() => { }, acceptKey: "MacroRunOnce", cancelDefault: true);
             if (app.Modal(review.ShowDialog) != true || !CanAcceptTabs) return false;
-            if (revision != MacroTrust.Revision || MacroTrust.Read(key) != remembered)
+            if (pending.Expired || MacroTrust.Read(key) != remembered)
             {
                 ShowMacroLaunchError(Text("MacroTrustChanged"));
                 return false;
@@ -144,10 +160,48 @@ internal sealed partial class MainWindow
                 review.DialogResult = true;
             }
         }
-        catch (Exception error) when (error is IOException or Win32Exception or UnauthorizedAccessException)
+        catch (Exception error) when (error is IOException or InvalidDataException or Win32Exception or UnauthorizedAccessException)
         {
             if (IsLoaded) ShowMacroLaunchError(Text("MacroTrustUnavailable"));
             return false;
+        }
+    }
+
+    private const int MacroReviewPageUnits = 8192;
+
+    private void InspectMacroText(Window owner, string titleKey, string text)
+    {
+        var dialog = new FormWindow(owner, Text(titleKey)) { Width = 780 };
+        var contents = ReadOnlyMacroValue("");
+        contents.MaxHeight = Math.Max(180, SystemParameters.WorkArea.Height - 240);
+        dialog.AddField(titleKey, contents);
+        var position = ReadOnlyMacroValue("");
+        int page = 0;
+        int pages = Math.Max(1, (text.Length + MacroReviewPageUnits - 1) / MacroReviewPageUnits);
+        if (pages > 1)
+        {
+            dialog.AddField("PastePreviewPageLabel", position);
+            dialog.AddAction("PastePreviousPage", () => { if (page > 0) ShowPage(page - 1); });
+            dialog.AddAction("PasteNextPage", () => { if (page + 1 < pages) ShowPage(page + 1); });
+        }
+        ShowPage(0);
+        dialog.AddButtons(() => { }, acceptKey: "OK");
+        app.Modal(dialog.ShowDialog);
+
+        void ShowPage(int index)
+        {
+            page = index;
+            int start = Boundary(page);
+            contents.Text = PermissionDisplay.PastePage(text.AsSpan(start, Boundary(page + 1) - start));
+            position.Text = string.Format(CultureInfo.CurrentCulture, Text("PastePreviewPage"), page + 1, pages);
+        }
+
+        int Boundary(int index)
+        {
+            int offset = index * MacroReviewPageUnits;
+            if (offset >= text.Length) return text.Length;
+            if (offset > 0 && (char.IsLowSurrogate(text[offset]) || text[offset] == '\n' && text[offset - 1] == '\r')) return offset - 1;
+            return offset;
         }
     }
 
@@ -189,9 +243,9 @@ internal sealed partial class MainWindow
                 dialog.AddField("MacroSourceDigest", sources);
                 dialog.AddField("MacroPairFingerprint", pairs);
                 foreach (var group in groups) sources.Items.Add(group.Key ?? Text("MacroTrustInvalid"));
-                sources.SelectionChanged += (_, _) =>
+                void DisplayEntries(IEnumerable<MacroTrust.Entry> selectedEntries)
                 {
-                    entries = groups[sources.SelectedIndex].OrderBy(entry => entry.Fingerprint, StringComparer.Ordinal).ToArray();
+                    entries = selectedEntries.OrderBy(entry => entry.Fingerprint, StringComparer.Ordinal).ToArray();
                     pairs.Items.Clear();
                     foreach (var entry in entries)
                     {
@@ -201,10 +255,13 @@ internal sealed partial class MainWindow
                             MacroTrustDecision.Block => "MacroTrustBlocked",
                             _ => "MacroTrustInvalid",
                         });
-                        pairs.Items.Add($"{entry.Fingerprint}  {status}");
+                        string label = $"{entry.Fingerprint}  {status}";
+                        if (entry.ConstantsDigest is { } version) label += $"\n{Text("MacroConstantsVersion")}  {version}";
+                        pairs.Items.Add(label);
                     }
-                    pairs.SelectedIndex = 0;
-                };
+                    pairs.SelectedIndex = entries.Length == 0 ? -1 : 0;
+                }
+                sources.SelectionChanged += (_, _) => DisplayEntries(groups[sources.SelectedIndex]);
                 sources.SelectedIndex = 0;
                 dialog.AddAction("MacroFindArguments", () =>
                 {
@@ -213,10 +270,11 @@ internal sealed partial class MainWindow
                     if (arguments is null) return;
                     try
                     {
-                        var key = MacroTrustKey.Create(digest, arguments);
-                        int index = Array.FindIndex(entries, entry => entry.Fingerprint == key.Fingerprint);
-                        if (index >= 0) pairs.SelectedIndex = index;
-                        else app.Modal(() => ThemedMessageBox.Show(dialog, Text("MacroTrustNoMatch"), dialog.Title));
+                        var matches = groups[sources.SelectedIndex].Where(entry =>
+                            MacroTrustKey.Create(digest, arguments, entry.ConstantsDigest).Fingerprint == entry.Fingerprint);
+                        DisplayEntries(matches);
+                        if (entries.Length == 0)
+                            app.Modal(() => ThemedMessageBox.Show(dialog, Text("MacroTrustNoMatch"), dialog.Title));
                     }
                     catch (MacroSourceException error)
                     {
@@ -224,11 +282,14 @@ internal sealed partial class MainWindow
                             icon: MessageBoxImage.Error));
                     }
                 });
+                dialog.AddAction("MacroShowAllDecisions", () => DisplayEntries(groups[sources.SelectedIndex]));
                 dialog.AddAsyncButtons(() =>
                 {
+                    if (pairs.SelectedIndex < 0) return Task.FromResult(false);
                     try
                     {
-                        MacroTrust.Forget(entries[pairs.SelectedIndex].Fingerprint);
+                        var entry = entries[pairs.SelectedIndex];
+                        MacroTrust.Forget(entry.Fingerprint, entry.Version);
                         return Task.FromResult(true);
                     }
                     catch (Win32Exception)

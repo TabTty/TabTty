@@ -476,13 +476,28 @@
   <data name="WindowGroupName" xml:space="preserve"><value>Window {0} · {1}</value></data>
   <data name="RunMacro" xml:space="preserve"><value>Run macro</value></data>
   <data name="MacroReview" xml:space="preserve"><value>Review macro execution</value></data>
-  <data name="MacroTrustNotice" xml:space="preserve"><value>A macro can connect to a saved profile, send commands and submit saved passwords. A remembered allow covers identical copies with these arguments, including later external launches. Moving the file can change which profile a relative path selects.</value></data>
+  <data name="MacroTrustNotice" xml:space="preserve"><value>A macro can connect to a saved profile, send commands and submit saved passwords. Your decision covers identical copies of the macro and its declared constants files with these arguments, including later external launches. Moving the macro can change which profile a relative path selects.</value></data>
   <data name="MacroElevatedNotice" xml:space="preserve"><value>This macro would run with administrator privileges. It can connect to a saved profile, send commands and submit saved passwords. Approve only if you intend this elevated run.</value></data>
-  <data name="MacroReadRemote" xml:space="preserve"><value>Open macro source</value></data>
-  <data name="MacroReadRemoteNotice" xml:space="preserve"><value>Reading this source may contact a network share or download a file. Continue to read it for this request.</value></data>
+  <data name="MacroReadRemote" xml:space="preserve"><value>Read a file for this macro</value></data>
+  <data name="MacroReadRemoteNotice" xml:space="preserve"><value>Reading this file may contact a network share or start a download. Continue to read it for this launch.</value></data>
   <data name="MacroReadSource" xml:space="preserve"><value>Read file</value></data>
   <data name="MacroSourceDigest" xml:space="preserve"><value>Source SHA-256</value></data>
   <data name="MacroInspectSource" xml:space="preserve"><value>Inspect source</value></data>
+  <data name="MacroConstantsVersion" xml:space="preserve"><value>Constants version (SHA-256)</value></data>
+  <data name="MacroConstantsFileDigest" xml:space="preserve"><value>Constants file SHA-256</value></data>
+  <data name="MacroConstantsAlias" xml:space="preserve"><value>Declared constants file alias</value></data>
+  <data name="MacroReadFilePath" xml:space="preserve"><value>File path</value></data>
+  <data name="MacroInspectConstants" xml:space="preserve"><value>Inspect constants file</value></data>
+  <data name="MacroShowAllDecisions" xml:space="preserve"><value>Show all decisions for this macro</value></data>
+  <data name="MacroErrorConstantsDeclaration" xml:space="preserve"><value>Invalid constants declaration.</value></data>
+  <data name="MacroErrorConstantsAlias" xml:space="preserve"><value>The constants file alias conflicts with another name.</value></data>
+  <data name="MacroErrorConstantsLimit" xml:space="preserve"><value>The declared constants exceed the permitted limit.</value></data>
+  <data name="MacroErrorConstantsJson" xml:space="preserve"><value>The constants file must contain one valid JSON object.</value></data>
+  <data name="MacroErrorConstantsName" xml:space="preserve"><value>A constant has a duplicate, reserved or invalid name.</value></data>
+  <data name="MacroErrorConstantsType" xml:space="preserve"><value>A constant has an unsupported type or numeric value.</value></data>
+  <data name="MacroErrorConstantsRead" xml:space="preserve"><value>The constants file could not be read.</value></data>
+  <data name="MacroErrorConstantFile" xml:space="preserve"><value>The declared constants file is unavailable.</value></data>
+  <data name="MacroErrorMemoryLimit" xml:space="preserve"><value>There is insufficient memory available within the macro limits.</value></data>
   <data name="MacroRunOnce" xml:space="preserve"><value>Run once</value></data>
   <data name="MacroAlwaysAllow" xml:space="preserve"><value>Always allow with these arguments</value></data>
   <data name="MacroAlwaysBlock" xml:space="preserve"><value>Always block with these arguments</value></data>

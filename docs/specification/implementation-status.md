@@ -1,5 +1,30 @@
 # Implementation and validation status
 
+## Shared macro constants, 2026-11-20
+
+Macro-enabled builds support the shared constants in Q78–Q88. A launch
+validates all declared JSON files, uses the captured values throughout the run,
+and includes the bytes of every declaration in its macro trust decision.
+The original decision format still applies to a macro with zero declarations.
+See the [implementation plan](https://github.com/TabTty/TabTty/issues/77).
+
+The Release solution build completed with zero warnings and errors. The Core
+and WPF regression suites passed, including the dedicated
+`--macro-launch` and `--macro-network` scenarios. The prior packaged version
+1 parser accepted an ordinary macro and rejected the new declaration at parse
+time. The current loader kept files with case-only name differences distinct
+in an NTFS directory with case-sensitive lookup enabled.
+
+| Acceptance | Executed coverage |
+| --- | --- |
+| M62–M66 | Checked both grammar versions, six source encodings, scalar and numeric bounds, full-file validation, duplicate decoded keys, static binding, and errors before execution. |
+| M67–M69 | Resolved relative and absolute dependencies and reused one snapshot per normalized path. Verified the declaration, byte and member limits with concurrent pending reviews and capacity release. WPF consent tests covered loopback SMB, a mapped drive and a junction, including Cancel and a remembered execution allow. They exercised the entry points after file selection, Explorer and CLI parsing, and forwarding-envelope decoding. |
+| M70–M73 | Verified inspected and executed values against the captured inputs after an edit and deletion. Exercised exact-byte changes, restoration and identical copies, version-specific forgetting without original files, failed trust writes, and reset with an outstanding review in another window. WPF trust coverage used English and Japanese. |
+
+Unrun environment-dependent scenario: hydration of an online-only cloud file
+through a live cloud provider. The machine had no disposable cloud placeholder
+fixture. The native redirect and SMB scenarios ran with real Windows paths.
+
 ## Native cutover acceptance on the current candidate, 2026-11-19
 
 The Windows 11 x64 test machine had four physical cores, eight logical

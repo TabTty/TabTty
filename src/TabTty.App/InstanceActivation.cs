@@ -108,32 +108,8 @@ internal sealed class InstanceActivation : IDisposable
                         if (length is <= 0 or > MaximumMessage) continue;
                         byte[] message = new byte[length];
                         await pipe.ReadExactlyAsync(message, deadline.Token).ConfigureAwait(false);
-                        using var document = JsonDocument.Parse(message, new JsonDocumentOptions { MaxDepth = 8 });
-                        JsonElement root = document.RootElement;
-                        InstanceLaunch[]? launches = null;
-                        bool macroEnvelope = root.ValueKind == JsonValueKind.Object &&
-                            root.TryGetProperty(MacroRequestsProperty, out _);
-                        if (macroEnvelope && root.TryGetProperty(MacroRequestsProperty, out var macros) &&
-                            macros.ValueKind == JsonValueKind.Array && macros.GetArrayLength() is > 0 and <= InstanceLaunch.MaximumPending)
-                        {
-                            launches = macros.Deserialize<InstanceLaunch[]>();
-                        }
-                        else if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("EditorRequests", out var editors) &&
-                            editors.ValueKind == JsonValueKind.Array && editors.GetArrayLength() is > 0 and <= InstanceLaunch.MaximumPending)
-                        {
-                            launches = editors.Deserialize<InstanceLaunch[]>();
-                            if (launches?.Any(launch => launch is not null && !launch.Edit && !launch.IsVault) == true)
-                                launches = null;
-                        }
-                        else if (root.ValueKind == JsonValueKind.Array && root.GetArrayLength() <= InstanceLaunch.MaximumPending)
-                        {
-                            launches = root.GetArrayLength() == 0 || root[0].ValueKind == JsonValueKind.String
-                                ? root.Deserialize<string[]>()?.Select(path => new InstanceLaunch(path, [])).ToArray()
-                                : root.Deserialize<InstanceLaunch[]>();
-                        }
-                        bool accepted = launches is not null && InstanceLaunch.Valid(launches) &&
-                            launches.Any(launch => launch.IsMacro) == macroEnvelope &&
-                            await deliver(launches).ConfigureAwait(false);
+                        InstanceLaunch[]? launches = DecodeRequests(message);
+                        bool accepted = launches is not null && await deliver(launches).ConfigureAwait(false);
                         await pipe.WriteAsync(new byte[] { accepted ? (byte)1 : (byte)0 }, deadline.Token)
                             .ConfigureAwait(false);
                         // The forwarder closes its end after reading the acknowledgement.
@@ -166,6 +142,35 @@ internal sealed class InstanceActivation : IDisposable
         byte[] reply = new byte[1];
         await pipe.ReadExactlyAsync(reply, deadline.Token).ConfigureAwait(false);
         return reply[0] == 1;
+    }
+
+    internal static InstanceLaunch[]? DecodeRequests(ReadOnlyMemory<byte> message)
+    {
+        using var document = JsonDocument.Parse(message, new JsonDocumentOptions { MaxDepth = 8 });
+        JsonElement root = document.RootElement;
+        bool macroEnvelope = root.ValueKind == JsonValueKind.Object &&
+            root.TryGetProperty(MacroRequestsProperty, out _);
+        InstanceLaunch[]? launches = null;
+        if (macroEnvelope && root.TryGetProperty(MacroRequestsProperty, out var macros) &&
+            macros.ValueKind == JsonValueKind.Array && macros.GetArrayLength() is > 0 and <= InstanceLaunch.MaximumPending)
+        {
+            launches = macros.Deserialize<InstanceLaunch[]>();
+        }
+        else if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("EditorRequests", out var editors) &&
+            editors.ValueKind == JsonValueKind.Array && editors.GetArrayLength() is > 0 and <= InstanceLaunch.MaximumPending)
+        {
+            launches = editors.Deserialize<InstanceLaunch[]>();
+            if (launches?.Any(launch => launch is not null && !launch.Edit && !launch.IsVault) == true)
+                launches = null;
+        }
+        else if (root.ValueKind == JsonValueKind.Array && root.GetArrayLength() <= InstanceLaunch.MaximumPending)
+        {
+            launches = root.GetArrayLength() == 0 || root[0].ValueKind == JsonValueKind.String
+                ? root.Deserialize<string[]>()?.Select(path => new InstanceLaunch(path, [])).ToArray()
+                : root.Deserialize<InstanceLaunch[]>();
+        }
+        return launches is not null && InstanceLaunch.Valid(launches) &&
+            launches.Any(launch => launch.IsMacro) == macroEnvelope ? launches : null;
     }
 
     internal static byte[] EncodeRequests(InstanceLaunch[] paths)

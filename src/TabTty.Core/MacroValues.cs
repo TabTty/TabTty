@@ -14,10 +14,11 @@ internal enum MacroErrorCode
 
 internal readonly record struct MacroPosition(int Line, int Column);
 
-internal sealed class MacroSourceException(string code, MacroPosition position) : Exception(code)
+internal sealed class MacroSourceException(string code, MacroPosition position, string? filePath = null) : Exception(code)
 {
     public string Code { get; } = code;
     public MacroPosition Position { get; } = position;
+    public string? FilePath { get; } = filePath;
 }
 
 internal sealed class MacroError(MacroErrorCode code, string? displayDetail = null) : Exception(code.ToString())
@@ -125,7 +126,10 @@ internal sealed record MacroUnary(string Operator, MacroExpression Value, MacroP
 internal sealed record MacroBinary(string Operator, MacroExpression Left, MacroExpression Right, MacroPosition At) : MacroExpression(At);
 internal sealed record MacroCast(MacroType Target, MacroExpression Value, MacroPosition At) : MacroExpression(At);
 internal sealed record MacroCall(string Name, MacroExpression[] Arguments, MacroPosition At) : MacroExpression(At);
-internal sealed record MacroMember(MacroExpression Target, string Name, MacroPosition At) : MacroExpression(At);
+internal sealed record MacroMember(MacroExpression Target, string Name, MacroPosition At) : MacroExpression(At)
+{
+    public object? ConstantValue { get; set; }
+}
 internal sealed record MacroIndex(MacroExpression Target, MacroExpression Index, MacroPosition At) : MacroExpression(At);
 internal sealed record MacroListLiteral(MacroExpression[] Values, MacroPosition At) : MacroExpression(At);
 internal sealed record MacroInterpolation(MacroExpression[] Parts, MacroPosition At) : MacroExpression(At);

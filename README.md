@@ -92,15 +92,17 @@ In a build that includes macros, choose **File → Run macro** and select a trus
 `.tttym` file. Add each ordinary argument as a separate entry. You can also run
 `TabTty.exe --macro "C:\ops\check.tttym" -- "argument with spaces"` or associate
 `.tttym` with TabTty through Windows Open With. File association supplies no
-arguments. For a new combination of file contents and arguments, TabTty shows
-the path, source digest and arguments before execution. A macro can send
+arguments. For a new combination of macro source, declared constants files
+and ordered arguments, TabTty shows the captured inputs before execution. A macro can send
 terminal commands and submit saved passwords. **Cancel** is the default.
 You can run it once or remember an allow or block for that exact combination.
-An identical copy with the same arguments uses the same decision. To forget
+Identical copies of the source and its declared constants files use the same
+decision with the same arguments. To forget
 a decision, open **Settings → Maintenance → Manage macro decisions**. Windows
 Credential Manager stores decisions for your Windows account on this PC.
-External requests that could read a remote source require separate read
-permission. An elevated run also requires explicit approval.
+An external request that could read a remote source requires separate read
+permission. A constants file that could require remote access needs read
+permission on every launch route. An elevated run also requires explicit approval.
 
 Start the source with `#tttym 1`. A macro opens a new tab and can connect using
 one saved profile. Relative profile paths start in the macro's directory.
@@ -112,6 +114,14 @@ Connect(@"profiles\server.ttty");
 WaitPrompt(Literal("$ "));
 ```
 
+To share values across macros, save a JSON object such as
+`{"Prompt":"$ ","TimeoutMs":5000}` in `common.json`. Add
+`#constants Common "common.json"` after the version line in each macro.
+After connecting, use `WaitPrompt(Literal(Common.Prompt), Common.TimeoutMs)`.
+The run keeps the captured values through completion. An edit to a declared
+file, including a formatting edit, selects the decision for the new contents.
+Keep saved passwords in the vault.
+
 Use the macro controls to pause, resume, or stop. A stopped macro leaves a
 healthy connection available for manual input. After a recording failure,
 retry recording and then explicitly resume the macro. If receive history was
@@ -119,7 +129,7 @@ lost, the tab offers a choice to continue or stop. To send a saved password,
 pass its exact vault entry name to `WritePassword` or `WritePasswordLine`.
 Select a password entry and use **Copy macro reference** in vault management
 to copy the quoted name. See the
-[macro language reference](drafts/macro-language.md).
+[macro language reference](docs/drafts/macro-language.md).
 
 ## Broadcast input
 

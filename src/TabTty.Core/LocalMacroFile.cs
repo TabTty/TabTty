@@ -5,6 +5,13 @@ namespace TabTty.Core;
 
 internal static class LocalMacroFile
 {
+    internal static bool IsOrdinaryFile(SafeFileHandle handle) => GetFileType(handle) == 1 &&
+        (File.GetAttributes(handle) & (FileAttributes.Directory | FileAttributes.Device)) == 0;
+
+    [DllImport("kernel32.dll", ExactSpelling = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    private static extern uint GetFileType(SafeFileHandle handle);
+
     internal static unsafe SafeFileHandle? TryOpen(string path)
     {
         // Resolve only a direct local volume mapping. A drive name can also

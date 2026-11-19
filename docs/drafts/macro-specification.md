@@ -12,8 +12,8 @@ Final review confirmed on 2026-11-14. Product decisions Q1-Q77 in the
 [interview](macro-issue.md) are accepted, including all Q70-Q77 recommendations.
 Q69 authorizes drafting routine language, API, resource and validation details.
 Those details and the primary testing seam are confirmed for implementation
-handoff. This is documentation only. Macros remain outside the initial release until scope is explicitly
-amended. No code, prototype or macro runtime tests accompany this draft.
+handoff. This contract applies to macro-enabled builds beyond the initial release.
+See the [implementation status](../specification/implementation-status.md) for verification.
 
 Read with the [language and API](macro-language.md) and
 [budgets and acceptance cases](macro-validation.md). Those documents form one

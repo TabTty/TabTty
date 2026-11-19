@@ -10,32 +10,45 @@ namespace TabTty.App;
 
 internal enum MacroTrustDecision : byte { Allow = 1, Block = 2 }
 
-internal readonly record struct MacroTrustKey(string SourceDigest, string Fingerprint)
+internal readonly record struct MacroTrustKey(string SourceDigest, string Fingerprint, string? ConstantsDigest = null)
 {
     private static readonly UTF8Encoding Utf8 = new(false, true);
 
-    internal static MacroTrustKey Create(string sourceDigest, IReadOnlyList<string> arguments)
+    internal byte Version => ConstantsDigest is null ? (byte)2 : (byte)3;
+
+    internal static string? ConstantsVersion(IReadOnlyList<MacroConstantsBinding> constants)
+    {
+        if (constants.Count == 0) return null;
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        hash.AppendData("TabTty/MacroConstants/v1"u8);
+        AppendLength(hash, constants.Count);
+        foreach (var binding in constants) hash.AppendData(Convert.FromHexString(binding.File.Digest));
+        return Convert.ToHexString(hash.GetHashAndReset());
+    }
+
+    internal static MacroTrustKey Create(string sourceDigest, IReadOnlyList<string> arguments, string? constantsDigest = null)
     {
         MacroLimits.ValidateArguments(arguments);
 
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        hash.AppendData("TabTty/MacroTrust/v2"u8);
+        hash.AppendData(constantsDigest is null ? "TabTty/MacroTrust/v2"u8 : "TabTty/MacroTrust/v3"u8);
         hash.AppendData(Convert.FromHexString(sourceDigest));
-        AppendLength(arguments.Count);
+        if (constantsDigest is not null) hash.AppendData(Convert.FromHexString(constantsDigest));
+        AppendLength(hash, arguments.Count);
         foreach (string argument in arguments)
         {
             byte[] encoded = Utf8.GetBytes(argument);
-            AppendLength(encoded.Length);
+            AppendLength(hash, encoded.Length);
             hash.AppendData(encoded);
         }
-        return new(sourceDigest, Convert.ToHexString(hash.GetHashAndReset()));
+        return new(sourceDigest, Convert.ToHexString(hash.GetHashAndReset()), constantsDigest);
+    }
 
-        void AppendLength(int value)
-        {
-            Span<byte> bytes = stackalloc byte[4];
-            BinaryPrimitives.WriteInt32BigEndian(bytes, value);
-            hash.AppendData(bytes);
-        }
+    private static void AppendLength(IncrementalHash hash, int value)
+    {
+        Span<byte> bytes = stackalloc byte[4];
+        BinaryPrimitives.WriteInt32BigEndian(bytes, value);
+        hash.AppendData(bytes);
     }
 }
 
@@ -43,17 +56,51 @@ internal readonly record struct MacroTrustKey(string SourceDigest, string Finger
 // out-of-process removal cannot be hidden by an in-memory decision.
 internal static class MacroTrust
 {
-    private static string Prefix = "TabTty/MacroTrust/v2/";
-    internal static void UseTestStore() => Prefix = $"TabTty/Tests/{Guid.NewGuid():N}/MacroTrust/v2/";
-    private const uint Generic = 1, LocalMachine = 2;
-    private const int NotFound = 1168, RecordSize = 66;
-    internal static long Revision { get; private set; }
+    private static string prefix = "TabTty/MacroTrust/";
+    private static Action? beforeTestWrite;
 
-    internal readonly record struct Entry(string Fingerprint, string? SourceDigest, MacroTrustDecision? Decision);
+    internal static void UseTestStore(Action? beforeWrite = null)
+    {
+        prefix = $"TabTty/Tests/{Guid.NewGuid():N}/MacroTrust/";
+        beforeTestWrite = beforeWrite;
+    }
+    private static string FormatPrefix(byte version) => prefix + (version switch
+    {
+        2 => "v2/",
+        3 => "v3/",
+        _ => throw new ArgumentOutOfRangeException(nameof(version)),
+    });
+    private const uint Generic = 1, LocalMachine = 2;
+    private const int NotFound = 1168, V2Size = 66, V3Size = V2Size + 32;
+    private static readonly HashSet<PendingReview> pendingReviews = [];
+
+    internal sealed class PendingReview(MacroTrustKey key) : IDisposable
+    {
+        internal MacroTrustKey Key { get; } = key;
+        internal bool Expired { get; set; }
+        public void Dispose() => pendingReviews.Remove(this);
+    }
+
+    internal static PendingReview BeginReview(MacroTrustKey key)
+    {
+        var review = new PendingReview(key);
+        pendingReviews.Add(review);
+        return review;
+    }
+
+    private static void ExpireReviews(string fingerprint, byte version)
+    {
+        foreach (var review in pendingReviews)
+            if (review.Key.Version == version && review.Key.Fingerprint == fingerprint)
+                review.Expired = true;
+    }
+
+    internal readonly record struct Entry(string Fingerprint, string? SourceDigest, MacroTrustDecision? Decision,
+        string? ConstantsDigest = null, byte Version = 2);
 
     internal static MacroTrustDecision? Read(MacroTrustKey key)
     {
-        if (!CredRead(Prefix + key.Fingerprint, Generic, 0, out nint result))
+        if (!CredRead(FormatPrefix(key.Version) + key.Fingerprint, Generic, 0, out nint result))
         {
             int error = Marshal.GetLastWin32Error();
             if (error == NotFound) return null;
@@ -61,8 +108,8 @@ internal static class MacroTrust
         }
         try
         {
-            Entry entry = Decode(Marshal.PtrToStructure<Credential>(result), key.Fingerprint);
-            if (entry.SourceDigest != key.SourceDigest || entry.Decision is null)
+            Entry entry = Decode(Marshal.PtrToStructure<Credential>(result), key.Fingerprint, key.Version);
+            if (entry.SourceDigest != key.SourceDigest || entry.ConstantsDigest != key.ConstantsDigest || entry.Decision is null)
                 throw new InvalidDataException("Invalid macro trust decision.");
             return entry.Decision;
         }
@@ -71,84 +118,95 @@ internal static class MacroTrust
 
     internal static unsafe void Save(MacroTrustKey key, MacroTrustDecision decision)
     {
-        Span<byte> data = stackalloc byte[RecordSize];
-        data[0] = 2;
+        Span<byte> data = stackalloc byte[key.Version == 2 ? V2Size : V3Size];
+        data[0] = key.Version;
         data[1] = (byte)decision;
         Convert.FromHexString(key.SourceDigest).CopyTo(data[2..34]);
-        Convert.FromHexString(key.Fingerprint).CopyTo(data[34..]);
+        Convert.FromHexString(key.Fingerprint).CopyTo(data[34..66]);
+        if (key.ConstantsDigest is not null) Convert.FromHexString(key.ConstantsDigest).CopyTo(data[66..]);
         fixed (byte* blob = data)
         {
             var credential = new Credential
             {
                 Type = Generic,
-                TargetName = Prefix + key.Fingerprint,
-                BlobSize = RecordSize,
+                TargetName = FormatPrefix(key.Version) + key.Fingerprint,
+                BlobSize = (uint)data.Length,
                 Blob = (nint)blob,
                 Persist = LocalMachine,
             };
+            beforeTestWrite?.Invoke();
             if (!CredWrite(ref credential, 0)) throw new Win32Exception(Marshal.GetLastWin32Error());
         }
-        Revision++;
+        ExpireReviews(key.Fingerprint, key.Version);
     }
 
     internal static List<Entry> List()
     {
-        if (!CredEnumerate(Prefix + "*", 0, out uint count, out nint results))
+        var entries = new List<Entry>();
+        AddEntries(2, entries);
+        AddEntries(3, entries);
+        return entries;
+    }
+
+    private static void AddEntries(byte version, List<Entry> entries)
+    {
+        string formatPrefix = FormatPrefix(version);
+        if (!CredEnumerate(formatPrefix + "*", 0, out uint count, out nint results))
         {
             int error = Marshal.GetLastWin32Error();
-            if (error == NotFound) return [];
+            if (error == NotFound) return;
             throw new Win32Exception(error);
         }
         try
         {
-            var entries = new List<Entry>();
             for (int i = 0; i < count; i++)
             {
                 var value = Marshal.PtrToStructure<Credential>(Marshal.ReadIntPtr(results, i * IntPtr.Size));
-                if (value.Type != Generic || value.TargetName?.StartsWith(Prefix, StringComparison.OrdinalIgnoreCase) != true)
+                if (value.Type != Generic || value.TargetName?.StartsWith(formatPrefix, StringComparison.OrdinalIgnoreCase) != true)
                     continue;
-                string fingerprint = value.TargetName[Prefix.Length..].ToUpperInvariant();
+                string fingerprint = value.TargetName[formatPrefix.Length..].ToUpperInvariant();
                 if (fingerprint.Length == 64 && fingerprint.All(char.IsAsciiHexDigit))
-                    entries.Add(Decode(value, fingerprint));
+                    entries.Add(Decode(value, fingerprint, version));
             }
-            return entries;
         }
         finally { CredFree(results); }
     }
 
-    internal static void Forget(string fingerprint)
+    internal static void Forget(string fingerprint, byte version = 2)
     {
         if (fingerprint.Length != 64 || !fingerprint.All(char.IsAsciiHexDigit))
             throw new ArgumentException(nameof(fingerprint));
-        if (!CredDelete(Prefix + fingerprint, Generic, 0))
+        if (!CredDelete(FormatPrefix(version) + fingerprint, Generic, 0))
         {
             int error = Marshal.GetLastWin32Error();
             if (error != NotFound) throw new Win32Exception(error);
         }
-        Revision++;
+        ExpireReviews(fingerprint, version);
     }
 
     internal static void Reset()
     {
         // Invalidate pending answers even if a partial removal needs a retry.
-        Revision++;
-        foreach (Entry entry in List()) Forget(entry.Fingerprint);
+        foreach (var review in pendingReviews) review.Expired = true;
+        foreach (Entry entry in List()) Forget(entry.Fingerprint, entry.Version);
         if (List().Count != 0) throw new IOException("Macro trust decisions could not be cleared.");
     }
 
-    private static Entry Decode(Credential value, string fingerprint)
+    private static Entry Decode(Credential value, string fingerprint, byte version)
     {
-        if (value.Type == Generic && value.Persist == LocalMachine && value.BlobSize == RecordSize && value.Blob != 0 &&
-            string.Equals(value.TargetName, Prefix + fingerprint, StringComparison.OrdinalIgnoreCase))
+        int size = version == 2 ? V2Size : V3Size;
+        if (value.Type == Generic && value.Persist == LocalMachine && value.BlobSize == size && value.Blob != 0 &&
+            string.Equals(value.TargetName, FormatPrefix(version) + fingerprint, StringComparison.OrdinalIgnoreCase))
         {
-            byte[] record = new byte[RecordSize];
+            byte[] record = new byte[size];
             Marshal.Copy(value.Blob, record, 0, record.Length);
             var decision = (MacroTrustDecision)record[1];
-            if (record[0] == 2 && decision is MacroTrustDecision.Allow or MacroTrustDecision.Block &&
-                Convert.ToHexString(record.AsSpan(34)) == fingerprint)
-                return new(fingerprint, Convert.ToHexString(record.AsSpan(2, 32)), decision);
+            if (record[0] == version && decision is MacroTrustDecision.Allow or MacroTrustDecision.Block &&
+                Convert.ToHexString(record.AsSpan(34, 32)) == fingerprint)
+                return new(fingerprint, Convert.ToHexString(record.AsSpan(2, 32)), decision,
+                    version == 3 ? Convert.ToHexString(record.AsSpan(66)) : null, version);
         }
-        return new(fingerprint, null, null);
+        return new(fingerprint, null, null, null, version);
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]

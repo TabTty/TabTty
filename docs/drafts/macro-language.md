@@ -4,8 +4,8 @@ Drafted under accepted Q69 and confirmed in the consolidated final review on
 2026-11-14, including routine language and API details. Read the
 [behavior contract](macro-specification.md) and [validation](macro-validation.md).
 Q78–Q88 extend version 1 with [shared macro constants](#shared-macro-constants).
-No parser, evaluator, API implementation or executable fixture is supplied.
-Examples below are specification examples, not claims of supported current code.
+The examples describe the language for macro-enabled builds. See the
+[implementation status](../specification/implementation-status.md) for verification.
 
 ## File shape and checking
 
