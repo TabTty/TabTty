@@ -275,6 +275,9 @@ metadata and cells share one capture. History results contain `source: "normal"`
 `earlier_range`/`next_cursor`; each fragment carries the anchor and boundary data
 specified below. Search returns `matches`, `scanned_range`, `scan_complete`, and
 optional `next_cursor`; matches include text/position and `context_range`.
+Capture ordinals belong to the current share. History and search use the same
+opaque logical-line identifier for a retained line within that share,
+including after reflow.
 Wait returns `outcome` (`changed`, `no_change`, `elapsed`, or `interrupted`) plus
 a current bounded metadata observation, not screen cells. Send returns
 `action_seq`, `sequence_consumed`, `delivery` (`pending`, `not_sent`, `submitted`,
@@ -315,8 +318,9 @@ value (ABA). A text refresh, cursor move, or color change can wake a change wait
 but does not itself make an action stale. Resolve input using current supported
 terminal modes; track a separate mouse-reporting generation for gestures.
 
-An action's observation must match its connection generation and layout epoch at
-preflight and first payload admission. Otherwise return `stale_observation`, with
+An action's observation must remain within its lifetime and match its connection
+generation and layout epoch at preflight and first payload admission.
+Otherwise return `stale_observation`, with
 no send. Later remote state can still change while input is in flight; this is not
 an atomic transaction with the peer or a guarantee of the intended application mode.
 Bind action observations to the current control generation, requiring an initial
@@ -561,9 +565,9 @@ destination. Show the SSH account and host/port, the Telnet host/port, or the
 serial port from the session being authorized, including a retained session.
 These details stay in the local dialog. Display any formatting or line-control
 characters in identity fields visibly as Unicode code points. Before starting
-or switching a share, also show the direct launcher's OS-observed path and PID
-and the recipient's pairing code. Ask the person to
-check the launcher and match the code in the external AI host. Explain that
+or switching a share, also show the path and PID of the bridge parent recorded
+by Windows and the recipient's pairing code. Ask the person to match the code
+in the external AI host. Explain that
 programs and chats sharing this connection may use its grants and that the host receives the current
 screen and can search retained normal-screen history, including output from
 before sharing and from any unshared interval. Previously displayed or echoed

@@ -1,11 +1,35 @@
 using System.ComponentModel;
+using System.IO.Pipes;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
 using System.Security.Principal;
 using Microsoft.Win32.SafeHandles;
 using TabTty.AiTransport;
 
 internal static partial class Program
 {
+    private static async Task OwnedPipeSurvivesEarlyClientDisconnect()
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var endpoint = new AiPipe(fixture: Guid.NewGuid());
+        using var listener = endpoint.OpenListeners(1)[0];
+        var rules = listener.GetAccessControl().GetAccessRules(true, false, typeof(SecurityIdentifier));
+        CheckMcpContract(rules.OfType<PipeAccessRule>().Any(rule => rule.AccessControlType == AccessControlType.Allow) &&
+            rules.OfType<PipeAccessRule>().All(rule => rule.AccessControlType != AccessControlType.Allow ||
+                !rule.PipeAccessRights.HasFlag(PipeAccessRights.CreateNewInstance)),
+            "The published pipe grants the client server-instance creation rights.");
+
+        using (var disconnected = await endpoint.ConnectAsync(deadline.Token)) { }
+        Task<bool> accepting = AiPipe.AcceptAsync(listener, deadline.Token);
+        using var next = await endpoint.ConnectAsync(deadline.Token);
+        CheckMcpContract(await accepting, "The owned listener did not recover after a client left.");
+        await next.WriteAsync(new byte[] { 42 }, deadline.Token);
+        byte[] received = new byte[1];
+        await listener.ReadExactlyAsync(received, deadline.Token);
+        CheckMcpContract(received[0] == 42, "The next client could not exchange data on the owned listener.");
+        Console.WriteLine("PASS McpOwnedPipeSurvivesEarlyDisconnect");
+    }
+
     private static void PipeIdentityIncludesIntegrityLevel()
     {
         using var user = WindowsIdentity.GetCurrent(TokenAccessLevels.Duplicate | TokenAccessLevels.Query);

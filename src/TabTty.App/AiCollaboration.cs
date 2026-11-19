@@ -1,3 +1,5 @@
+using System.Buffers.Binary;
+using System.Collections.Generic;
 using System.IO;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -17,7 +19,6 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
     private readonly Dictionary<string, Counterpart> peers = [];
     private readonly Dictionary<string, Sharing> shares = [];
     private bool disposed;
-    private long captureOrdinal;
     private const int HandleLimit = 256;
     private const int HandleLifetime = 60_000;
     internal IReadOnlyCollection<Counterpart> Peers => peers.Values;
@@ -31,7 +32,8 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
         internal uint LauncherId { get; } = launcherId;
         internal string? Name { get; set; }
         internal string Label => Name is { Length: > 0 } name ? $"{Code} · {name} ({Text("AiUnverified")})" : Code;
-        internal Dictionary<string, Handle> Handles { get; } = [];
+        internal OrderedDictionary<string, Handle> Handles { get; } = [];
+        internal int CapturesInProgress { get; set; }
         internal CancellationTokenSource Lifetime { get; } = new();
         internal AiRateLimit Calls { get; } = AiRateLimit.OrdinaryCalls(now);
         private readonly AiRateLimit returns = AiRateLimit.ControlReturns(now);
@@ -46,6 +48,17 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
 
     internal sealed class Sharing(TerminalTab tab, Counterpart peer, TerminalSession session)
     {
+        private readonly byte[] lineIdentityKey = RandomNumberGenerator.GetBytes(32);
+        internal long CaptureOrdinal { get; set; }
+        internal long PublicLineId(long id)
+        {
+            Span<byte> value = stackalloc byte[sizeof(long)];
+            BinaryPrimitives.WriteInt64LittleEndian(value, id);
+            Span<byte> digest = stackalloc byte[32];
+            HMACSHA256.HashData(lineIdentityKey, value, digest);
+            return BinaryPrimitives.ReadInt64LittleEndian(digest) & long.MaxValue;
+        }
+
         internal string Id { get; } = NewId();
         internal string Generation { get; } = NewId();
         internal TerminalTab Tab { get; } = tab;
@@ -461,7 +474,8 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
         try { inputMemory = observationWork.Reserve(action.PasteText is { } payload ? payload.Length * 2L + 512 : 512); }
         catch (ResourceLimitException) { return DeliveryError("resource_limit", "not_sent", sequence, false, control); }
         using var reservedInput = inputMemory;
-        var attempt = new AiInputAttempt(control.Lease, observation.State.LayoutEpoch, token);
+        long expires = share.Peer.Handles[observationId].Expires;
+        var attempt = new AiInputAttempt(control.Lease, observation.State.LayoutEpoch, token, () => Now >= expires);
         control.Attempt = attempt;
         control.PendingDigest = digest;
         Task<object> sending = PerformAsync();
@@ -587,7 +601,8 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
         finally { share.Waiting = false; }
     }
 
-    private string Store(Counterpart peer, Sharing? share, object value, long? expires = null)
+    private string Store(Counterpart peer, Sharing? share, object value, long? expires = null,
+        string? keepCapture = null, string? keepObservation = null)
     {
         if (!peers.ContainsKey(peer.Id) || share is not null && !shares.ContainsKey(share.Id))
         {
@@ -595,16 +610,13 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
             throw new ToolException("not_shared");
         }
         string id = NewId();
-        StoreHandle(peer, share, id, value, expires);
-        return id;
-    }
-
-    private void StoreHandle(Counterpart peer, Sharing? share, string id, object value, long? expires)
-    {
         Prune(peer);
-        while (peer.Handles.Count >= HandleLimit) RemoveHandle(peer, peer.Handles.Keys.First());
+        if (expires is { } deadline && deadline <= Now) throw new ToolException("cursor_expired");
+        if (peer.Handles.Count >= HandleLimit)
+            RemoveHandle(peer, peer.Handles.Keys.First(key => key != keepCapture && key != keepObservation));
         peer.Handles.Add(id, new Handle(share, expires ?? Now + HandleLifetime, value));
         StartExpiryTimer();
+        return id;
     }
 
     private void StartExpiryTimer()

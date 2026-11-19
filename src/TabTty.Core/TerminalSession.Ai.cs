@@ -31,7 +31,6 @@ internal sealed class AiInputLease : IDisposable
         lock (gate)
         {
             if (IsRevoked) throw new AiInputRejectedException("control_required");
-            attempt.Cancellation.ThrowIfCancellationRequested();
             attempt.MarkAdmitted();
             return write();
         }
@@ -42,7 +41,6 @@ internal sealed class AiInputLease : IDisposable
         lock (gate)
         {
             if (IsRevoked) throw new AiInputRejectedException("control_required");
-            attempt.Cancellation.ThrowIfCancellationRequested();
             attempt.MarkAdmitted();
             return write();
         }
@@ -56,7 +54,8 @@ internal sealed class AiInputLease : IDisposable
     }
 }
 
-internal sealed class AiInputAttempt(AiInputLease lease, long layoutEpoch, CancellationToken cancellation)
+internal sealed class AiInputAttempt(AiInputLease lease, long layoutEpoch, CancellationToken cancellation,
+    Func<bool>? observationExpired = null)
 {
     private int admitted;
     internal AiInputLease Lease { get; } = lease;
@@ -64,7 +63,13 @@ internal sealed class AiInputAttempt(AiInputLease lease, long layoutEpoch, Cance
     internal CancellationToken Cancellation { get; } = cancellation;
     internal bool Admitted => Volatile.Read(ref admitted) != 0;
     internal int CompletedWrites { get; private set; }
-    internal void MarkAdmitted() => Volatile.Write(ref admitted, 1);
+    internal void MarkAdmitted()
+    {
+        Cancellation.ThrowIfCancellationRequested();
+        if (!Admitted && observationExpired?.Invoke() == true)
+            throw new AiInputRejectedException("stale_observation");
+        Volatile.Write(ref admitted, 1);
+    }
     internal void CompleteWrite() => CompletedWrites++;
 }
 

@@ -45,8 +45,10 @@ is required. A saved host launch configuration confers no output/control access.
 
 Use `\\.\pipe\TabTty.Ai.v1.<logon-SID>` for the current Windows logon, derived
 from the process token rather than a supplied username. The GUI creates the
-first pipe instance with exclusive first-instance checking, then bounded server
-instances under its ownership. A conflicting owner disables AI attachment with
+first pipe instance with exclusive first-instance checking, then opens the
+bounded pool before accepting connections. Reuse the owned instances across
+client disconnects, including a client that leaves before pairing. A
+conflicting owner disables AI attachment with
 a visible error; never connect to it as a substitute GUI. No endpoint exists
 after the application run ends. The pipe name is discovery, not authentication.
 
@@ -58,8 +60,9 @@ integrity can both be non-elevated. If any token field differs or cannot be
 read, reject the attachment. The same comparison applies to the direct launcher.
 Run normally without elevation and retain the current privileges on failure.
 [Windows mandatory integrity control](https://learn.microsoft.com/en-us/windows/win32/secauthz/mandatory-integrity-control).
-Clients request individual read/write rights, not instance creation or generic
-write; the server retains the rights needed to create its instances. Microsoft
+After opening the pool, the GUI restricts the logon SID to individual client
+rights and retains its original server handles. The published ACL excludes
+instance creation and generic write for clients. Microsoft
 documents the permissive default DACL and logon-SID restriction, while
 `CurrentUserOnly` checks user and elevation but is not a complete logon policy.
 [Pipe access](https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights),
@@ -85,12 +88,13 @@ not an authentication substitute or transferable permission. Reattachment is a
 new counterpart, even for the same executable, PID value, name, or launch config.
 
 The GUI's counterpart picker shows the pairing code, the executable path and PID
-of the bridge's OS-observed direct launcher, the validated bridge location and
+of the bridge parent recorded by Windows, the validated bridge location and
 the bounded claimed AI name marked as unverified. Its details explain that
 access belongs to this integration and may cover multiple chats in that host.
 `tabtty_list_shared_sessions` returns the same code so the person can match them.
 Confirming the selected counterpart grants read access only to that tab. The
-confirmation repeats the direct launcher's path, PID and pairing code. Separate
+confirmation repeats the recorded parent's path, PID and pairing code. The
+pairing code identifies the connection being approved. Separate
 bridges can represent separate integrations where the
 host supports that setup, without promising per-chat isolation.
 

@@ -50,9 +50,10 @@ internal sealed partial class AiCollaboration
                     input.Integer("rows", 1, 512), input.Integer("columns", 1, 1024));
             }
             bool highlights = args.Boolean("include_highlights", true);
-            if (peer.Handles.Values.Count(handle => handle.Value is ScreenCapture) >= 2)
+            if (peer.CapturesInProgress + peer.Handles.Values.Count(handle => handle.Value is ScreenCapture) >= 2)
                 throw new ToolException("resource_limit");
             var memory = screenMemory.Reserve(0);
+            peer.CapturesInProgress++;
             var control = share.Control;
             long completed = share.Completed;
             bool wasIdle = control?.Sending is null;
@@ -71,8 +72,6 @@ internal sealed partial class AiCollaboration
                             suggested_region = new { row = 1, column = 1, rows = 1, columns = Math.Min(80, state.Columns) } });
                     }
                 }, token);
-                if (peer.Handles.Values.Count(handle => handle.Value is ScreenCapture) >= 2)
-                    throw new ToolException("resource_limit");
                 string? highlightStatus = highlights ? "current" : null;
                 if (highlights && share.Tab.HasAiHighlightRules)
                 {
@@ -96,11 +95,12 @@ internal sealed partial class AiCollaboration
                 long expires = Now + HandleLifetime;
                 string observation = Store(peer, share, new Observation(data.State, control?.Id, completed,
                     wasIdle && control == share.Control && control?.Sending is null && completed == share.Completed), expires);
-                capture = new ScreenCapture(data.State, data.Region, data.Lines, ++captureOrdinal, clock.GetUtcNow(),
+                capture = new ScreenCapture(data.State, data.Region, data.Lines, ++share.CaptureOrdinal, clock.GetUtcNow(),
                     expires, NewId(), observation, highlightStatus, memory);
-                captureKey = Store(peer, share, capture, expires);
+                captureKey = Store(peer, share, capture, expires, keepObservation: observation);
             }
             catch { memory.Dispose(); throw; }
+            finally { peer.CapturesInProgress--; }
         }
 
         var lines = new List<ScreenRow>();
@@ -130,7 +130,8 @@ internal sealed partial class AiCollaboration
             nextCell = 0;
         }
         string? next = nextRow < capture.Lines.Length
-            ? Store(peer, share, new ScreenCursor(captureKey, nextRow, nextCell), capture.Expires) : null;
+            ? Store(peer, share, new ScreenCursor(captureKey, nextRow, nextCell), capture.Expires,
+                keepCapture: captureKey, keepObservation: capture.Observation) : null;
         if (next is null) RemoveHandle(peer, captureKey);
         var state = capture.State;
         return Ok(share, new
@@ -157,6 +158,8 @@ internal sealed partial class AiCollaboration
     private static ScreenRow[] CaptureScreen(TerminalOutput model, Region region, ResourceReservation memory,
         CancellationToken token)
     {
+        const int limit = 16 * MiB;
+        Charge(64 + region.Rows * 8L);
         var lines = new ScreenRow[region.Rows];
         for (int i = 0; i < lines.Length; i++)
         {
@@ -178,20 +181,25 @@ internal sealed partial class AiCollaboration
                 next = column + cell.Width;
             });
             if (next <= last) Add(next, last - next + 1, " ", default, true);
+            Charge(96 + cells.Count * 16L);
             lines[i] = new ScreenRow(row, Math.Min(first, cells[0].column),
                 Math.Max(last, next - 1), cells.ToArray(), null, rowIdentity.Id, rowIdentity.Revision);
-            memory.Add(96 + cells.Count * 16L);
 
             void Add(int column, int width, string text, TerminalStyle style, bool blank)
             {
                 long size = 112 + text.Length * 2L;
-                if (memory.Size + size > 16 * MiB) throw new ScreenRegionTooLargeException();
-                memory.Add(size);
+                Charge(size);
                 cells.Add(new ScreenCell(column, width, text, style.Foreground ?? 0xFFFFFF, style.Background ?? 0,
                     (int)style.Flags, blank));
             }
         }
         return lines;
+
+        void Charge(long bytes)
+        {
+            if (bytes > limit - memory.Size) throw new ScreenRegionTooLargeException();
+            memory.Add(bytes);
+        }
     }
 
     private async Task<object> ReadHistoryAsync(Sharing share, Arguments args, CancellationToken token)
@@ -225,7 +233,9 @@ internal sealed partial class AiCollaboration
                 var staged = new StagedHistory(work) { Source = sourceId };
                 var body = Ok(share, new
                 {
-                    source = "normal", capture_ordinal = ++captureOrdinal, fragments = page.Fragments,
+                    source = "normal", capture_ordinal = ++share.CaptureOrdinal,
+                    fragments = page.Fragments.Select(fragment =>
+                        fragment with { logical_line_id = share.PublicLineId(fragment.logical_line_id) }).ToArray(),
                     range = page.Range is { } range ? staged.Add(range) : null,
                     earlier_range = page.Earlier is { } earlier ? staged.Add(earlier) : null,
                     next_cursor = page.Next is { } next && page.Range is { } original
@@ -280,7 +290,7 @@ internal sealed partial class AiCollaboration
                 {
                     source = "normal",
                     matches = page.Matches.Select(match => new { text = match.Text,
-                        logical_line_id = match.Position.Line, content_offset = match.Position.Offset,
+                        logical_line_id = share.PublicLineId(match.Position.Line), content_offset = match.Position.Offset,
                         context_range = staged.Add(match.Context) }).ToArray(),
                     scanned_range = page.Scanned is { } scanned ? staged.Add(scanned) : null,
                     scan_complete = page.Next is null,

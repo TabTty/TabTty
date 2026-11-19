@@ -8,16 +8,16 @@ using Microsoft.Win32.SafeHandles;
 
 namespace TabTty.AiTransport;
 
-internal sealed class AiPrivateChannel(PipeStream pipe, SafeProcessHandle peer, SafeProcessHandle? launcher = null)
+internal sealed class AiPrivateChannel(PipeStream pipe, SafeProcessHandle peer, SafeProcessHandle? launcher = null,
+    bool keepPipeOpen = false)
     : IDisposable
 {
     private readonly CancellationTokenSource lifetime = new();
     private readonly Channel<Frame> outbound = Channel.CreateBounded<Frame>(20);
     private sealed record Frame(byte[] Bytes, IDisposable? Memory);
-    private const int MaxQueued = 8 * 1024 * 1024;
     // Includes three 256-scalar strings even when JSON escapes every UTF-16 code unit.
     internal const int MaxControlFrame = 16 * 1024;
-    private int queued;
+    internal AiPayloadBudget Payload { get; } = new();
     private readonly object stopGate = new();
     private Task? cancellation;
     private long lastHeartbeat = Stopwatch.GetTimestamp();
@@ -66,18 +66,17 @@ internal sealed class AiPrivateChannel(PipeStream pipe, SafeProcessHandle peer, 
     // A successful enqueue transfers the reservation to the writer.
     internal bool TrySend(byte[] frame, bool priority = false, IDisposable? memory = null)
     {
-        if (frame.Length <= (priority ? MaxControlFrame : AiFrames.MaxFrame))
+        if (frame.Length <= (priority ? MaxControlFrame : AiFrames.MaxFrame) &&
+            Payload.TryReserve(frame.Length, priority))
         {
-            int total = Interlocked.Add(ref queued, frame.Length);
-            int limit = priority ? MaxQueued : MaxQueued - 512 * 1024;
-            if (total <= limit && (priority || outbound.Reader.Count < 16) &&
+            if ((priority || outbound.Reader.Count < 16) &&
                 outbound.Writer.TryWrite(new Frame(frame, memory))) return true;
-            Interlocked.Add(ref queued, -frame.Length);
+            Payload.Release(frame.Length);
         }
         return false;
     }
 
-    internal async Task RunAsync(Func<JsonElement, Task> receive, CancellationToken token)
+    internal async Task RunAsync(Action<AiFrames.PrivateFrame> receive, CancellationToken token)
     {
         using var registration = token.Register(Stop);
         Task input = ReadAsync(receive), output = WriteAsync(), health = HealthAsync();
@@ -101,22 +100,23 @@ internal sealed class AiPrivateChannel(PipeStream pipe, SafeProcessHandle peer, 
             // Close admissions before the writer drains its last owned frames.
             outbound.Writer.TryComplete();
             cancellation = lifetime.CancelAsync();
-            pipe.Dispose();
+            if (!keepPipeOpen) pipe.Dispose();
+            while (outbound.Reader.TryRead(out var frame)) Release(frame);
         }
     }
 
-    private async Task ReadAsync(Func<JsonElement, Task> receive)
+    private async Task ReadAsync(Action<AiFrames.PrivateFrame> receive)
     {
         while (!Token.IsCancellationRequested)
         {
-            JsonElement message = await AiFrames.ReadPrivateAsync(pipe, Token).ConfigureAwait(false);
+            AiFrames.PrivateFrame frame = await AiFrames.ReadPrivateFrameAsync(pipe, Token).ConfigureAwait(false);
             if (!Healthy()) return;
-            if (message.TryGetProperty("heartbeat", out var heartbeat) && heartbeat.ValueKind == JsonValueKind.True)
+            if (frame.Message.TryGetProperty("heartbeat", out var heartbeat) && heartbeat.ValueKind == JsonValueKind.True)
             {
                 Interlocked.Exchange(ref lastHeartbeat, Stopwatch.GetTimestamp());
                 continue;
             }
-            await receive(message).ConfigureAwait(false);
+            receive(frame);
         }
     }
 
@@ -130,13 +130,13 @@ internal sealed class AiPrivateChannel(PipeStream pipe, SafeProcessHandle peer, 
                 finally { Release(frame); }
             }
         }
-        finally { while (outbound.Reader.TryRead(out var frame)) Release(frame); }
+        finally { Stop(); }
+    }
 
-        void Release(Frame frame)
-        {
-            Interlocked.Add(ref queued, -frame.Bytes.Length);
-            frame.Memory?.Dispose();
-        }
+    private void Release(Frame frame)
+    {
+        Payload.Release(frame.Bytes.Length);
+        frame.Memory?.Dispose();
     }
 
     private bool Healthy() => Stopwatch.GetElapsedTime(Interlocked.Read(ref lastHeartbeat)) < TimeSpan.FromSeconds(20) &&

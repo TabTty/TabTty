@@ -16,6 +16,9 @@ internal sealed class TerminalHighlightView
     private TerminalHighlightRules? rules;
     private CancellationTokenSource? work;
     private List<LineResult> cached = [];
+    private Dictionary<int, TerminalHighlightSpan[]> rowOverlays = [];
+    private HashSet<int> evaluatedRows = [];
+    private (int First, int End) evaluatedViewport;
     private long lastOutput;
     private TerminalSnapshot? evaluated;
     private bool pending;
@@ -181,6 +184,7 @@ internal sealed class TerminalHighlightView
             {
                 cached = ReferenceEquals(latest, captured) ? result : Remap(latest, captured, result);
                 evaluated = latest.HasSameHighlightText(captured) ? latest : null;
+                evaluatedViewport = lastViewport;
             }
             Publish();
         }
@@ -228,10 +232,14 @@ internal sealed class TerminalHighlightView
     private void Publish()
     {
         var overlays = new Dictionary<int, TerminalHighlightSpan[]>();
+        var currentRows = new HashSet<int>();
         if (snapshot is { } view)
         {
             foreach (LineResult line in cached)
             {
+                for (int row = Math.Max(line.Anchor.StartRow, evaluatedViewport.First);
+                    row <= line.Anchor.EndRow && row < evaluatedViewport.End; row++)
+                    currentRows.Add(row);
                 if (line.Spans.Length == 0) continue;
                 int offset = 0;
                 for (int row = line.Anchor.StartRow; row <= line.Anchor.EndRow; row++)
@@ -245,6 +253,8 @@ internal sealed class TerminalHighlightView
                 }
             }
         }
+        rowOverlays = overlays;
+        evaluatedRows = currentRows;
         surface.SetHighlights(overlays);
     }
 
@@ -254,17 +264,8 @@ internal sealed class TerminalHighlightView
     {
         if (snapshot is not { } view || view != evaluated || work is not null) return null;
         int index = view.ScreenStartRow + row - 1;
-        if (index >= view.Count) return null;
-        LineResult? line = cached.FirstOrDefault(line => line.Anchor.StartRow <= index && index <= line.Anchor.EndRow);
-        if (line is null) return null;
-        int start = 0;
-        for (int i = line.Anchor.StartRow; i < index; i++) start += view[i].Length;
-        int end = start + view[index].Length;
-        var spans = line.Spans.Where(span => span.Start < end && span.End > start).Select(span => span with
-        {
-            Start = Math.Max(0, span.Start - start), End = Math.Min(end, span.End) - start,
-        }).ToArray();
+        if (!evaluatedRows.Contains(index) || index >= view.Count) return null;
         var identity = view.DisplayIdentity(index);
-        return (identity.Id, identity.Revision, spans);
+        return (identity.Id, identity.Revision, rowOverlays.GetValueOrDefault(index) ?? []);
     }
 }

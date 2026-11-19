@@ -525,7 +525,7 @@
   <data name="AiTakeControl" xml:space="preserve"><value>Take control from AI</value></data>
   <data name="AiGiveControl" xml:space="preserve"><value>Give control to AI</value></data>
   <data name="AiShareOutput" xml:space="preserve"><value>Share output with AI</value></data>
-  <data name="AiLauncherProcess" xml:space="preserve"><value>Bridge launcher (PID {1}) — {0}</value></data>
+  <data name="AiLauncherProcess" xml:space="preserve"><value>Bridge parent recorded by Windows (PID {1}) — {0}</value></data>
   <data name="AiSshTarget" xml:space="preserve"><value>SSH account and destination: {0}</value></data>
   <data name="AiTelnetTarget" xml:space="preserve"><value>Telnet destination: {0}</value></data>
   <data name="AiSerialTarget" xml:space="preserve"><value>Serial port: {0}</value></data>
@@ -534,7 +534,7 @@
 {3}
 {2}
 
-Check the launcher and match the pairing code in your AI host. Programs and chats that share this host connection can use this permission.
+Match the pairing code in your AI host. Windows reports the bridge's parent process. Use the pairing code to confirm which host connection receives access. Programs and chats that share this connection can use this permission.
 
 The host can read the current screen and search retained terminal history, including the normal screen behind a full-screen application. Text from before sharing or while sharing was off is included if still retained. The bridge runs locally. The host may keep this data or send it to an external model, depending on its settings.
 
@@ -543,7 +543,7 @@ Use End AI sharing to stop future reads. Sharing again gives the recipient acces
 {3}
 {2}
 
-Check the launcher and match the pairing code in your AI host. Programs and chats that share this host connection can use this permission.
+Match the pairing code in your AI host. Windows reports the bridge's parent process. Use the pairing code to confirm which host connection receives access. Programs and chats that share this connection can use this permission.
 
 The host can send keys and multiple lines of commands without asking again, with all permissions available in the connected terminal. Taking control back stops new AI input and keeps output shared. Choose End AI sharing before entering a password or one-time code.</value></data>
   <data name="AiConfirmSwitch" xml:space="preserve"><value>Continuing also ends this tab’s sharing with integration {0}.</value></data>

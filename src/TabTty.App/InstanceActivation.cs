@@ -94,61 +94,56 @@ internal sealed class InstanceActivation : IDisposable
             try
             {
                 var endpoint = new AiPipe(activation: true);
-                var waiting = endpoint.Listen(first: true);
-                try
+                using var pipe = endpoint.OpenListeners(1)[0];
+                while (await AiPipe.AcceptAsync(pipe, token).ConfigureAwait(false))
                 {
-                    while (!token.IsCancellationRequested)
+                    try
                     {
-                        await waiting.WaitForConnectionAsync(token).ConfigureAwait(false);
-                        using var pipe = waiting;
-                        // Keep ownership of the endpoint and let the client drain the
-                        // acknowledgement from this instance after the server closes it.
-                        waiting = endpoint.Listen(first: false);
-                        try
+                        using var peer = endpoint.VerifyPeer(pipe, server: false, "TabTty.exe", out _);
+                        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+                        deadline.CancelAfter(TimeSpan.FromSeconds(5));
+                        byte[] header = new byte[4];
+                        await pipe.ReadExactlyAsync(header, deadline.Token).ConfigureAwait(false);
+                        int length = BinaryPrimitives.ReadInt32LittleEndian(header);
+                        if (length is <= 0 or > MaximumMessage) continue;
+                        byte[] message = new byte[length];
+                        await pipe.ReadExactlyAsync(message, deadline.Token).ConfigureAwait(false);
+                        using var document = JsonDocument.Parse(message, new JsonDocumentOptions { MaxDepth = 8 });
+                        JsonElement root = document.RootElement;
+                        InstanceLaunch[]? launches = null;
+                        bool macroEnvelope = root.ValueKind == JsonValueKind.Object &&
+                            root.TryGetProperty(MacroRequestsProperty, out _);
+                        if (macroEnvelope && root.TryGetProperty(MacroRequestsProperty, out var macros) &&
+                            macros.ValueKind == JsonValueKind.Array && macros.GetArrayLength() is > 0 and <= InstanceLaunch.MaximumPending)
                         {
-                            using var peer = endpoint.VerifyPeer(pipe, server: false, "TabTty.exe", out _);
-                            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
-                            deadline.CancelAfter(TimeSpan.FromSeconds(5));
-                            byte[] header = new byte[4];
-                            await pipe.ReadExactlyAsync(header, deadline.Token).ConfigureAwait(false);
-                            int length = BinaryPrimitives.ReadInt32LittleEndian(header);
-                            if (length is <= 0 or > MaximumMessage) continue;
-                            byte[] message = new byte[length];
-                            await pipe.ReadExactlyAsync(message, deadline.Token).ConfigureAwait(false);
-                            using var document = JsonDocument.Parse(message, new JsonDocumentOptions { MaxDepth = 8 });
-                            JsonElement root = document.RootElement;
-                            InstanceLaunch[]? launches = null;
-                            bool macroEnvelope = root.ValueKind == JsonValueKind.Object &&
-                                root.TryGetProperty(MacroRequestsProperty, out _);
-                            if (macroEnvelope && root.TryGetProperty(MacroRequestsProperty, out var macros) &&
-                                macros.ValueKind == JsonValueKind.Array && macros.GetArrayLength() is > 0 and <= InstanceLaunch.MaximumPending)
-                            {
-                                launches = macros.Deserialize<InstanceLaunch[]>();
-                            }
-                            else if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("EditorRequests", out var editors) &&
-                                editors.ValueKind == JsonValueKind.Array && editors.GetArrayLength() is > 0 and <= InstanceLaunch.MaximumPending)
-                            {
-                                launches = editors.Deserialize<InstanceLaunch[]>();
-                                if (launches?.Any(launch => launch is not null && !launch.Edit && !launch.IsVault) == true)
-                                    launches = null;
-                            }
-                            else if (root.ValueKind == JsonValueKind.Array && root.GetArrayLength() <= InstanceLaunch.MaximumPending)
-                            {
-                                launches = root.GetArrayLength() == 0 || root[0].ValueKind == JsonValueKind.String
-                                    ? root.Deserialize<string[]>()?.Select(path => new InstanceLaunch(path, [])).ToArray()
-                                    : root.Deserialize<InstanceLaunch[]>();
-                            }
-                            bool accepted = launches is not null && InstanceLaunch.Valid(launches) &&
-                                launches.Any(launch => launch.IsMacro) == macroEnvelope &&
-                                await deliver(launches).ConfigureAwait(false);
-                            await pipe.WriteAsync(new byte[] { accepted ? (byte)1 : (byte)0 }, deadline.Token)
-                                .ConfigureAwait(false);
+                            launches = macros.Deserialize<InstanceLaunch[]>();
                         }
-                        catch (Exception exception) when (exception is IOException or JsonException or ArgumentException or
-                            Win32Exception or UnauthorizedAccessException or OperationCanceledException) { }
+                        else if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("EditorRequests", out var editors) &&
+                            editors.ValueKind == JsonValueKind.Array && editors.GetArrayLength() is > 0 and <= InstanceLaunch.MaximumPending)
+                        {
+                            launches = editors.Deserialize<InstanceLaunch[]>();
+                            if (launches?.Any(launch => launch is not null && !launch.Edit && !launch.IsVault) == true)
+                                launches = null;
+                        }
+                        else if (root.ValueKind == JsonValueKind.Array && root.GetArrayLength() <= InstanceLaunch.MaximumPending)
+                        {
+                            launches = root.GetArrayLength() == 0 || root[0].ValueKind == JsonValueKind.String
+                                ? root.Deserialize<string[]>()?.Select(path => new InstanceLaunch(path, [])).ToArray()
+                                : root.Deserialize<InstanceLaunch[]>();
+                        }
+                        bool accepted = launches is not null && InstanceLaunch.Valid(launches) &&
+                            launches.Any(launch => launch.IsMacro) == macroEnvelope &&
+                            await deliver(launches).ConfigureAwait(false);
+                        await pipe.WriteAsync(new byte[] { accepted ? (byte)1 : (byte)0 }, deadline.Token)
+                            .ConfigureAwait(false);
+                        // The forwarder closes its end after reading the acknowledgement.
+                        // Disconnecting sooner could discard the unread byte.
+                        await pipe.ReadAsync(header.AsMemory(0, 1), deadline.Token).ConfigureAwait(false);
                     }
+                    catch (Exception exception) when (exception is IOException or JsonException or ArgumentException or
+                        Win32Exception or UnauthorizedAccessException or OperationCanceledException) { }
+                    finally { pipe.Disconnect(); }
                 }
-                finally { waiting.Dispose(); }
             }
             catch (Exception exception) when (exception is IOException or OperationCanceledException or
                 Win32Exception or UnauthorizedAccessException) { }

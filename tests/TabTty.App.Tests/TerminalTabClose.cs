@@ -237,6 +237,7 @@ internal static partial class Program
         };
         dialogTimer.Start();
         terminal.Start();
+        var counterpart = app.Ai.Attach("close fixture", @"C:\Fixtures\Host.exe", 101)!;
         try
         {
             using TcpClient peer = await listener.AcceptTcpClientAsync(deadline.Token);
@@ -249,10 +250,18 @@ internal static partial class Program
             if (!reply.AsSpan().SequenceEqual("\u001b[0n"u8))
                 throw new InvalidOperationException("The connected test tab did not receive its complete output.");
             var held = (TerminalSnapshot)await owner.GetOutputAsync(deadline.Token);
+            CheckMcpContract(app.Ai.Share(terminal, counterpart) is null && app.Ai.Grant(terminal) is null,
+                "The fixture could not share the tab and grant control.");
+            AiInputLease lease = terminal.AiSharing!.Control!.Lease;
+            var prepared = await app.Ai.CallAsync(counterpart, "tabtty_read_state",
+                System.Text.Json.JsonSerializer.SerializeToElement(new { session = terminal.AiSharing.Id }), deadline.Token);
+            bool revokedAtClose = false;
+            counterpart.SharingEnded = _ => revokedAtClose = terminal.ClosePending && terminal.IsRunning &&
+                lease.IsRevoked && !app.Ai.CanDeliver(counterpart, prepared);
 
             close.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             while (reviews == 0) await Task.Delay(15, deadline.Token);
-            if (reviews != 1 || terminal.InputSession is null || !tabs.Items.Contains(item))
+            if (reviews != 1 || !terminal.IsAiControlling || lease.IsRevoked || !tabs.Items.Contains(item))
                 throw new InvalidOperationException("Declining a repeated tab close changed the live connection or removed the tab.");
 
             long closedBefore = Interlocked.Read(ref NativeTerminalCoreDiagnostics.ClosedModels);
@@ -260,7 +269,7 @@ internal static partial class Program
             close.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             await terminal.Completion.WaitAsync(deadline.Token);
             while (tabs.Items.Contains(item)) await Task.Delay(15, deadline.Token);
-            if (reviews != 2 || terminal.IsRunning || !host.IsVisible)
+            if (reviews != 2 || terminal.IsRunning || !host.IsVisible || !revokedAtClose)
                 throw new InvalidOperationException("The accepted tab close did not complete once and preserve the other tab.");
             if (Interlocked.Read(ref NativeTerminalCoreDiagnostics.ClosedModels) <= closedBefore)
                 throw new InvalidOperationException("The visual close did not release the native terminal model.");
@@ -275,6 +284,7 @@ internal static partial class Program
         }
         finally
         {
+            app.Ai.Detach(counterpart);
             dialogTimer.Stop();
             terminal.Disconnect();
             await terminal.Completion.WaitAsync(TimeSpan.FromSeconds(5));

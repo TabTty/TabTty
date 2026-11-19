@@ -24,6 +24,8 @@ internal static partial class Program
     {
         PipeIdentityIncludesIntegrityLevel();
         Console.WriteLine("PASS PipeIdentityIncludesIntegrityLevel");
+        await OwnedPipeSurvivesEarlyClientDisconnect();
+        await CheckMcpAdmissionContracts();
         using (var localPipe = new System.IO.Pipes.NamedPipeClientStream("TabTty-closed-channel-test"))
         using (var self = System.Diagnostics.Process.GetCurrentProcess())
         {
@@ -114,6 +116,11 @@ internal static partial class Program
                 !old.GetRawText().Contains("SCREEN", StringComparison.Ordinal), "Parked history used the wrong screen.");
             var search = await Call(owner, "search_history", new { session, query = "あ" });
             Check(search.GetProperty("matches").GetArrayLength() == 1, "Literal Japanese search missed retained output.");
+            var firstLine = old.GetProperty("fragments").EnumerateArray().First(fragment =>
+                fragment.GetProperty("text").GetString()!.Contains("earlier", StringComparison.Ordinal));
+            Check(firstLine.GetProperty("logical_line_id").GetInt64() ==
+                search.GetProperty("matches")[0].GetProperty("logical_line_id").GetInt64(),
+                "Read and search disagree on the public identity of one retained line.");
             var context = search.GetProperty("matches")[0].GetProperty("context_range").GetString();
             var contextPage = await Call(owner, "read_history", new { session, range = context, max_rows = 1 });
             string pageCursor = contextPage.GetProperty("next_cursor").GetString()!;
@@ -213,7 +220,13 @@ internal static partial class Program
             Check(ai.Share(tab, owner) is null && ai.Grant(tab) is null, "The original integration could not obtain a fresh grant.");
             string closingSession = tab.AiSharing!.Id;
             string closingControl = tab.AiSharing.Control!.Id;
+            int fixtures = 0;
+            while (owner.Handles.Count < 256)
+                owner.Handles.Add($"fixture-{fixtures++}", new AiCollaboration.Handle(null, long.MaxValue, new object()));
+            string oldest = owner.Handles.Keys.First();
             var lastState = await Call(owner, "read_state", new { session = closingSession });
+            Check(owner.Handles.Count <= 256 && owner.Handles.ContainsKey(lastState.GetProperty("observation").GetString()!) &&
+                !owner.Handles.ContainsKey(oldest), "A screen read at capacity returned an evicted observation.");
             ai.Detach(owner);
             var reattached = ai.Attach("fixture bridge", owner.LauncherPath, owner.LauncherId)!;
             try
@@ -471,5 +484,66 @@ internal static partial class Program
         {
             if (!condition) throw new InvalidOperationException(message);
         }
+    }
+
+    private static async Task CheckMcpAdmissionContracts()
+    {
+        using var lease = new AiInputLease();
+        bool expired = true;
+        int writes = 0;
+        var attempt = new AiInputAttempt(lease, 1, CancellationToken.None, () => expired);
+        try
+        {
+            await lease.StartWrite(attempt, Write);
+            throw new InvalidOperationException("An expired observation reached admission.");
+        }
+        catch (AiInputRejectedException error) when (error.Code == "stale_observation")
+        {
+            CheckMcpContract(!attempt.Admitted && writes == 0, "Rejecting an expired observation changed admission state.");
+        }
+        expired = false;
+        var fresh = new AiInputAttempt(lease, 1, CancellationToken.None, () => expired);
+        await lease.StartWrite(fresh, Write);
+        expired = true;
+        await lease.StartWrite(fresh, Write);
+        CheckMcpContract(fresh.Admitted && writes == 2, "An admitted action did not retain its admission across writes.");
+        Console.WriteLine("PASS McpObservationExpiryAtFirstAdmission");
+
+        using var ordinary = TerminalHistory.WorkQuota.Reserve(60 * 1024 * 1024);
+        using var control = TerminalHistory.ControlWorkQuota.Reserve(4 * 1024 * 1024);
+        CheckMcpContract(ordinary.Size + control.Size == 64L * 1024 * 1024, "Control did not retain its share of the work budget.");
+        Console.WriteLine("PASS McpControlWorkRetainsCapacity");
+
+        using var pipe = new System.IO.Pipes.NamedPipeClientStream("TabTty-buffer-lifecycle-fixture");
+        using var self = System.Diagnostics.Process.GetCurrentProcess();
+        using var channel = new TabTty.AiTransport.AiPrivateChannel(pipe, self.SafeHandle);
+        const int ordinaryLimit = 8 * 1024 * 1024 - 512 * 1024;
+        CheckMcpContract(channel.Payload.TryReserve(ordinaryLimit, priority: false), "The ordinary payload allowance was unavailable.");
+        CheckMcpContract(!channel.TrySend(new { message = "ordinary" }), "A private frame bypassed the shared payload budget.");
+        var owner = new CountedReservation();
+        CheckMcpContract(channel.TrySend(new byte[16], priority: true, owner), "Ordinary work exhausted reserved control capacity.");
+        channel.Stop();
+        channel.Payload.Release(ordinaryLimit);
+        CheckMcpContract(owner.Releases == 1 && channel.Payload.TryReserve(ordinaryLimit, priority: false),
+            "Stopping before the writer started failed to release its queued reservation exactly once.");
+        channel.Payload.Release(ordinaryLimit);
+        Console.WriteLine("PASS McpSharedPayloadAndUnstartedWriterCleanup");
+
+        ValueTask Write()
+        {
+            writes++;
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    private static void CheckMcpContract(bool condition, string message)
+    {
+        if (!condition) throw new InvalidOperationException(message);
+    }
+
+    private sealed class CountedReservation : IDisposable
+    {
+        internal int Releases { get; private set; }
+        public void Dispose() => Releases++;
     }
 }

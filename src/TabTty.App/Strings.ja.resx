@@ -525,7 +525,7 @@
   <data name="AiTakeControl" xml:space="preserve"><value>AI操作を中断して引き継ぐ</value></data>
   <data name="AiGiveControl" xml:space="preserve"><value>AIに操作を任せる</value></data>
   <data name="AiShareOutput" xml:space="preserve"><value>AIと出力を共有</value></data>
-  <data name="AiLauncherProcess" xml:space="preserve"><value>ブリッジを起動したプログラム（PID {1}）　{0}</value></data>
+  <data name="AiLauncherProcess" xml:space="preserve"><value>Windows が記録したブリッジの親プロセス（PID {1}）　{0}</value></data>
   <data name="AiSshTarget" xml:space="preserve"><value>SSH アカウントと接続先：{0}</value></data>
   <data name="AiTelnetTarget" xml:space="preserve"><value>Telnet 接続先：{0}</value></data>
   <data name="AiSerialTarget" xml:space="preserve"><value>シリアルポート：{0}</value></data>
@@ -534,7 +534,7 @@
 {3}
 {2}
 
-起動元のプログラムと AI アプリの照合コードを確認してください。この接続を共用するプログラムやチャットは同じ権限を使えます。
+Windows が記録したブリッジの親プロセスを表示しています。AI アプリ側の照合コードと突き合わせて、権限を付与する接続を確認してください。この接続を共用するプログラムやチャットは同じ権限を使えます。
 
 AI アプリは現在の画面と保持されている端末履歴を読み取り、検索できます。全画面アプリの背後にある通常画面、共有開始前の履歴、共有を終了していた間の出力も、残っていれば対象です。ブリッジはこの PC で動作します。AI アプリの設定によっては、内容が保存されたり外部のモデルに送られたりします。
 
@@ -543,7 +543,7 @@ AI アプリは現在の画面と保持されている端末履歴を読み取�
 {3}
 {2}
 
-起動元のプログラムと AI アプリの照合コードを確認してください。この接続を共用するプログラムやチャットは同じ権限を使えます。
+Windows が記録したブリッジの親プロセスを表示しています。AI アプリ側の照合コードと突き合わせて、権限を付与する接続を確認してください。この接続を共用するプログラムやチャットは同じ権限を使えます。
 
 AI アプリは個別の確認なしでキーや複数行のコマンドを入力し、この端末で利用できる接続先の権限で操作できます。操作を引き継ぐと AI からの新しい入力は止まり、出力の共有は続きます。パスワードやワンタイムコードを入力する前に「AIとの共有を終了」を選んでください。</value></data>
   <data name="AiConfirmSwitch" xml:space="preserve"><value>続行すると、このタブと連携先 {0} との共有は終了します。</value></data>

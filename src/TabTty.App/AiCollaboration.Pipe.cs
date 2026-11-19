@@ -1,7 +1,6 @@
 using System.ComponentModel;
 using System.IO;
 using System.IO.Pipes;
-using System.Text;
 using System.Text.Json;
 using System.Windows.Threading;
 using TabTty.AiTransport;
@@ -19,28 +18,32 @@ internal sealed partial class AiCollaboration
         var token = listenerStop.Token;
         _ = Task.Run(async () =>
         {
-            var slots = new SemaphoreSlim(8, 8);
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(token);
             try
             {
                 var endpoint = new AiPipe();
-                NamedPipeServerStream waiting = endpoint.Listen(first: true);
-                try
+                var listeners = endpoint.OpenListeners(8);
+                await Task.WhenAll(listeners.Select(ServeConnectionsAsync)).ConfigureAwait(false);
+
+                async Task ServeConnectionsAsync(NamedPipeServerStream listener)
                 {
-                    while (!token.IsCancellationRequested)
+                    using (listener)
                     {
-                        await waiting.WaitForConnectionAsync(token).ConfigureAwait(false);
-                        if (!slots.Wait(0))
+                        try
                         {
-                            waiting.Disconnect();
-                            continue;
+                            while (await AiPipe.AcceptAsync(listener, stop.Token).ConfigureAwait(false))
+                            {
+                                try { await RunPeerAsync(endpoint, listener, stop.Token).ConfigureAwait(false); }
+                                finally { listener.Disconnect(); }
+                            }
                         }
-                        var connected = waiting;
-                        try { waiting = endpoint.Listen(first: false); }
-                        catch { connected.Dispose(); slots.Release(); throw; }
-                        _ = RunPeerAsync(endpoint, connected, slots, token);
+                        catch
+                        {
+                            await stop.CancelAsync().ConfigureAwait(false);
+                            throw;
+                        }
                     }
                 }
-                finally { waiting.Dispose(); }
             }
             catch (Exception error) when (token.IsCancellationRequested &&
                 error is OperationCanceledException or IOException or ObjectDisposedException) { }
@@ -52,19 +55,19 @@ internal sealed partial class AiCollaboration
         }, token);
     }
 
-    private async Task RunPeerAsync(AiPipe endpoint, NamedPipeServerStream pipe, SemaphoreSlim slots, CancellationToken token)
+    private async Task RunPeerAsync(AiPipe endpoint, NamedPipeServerStream pipe, CancellationToken token)
     {
         Counterpart? peer = null;
         var requests = new Dictionary<int, Request>();
         var gate = new object();
-        var attachmentMemory = new ResourceQuota(8 * MiB, observationWork, collectOnPressure: false);
-        var frameMemory = new ResourceQuota(8 * MiB - 512 * KiB, attachmentMemory, collectOnPressure: false);
+        var frameMemory = new ResourceQuota(8 * MiB - 512 * KiB, observationWork, collectOnPressure: false);
+        var controlMemory = new ResourceQuota(512 * KiB, TerminalHistory.ControlWorkQuota, collectOnPressure: false);
+        bool nameReceived = false;
         try
         {
-            using (pipe)
             using (var process = endpoint.VerifyPeer(pipe, server: false, "TabTty.McpBridge.exe", out string location))
             using (var launcher = endpoint.OpenLauncher(process, out string launcherPath, out uint launcherId))
-            using (var channel = new AiPrivateChannel(pipe, process, launcher))
+            using (var channel = new AiPrivateChannel(pipe, process, launcher, keepPipeOpen: true))
             {
                 using (var handshake = AiFrames.Deadline(token, 5))
                     await AiPrivateChannel.HandshakeAsync(pipe, server: true, handshake.Token).ConfigureAwait(false);
@@ -76,10 +79,11 @@ internal sealed partial class AiCollaboration
                 {
                     if (!channel.TrySend(new { revoked = id }, priority: true)) channel.Stop();
                 }).Task.ConfigureAwait(false);
-                await channel.RunAsync(ReceiveAsync, token).ConfigureAwait(false);
+                await channel.RunAsync(Receive, token).ConfigureAwait(false);
 
-                async Task ReceiveAsync(JsonElement message)
+                void Receive(AiFrames.PrivateFrame frame)
                 {
+                    JsonElement message = frame.Message;
                     if (message.TryGetProperty("cancel", out var cancellation))
                     {
                         Request? active;
@@ -90,21 +94,17 @@ internal sealed partial class AiCollaboration
                     if (message.TryGetProperty("client_name", out var client))
                     {
                         string? name = client.GetString();
-                        if (name is not null && name.EnumerateRunes().Count() <= 128)
-                            await app.Dispatcher.InvokeAsync(() => attached.Name ??= PermissionDisplay.SingleLine(name),
-                                DispatcherPriority.Background, channel.Token).Task.ConfigureAwait(false);
+                        if (!nameReceived && name is not null && name.EnumerateRunes().Count() <= 128)
+                        {
+                            nameReceived = true;
+                            _ = app.Dispatcher.InvokeAsync(() => attached.Name ??= PermissionDisplay.SingleLine(name),
+                                DispatcherPriority.Normal, channel.Token);
+                        }
                         return;
                     }
                     int id = message.GetProperty("id").GetInt32();
                     string nameOfTool = message.GetProperty("name").GetString() ?? "";
                     JsonElement arguments = message.GetProperty("arguments");
-                    if (nameOfTool == "protocol")
-                    {
-                        int retry = await app.Dispatcher.InvokeAsync(() => TryTakeCall(attached, out int delay) ? 0 : delay,
-                            DispatcherPriority.Background, channel.Token).Task.ConfigureAwait(false);
-                        if (!channel.TrySend(new { id, protocol_retry_after_ms = retry })) channel.Stop();
-                        return;
-                    }
                     Request? request = null;
                     int retryAfter = 50;
                     lock (gate)
@@ -116,12 +116,10 @@ internal sealed partial class AiCollaboration
                         {
                             try
                             {
-                                string frame = message.GetRawText();
-                                if (isOrdinary || Encoding.UTF8.GetByteCount(frame) <= AiPrivateChannel.MaxControlFrame)
+                                if (isOrdinary || frame.Length <= AiPrivateChannel.MaxControlFrame)
                                 {
-                                    long weight = frame.Length * 2L + 256;
                                     request = new Request(isOrdinary, channel.Token,
-                                        (isOrdinary ? frameMemory : attachmentMemory).Reserve(weight));
+                                        (isOrdinary ? frameMemory : controlMemory).Reserve(frame.RetainedBytes));
                                     requests.Add(id, request);
                                 }
                             }
@@ -131,9 +129,12 @@ internal sealed partial class AiCollaboration
                     if (request is null)
                     {
                         // Return overflow stays on the pipe reader, ahead of any GUI work.
-                        if (!channel.TrySend(new { id, result = Error("busy", new { retry_after_ms = retryAfter > 0 ? retryAfter : 50 }) },
-                            priority: nameOfTool == "tabtty_return_control"))
-                            channel.Stop();
+                        int retry = retryAfter > 0 ? retryAfter : 50;
+                        bool accepted = nameOfTool == "protocol"
+                            ? channel.TrySend(new { id, protocol_retry_after_ms = retry })
+                            : channel.TrySend(new { id, result = Error("busy", new { retry_after_ms = retry }) },
+                                priority: nameOfTool == "tabtty_return_control");
+                        if (!accepted) channel.Stop();
                         return;
                     }
                     _ = ServeAsync(id, nameOfTool, arguments, request);
@@ -143,8 +144,16 @@ internal sealed partial class AiCollaboration
                 {
                     try
                     {
+                        if (name == "protocol")
+                        {
+                            int retry = await app.Dispatcher.InvokeAsync(() => TryTakeCall(attached, out int delay) ? 0 : delay,
+                                DispatcherPriority.Background, request.Token).Task.ConfigureAwait(false);
+                            if (!channel.TrySend(new { id, protocol_retry_after_ms = retry })) channel.Stop();
+                            return;
+                        }
                         Reply reply = await app.Dispatcher.InvokeAsync(() => CallAdmittedAsync(attached, name, arguments, request.Token),
-                            DispatcherPriority.Background, request.Token).Task.Unwrap().ConfigureAwait(false);
+                            request.Ordinary ? DispatcherPriority.Background : DispatcherPriority.Normal,
+                            request.Token).Task.Unwrap().ConfigureAwait(false);
                         using var prepared = reply.History;
                         byte[] frame = AiFrames.Serialize(new { id, result = reply.Body, session = reply.Share?.Id,
                             listing = reply.SharingRevision.HasValue ? true : (bool?)null });
@@ -159,7 +168,7 @@ internal sealed partial class AiCollaboration
                         ResourceReservation? reservedFrame = null;
                         if (fits)
                         {
-                            try { reservedFrame = (request.Ordinary ? frameMemory : attachmentMemory).Reserve(frame.Length); }
+                            try { reservedFrame = (request.Ordinary ? frameMemory : controlMemory).Reserve(frame.Length); }
                             catch (ResourceLimitException) { }
                         }
                         try
@@ -187,7 +196,7 @@ internal sealed partial class AiCollaboration
                         finally { reservedFrame?.Dispose(); }
                         if (stopChannel) channel.Stop();
                     }
-                    catch (Exception error) when (error is OperationCanceledException or IOException or ObjectDisposedException or JsonException)
+                    catch (Exception error) when (error is OperationCanceledException or IOException or ObjectDisposedException or JsonException or InvalidDataException)
                     {
                         if (!request.Token.IsCancellationRequested) channel.Stop();
                     }
@@ -210,7 +219,6 @@ internal sealed partial class AiCollaboration
                     peer.SharingEnded = null;
                     Detach(peer);
                 }).Task.ConfigureAwait(false);
-            slots.Release();
         }
     }
 

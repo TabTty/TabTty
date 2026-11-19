@@ -29,17 +29,15 @@ internal static class AiFrames
         content = new[] { new { type = "text", text = body.GetRawText() } },
     };
 
-    internal static JsonElement Parse(ReadOnlyMemory<byte> bytes)
+    internal static JsonElement Parse(ReadOnlyMemory<byte> bytes) => Parse(bytes, out _);
+
+    private static JsonElement Parse(ReadOnlyMemory<byte> bytes, out int tokens)
     {
-        // A short numeric value or an empty container costs far more in the DOM
-        // than on the wire. Check dense frames before allocating document metadata.
-        if (bytes.Length > MaxJsonTokens)
-        {
-            var reader = new Utf8JsonReader(bytes.Span, new JsonReaderOptions { MaxDepth = 32 });
-            int tokens = 0;
-            while (reader.Read())
-                if (++tokens > MaxJsonTokens) throw new JsonException();
-        }
+        // Include container tokens in both the nesting/token check and DOM accounting.
+        var reader = new Utf8JsonReader(bytes.Span, new JsonReaderOptions { MaxDepth = 32 });
+        tokens = 0;
+        while (reader.Read())
+            if (++tokens > MaxJsonTokens) throw new JsonException();
         _ = StrictUtf8.GetCharCount(bytes.Span);
         using var document = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 32 });
         if (document.RootElement.ValueKind != JsonValueKind.Object) throw new JsonException();
@@ -67,7 +65,12 @@ internal static class AiFrames
             (!value.TryGetDouble(out double number) || !double.IsFinite(number))) throw new JsonException();
     }
 
-    internal static async Task<JsonElement> ReadPrivateAsync(Stream stream, CancellationToken token)
+    internal sealed record PrivateFrame(JsonElement Message, int Length, long RetainedBytes);
+
+    internal static async Task<JsonElement> ReadPrivateAsync(Stream stream, CancellationToken token) =>
+        (await ReadPrivateFrameAsync(stream, token).ConfigureAwait(false)).Message;
+
+    internal static async Task<PrivateFrame> ReadPrivateFrameAsync(Stream stream, CancellationToken token)
     {
         byte[] header = new byte[4];
         await stream.ReadExactlyAsync(header.AsMemory(0, 1), token).ConfigureAwait(false);
@@ -77,7 +80,10 @@ internal static class AiFrames
         if (length is < 1 or > MaxFrame) throw new InvalidDataException();
         byte[] body = GC.AllocateUninitializedArray<byte>(length);
         await stream.ReadExactlyAsync(body, deadline.Token).ConfigureAwait(false);
-        return Parse(body);
+        JsonElement message = Parse(body, out int tokens);
+        // The retained clone owns the UTF-8 frame and a token index, including
+        // structural rows. Leave margin for object and array overhead.
+        return new PrivateFrame(message, length, length + 24L * tokens + 512);
     }
 
     internal static async Task WritePrivateAsync(Stream stream, byte[] body, CancellationToken token)
@@ -128,7 +134,9 @@ internal static class AiFrames
         private async Task<bool> FillAsync(CancellationToken token)
         {
             start = 0;
-            end = await input.ReadAsync(buffer, token).ConfigureAwait(false);
+            // Redirected Windows stdin may already be blocked in an uncancellable
+            // read. On timeout the caller ends this attachment and never reuses the buffer.
+            end = await input.ReadAsync(buffer.AsMemory(), token).AsTask().WaitAsync(token).ConfigureAwait(false);
             return end != 0;
         }
     }

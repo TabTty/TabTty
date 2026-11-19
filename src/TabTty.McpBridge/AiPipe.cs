@@ -15,6 +15,10 @@ internal sealed class AiPipe
 {
     private const uint Overlapped = 0x40000000;
     private const uint FirstInstance = 0x00080000;
+    private const uint WriteDacl = 0x00040000;
+    private const uint ClientAccess = 0x00100083;
+    private const uint DaclSecurityInformation = 0x00000004;
+    private const string ProtectedDacl = "D:P(D;;WD;;;OW)";
     private const uint QueryAndSynchronize = 0x00101000;
     private const uint TokenQuery = 0x0008;
     private readonly Identity local;
@@ -22,35 +26,81 @@ internal sealed class AiPipe
 
     internal readonly record struct Identity(string User, string Logon, bool Elevated, string IntegritySid, int Session);
 
-    internal AiPipe(bool activation = false)
+    internal AiPipe(bool activation = false, Guid? fixture = null)
     {
         using var process = Open((uint)Environment.ProcessId);
         local = ProcessIdentity(process);
         path = (activation ? @"\\.\pipe\TabTty.Activation.v1." : @"\\.\pipe\TabTty.Ai.v1.") + local.Logon;
+        if (fixture is { } id) path += "." + id.ToString("N");
     }
 
-    internal NamedPipeServerStream Listen(bool first)
+    internal NamedPipeServerStream[] OpenListeners(int count)
     {
-        string sddl = "D:P(A;;GA;;;" + local.Logon + ")";
-        if (!ConvertStringSecurityDescriptorToSecurityDescriptor(sddl, 1, out nint descriptor, out _))
-            throw LastError();
+        var listeners = new List<NamedPipeServerStream>(count);
         try
+        {
+            for (int i = 0; i < count; i++)
+                listeners.Add(OpenListener((uint)count, first: i == 0));
+
+            // All instances are owned before publishing the client-only ACL.
+            // OWNER RIGHTS suppresses the owner's implicit ability to change it.
+            string clients = $"{ProtectedDacl}(A;;0x{ClientAccess:X};;;{local.Logon})";
+            return WithDescriptor(clients, descriptor =>
+            {
+                if (!SetKernelObjectSecurity(listeners[0].SafePipeHandle, DaclSecurityInformation, descriptor))
+                    throw LastError();
+                return listeners.ToArray();
+            });
+        }
+        catch
+        {
+            foreach (var listener in listeners) listener.Dispose();
+            throw;
+        }
+    }
+
+    private NamedPipeServerStream OpenListener(uint count, bool first) =>
+        WithDescriptor($"{ProtectedDacl}(A;;FRFW;;;{local.Logon})", descriptor =>
         {
             var security = new SecurityAttributes
             {
                 Size = Marshal.SizeOf<SecurityAttributes>(), Descriptor = descriptor,
             };
-            SafePipeHandle handle = CreateNamedPipe(path, 3u | Overlapped | (first ? FirstInstance : 0),
-                8, 9, 64 * 1024, 64 * 1024, 0, ref security);
-            if (handle.IsInvalid)
-            {
-                var error = LastError();
-                handle.Dispose();
-                throw error;
-            }
-            return new NamedPipeServerStream(PipeDirection.InOut, true, false, handle);
-        }
+            SafePipeHandle handle = CreateNamedPipe(path,
+                3u | Overlapped | (first ? FirstInstance | WriteDacl : 0),
+                8, count, 64 * 1024, 64 * 1024, 0, ref security);
+            if (!handle.IsInvalid) return new NamedPipeServerStream(PipeDirection.InOut, true, false, handle);
+            var error = LastError();
+            handle.Dispose();
+            throw error;
+        });
+
+    private static T WithDescriptor<T>(string sddl, Func<nint, T> use)
+    {
+        if (!ConvertStringSecurityDescriptorToSecurityDescriptor(sddl, 1, out nint descriptor, out _))
+            throw LastError();
+        try { return use(descriptor); }
         finally { LocalFree(descriptor); }
+    }
+
+    internal static async Task<bool> AcceptAsync(NamedPipeServerStream pipe, CancellationToken token)
+    {
+        while (!token.IsCancellationRequested)
+        {
+            try
+            {
+                await pipe.WaitForConnectionAsync(token).ConfigureAwait(false);
+                return true;
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { return false; }
+            catch (IOException error) when (error.HResult == unchecked((int)0x800700E8))
+            {
+                // ERROR_NO_DATA means the client left before ConnectNamedPipe.
+                // The stream has not transitioned to Connected, so reset natively.
+                if (!DisconnectNamedPipe(pipe.SafePipeHandle)) throw LastError();
+            }
+        }
+        return false;
     }
 
     internal async Task<NamedPipeClientStream> ConnectAsync(CancellationToken token)
@@ -59,7 +109,7 @@ internal sealed class AiPipe
         {
             token.ThrowIfCancellationRequested();
             // READ_DATA | WRITE_DATA | READ_ATTRIBUTES | SYNCHRONIZE, without CREATE_PIPE_INSTANCE.
-            SafePipeHandle handle = CreateFile(path, 0x00100083, 0, 0, 3,
+            SafePipeHandle handle = CreateFile(path, ClientAccess, 0, 0, 3,
                 Overlapped | 0x00100000 | 0x00010000, 0);
             if (!handle.IsInvalid) return new NamedPipeClientStream(PipeDirection.InOut, true, true, handle);
             int error = Marshal.GetLastWin32Error();
@@ -236,6 +286,10 @@ internal sealed class AiPipe
     [DllImport("advapi32.dll", EntryPoint = "ConvertStringSecurityDescriptorToSecurityDescriptorW", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool ConvertStringSecurityDescriptorToSecurityDescriptor(string text, uint revision,
         out nint descriptor, out int size);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool SetKernelObjectSecurity(SafePipeHandle handle, uint securityInformation, nint descriptor);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool DisconnectNamedPipe(SafePipeHandle handle);
     [DllImport("kernel32.dll")] private static extern nint LocalFree(nint pointer);
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetNamedPipeServerProcessId(SafePipeHandle pipe, out uint pid);

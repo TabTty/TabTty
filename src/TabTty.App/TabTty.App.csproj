@@ -20,6 +20,7 @@
     <Compile Include="../TabTty.McpBridge/AiPipe.cs" Link="AiPipe.cs" />
     <Compile Include="../TabTty.McpBridge/AiFrames.cs" Link="AiFrames.cs" />
     <Compile Include="../TabTty.McpBridge/AiPrivateChannel.cs" Link="AiPrivateChannel.cs" />
+    <Compile Include="../TabTty.McpBridge/AiPayloadBudget.cs" Link="AiPayloadBudget.cs" />
     <Compile Include="../TabTty.McpBridge/AiRateLimit.cs" Link="AiRateLimit.cs" />
   </ItemGroup>
 </Project>

@@ -27,7 +27,12 @@ internal static class TerminalHistory
     private const int KiB = 1024;
     internal const int PageOutputBudget = 384 * KiB;
     internal sealed class HistoryException(string code) : Exception(code);
-    internal static readonly ResourceQuota WorkQuota = new(64 * 1024 * 1024, collectOnPressure: false);
+    private const int ControlWorkBytes = 4 * 1024 * 1024;
+    private static readonly ResourceQuota TransientWork = new(64 * 1024 * 1024, collectOnPressure: false);
+    internal static readonly ResourceQuota WorkQuota = new(64 * 1024 * 1024 - ControlWorkBytes,
+        TransientWork, collectOnPressure: false);
+    internal static readonly ResourceQuota ControlWorkQuota = new(ControlWorkBytes,
+        TransientWork, collectOnPressure: false);
     internal readonly record struct HistoryProof(TerminalTextFingerprint Content, long Revision)
     {
         internal static HistoryProof Empty => new(TerminalTextFingerprint.Empty, 0);

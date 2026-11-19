@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
@@ -8,14 +10,14 @@ internal sealed class McpStdio(AiPrivateChannel channel, Stream input, Stream ou
 {
     private readonly object gate = new();
     private readonly Dictionary<int, Pending> pending = [];
-    private readonly Dictionary<int, TaskCompletionSource<int>> protocolAdmissions = [];
+    private readonly Dictionary<int, ProtocolRequest> protocolAdmissions = [];
     private readonly Channel<Outgoing> responses = Channel.CreateBounded<Outgoing>(20);
-    private const int MaxQueued = 8 * 1024 * 1024;
-    private int queued, nextId;
+    private int nextId;
     private bool legacyInitialized, legacyReady;
     private readonly AiRateLimit ordinaryCalls = AiRateLimit.OrdinaryCalls(Environment.TickCount64);
     private readonly AiRateLimit controlReturns = AiRateLimit.ControlReturns(Environment.TickCount64);
     private sealed record Pending(int Id, JsonElement PublicId, string Key, bool Modern, bool Ordinary);
+    private sealed record ProtocolRequest(JsonElement PublicId, string Key, string Method, object Result);
     private sealed record Outgoing(byte[] Bytes, int? Request = null);
     private readonly Dictionary<int, (string? Session, bool Listing)> queuedReplies = [];
 
@@ -28,6 +30,7 @@ internal sealed class McpStdio(AiPrivateChannel channel, Stream input, Stream ou
         {
             channel.Stop();
             responses.Writer.TryComplete();
+            while (responses.Reader.TryRead(out var response)) channel.Payload.Release(response.Bytes.Length);
             input.Dispose();
             output.Dispose();
             try { await Task.WhenAll(rpc, read, write).WaitAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false); }
@@ -50,11 +53,11 @@ internal sealed class McpStdio(AiPrivateChannel channel, Stream input, Stream ou
                 Error(null, -32700, "Parse error");
                 continue;
             }
-            await DispatchAsync(message).ConfigureAwait(false);
+            lock (gate) Dispatch(message);
         }
     }
 
-    private async Task DispatchAsync(JsonElement message)
+    private void Dispatch(JsonElement message)
     {
         JsonElement? id = message.TryGetProperty("id", out var rawId) && ValidId(rawId) ? rawId : null;
         if (!message.TryGetProperty("jsonrpc", out var rpc) || !TextEquals(rpc, "2.0") ||
@@ -76,8 +79,9 @@ internal sealed class McpStdio(AiPrivateChannel channel, Stream input, Stream ou
         var capabilities = Get(metadata, McpProtocol.CapabilitiesKey);
         bool modern = method == "server/discover" || version.ValueKind != JsonValueKind.Undefined ||
             capabilities.ValueKind != JsonValueKind.Undefined;
+        const int metadataLimit = 16 * 1024;
         if (metadata.ValueKind != JsonValueKind.Undefined &&
-            (metadata.ValueKind != JsonValueKind.Object || Encoding.UTF8.GetByteCount(metadata.GetRawText()) > 16 * 1024))
+            (metadata.ValueKind != JsonValueKind.Object || Utf8Length(metadata) > metadataLimit))
         { Error(id, -32602, "Invalid metadata"); return; }
         if (modern)
         {
@@ -95,10 +99,10 @@ internal sealed class McpStdio(AiPrivateChannel channel, Stream input, Stream ou
         else if (method is not ("initialize" or "ping") && !legacyReady)
         { Error(id, -32600, "Initialize first"); return; }
         string key = IdKey(id.Value);
-        lock (gate)
+        if (pending.Values.Any(value => value.Key == key) || protocolAdmissions.Values.Any(value => value.Key == key))
         {
-            if (pending.Values.Any(value => value.Key == key))
-            { Error(id, -32600, "Request ID is already in use"); return; }
+            Error(id, -32600, "Request ID is already in use");
+            return;
         }
         string? tool = method == "tools/call" && Get(parameters, "name") is { ValueKind: JsonValueKind.String } name
             ? name.GetString() : null;
@@ -109,32 +113,23 @@ internal sealed class McpStdio(AiPrivateChannel channel, Stream input, Stream ou
             else Error(id, -31001, "Busy", new { retry_after_ms = retryAfter });
             return;
         }
-        if (method is "initialize" or "ping" or "server/discover" or "tools/list")
-        {
-            int retry = await AdmitProtocolCallAsync().ConfigureAwait(false);
-            if (retry != 0)
-            {
-                Error(id, -31001, "Busy", new { retry_after_ms = retry });
-                return;
-            }
-        }
         switch (method)
         {
             case "initialize" when !modern:
-                if (legacyInitialized || Get(parameters, "protocolVersion").ValueKind != JsonValueKind.String ||
+                if (legacyInitialized || protocolAdmissions.Values.Any(request => request.Method == "initialize") ||
+                    Get(parameters, "protocolVersion").ValueKind != JsonValueKind.String ||
                     Get(parameters, "capabilities").ValueKind != JsonValueKind.Object ||
-                    Get(parameters, "clientInfo").ValueKind != JsonValueKind.Object)
+                    Get(parameters, "clientInfo").ValueKind != JsonValueKind.Object || Utf8Length(parameters) > metadataLimit)
                 { Error(id, -32602, "Invalid initialization"); return; }
                 if (!AnnounceClient(id.Value, Get(parameters, "clientInfo"))) return;
-                legacyInitialized = true;
-                Respond(id.Value, new { protocolVersion = McpProtocol.Legacy, capabilities = McpProtocol.Capabilities,
+                StartProtocol(id.Value, key, method, new { protocolVersion = McpProtocol.Legacy, capabilities = McpProtocol.Capabilities,
                     serverInfo = McpProtocol.ServerInfo });
                 break;
             case "ping" when !modern:
-                Respond(id.Value, new { });
+                StartProtocol(id.Value, key, method, new { });
                 break;
             case "server/discover" when modern:
-                Respond(id.Value, new { resultType = "complete", supportedVersions = McpProtocol.Versions,
+                StartProtocol(id.Value, key, method, new { resultType = "complete", supportedVersions = McpProtocol.Versions,
                     capabilities = McpProtocol.Capabilities,
                     _meta = new Dictionary<string, object> { ["io.modelcontextprotocol/serverInfo"] = McpProtocol.ServerInfo },
                     ttlMs = 300000, cacheScope = "public" });
@@ -142,7 +137,7 @@ internal sealed class McpStdio(AiPrivateChannel channel, Stream input, Stream ou
             case "tools/list":
                 if (Get(parameters, "cursor").ValueKind != JsonValueKind.Undefined)
                 { Error(id, -32602, "Invalid tool-list cursor"); return; }
-                Respond(id.Value, modern
+                StartProtocol(id.Value, key, method, modern
                     ? new { resultType = "complete", tools = McpProtocol.Tools.Values, ttlMs = 300000, cacheScope = "public" }
                     : (object)new { tools = McpProtocol.Tools.Values });
                 break;
@@ -152,15 +147,23 @@ internal sealed class McpStdio(AiPrivateChannel channel, Stream input, Stream ou
                     args.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Object))
                 { Error(id, -32602, "Invalid tool call"); return; }
                 if (args.ValueKind == JsonValueKind.Undefined) args = McpProtocol.EmptyArguments;
-                lock (gate)
                 {
                     bool ordinary = tool != "tabtty_return_control";
-                    if (pending.Count >= 18 || ordinary && pending.Values.Count(value => value.Ordinary) >= 16)
-                    { ToolResult(id.Value, modern, ErrorBody("busy", 50)); return; }
+                    if (pending.Count + protocolAdmissions.Count >= 18 || ordinary && OrdinaryPending >= 16)
+                    { ToolResult(id.Value, modern, ErrorBody("busy", 50), priority: !ordinary); return; }
                     int internalId = checked(++nextId);
-                    byte[] frame = AiFrames.Serialize(new { id = internalId, name = tool, arguments = args });
-                    if (!ordinary && frame.Length > AiPrivateChannel.MaxControlFrame)
-                    { ToolResult(id.Value, modern, ErrorBody("resource_limit")); return; }
+                    // The tool name is from the fixed schema table and the argument
+                    // object has already been validated. Preserve its wire encoding.
+                    string prefix = string.Create(CultureInfo.InvariantCulture,
+                        $"{{\"id\":{internalId},\"name\":\"{tool}\",\"arguments\":");
+                    ReadOnlySpan<byte> arguments = JsonMarshal.GetRawUtf8Value(args);
+                    int length = prefix.Length + arguments.Length + 1;
+                    if (length > (ordinary ? AiFrames.MaxFrame : AiPrivateChannel.MaxControlFrame))
+                    { ToolResult(id.Value, modern, ErrorBody("resource_limit"), priority: !ordinary); return; }
+                    byte[] frame = new byte[length];
+                    Encoding.UTF8.GetBytes(prefix, frame);
+                    arguments.CopyTo(frame.AsSpan(prefix.Length));
+                    frame[^1] = (byte)'}';
                     // A child JsonElement keeps its entire document alive. Retain only the
                     // bounded ID while waiting for a GUI reply or a writable stdout.
                     var publicId = JsonSerializer.SerializeToElement(id.Value);
@@ -168,7 +171,7 @@ internal sealed class McpStdio(AiPrivateChannel channel, Stream input, Stream ou
                     if (!channel.TrySend(frame, priority: !ordinary))
                     {
                         pending.Remove(internalId);
-                        ToolResult(id.Value, modern, ErrorBody("busy", 50));
+                        ToolResult(id.Value, modern, ErrorBody("busy", 50), priority: !ordinary);
                     }
                 }
                 break;
@@ -193,24 +196,19 @@ internal sealed class McpStdio(AiPrivateChannel channel, Stream input, Stream ou
 
     private bool clientNameAnnounced;
 
-    private async Task<int> AdmitProtocolCallAsync()
+    private int OrdinaryPending => protocolAdmissions.Count + pending.Values.Count(value => value.Ordinary);
+
+    private void StartProtocol(JsonElement publicId, string key, string method, object result)
     {
-        int id;
-        var completion = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
-        lock (gate)
+        if (OrdinaryPending >= 16 || protocolAdmissions.Count + pending.Count >= 18)
         {
-            id = checked(++nextId);
-            protocolAdmissions.Add(id, completion);
+            Error(publicId, -31001, "Busy", new { retry_after_ms = 50 });
+            return;
         }
-        try
-        {
-            if (!channel.TrySend(new { id, name = "protocol", arguments = new { } })) return 50;
-            return await completion.Task.WaitAsync(channel.Token).ConfigureAwait(false);
-        }
-        finally
-        {
-            lock (gate) protocolAdmissions.Remove(id);
-        }
+        int id = checked(++nextId);
+        if (channel.TrySend(new { id, name = "protocol", arguments = new { } }))
+            protocolAdmissions.Add(id, new ProtocolRequest(JsonSerializer.SerializeToElement(publicId), key, method, result));
+        else Error(publicId, -31001, "Busy", new { retry_after_ms = 50 });
     }
 
     private void Cancel(JsonElement id)
@@ -220,15 +218,25 @@ internal sealed class McpStdio(AiPrivateChannel channel, Stream input, Stream ou
         lock (gate)
         {
             Pending? match = pending.Values.FirstOrDefault(item => item.Key == key);
-            if (match is null) return;
+            if (match is null)
+            {
+                foreach (var admission in protocolAdmissions)
+                    if (admission.Value.Key == key)
+                    {
+                        protocolAdmissions.Remove(admission.Key);
+                        break;
+                    }
+                return;
+            }
             pending.Remove(match.Id);
             queuedReplies.Remove(match.Id);
             if (!channel.TrySend(new { cancel = match.Id }, priority: true)) channel.Stop();
         }
     }
 
-    private Task ReceivePrivateAsync(JsonElement message)
+    private void ReceivePrivateAsync(AiFrames.PrivateFrame frame)
     {
+        JsonElement message = frame.Message;
         lock (gate)
         {
             if (Get(message, "revoked") is { ValueKind: JsonValueKind.String } revoked)
@@ -236,32 +244,37 @@ internal sealed class McpStdio(AiPrivateChannel channel, Stream input, Stream ou
                 string idOfShare = revoked.GetString()!;
                 foreach (var response in queuedReplies.Where(entry => entry.Value.Session == idOfShare || entry.Value.Listing)
                     .Select(entry => entry.Key).ToArray()) queuedReplies.Remove(response);
-                return Task.CompletedTask;
+                return;
             }
             int id = message.GetProperty("id").GetInt32();
-            if (protocolAdmissions.TryGetValue(id, out var admission))
+            if (protocolAdmissions.Remove(id, out var admission))
             {
-                admission.TrySetResult(message.GetProperty("protocol_retry_after_ms").GetInt32());
-                return Task.CompletedTask;
+                int retry = message.GetProperty("protocol_retry_after_ms").GetInt32();
+                if (retry != 0) Error(admission.PublicId, -31001, "Busy", new { retry_after_ms = retry });
+                else
+                {
+                    if (admission.Method == "initialize") legacyInitialized = true;
+                    Respond(admission.PublicId, admission.Result);
+                }
+                return;
             }
-            if (!pending.TryGetValue(id, out var request)) return Task.CompletedTask;
+            if (!pending.TryGetValue(id, out var request)) return;
             var session = Get(message, "session");
             queuedReplies[id] = (session.ValueKind == JsonValueKind.String ? session.GetString() : null,
                 Get(message, "listing").ValueKind == JsonValueKind.True);
-            ToolResult(request.PublicId, request.Modern, message.GetProperty("result"), id);
+            ToolResult(request.PublicId, request.Modern, message.GetProperty("result"), id, priority: !request.Ordinary);
         }
-        return Task.CompletedTask;
     }
 
-    private void ToolResult(JsonElement id, bool modern, JsonElement body, int? request = null)
+    private void ToolResult(JsonElement id, bool modern, JsonElement body, int? request = null, bool priority = false)
     {
         object result = AiFrames.ToolResult(body, modern);
         if (AiFrames.Serialize(result).Length > AiFrames.MaxResult)
         {
-            ToolResult(id, modern, ErrorBody("resource_limit"), request);
+            ToolResult(id, modern, ErrorBody("resource_limit"), request, priority);
             return;
         }
-        Enqueue(AiFrames.Serialize(new { jsonrpc = "2.0", id, result }), request);
+        Enqueue(AiFrames.Serialize(new { jsonrpc = "2.0", id, result }), request, priority);
     }
 
     private void Respond(JsonElement id, object result) => Enqueue(AiFrames.Serialize(new { jsonrpc = "2.0", id, result }));
@@ -270,11 +283,13 @@ internal sealed class McpStdio(AiPrivateChannel channel, Stream input, Stream ou
         Enqueue(AiFrames.Serialize(new Dictionary<string, object?> { ["jsonrpc"] = "2.0", ["id"] = id,
             ["error"] = new { code, message, data } }));
 
-    private void Enqueue(byte[] bytes, int? request = null)
+    private void Enqueue(byte[] bytes, int? request = null, bool priority = false)
     {
-        int total = Interlocked.Add(ref queued, bytes.Length);
-        if (bytes.Length <= AiFrames.MaxFrame && total <= MaxQueued && responses.Writer.TryWrite(new Outgoing(bytes, request))) return;
-        Interlocked.Add(ref queued, -bytes.Length);
+        if (bytes.Length <= AiFrames.MaxFrame && channel.Payload.TryReserve(bytes.Length, priority))
+        {
+            if ((priority || responses.Reader.Count < 16) && responses.Writer.TryWrite(new Outgoing(bytes, request))) return;
+            channel.Payload.Release(bytes.Length);
+        }
         channel.Stop();
     }
 
@@ -282,6 +297,7 @@ internal sealed class McpStdio(AiPrivateChannel channel, Stream input, Stream ou
     {
         await foreach (Outgoing response in responses.Reader.ReadAllAsync(channel.Token).ConfigureAwait(false))
         {
+            Task? write = null;
             try
             {
                 lock (gate)
@@ -291,17 +307,27 @@ internal sealed class McpStdio(AiPrivateChannel channel, Stream input, Stream ou
                         if (!pending.Remove(request, out var original)) continue;
                         if (!queuedReplies.Remove(request))
                         {
-                            ToolResult(original.PublicId, original.Modern, ErrorBody("not_shared"));
+                            ToolResult(original.PublicId, original.Modern, ErrorBody("not_shared"), priority: !original.Ordinary);
                             continue;
                         }
                     }
                 }
                 using var deadline = AiFrames.Deadline(channel.Token);
-                await output.WriteAsync(response.Bytes, deadline.Token).AsTask().WaitAsync(deadline.Token).ConfigureAwait(false);
+                write = output.WriteAsync(response.Bytes, deadline.Token).AsTask();
+                await write.WaitAsync(deadline.Token).ConfigureAwait(false);
                 await output.WriteAsync("\n"u8.ToArray(), deadline.Token).AsTask().WaitAsync(deadline.Token).ConfigureAwait(false);
                 await output.FlushAsync(deadline.Token).WaitAsync(deadline.Token).ConfigureAwait(false);
             }
-            finally { Interlocked.Add(ref queued, -response.Bytes.Length); }
+            finally
+            {
+                if (write is { IsCompleted: false })
+                    _ = write.ContinueWith(completed =>
+                    {
+                        _ = completed.Exception;
+                        channel.Payload.Release(response.Bytes.Length);
+                    }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                else channel.Payload.Release(response.Bytes.Length);
+            }
         }
     }
 
@@ -311,6 +337,7 @@ internal sealed class McpStdio(AiPrivateChannel channel, Stream input, Stream ou
     private static JsonElement Get(JsonElement value, string name) =>
         value.ValueKind == JsonValueKind.Object && value.TryGetProperty(name, out var member) ? member : default;
     private static bool TextEquals(JsonElement value, string text) => value.ValueKind == JsonValueKind.String && value.ValueEquals(text);
+    private static int Utf8Length(JsonElement value) => JsonMarshal.GetRawUtf8Value(value).Length;
     private static JsonElement ErrorBody(string code, int? retry = null) => JsonSerializer.SerializeToElement(new
     { status = "error", error = new { code, retry_after_ms = retry } }, AiFrames.JsonOptions);
 }

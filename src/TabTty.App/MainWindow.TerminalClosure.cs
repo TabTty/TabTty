@@ -190,6 +190,7 @@ internal sealed partial class MainWindow
         {
             request.Started = request.Target.Item.IsClosing = true;
             request.Target.Terminal.ClosePending = true;
+            window.app.Ai.EndSharing(request.Target.Terminal);
             request.Target.Terminal.ProtectRecordingClose();
             request.Decision.TrySetResult();
             _ = ExecuteAsync(request);
@@ -210,7 +211,6 @@ internal sealed partial class MainWindow
             TransferWindowCloseResult? transferOutcome = null;
             try
             {
-                window.app.Ai.EndSharing(terminal);
                 transfer = terminal.CloseFileTransferAsync();
                 terminal.Disconnect();
                 actualCleanup = ObserveCleanupAsync(terminal.Completion);

@@ -1,9 +1,12 @@
 using System.Diagnostics;
+using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 
 if (args.Length != 1) throw new ArgumentException("Pass the directory containing the packaged TabTty and bridge.");
+await ProtocolControlCheck.RunAsync();
 string directory = Path.GetFullPath(args[0]);
-using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(70));
 using var app = Process.Start(new ProcessStartInfo(Path.Combine(directory, "TabTty.exe"))
 {
     UseShellExecute = false,
@@ -14,8 +17,15 @@ try
     using var bridge = StartBridge();
     try
     {
+        var wireJson = new JsonSerializerOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
         var client = new { name = "Independent test client", version = "1" };
-        var init = await Request(1, "initialize", new { protocolVersion = "2025-11-25", capabilities = new { }, clientInfo = client });
+        object LegacyMetadata(string extra) =>
+            new { protocolVersion = "2025-11-25", capabilities = new { extra }, clientInfo = client };
+        const int metadataLimit = 16 * 1024;
+        int legacyPadding = metadataLimit - JsonSerializer.SerializeToUtf8Bytes(LegacyMetadata("界"), wireJson).Length;
+        Check((await Request(0, "initialize", LegacyMetadata("界" + new string('x', legacyPadding + 1))))
+            .GetProperty("error").GetProperty("code").GetInt32() == -32602);
+        var init = await Request(1, "initialize", LegacyMetadata("界" + new string('x', legacyPadding)));
         Check(init.GetProperty("result").GetProperty("protocolVersion").GetString() == "2025-11-25");
         await Write(new { jsonrpc = "2.0", method = "notifications/initialized" });
         var legacyList = (await Request(2, "tools/list", new { })).GetProperty("result");
@@ -48,6 +58,16 @@ try
         Check(discovery.GetProperty("resultType").GetString() == "complete" && discovery.GetProperty("ttlMs").GetInt32() == 300000);
         var modernList = (await Request(6, "tools/list", new { _meta = metadata })).GetProperty("result");
         Check(modernList.GetProperty("cacheScope").GetString() == "public" && modernList.GetProperty("tools").GetArrayLength() == 7);
+        metadata["fixture/optional"] = "界";
+        int modernPadding = metadataLimit - JsonSerializer.SerializeToUtf8Bytes(metadata, wireJson).Length;
+        metadata["fixture/optional"] = "界" + new string('x', modernPadding + 1);
+        Check((await Request(10, "tools/list", new { _meta = metadata }))
+            .GetProperty("error").GetProperty("code").GetInt32() == -32602);
+        metadata["fixture/optional"] = "界" + new string('x', modernPadding);
+        Check((await Request(11, "tools/list", new { _meta = metadata })).GetProperty("result")
+            .GetProperty("tools").GetArrayLength() == 7);
+        metadata.Remove("fixture/optional");
+        Console.WriteLine("PASS McpAggregateClientMetadataBoundaries");
         metadata["io.modelcontextprotocol/protocolVersion"] = "1900-01-01";
         var unsupported = (await Request(7, "server/discover", new { _meta = metadata })).GetProperty("error");
         Check(unsupported.GetProperty("code").GetInt32() == -32022 &&
@@ -78,6 +98,8 @@ try
             arguments = new { session = "unshared", control = "unknown", reason = new string('a', 16 * 1024) } }))
             .GetProperty("result").GetProperty("structuredContent");
         Check(oversized.GetProperty("error").GetProperty("code").GetString() == "resource_limit");
+        await CheckFrameDeadline();
+        _ = await CheckFreshAttachment();
         bridge.StandardInput.Close();
         await bridge.WaitForExitAsync(deadline.Token);
         Check(bridge.ExitCode == 0 && !app.HasExited);
@@ -94,6 +116,29 @@ try
             Check(second.ExitCode == 0 && !app.HasExited);
         }
         Console.WriteLine("PASS VerifiedGuiActivation");
+
+        async Task CheckFrameDeadline()
+        {
+            using var idle = StartBridge();
+            using var incomplete = StartBridge();
+            try
+            {
+                await Request(1, "initialize", LegacyMetadata(""), idle);
+                await Request(1, "initialize", LegacyMetadata(""), incomplete);
+                var elapsed = Stopwatch.StartNew();
+                await incomplete.StandardInput.WriteAsync("{");
+                await incomplete.StandardInput.FlushAsync(deadline.Token);
+                await incomplete.WaitForExitAsync(deadline.Token).WaitAsync(TimeSpan.FromSeconds(25), deadline.Token);
+                Check(elapsed.Elapsed >= TimeSpan.FromSeconds(19) && !app.HasExited && !idle.HasExited);
+                Check((await Request(2, "ping", new { }, idle)).TryGetProperty("result", out _));
+                Console.WriteLine("PASS McpIncompleteFrameDeadlineAndIdleAttachment");
+            }
+            finally
+            {
+                if (!incomplete.HasExited) incomplete.Kill();
+                if (!idle.HasExited) idle.Kill();
+            }
+        }
 
         async Task<string> CheckFreshAttachment()
         {
@@ -126,7 +171,7 @@ try
         async Task Write(object message, Process? peer = null)
         {
             var input = (peer ?? bridge).StandardInput;
-            await input.WriteLineAsync(JsonSerializer.Serialize(message));
+            await input.WriteLineAsync(JsonSerializer.Serialize(message, wireJson));
             await input.FlushAsync(deadline.Token);
         }
         async Task<JsonElement> Read(Process? peer = null)
@@ -171,6 +216,8 @@ Process StartBridge() => Process.Start(new ProcessStartInfo(Path.Combine(directo
 {
     UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
     RedirectStandardOutput = true, RedirectStandardError = true,
+    StandardInputEncoding = new UTF8Encoding(false),
+    StandardOutputEncoding = Encoding.UTF8,
 }) ?? throw new InvalidOperationException("Bridge did not start.");
 
 static void Check(bool condition)
