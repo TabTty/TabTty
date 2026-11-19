@@ -57,6 +57,18 @@ readable source with a required language-version declaration and execution of
 one validated snapshot. These future-feature decisions do not add macro
 execution, an editor or macro-file activation to the initial release.
 
+The macro-enabled design lets the user remember an allow or block for an exact
+combination of file contents and ordered arguments on this PC. An identical
+copy opened elsewhere with the same arguments uses the same decision. Each
+different argument list has its own decision. A user may also run the macro
+once or reset all remembered macro allows and blocks in Settings. A running
+macro's `Connect` checks the resolved profile's location and version under
+the shared [profile trust contract](../specification/profile-trust.md).
+Trusting that version from a macro leaves an unregistered profile unregistered.
+When an external request could contact a remote source, TabTty asks for
+permission to read it before identifying its contents. See the [launch contract](macro-specification.md#loading-launch-and-source-identity)
+and [remembered macro trust](macro-specification.md#remembered-macro-trust).
+
 ## Initial design constraints
 
 - Keep connection lifecycle, terminal input, receive processing, and credential

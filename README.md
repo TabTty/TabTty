@@ -3,11 +3,12 @@
 TabTty runs on Windows 11 x64. Extract the whole folder and run `TabTty.exe`.
 Keep its .NET runtime, native libraries and license files together.
 
-When you start TabTty from the extracted folder, it registers Explorer icons
-for `.ttty` (connection profiles), `.tttym` (macros), `.tttykey` (credential
-vaults), and `.tttylog` (raw and terminal session logs) for your Windows
-account. Keep the Assets folder next to the executable. The Settings tab also
-offers **Register TabTty file types with Windows** to retry registration.
+To register TabTty file types for your Windows account, open **Settings →
+Maintenance** and select **Register TabTty file types with Windows**.
+This adds TabTty to **Open with** for `.ttty` (connection profiles), `.tttym`
+(macros), and `.tttykey` (credential vaults). It also registers Explorer icons
+for those types and for `.tttylog` (raw and terminal session logs). Keep the
+Assets folder next to the executable.
 
 To uninstall, close all TabTty windows. Open PowerShell in the extracted
 folder using the same Windows account (no administrator rights needed) and run:
@@ -24,7 +25,7 @@ Windows default app choices are left alone; change them in **Settings →
 Apps → Default apps** if needed. The script keeps application files, settings,
 profiles, vaults, macros and logs. After it succeeds, you can delete the
 extracted application files manually, keeping any data you saved there.
-Starting TabTty again recreates the registrations.
+To register the file types again, use the same button in Settings.
 
 Use the menu button at the right of the tab bar to access File, Edit, View,
 Window, Connection and Tools. Drag the empty area of the tab bar to move the
@@ -62,6 +63,13 @@ and `.tttykey` with TabTty to use these File Explorer commands.
   to open its vault editor. The selected vault uses the same unlock state in
   the standalone window, the TabTty management tab, and connections.
 
+For a profile received from someone else, choose **Edit** to inspect its
+destination, credential references and recording settings before connecting.
+When recording is enabled, TabTty opens the log files before connecting to the
+terminal. An absolute UNC log path, or a relative log path in a profile opened
+from a network share, can cause Windows to authenticate to that share and save
+the terminal output there.
+
 Profile changes take effect on the next connection. Font and retained-row defaults
 also apply on the next connection. Language, application theme, bell and saved
 highlight rules apply after saving. The terminal uses fixed black and white
@@ -84,7 +92,15 @@ In a build that includes macros, choose **File → Run macro** and select a trus
 `.tttym` file. Add each ordinary argument as a separate entry. You can also run
 `TabTty.exe --macro "C:\ops\check.tttym" -- "argument with spaces"` or associate
 `.tttym` with TabTty through Windows Open With. File association supplies no
-arguments.
+arguments. For a new combination of file contents and arguments, TabTty shows
+the path, source digest and arguments before execution. A macro can send
+terminal commands and submit saved passwords. **Cancel** is the default.
+You can run it once or remember an allow or block for that exact combination.
+An identical copy with the same arguments uses the same decision. To forget
+a decision, open **Settings → Maintenance → Manage macro decisions**. Windows
+Credential Manager stores decisions for your Windows account on this PC.
+External requests that could read a remote source require separate read
+permission. An elevated run also requires explicit approval.
 
 Start the source with `#tttym 1`. A macro opens a new tab and can connect using
 one saved profile. Relative profile paths start in the macro's directory.
@@ -116,8 +132,12 @@ operate on the current view. Settings and profile editors have no target checkbo
 
 The first Start selects the existing terminal tabs in scope. Use **Select All
 Targets** or **Clear All Targets** to change the selection. Stopping and restarting
-with the same setting keeps the selection. Newly opened tabs start unchecked,
+with the same setting keeps the selection. Newly opened terminal tabs start checked,
 and moving a tab to another window checks it for subsequent operations.
+Reconnecting a tab preserves your selection. If the destination changes, a topmost
+notification shows the previous and current destinations. You can keep typing and
+broadcasting while it is open.
+Hover over a recipient checkbox to see its transport and destination.
 
 To broadcast across windows, enable **Allow broadcast input across windows**
 in **Settings → Tab behavior**. The next Start applies the new scope and resets
@@ -125,7 +145,7 @@ selection to all connection tabs in that scope. An active broadcast continues
 using its current scope until stopped. While the all-window preference is saved,
 **Stop Broadcast** ends broadcasts in every window.
 
-A multiline paste asks once for confirmation and lists the recipients. During
+A multiline paste asks once for confirmation and lists each recipient's destination and tab name. During
 paste or a remote mouse drag, the recipients stay fixed. **Stop Paste** ends the
 remaining paste across all recipients. If sending fails, check the status for
 each recipient's outcome before trying again.
@@ -163,8 +183,8 @@ across all profiles and windows until TabTty exits or you change or archive
 the selected vault. Copy the vault
 with profile files when moving to another PC. Profiles contain credential IDs.
 Use encrypted backups before changing credentials. A backup retains the master
-password used when that backup was made. Manage vault opens the Vault entries
-page. Add or import credentials there, select an entry to edit or delete it, and
+password used when that backup was made. Open **Manage vault** to add or import
+credentials, select an entry to edit or delete it, and
 use the Vault file section for backups, restore, and master-password changes.
 
 Private-key import supports the agreed OpenSSH, PKCS#8, RSA and EC envelopes.
@@ -177,9 +197,14 @@ moves the existing vault to a unique sibling file. The next unlock or management
 request initializes a new vault at the configured path. Select new credential
 entries in any profiles that referenced the archived vault.
 
-Verify SSH host fingerprints before trusting them. A changed key requires an
-explicit replacement decision. Manage saved host keys separately from credentials.
-Telnet connects without automatic login. Enter commands or credentials manually.
+Before trusting a new or changed SSH host key, compare its fingerprint with one
+obtained independently from the server administrator. During keyboard-interactive
+authentication, the SSH server shown above the questions receives your answers.
+Use the TabTty vault master password only in a local vault dialog.
+Manage saved host keys separately from credentials.
+
+New profiles start with SSH selected. Telnet uses manual login and sends passwords,
+commands and output in clear text. The connected tab identifies Telnet as unencrypted.
 
 ## File transfer over SSH
 
@@ -197,6 +222,16 @@ times, then choose **Overwrite**, **Skip**, or **Cancel**. Cancelling keeps file
 already saved. Use **Retry failed items** to start those items from the beginning
 while the original connection remains available. Remote file names use the tab's
 effective transmit encoding when the transfer window opens.
+
+TabTty marks files downloaded through SFTP with the Windows Internet zone
+(Mark of the Web). Choose a destination that supports named streams, such as
+NTFS. If the mark cannot be saved, the download fails before replacing or
+creating the final file.
+Only your Windows account receives access to downloaded files, including
+temporary files and replacements in shared folders. To share a completed
+download, grant access through the file's Windows Security properties.
+Uploads request owner-only read/write access (0600) from the server when
+creating a file. The server controls the resulting access permissions.
 
 Both panes can create folders and rename or delete files and folders. Deleting
 a folder includes its contents. Remote deletion is permanent. Windows recycling
@@ -238,9 +273,17 @@ that tab and can be resumed explicitly.
 
 Open a terminal tab's context menu and choose **Set up AI collaboration**.
 Register the supplied executable and its stdio argument in your external MCP
-host. Start TabTty before the host connects its integration. Match the host's
-pairing code with the one under **Share output with AI** and choose the intended
-integration. Several chats in the same integration may use a tab's permissions.
+host. Start TabTty before the host connects its integration. Under **Share
+output with AI**, match the pairing code to the one shown by your host and
+check the executable path and process ID that Windows reports for the process
+that launched the bridge. Some hosts use a helper process. The host's display
+name is self-reported. The launcher details identify a local process and do
+not authenticate the AI product, model or individual chat.
+
+Permissions apply to the selected bridge connection. A second connection starts
+with no shared tabs, even if it reports the same name. Restarting the bridge
+requires fresh sharing and a new input grant. Several chats using one bridge
+connection may use its permissions.
 
 Sharing starts in read-only mode. The AI can inspect the live terminal and the
 text the tab still retains. Choose **Give control to AI** to allow terminal input.
@@ -250,10 +293,20 @@ new AI input and keeps sharing active. If terminal input needs cleanup, wait for
 **Taking control** to clear. **End AI sharing** revokes reading and input. Data
 the integration already received remains with that integration.
 
+An attached integration keeps its granted access when you lock Windows, switch
+users, or disconnect Remote Desktop. To stop access before stepping away,
+choose **End AI sharing** in the tab's status bar.
+
+Choose **End AI sharing** before entering a password or one-time code in the
+terminal. Whenever you share a tab, the integration can read its current screen
+and retained history, including output from before sharing and from intervals
+when sharing was off. This includes text echoed locally or by the remote system
+and text hidden by terminal conceal styling. If sensitive text reached the
+screen or history, keep that tab unshared and use a fresh terminal session for AI
+collaboration.
+
 Shared tabs cannot be broadcast targets. An active or paused macro keeps its own
-input authority while the AI can inspect its shared output. Use the external
-chat to ask the AI to return control for passwords or one-time codes, then grant
-control again when it should continue.
+input authority while the AI can inspect its shared output.
 
 For closed-network operation, provision the AI host, its inference runtime, and
 the model before use. Configure the host to use local inference or a server

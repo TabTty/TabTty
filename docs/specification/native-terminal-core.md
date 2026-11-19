@@ -18,6 +18,17 @@ requiring the user to retry. Q14 in the
 the exceptional changed-target outcome and confirms candidate 3's final shared
 understanding. All three designs are ready for separately requested implementation.
 
+On 2026-11-18, Q20-Q22 and Q24-Q27 of the separate
+[whole-codebase interview](../drafts/whole-codebase-architecture-deepening.md)
+accepted the shared-grapheme ownership/interface, pinned emoji recognition,
+bounded stored spelling and revised paste policies. The user's restored Q26
+original shared-budget policy supersedes the later independent Q28-Q29 branch
+for accounting only. The configurable 512 MiB default source cap and
+confirmation for CR/LF or source size above 1 KiB remain accepted.
+The accepted decisions are consolidated below.
+Candidate 6's final Q23 review was accepted on 2026-11-18. This records specification work,
+not implementation or runtime verification of those amendments.
+
 ## Scope and ownership
 
 The [codec decision record](../drafts/terminal-codec-consultation.md) records
@@ -110,6 +121,105 @@ Define cells, Unicode scalars, grapheme offsets, UTF-16 offsets and UTF-8 byte
 counts separately at the seam. Preserve their existing meanings rather than
 using one integer offset interchangeably. C# display/layout and UIA adapters
 consume these results without reconstructing mutable terminal state.
+
+## Shared grapheme operations
+
+Use one Rust rule authority for joining, cell width, drawing-aid eligibility and
+scalar/grapheme/UTF-16/UTF-8 measures under the
+[pinned terminal policy](terminal-and-encodings.md#pinned-emoji-recognition).
+C# retains session order, authority, pacing, broadcast coordination, transport
+and file I/O; WPF retains shaping and presentation. Neither runtime Unicode
+categories in C# nor font shaping decide terminal semantics. No managed fallback,
+swappable Unicode provider or new third-party crate is introduced.
+
+Q21 selects named complete operations with owned immutable unit plans at the
+existing terminal/input/observation seam. Complete paste analysis works without
+a live terminal model, but still belongs to an admitted input/preview operation
+with charged storage. The ordinary caller requests complete analysis, sending
+or observation; it does not drive a scalar loop, cursor protocol, internal page
+iterator or a native-reservation recipe. The managed adapter hides those steps.
+This supplies depth through complete obligations, locality for shared rules and
+leverage across existing consumers rather than a second public Unicode workflow.
+
+Analyze the exact complete immutable input, including its final page, before
+reporting success. Malformed UTF-16 or forbidden controls reject the whole
+not-yet-started operation without replacement, normalization, live encoder
+progress, prefix submission or local echo. Internal page splits carry decoding
+context, including a split surrogate pair; a page end is not an input end or
+grapheme boundary. A large valid input grapheme is traversed using bounded
+continuation state and offsets, not a temporary copy of the entire grapheme.
+Compact/bounded indexing must not require a descriptor for every scalar or
+grapheme. An owned input plan is not the display's 256-scalar retained prefix.
+
+Shared segmentation/counts do not prove target encodability or input permission.
+Every frozen target performs strict whole-input preflight against its current
+generation, encoder, settings and mode basis, and admits its required resources
+before any target sends a payload/start marker. Revalidation recognizes held
+reservations without double charging them. See
+[input ownership](session-and-recording.md),
+[broadcast preparation](broadcast-input-operations.md) and
+[paste resources](resources-and-validation.md) for shared source retention,
+the configurable source-text cap (default 512 MiB of actual UTF-16 bytes),
+confirmation for CR/LF or source size strictly above 1,024 bytes, the 30-second
+broadcast preparation deadline and reserved cleanup rules. Charge the physically
+shared source once, alongside terminal
+state and actual paste work/copies in the application-wide 4 GiB envelope.
+Each target uses the existing 2 MiB/256-unit input-work allowance, shared with
+its other input rather than an additional paste pool; the entire shared source
+is not charged again to that allowance. The per-session 2 GiB terminal-state
+sublimit and local-echo state admission remain. Q27 permits Stop at the next
+complete scalar or required larger indivisible codec/control unit, even inside
+a grapheme, while keeping CRLF indivisible. Internal chunk completion is neither
+a completed grapheme count nor an additional pacing delay.
+
+Keep source/REP spelling, editable-grid tails for each projection and serialized
+Text position independent. Each stored spelling retains its first 256 scalars,
+while bounded break state advances over all eligible input, including omitted
+continuations. Width/drawing-aid facts use the retained prefix. One owner's
+saturation cannot return early from an entire source operation or bypass another
+projection or eligible recording stream. Estimate and Execute share definitions
+but start from their own valid state. Preserve ordered intermediate width changes
+through retained scalar 256; later omitted suffixes do not alter stored geometry.
+The normal/alternate Text, Terminal, Raw and REP consequences are defined in the
+[bounded-spelling contract](terminal-and-encodings.md#bounded-stored-spelling-and-complete-stream-segmentation).
+This normal storage omission does not invoke session or recording failure.
+
+Observations own text and authoritative stored spans from the same capture,
+generation, projection and range, with explicit offset units and required
+cell/drawing facts. Preserve VT-separated spans, zero-cell content, wide-cell
+continuations and generated projection separators. UIA must not re-segment an
+exported concatenation to reconstruct spans; WPF consumes supplied drawing-aid
+facts. Ownership keeps a result readable after mutation/disposal, but does not
+make it a valid basis for a later live operation. UIA's stable-anchor/eviction
+collapse and AI history's authority, expiry and content/retention checks remain
+distinct. Internal pages never authorize UIA `GetText` truncation or change AI
+external page/result limits. If the next stored span cannot fit, return the
+existing narrow resource/provider failure without false progress.
+
+Pin Unicode 17.0.0, UAX29 r47, UAX11 r44 and Emoji 17/UTS51 r29. The build manifest
+must identify the exact versioned sources and hashes for `EastAsianWidth.txt`,
+`auxiliary/GraphemeBreakProperty.txt`, `DerivedCoreProperties.txt` (InCB),
+`extracted/DerivedGeneralCategory.txt` (Mn/Mc/Me), `emoji/emoji-data.txt`,
+`PropList.txt` (the full Variation_Selector property), `emoji-sequences.txt`,
+`emoji-zwj-sequences.txt`, `emoji-variation-sequences.txt` and `emoji-test.txt`.
+Record actual download paths, range expansion, property defaults, set union and
+the accepted qualification/multi-scalar filtering. Provide reproducible
+generation/checking, source/version/hash and data/schema compatibility checks,
+and applicable Unicode license notices. Missing, corrupt or incompatible native
+code/data fails packaging/initialization explicitly; session-free analysis uses
+the same checks. No runtime download or OS-data substitution is permitted.
+
+Future verification uses the official pinned GraphemeBreakTest corpus plus
+independent specified width/placement/content expectations through the ordinary
+interface. The former managed heuristic, generated lookup itself and a displayed
+combined glyph are not independent oracles. Cover every relevant byte/scalar/page
+split, invalid final input, source/projection isolation, authoritative observation
+lifetime, 255/256/257 and much longer continuations, exact outbound input and Stop.
+Include heart + VS16 + 254 acute accents + VS15: omitted scalar 257 cannot shrink
+stored width; with 253 accents the retained VS15 at 256 does shrink it. Include
+woman + 254 acute accents + ZWJ + laptop + grinning face: the omitted laptop must
+advance break state so grinning face begins a new stored span. These are required
+future observations, not executed conformance tests or measured performance.
 
 ## Shared interpretation rules (accepted Q6)
 

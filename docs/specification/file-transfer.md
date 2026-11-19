@@ -40,9 +40,17 @@ listing revision, and selection. Navigation and Refresh supersede stale listing
 results. The local and remote folder controls are keyboard accessible. All
 actions, dialogs, and outcomes use the application's language and theme.
 
+An edited path is a navigation draft. Enter lists that directory; Escape
+restores the last listed path. While a pane is loading or its path field
+differs from the listed directory, disable its list, file-management actions
+and transfers involving it. Failed navigation leaves the draft available for
+correction. A background refresh must preserve an outstanding draft. These
+rules apply to new operations; a running batch keeps its captured paths.
+
 Buttons capture the selected source entries and the opposite pane's displayed
 directory at invocation. A cross-pane drop captures the highlighted directory,
-or the displayed directory for a drop on a file row or empty space. Both use
+or the displayed directory for a drop on a file row or empty space. Accept a
+drop only on the destination last previewed during that drag. Both use
 the same copy operation. Discard a drag if its source selection or target
 listing generation is stale. After capture, pane navigation and refresh do not
 change the batch. A second batch and file-management mutations in that window
@@ -69,8 +77,10 @@ request the `sftp` subsystem with a reply and no PTY. Begin SFTP INIT after the
 subsystem succeeds. Offer version 3 and require a version 3 reply. Show channel,
 subsystem, or version refusal in the transfer window. Opening another terminal
 tab still makes a separate SSH connection. SFTP uses neither a second login nor
-new host-trust or vault interactions. Maintain one live SFTP channel per tab;
-allow explicit reopen after a channel failure when the SSH connection survives.
+new host-trust or vault interactions. Maintain one opening/live/closing SFTP
+slot for the tab's current SSH connection generation. Allow explicit reopen
+after a channel failure when the SSH connection survives and the old slot can
+safely retire, as detailed below.
 
 Keep one transport packet reader and serialized transport writer. Route channel
 messages by their SSH channel identifier with independent credit, buffering,
@@ -91,6 +101,69 @@ partway through cancellation. Do not wait for filesystem work, UI, or transfer
 credit inside the common receive pump. Schedule interactive input and SSH
 control ahead of bulk traffic with bounded fair service for the transfer.
 
+### SFTP channel lifetime and ownership
+
+Use the [shared SSH channel module](transports-and-authentication.md#shared-ssh-channel-ownership)
+accepted in Q17-Q19. Its named complete operations own channel open, request
+replies, notification/send submission, flow control, close and actual cleanup.
+SFTP retains subsystem/INIT/version sequencing, framing, request-ID matching,
+file-operation meaning and diagnostics. Bind the incremental SFTP consumer and
+bounded peer-request rejection policy before channel open. Normal requests and
+data require confirmed open; Close is available while opening. The consumer
+cannot wait for subsystem success, INIT/version completion or a future callback.
+
+Validate each frame length before allocating its body; preserve the 256 KiB
+maximum. Consume a prefix once bounded parser/frame storage actually owns it,
+without waiting for the remaining frame, remote reply or local file I/O.
+Reserve needed reply/parser capacity during SFTP request admission. Account for
+the original chunk while copying, partial/completed frames, pending replies and
+buffers transferred to local I/O through their actual lifetimes. Returning SSH
+credit does not release that storage. Preserve the 2 MiB per live/closing channel
+and 32 MiB application buffer guards and separate request/provider/result limits;
+do not hide a frame queue in another quota or wait on the only callback that can
+make capacity available.
+
+Send complete frames in order, supplying whole-frame permitted stopping points.
+An individual stop cannot interrupt a packet after the shared writer commits
+its irreversible cipher/sequence changes. If a frame remains incomplete, finish
+already-admitted work safely or stop all later DATA on that channel and close
+under the existing cancellation/error policy; never append a new frame to an
+abandoned prefix. Close can progress once the current committed packet settles
+without waiting for a zero-credit Send to finish its frame. No guarantee to
+finish every cancelled frame or retain that channel is added.
+
+Interpret definite byte progress and uncertain send ranges when classifying
+file effects. An uncertain final packet may have delivered a complete mutation
+request even when the full-frame write did not return success. Preserve possible
+UnknownOutcome and the existing refresh/recovery rules; no automatic replay or
+assumed non-execution. The shared channel module does not decide file outcomes.
+
+An existing opening/live slot rejects another start. An explicit reopen may
+wait for a closing slot within the existing connection-wait budget, with bounded
+waiters or a capacity/busy result. Repeated requests do not reset that deadline.
+A timed-out/stopped request never opens automatically later. Retire the old slot
+only after protocol identity retirement and channel-owned actual release; a
+queued/sent CLOSE, freed payload buffer or timeout alone is insufficient.
+Cancellation after OPEN commitment retains its original identity. A late
+confirmation only permits old-instance cleanup/CLOSE, never subsystem startup;
+a late refusal resolves only that old attempt.
+
+If OPEN/CLOSE never resolves, reopen may remain unavailable on that connection.
+Keep the healthy terminal running and report pending/busy/timeout truthfully;
+do not add closing slots, force terminal disconnect, reuse unresolved IDs or
+reconnect/replay automatically. A fresh explicitly reconnected generation has
+its own slot, subject to shared capacity and existing file-operation guards.
+Old work remains charged to its original owner, and late completions cannot
+change the new slot, credit or results.
+
+Channel-owned release does not claim release of separately transferred parser
+storage/local file I/O or erase unknown file outcomes. Pending cancelled I/O
+still blocks new mutations under [file-operation cancellation](file-operations.md#confirmation-and-cancellation);
+a channel reopen or UI refresh does not bypass that guard. Existing window/tab
+close confirmations and ownership remain unchanged. Q19 confirms design readiness
+for separately requested implementation; the [27-case verification plan](../drafts/whole-codebase-architecture-deepening.md#candidate-5-verification-plan)
+is required future work, not executed evidence.
+
 ## Paths, names, and trees
 
 Capture the effective terminal transmit encoding at transfer-window creation.
@@ -104,6 +177,13 @@ those entries. A non-decodable name can be shown with an escaped byte label;
 reject operations that require interpreting it as a usable filename. Reject
 generated names that cannot round-trip in the chosen encoding. File data and
 line endings are copied byte for byte.
+
+Listings and overwrite/deletion confirmations use the same visible labels for
+local and remote names. Escape control characters, Unicode format characters,
+line separators, unusual whitespace and literal marker openers. An undecodable
+component has a distinct byte label. Retain the original path for the action.
+Within the 32 MiB per-window listing allowance, limit the materialized rows to
+16 MiB, counting each full child path and its decoded and displayed names.
 
 Validate each listed child and newly encoded component before joining it to a
 selected parent. Reject empty names, NUL, `/`, and path traversal components in
@@ -137,6 +217,15 @@ lock remote path components across requests. Stop the affected subtree when a
 change is observed. A remote server controls its filesystem and can change paths
 between checks, so these checks do not provide a remote filesystem snapshot.
 
+Create new directories privately, both for folder copies and for New folder.
+On Windows, check for persistent ACLs before creating a directory. Supply a
+protected DACL at creation that grants only the current user full control,
+with inheritance for child files and folders. Verify ownership and the DACL
+before copying any children. On upload, request POSIX mode 0700 in the SFTP
+MKDIR and fail that subtree if the server refuses. When merging with a folder
+that already exists, preserve its permissions. As with file creation, the
+remote server enforces the requested access. [Windows directory creation](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createdirectoryw)
+
 ## File write and replacement
 
 Read source attributes at open where available. Stream to an exclusively
@@ -144,9 +233,34 @@ created temporary sibling using bounded buffers. Finish all writes and close
 the staged file successfully before committing the final name. Check expected
 length and comparable source attributes again before commit. Detected source
 changes fail the file. Preserve source last-modified time where representable,
-preferably on the staged file. A timestamp-setting failure is a metadata
-warning if the bytes were committed. Keep destination-platform defaults for
-permissions and ownership.
+preferably on the staged file. The local last-access time stays private.
+SFTP v3 couples the access and modification fields, so set both to the source
+modification time on upload. A timestamp-setting failure is a metadata
+warning if the bytes were committed. Create each local download under the
+current user's ownership with a protected DACL granting only that user full
+control. Before writing received bytes, verify the created file's owner and
+DACL and the volume's support for persistent ACLs. Fail the item if the
+destination cannot retain those permissions. Keep the protected DACL on
+publication, including approved replacements. For uploads, request POSIX mode 0600 (owner read/write)
+in the exclusive SFTP OPEN that creates the temporary file. A refusal fails
+the upload. Do not retry with omitted permissions or broaden them after
+rename. The server enforces effective access, including its ACLs and mapping
+on systems without POSIX modes. A server need not report POSIX mode to support
+uploads. The server assigns ownership of uploaded files.
+[Windows file security and inheritance](https://learn.microsoft.com/en-us/windows/win32/fileio/file-security-and-access-rights).
+[SFTP v3 OPEN attributes](https://datatracker.ietf.org/doc/html/draft-ietf-secsh-filexfer-02#section-6.3)
+
+Classify every downloaded regular file as Windows Internet zone 3, including
+files from an authenticated SSH server and files reached through directory
+copies. Before writing any received content, attach a local `Zone.Identifier`
+stream containing only `[ZoneTransfer]` and `ZoneId=3` to the staged file.
+Verify that the mark belongs to the staged file and has the expected value
+before publishing it. The new name or approved replacement must carry that
+object's mark. Fail the item before commit if the destination cannot store
+or verify the mark. Leave an existing destination intact on this failure.
+The marker records origin for consumers of Windows zone metadata. Virus
+scanning and execution decisions belong to Windows and the consuming application.
+[Windows zone stream format](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fscc/6e3f7352-d11c-4d76-8c39-2516a9df36e8)
 
 Use a no-replace move for a new file. On a collision with an ordinary file,
 query both sides and show their names, sizes in bytes, and modification times
@@ -160,6 +274,15 @@ metadata check cannot close the interval between check and replacement.
 Serialize TabTty's own final local mutations for the same resolved destination,
 including writes from different tabs. External writers and remote aliases may
 still change the filesystem between checks.
+
+For local overwrites, capture the volume serial number, 128-bit file ID, size
+and modification time from the same opened file. Compare them with the
+approved snapshot after staging and once more immediately before publication.
+If Windows cannot identify an existing destination, leave it in place. The
+final Windows rename names its destination by path, so an external change
+between that last check and the rename can still take effect.
+[Windows file identity](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_id_info)
+and [rename arguments](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_rename_info)
 
 Use a same-directory Windows file replacement operation for approved local
 overwrites and advertised `posix-rename@openssh.com` version `1` for approved

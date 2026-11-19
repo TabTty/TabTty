@@ -103,9 +103,22 @@ capacity returns the existing resource error without publishing progress.
 Preparation, scanning, and repagination share the original per-call work budget;
 retrying does not restart that budget.
 
-Implementation capacity must fit the maximum supported cluster: 256 Unicode
-scalars, at most 1024 UTF-8 bytes. An explicit caller text limit too small for
-the next complete cluster returns resource_limit without progress. Do not
+Under accepted whole-codebase architecture Q20-Q22/Q25, observations use owned
+immutable text and the Rust model's authoritative stored spans from one capture,
+generation, projection and range. Retained spellings contain at most their first
+256 Unicode scalars; omitted continuations still advance incoming break state
+but are not reconstructed in history. Do not re-segment concatenated retained
+prefixes, merge VT-separated spans or mix text with metadata from another
+capture. Ownership after mutation/disposal does not establish later live
+authority or consistency; existing content/retention validation still applies.
+See [the terminal contract](terminal-and-encodings.md) and
+[the native module](native-terminal-core.md). Candidate 6's final Q23 review was
+accepted on 2026-11-18; these are accepted design amendments, not runtime evidence.
+
+Implementation capacity must fit the maximum retained stored span: 256 Unicode
+scalars, at most 1024 UTF-8 bytes. This is not a maximum incoming grapheme length
+or an outgoing input truncation rule. An explicit caller text limit too small
+for the next complete stored span returns resource_limit without progress. Do not
 exceed that limit or emit an endless empty continuation. This is distinct from
 the legitimate no-match search continuation after advancing validated coverage.
 

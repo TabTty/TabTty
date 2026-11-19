@@ -11,6 +11,15 @@ Q103/Q117-Q128/Q144-Q145/Q149-Q154. Tera Term 5.7.1 is the behavior reference;
 explicit TabTty adaptations below and prior user decisions take precedence.
 This is neither implemented compatibility nor a claim of every xterm feature.
 
+The shared-grapheme decisions accepted on 2026-11-18 in Q20-Q22 and Q24-Q27 of
+the [whole-codebase interview](../drafts/whole-codebase-architecture-deepening.md)
+amend the Unicode and input-capacity contract below. The restored original Q26
+shared-budget policy supersedes the later independent Q28-Q29 accounting branch;
+the configurable 512 MiB default source cap and confirmation for CR/LF or
+source size above 1 KiB remain.
+Candidate 6's final Q23 review was accepted on 2026-11-18. These amendments record
+design decisions, not new implementation or runtime validation.
+
 ## Terminal operations
 
 Accept seven-bit ESC control spellings. High bytes belong to the selected
@@ -87,11 +96,11 @@ terminal control is introduced.
 | Case | Cell/content rule |
 | --- | --- |
 | Ordinary Unicode cluster | Maximum width of its non-mark base scalars: Wide/Fullwidth 2, Ambiguous profile 1/2, other 1 |
-| Recognized emoji sequence | Two cells, including supported presentation/ZWJ/modifier sequences; text variation selects the text-width rule |
+| Recognized emoji sequence | Two cells for the pinned repertoire defined below; VS15 in the retained spelling selects the ordinary text-width rule |
 | Combining/variation/joiner continuation | Extend the preceding eligible cluster without normalizing text; chunk boundaries do not end clusters |
 | Isolated mark | One cell with a dotted-circle rendering aid; stored/copied/logged content excludes the synthetic dotted circle |
 | Interior/repeated U+FEFF | Preserve in content/copy/logs as a zero-width format; only Q126's first complete UTF-8 signature per source is consumed |
-| Unrecognized grapheme/ZWJ sequence | Preserve scalars, use the ordinary maximum-base rule; no promise of one combined glyph |
+| Unrecognized grapheme/ZWJ sequence | Retain scalars subject to the stored-prefix guard below and use the ordinary maximum-base rule; no promise of one combined glyph |
 | Legacy decoded text | Same Unicode width policy after exact mapping; no extra hidden locale/OS byte-width override |
 | Wide cluster at last column | With wrap, move the complete cluster to the next row; without wrap, reserve the last two cells by moving its start left one column; never store half a cluster |
 | Edit/erase touches part of a cluster | Affect the entire cluster and leave cleared cells; no orphan continuation cell or split Unicode content |
@@ -99,12 +108,92 @@ terminal control is introduced.
 Text-changing operations advance revisions; pure attribute/layout changes do
 not. An incrementally extended cluster can change its width; recompute its
 cell placement before publishing the next snapshot. Keep the last editable
-cluster's provenance; growth past the resource cap is explicit failure, not
-silent truncation. Layout reflow joins only soft-wrapped normal lines and
+cluster's provenance and apply the bounded stored-prefix rule below. Layout
+reflow joins only soft-wrapped normal lines and
 preserves anchors, attributes, clusters, recorded revisions, and explicit
 hard boundaries. Enforce the captured physical-row quota before publishing;
 retirement records eligible Text without LF. Alternate resize clips/pads,
 does not reflow, and parks normal content until its eventual return/reflow.
+
+### Pinned emoji recognition
+
+The recognized repertoire is the union of the Emoji 17 RGI set, every emoji-style
+pair in the pinned `emoji-variation-sequences.txt`, and the multi-scalar
+minimally-qualified/unqualified forms listed in `emoji-test.txt`. Include the
+RGI sequence and ZWJ files; do not generate additional missing-selector variants
+or recognize a known substring of an otherwise unsupported sequence. A bare
+text-default symbol remains under the ordinary width rule even when listed as
+an unqualified singleton. Supported VS16 pairs select two cells. Any VS15 in
+the spelling being measured selects ordinary width, which can itself be two.
+
+For recognition lookup only, remove the maximal trailing run whose scalars
+have both General_Category Mn/Mc/Me and Grapheme_Cluster_Break Extend/SpacingMark,
+excluding the full Variation_Selector property and U+20E3 COMBINING ENCLOSING
+KEYCAP. The entire remaining core must match the repertoire. Do not remove
+interior marks, selectors, joiners, modifiers, tags or keycap structure to
+manufacture a match. Lookup never changes stored content or normalizes text.
+An unmatched sequence uses the ordinary maximum of non-mark base widths;
+isolated-mark and zero-width FEFF rules retain their special meanings.
+
+Reevaluate from the retained original spelling after every stored extension,
+including intermediate shrink/growth within one receive chunk. For example,
+`00A9 FE0F 0301` is two cells, while `00A9 FE0F 0301 FE0F` and
+`00A9 FE0F 200D 00A9` use ordinary width. `2764 FE0F FE0E` uses ordinary width.
+Chunk/page ends do not freeze recognition. The bounded-prefix exception below
+means that omitted continuations beyond scalar 256 do not change this geometry.
+Font shaping and the OS Unicode category database are not independent rule
+authorities. Data provenance and independent verification belong to the
+[shared Rust grapheme design](native-terminal-core.md#shared-grapheme-operations).
+
+### Bounded stored spelling and complete-stream segmentation
+
+Retain at most the first 256 Unicode scalars of each stored cluster. Consume
+further continuations without ending the session, inserting a replacement or
+ellipsis, manufacturing a break at scalar 257, or keeping an unbounded archive.
+This is a per-cluster storage guard, not a line-length or outgoing-input limit.
+Keep a separate bounded incremental break state and advance it over every
+eligible scalar, including omitted ones. Start the next stored cluster at the
+next real grapheme break or existing VT continuation cutoff. Repeatedly testing
+the truncated prefix against the next scalar is insufficient: a retained ZWJ
+must not absorb a later independent cluster after its omitted continuation.
+
+The source-local last-graphic/REP spelling, each editable-grid projection and
+serialized Text-position state remain independent. One owner's saturation must
+not stop the whole source operation: other projections, recording eligibility
+and full-stream break state still advance. Width, recognition and drawing-aid
+eligibility use each owner's retained prefix through scalar 256; omitted
+VS15/VS16 or other suffixes do not alter its stored geometry. Estimate and
+Execute use the same classification from their independent states.
+
+Screen, scrollback, copy, UIA, screen/history observations, search and normal-
+screen Text recording use the corresponding retained spelling. Alternate-screen
+Text and Terminal recording still receive their original eligible scalar or
+operation stream; Raw still receives original terminal-payload bytes. Storage
+saturation must not bypass those independent paths. Existing recording interval,
+source-provenance and I/O-failure rules still apply, with no backfill or claim
+of file durability. REP replays its source-local retained spelling through the
+existing resolved-text path and cannot reconstruct omitted continuations.
+
+Reflow, selection and observations use authoritative stored spans. Freshly
+segmenting exported concatenated prefixes may produce different spans and must
+not redefine the stored ones. Add no invisible separators to copied text.
+UIA's full-result promise covers retained text and permits no additional
+provider-time truncation. Serialized Text position remains bounded and does not
+discard stream text; emit TAB only when its expansion is provably faithful,
+otherwise use the existing final-spaces/text representation.
+
+This omission is normal continued processing, without a per-scalar warning,
+new dialog, fatal incomplete status or recording failure. Actual resource,
+transport, recording and provider failures retain their existing outcomes.
+Successful outbound paste preserves the complete validated input; the display
+prefix is never its payload. Local echo can use a bounded stored prefix of that
+exact submitted input. See [input and recording](session-and-recording.md) for
+the source-size cap, confirmation and scalar/codec-safe Stop, and
+[resource accounting](resources-and-validation.md)
+for shared-source/application admission, existing target input-work bounds and
+observation capacities.
+
+### Presentation and accessibility
 
 Use Consolas 12 pt with installed fallback and fixed row/cell metrics; absent
 fonts are visible nonfatal fallback status. Keep required shaping while

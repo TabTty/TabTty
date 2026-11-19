@@ -196,7 +196,7 @@ observable behavior without replacing them.
 | M10 | List aliases, Clone, element replacement/Add in foreach through helper | Aliases visible; clone independent; mutation detected before next iteration |
 | M11 | Short-circuit with an effectful helper; for continue; helper local/top-level visibility | Correct evaluation order and scopes; source validation still covers helper |
 | M12 | Relative profile path after several relative base changes/reset | Correct per-run base; no process-CWD, other-run or log-directory change |
-| M13 | Macro opens an unregistered saved profile | Connection works without profile registration or file rewrite |
+| M13 | Macro resolves an unregistered profile that needs review. Exercise Connect once, Trust this version and connect, and Cancel. | Both connect choices use the reviewed snapshot and leave the profile unregistered. Only Trust this version and connect remembers the location and version for later connections. Cancel starts neither recording nor transport and uses no credential. |
 | M14 | Initial log creation failure after one selected file opens | No transport start; visible pause; partial empty files remain; same-snapshot retry/new parts; separate Resume |
 | M15 | Early SSH prompt before Connect completes | First wait sees it; no observer-after-connect race |
 | M16 | Tab moves while active/paused/dialog-waiting | Same run/session/history; window operations resolve current host; no reconnect |
@@ -233,7 +233,18 @@ observable behavior without replacing them.
 | M47 | Same basename concurrent runs, illegal basename chars, empty name, collision, partial group failure | Distinct grouped names; no overwrite; visible retry/new parts; no secret/argument filename content |
 | M48 | EN/JA/system UI and Light/Dark/system changes during run | Stable script identifiers/semantics, localized state/errors, readable accessible controls |
 | M49 | Repeated stop/restart while regex/host work remains in flight | Old work remains charged and cannot write into new run; new admission bounded |
-| M50 | Telnet/serial first password send and remote echo | Q77: persistent nonblocking notice; no invented profile approval or per-send confirmation |
+| M50 | Telnet/serial first password send and remote echo | Q77: the persistent nonblocking notice requires no per-send confirmation. Profile trust was checked at connection time. |
+| M51 | An unseen source and argument pair is opened through the picker, Explorer, CLI or a forwarded request | Review shows the full source digest, inspectable snapshot, path and unambiguous arguments. Cancel is the default. Closing or cancelling creates no run, tab or decision. Run once starts one run and the next launch asks again. |
+| M52 | Always allow, sign out and back in, then open an identical copy from another directory through another entry point | The same ordered arguments reuse the macro allow. New arguments require review. The run sees its actual location and arguments. A different profile selected by a relative path is checked against its own location and version, with the ordinary host-key and vault checks. |
+| M53 | Keep the arguments fixed and replace a file at the same path, change just its BOM or line endings, or replace it while a review is open | Each unseen pair requires review. An approved run executes the bytes displayed for that review. Restoring the original bytes and arguments reuses their decision. |
+| M54 | Allow one argument list and block another for the same source. Open a renamed copy through the picker, Explorer, CLI and forwarding with the applicable list. Forget one decision in another window. | Each launch honors its own pair. A block ends the request without a run, tab or override prompt. Forgetting either entry restores review for that pair alone. A stale dialog cannot undo the change. |
+| M55 | Read a decision after sign-in, under another account, and on a second PC with copied settings, macro and portable vault | Only the original account on the original PC reuses the decision for the pair. Neither credential target names nor records contain raw argument values or passwords. |
+| M56 | Look up a pair with only a content-only record present, or with a missing, malformed, incompatible or unreadable pair record. Fail a decision write. | A missing pair record requires review even if a content-only decision exists. An invalid pair record or a read or write error stops launch with a visible error. A cached allow or sidecar file cannot supply the decision. |
+| M57 | An external launch refers to a UNC share, a mapped drive, or a local-looking path redirected to a remote file during opening | No remote contact before explicit read permission, including during classification. Cancel leaves the source untouched. After read consent, the source and arguments select the usual allow, block or review outcome. |
+| M58 | A remembered allow or block is opened in an elevated instance, a request crosses integrity levels, or forwarding reaches an older receiver | Elevated execution needs an explicit local decision for that run. A block still prevents it. Forwarding across integrity levels or to a receiver without this policy starts no run. |
+| M59 | Compare `[]`, `[""]`, `["a b"]`, `["a","b"]` and `["b","a"]`. Vary case, whitespace and Unicode normalization. Try different CLI quoting that parses to the same strings. | Each distinct ordered list has its own decision. Identical parsed lists match across routes, including Explorer and CLI with zero arguments. |
+| M60 | Edit the picker's arguments after a lookup, then execute. Have the running macro modify its own `Macro.Args`. | Admission uses the decision for the final edited list. A blocked pair cannot run and an unknown pair requires fresh review. Later mutation of the script's copy leaves the stored decision tied to the launch arguments. |
+| M61 | Reset all macro decisions with both allowed and blocked pairs, a launch review open in another window, an active connection, and trusted and registered profiles. | The next launch of each pair asks again. The old review cannot launch a run or restore a decision. The active connection continues. Profile trust and registrations are preserved. |
 
 ## Performance and responsiveness validation plan
 
@@ -285,7 +296,7 @@ Draft checks performed on 2026-11-14: independent read-only language, receive
 and lifecycle consistency reviews; corrections for cancellation examples,
 factory error timing, current local echo, partial-log handle cleanup, aggregate
 matching work and emergency capacity; local-link/anchor/code-fence/control-byte
-checks across the eight affected documents. All 50 acceptance IDs are unique,
+checks across the eight affected documents. The original 50 acceptance IDs are unique,
 and Q70-Q77 have since been accepted in full. These are document checks only. No macro
 implementation, runtime test, benchmark or security-validation result is claimed.
 

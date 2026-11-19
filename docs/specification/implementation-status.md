@@ -1,5 +1,115 @@
 # Implementation and validation status
 
+## Native cutover acceptance on the current candidate, 2026-11-19
+
+The Windows 11 x64 test machine had four physical cores, eight logical
+processors, 16 GiB of installed RAM and an NTFS NVMe SSD. The exact working
+tree based on `b0a10cf`, the packaged binaries and the fixture hashes are
+recorded in `artifacts/issue-16-acceptance-80cfee00a0a64545985261f1f0f3b9b0`.
+The workload test assembly loads the same application, Core and native DLLs
+as the extracted self-contained ZIP.
+
+Publication initially failed because MSBuild omitted `Unicode-Data-LICENSE.txt`
+from its copy items. The rebuilt ZIP includes the file, the Rust and OpenSSL
+notices, and the .NET and WPF runtimes. The extracted terminal DLL matched its
+build manifest and passed the Unicode 17 corpus of 766 cases. Isolated copies
+of the packaged Core exercised terminal creation and returned the expected
+explicit errors with a missing DLL and a prior-ABI DLL. The ZIP SHA-256 is
+`ABF70E0CA53CF1DC54EFB71A2C751DD7943E6B97113C9044D35507B30E88D793`.
+
+The native single-byte check compared all 10,240 byte positions across the 40
+supported identities. It used the published ISO Unicode mappings for the three
+ICU ISO pages and direct strict Win32 calls for the other 37 pages. The log
+records each expected-table digest. It also checks C0 bell and embedded NUL,
+decoded C1 nonexecution, and the CP1258 combining acute accent. On this Windows
+build, the accepted Win32 CP864 provider maps byte `25` to U+0025. The
+[published DOS Arabic table](https://www.unicode.org/Public/MAPPINGS/VENDORS/MICSFT/PC/CP864.TXT)
+maps that byte to U+066A. The codec conditions in
+[#16](https://github.com/TabTty/TabTty/issues/16), [#23](https://github.com/TabTty/TabTty/issues/23),
+[#25](https://github.com/TabTty/TabTty/issues/25), [#26](https://github.com/TabTty/TabTty/issues/26)
+and [#38](https://github.com/TabTty/TabTty/issues/38) now use the approved set of
+47 encodings and the recorded Win32/ICU rules.
+
+An independently distributed [Microsoft OpenSSH 10.4p1 preview server](https://github.com/PowerShell/Win32-OpenSSH/releases/tag/10.4.0.0p1-Preview)
+ran on loopback under a temporary configuration. The fixture checked the exact
+host fingerprint, real public-key login, shell input and output, and an SFTP
+upload, rename, list, download and delete on the same connection. The uploaded
+host file and downloaded data matched the independent bytes, including across
+rekey. The Raw recording contained the shell output and excluded the file data.
+
+Both 30-minute responsiveness runs completed 600 scheduled interactions after
+warm-up on 20 SSH sessions in two windows. Upload and download ran alongside
+terminal traffic with a held SFTP write reply across rekey. Each run recorded
+20 matching Raw streams, 20 Text files, 20 Terminal files and zero disconnects.
+
+| Distribution | Measured bytes/s | Local p95 / max | Tab switch p95 / max | Stop Paste p95 / max | Verified SFTP round trips |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Equal | 1,048,445 | 55.16 / 175.06 ms | 62.71 / 175.06 ms | 0.28 / 7.62 ms | 549 |
+| One busy | 1,048,579 | 17.83 / 68.87 ms | 21.77 / 68.87 ms | 0.40 / 1.10 ms | 554 |
+
+The equal run had one tab switch above 100 ms. Selection and synchronous
+layout took 2.86 ms. The valid viewport arrived 163.76 ms after layout, and
+the sample overlapped 29.44 ms of GC pauses. The concentrated run had no
+tab switch above 100 ms. The JSON reports preserve CPU time, storage byte
+counts, SFTP bytes, sampled resource peaks and observation outcomes.
+
+The separate overload check held all 128 recording I/O slots while 20 Telnet
+sessions retained accepted log bytes. It measured 20 paste cancellations and
+20 disconnects from dispatcher submission to local acceptance. The p95 values
+were 0.28 ms and 1.58 ms, with maxima of 1.49 ms and 12.91 ms respectively.
+Disconnect refused new input while recording I/O still owned the queued bytes.
+All 20 Raw recordings matched after actual release.
+
+The background-memory workload passed for every count from one through six
+receiving tabs, with 5,000 retained rows and all three recording formats.
+The visible, unselected, minimized, EOF/drain and restored phases produced a
+maximum of 683,782,144 private bytes and 759,222,272 working-set bytes across
+the six processes. Every recording matched its expected digest.
+
+Release regression passed 94 Core checks, 27 WPF checks, 35 Rust checks and
+both MCP checks against the extracted package. The focused terminal raster,
+terminal closure, file-operation and HGLOBAL clipboard/SFTP checks also passed.
+An independent Vim session entered and left the alternate screen, accepted
+typed input, and retained the edited row through a real viewport resize.
+After Vim exited, the original buffer was restored. The same session tested
+pause/resume, accessible UI Automation text, and exact bytes in both Raw
+parts. The fixture initially waited for a whole-row text match, although Vim
+had written the expected text within the row. The corrected check passed with
+the normal dynamic viewport.
+
+| Environment-limited check | Recorded reason |
+| --- | --- |
+| Deployment on a clean supported Windows 11 x64 installation | This machine contains the SDK and build tools. A clean Windows VM or second machine was unavailable. The extracted ZIP and its local execution were verified. |
+| Physical serial COM | Windows reported no physical COM port. The controlled serial cases ran in the Core regression. |
+| Isolated Windows clipboard | Creating a named window station returned Access Denied (5). The create-only probe for the Windows-assigned station returned Already Exists (183). The Win32 block/SFTP check passed. |
+
+## Whole-codebase ownership implementation, 2026-11-18
+
+The working tree based on `b0a10cf` contains implementation across the six
+design areas in [plan #40](https://github.com/TabTty/TabTty/issues/40).
+Recording wait protection and directional EOF, terminal transport delivery,
+verified profile/settings/vault publication, explicit vault initialization
+and source-bound archive, shared SSH credit accounting, and Rust-owned
+grapheme and paste processing are connected to production paths.
+
+Clipboard paste uses the configurable 512 MiB default for preconversion
+UTF-16 content bytes. The confirmation threshold is CR/LF or strictly more
+than 1 KiB. The preview exposes the full source in bounded pages. The source
+is shared, and conversion uses bounded chunks under the existing input
+allowance. Received graphemes retain the first 256 scalars while their
+segmentation state continues. The official [Unicode 17 boundary
+corpus](https://www.unicode.org/Public/17.0.0/ucd/auxiliary/GraphemeBreakTest.txt)
+passed all 766 cases through the native boundary interface.
+
+The generation recording owner now reports immutable results and separate
+actual release. Profile, JSON store and vault editors can recheck and adopt a
+verified prior publication. SSH starts terminal delivery alongside the packet
+pump, SFTP binds its parser owner before opening, and broadcast paste waits for
+every ordered target start before sending. The acceptance audit records the
+remaining implementation and test work against the individual issue criteria.
+
+[Acceptance audit for #41–#67](architecture-acceptance.md)
+
 The [Rust terminal and closure plan](https://github.com/TabTty/TabTty/issues/16)
 is in implementation on `codex/16-complete-rust-terminal`. Baseline commit
 `61aa1865c1cc083d09cf91eb9747cc0a9340ed69` preserves the original source,
@@ -515,11 +625,13 @@ The verified Windows x64 archive is
 `TabTty-ai-collaboration-20261114-101227.zip` with SHA-256
 `B051BBF840ED4878729125D3AD8B3BFD485386A6FEF4A94FAC844C430CEBB171`.
 
-The remaining [validation plan](ai-collaboration-validation.md) includes
+The 2026-11-14 plan at the time of these runs included
 real Goose/Ollama and LM Studio model runs, blocked-egress operation, real
 top/vim tasks, native IME/Narrator and physical COM interaction, cross-logon
 and elevation cases, and the reference 20-session performance workload.
-These checks are pending. The history implementation uses composable row
+On 2026-11-19 the user selected Codex for real-assistant testing. See the
+[current validation plan](ai-collaboration-validation.md) for that host workflow.
+The history implementation uses composable row
 fingerprints and captures search slices under the session lock. If range proof
 construction exceeds the work budget, the call reports busy and preserves the
 existing continuation. Large-buffer search latency and memory use still require

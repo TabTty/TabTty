@@ -4,6 +4,9 @@ Published as [GitHub issue #3](https://github.com/TabTty/TabTty/issues/3)
 with ready-for-agent on 2026-11-14. The [published body](macro-github-issue.md)
 contains the confirmed specification and testing decisions.
 
+The 2026-11-19 revision specifies remembered macro trust for a future
+macro-enabled build. Its acceptance cases are M51–M60.
+
 Final review confirmed on 2026-11-14. Product decisions Q1-Q77 in the
 [interview](macro-issue.md) are accepted, including all Q70-Q77 recommendations.
 Q69 authorizes drafting routine language, API, resource and validation details.
@@ -66,12 +69,30 @@ routing selects the most recently active surviving terminal window, creating
 one if needed. Existing blocking application modals retain their bounded FIFO
 activation behavior; macro dialogs do not become application-wide modals.
 
+The receiving window applies the same macro trust decision to the file picker,
+Explorer, command-line startup and forwarded requests. Forward macro requests
+only between instances of the same user and integrity level. Use an envelope
+version that receivers without this policy reject. The receiver obtains the
+source and computes its identity independently of the sender.
+
+The file picker authorizes reading the selected file. For an external request,
+TabTty may read an ordinary local file to identify it. Before any operation that
+could contact a remote source, ask whether to open the displayed path for this
+request, with **Cancel** selected. This includes UNC paths, mapped network
+drives, redirects and cloud files that need downloading. Establish local access
+without following an unchecked redirect or probing a share, and keep that
+guarantee through the open. If locality is uncertain, ask first. Cancelling
+leaves the remote source untouched. Permission to read only obtains the
+snapshot. Execution requires approval for its contents and invocation arguments.
+
 Read one bounded source snapshot, detect the longest matching BOM first, and
 strictly decode UTF-8 with/without BOM or BOM-marked UTF-16LE/BE/UTF-32LE/BE.
 No BOM means UTF-8. Reject malformed input without repair or legacy guessing.
 Reject a detected incomplete/changed read; do not claim an atomic filesystem
-snapshot against arbitrary concurrent in-place writes. Validate exactly the
-decoded snapshot that will run. External edits after loading affect later runs.
+snapshot against arbitrary concurrent in-place writes. Compute SHA-256 over
+the exact encoded bytes, including any BOM and original line endings. Decode,
+validate and execute from that same snapshot. Keep it through any user review
+and never reopen the path to execute it. External edits affect later launches.
 
 Validate the required version, entire grammar, types, names, permitted members,
 function call graph and resource admission before running any statement. Dead
@@ -80,7 +101,8 @@ send, macro dialog or macro-requested window action. Source diagnostics can be
 shown by the application. Runtime input/value errors are distinct from source
 errors; constant folding cannot change whether an error is catchable.
 
-After validation/admission, allocate the new run/tab and capture:
+Once source validation, execution approval and resource admission succeed,
+allocate the new run/tab with the following values.
 
 | Information | Meaning |
 | --- | --- |
@@ -95,6 +117,88 @@ These values survive file rename, base-directory change and tab movement.
 Source location diagnostics use one-based lines/UTF-16 columns, with CRLF one
 line break and CR or LF one each. BOM is not a source column.
 
+### Remembered macro trust
+
+An allow or block applies to the pair formed by the SHA-256 digest of the source
+bytes and the exact ordered list of arguments supplied at launch. Renaming, moving
+or copying the file preserves the match when the arguments are the same. A
+change to either part selects the decision for the new pair. Restoring both
+parts reuses the original decision, regardless of launch route.
+
+Compare the strings after Windows argument parsing or picker entry. Preserve
+argument boundaries, order, case, whitespace and Unicode spelling. Thus
+`[]`, `[""]`, `["a b"]` and `["a", "b"]` are four different lists. CLI quoting
+that produces the same parsed strings gives the same match.
+
+| Decision for this content and argument list | Launch behavior |
+| --- | --- |
+| Allow | Run the validated snapshot at ordinary user privileges without an execution confirmation. |
+| Block | End the request before creating a run or tab. The picker also honors the block. |
+| No decision | Offer **Run once**, **Always allow with these arguments**, **Always block with these arguments** and **Cancel**. Cancel is the default. |
+
+Show the full source digest, normalized absolute path and all ordered arguments on the
+review screen. Render quotes, control characters, empty strings and an empty list
+unambiguously. Let the user inspect the captured source. Explain at the point
+of approval that the decision covers identical copies opened anywhere with these
+arguments, including on later external requests. Moving the file can change
+which profile a relative path selects. The resolved profile has its own trust
+decision when the macro calls `Connect`. A macro can issue commands and submit
+saved passwords. The usual SSH host-key review, vault unlock and authentication
+rules apply on every connection.
+
+Capture the final, validated argument list before looking up the pair. The
+picker can combine review and argument editing. An edit invalidates the review
+and requires lookup for the edited list before admission. Initialize `Macro.Args`
+from the approved list. Later script edits to that run-local copy do not alter
+the remembered decision.
+
+**Run once** uses only the reviewed snapshot and arguments. **Cancel** or
+closing the review ends the request. Neither saves a decision. **Always allow**
+saves the decision before starting this run. **Always block** saves it and ends
+the request. TabTty accepts decision changes only through its local UI. In
+Settings, group decisions by source digest and identify each argument list by
+the pair fingerprint defined below. Let the user match a list by entering its
+arguments and forget an individual decision even after the file has been deleted.
+Settings also offers a single reset for all remembered macro allows and blocks
+for this Windows account on this PC. Forgetting one entry affects that pair.
+Resetting all entries returns every pair to review on its next launch. Order
+these operations and launch admission across windows so pending reviews respect
+each individual removal or new block. A macro review already
+open when the reset completes expires, including one for a previously unseen
+pair. An old dialog cannot admit a run or recreate a decision. Admitted runs
+and connections continue. The reset affects only macro decisions. Profile
+trust and profile registrations retain their own lifetimes.
+
+Derive the pair fingerprint with SHA-256 over the ASCII tag `TabTty/MacroTrust/v2`,
+the 32 raw bytes of the source digest, then the argument count and each argument
+in order. Encode the count and each argument's UTF-8 byte length as unsigned
+32-bit big-endian integers. Follow each length with exactly those bytes, using
+strict UTF-8 without adding a BOM or normalizing the string.
+
+Store one Windows Credential Manager generic credential per pair, scoped to the
+current Windows user on this PC (`CRED_TYPE_GENERIC`, `CRED_PERSIST_LOCAL_MACHINE`).
+Use the pair fingerprint in a versioned TabTty-specific target name. Verify
+the bounded record's version, source digest, pair fingerprint and decision
+before use. Content-only records grant neither an allow nor a block for a pair.
+Omit source text, paths, argument values and passwords. Trust survives sign-out.
+Copying a macro, settings, profile or portable vault to another PC does not
+transfer its approval. Windows protects this store at the user-account boundary.
+Software running as that user
+and administrators with control of the account are within that boundary.
+[Windows credential types and persistence](https://learn.microsoft.com/en-us/windows/win32/api/wincred/ns-wincred-credentialw)
+
+An elevated instance still honors blocks. Before executing with elevated rights,
+require an explicit one-time decision in the elevated window, even for a known
+allow. Explain that this run would have administrator privileges. A remembered
+decision for ordinary use cannot authorize elevation.
+[Windows integrity levels](https://learn.microsoft.com/en-us/windows/win32/secauthz/mandatory-integrity-control)
+
+Look up the current record for each launch. A missing record triggers review.
+An unreadable store, invalid record or failed decision write stops the launch
+with a localized error. Do not fall back to cached decisions, file metadata or
+ordinary settings. Rechecking or repairing the store must be possible without
+executing a macro. [Windows credential lookup](https://learn.microsoft.com/en-us/windows/win32/api/wincred/nf-wincred-credreadw)
+
 ## Connection and path handling
 
 `Connect(profilePath)` explicitly requests the run's only connection. Resolve
@@ -104,6 +208,15 @@ relative paths against a run-local base initially equal to the source directory.
 `..`; do not expand environment variables or `~`, change process working
 directory, or alter other runs. Existing Windows absolute/UNC/long-path rules
 apply; invalid paths report errors without fallback.
+
+Apply the [profile trust contract](../specification/profile-trust.md) when
+`Connect` resolves its profile. Look up the reviewed location and file version
+using the same trust records as a manual connection. When review is required,
+offer **Connect once**, **Trust this version and connect**, and **Cancel**.
+Connect once authorizes this attempt. Trust this version and connect also
+remembers the reviewed location and version. Both choices leave an unregistered
+profile unregistered. Cancel ends the attempt before recording preparation,
+transport startup or credential use. Use the approved snapshot for the attempt.
 
 Load the profile without registering it, rewriting it or changing its saved
 settings. Preserve existing bounded basic load checks and runtime checks; full
@@ -200,7 +313,8 @@ and explicitly shared AI output; the feature does not redact remote data or
 modify Raw logging. Before the first explicit-reference password submission over
 Telnet/serial in a run, show a persistent nonblocking notice that the transport
 provides no TabTty encryption and remote echo may be recorded/shared (Q77).
-Keep Stop available; add neither per-send approval nor stored profile approval.
+Keep Stop available. The profile trust decision takes place at connection time.
+The password notice requires no per-send approval.
 
 ## Receive text and matching
 
@@ -446,7 +560,7 @@ above and are required by the acceptance matrix, not conditional alternatives.
 | Q74: Match/deadline/pause races | Preserve an already committed match/result or timeout through pause; Stop invalidates any undelivered result. Discard uncommitted worker results when the operation's pause/cursor generation changes and re-evaluate retained input on Resume. A deadline settled before pause is not revived by later input. At a deadline, evaluate a frozen cutoff of data admitted before expiry before declaring timeout. Receive after expiry cannot rescue it; local remaining budget freezes when pause is admitted. |
 | Q75: Closing a run before connection | Include an active macro in the existing combined close confirmation even before a transport exists, with one confirmation per affected close scope. While reviewing the close, hold new macro operations at the ordinary safe boundary; started sends finish, and Q70 governs a started connection. Cancel close releases only the close-review hold. Confirm close permanently stops the run and follows existing connection/SFTP cleanup. Do not prompt when merely moving a tab. |
 | Q76: Partial or uncertain transmission failure | A known zero-payload rejection is catchable. Once a send may have delivered a prefix, end the macro with a clear uncertain-delivery result and do not allow catch to replay/continue automatically. Preserve a healthy session after necessary cleanup; actual transport failure still disconnects under its normal rule. |
-| Q77: Unencrypted terminal password notice | Before the first explicit-reference password submission over Telnet/serial in a run, display a persistent nonblocking notice that this transport provides no TabTty encryption and remote echo may be recorded/shared. Do not add per-send approval or profile-approval storage to trusted macros. Keep Stop available and document the risk at the password APIs. SSH remote echo can also be recorded; SSH encryption is not a log-redaction promise. |
+| Q77: Unencrypted terminal password notice | Before the first explicit-reference password submission over Telnet/serial in a run, display a persistent nonblocking notice that this transport provides no TabTty encryption and remote echo may be recorded/shared. The notice adds no per-send approval. Profile trust follows the connection contract above. Keep Stop available and document the risk at the password APIs. SSH remote echo can also be recorded; SSH encryption is not a log-redaction promise. |
 
 The final review confirmed this contract, its language/API and budgets, and the
 primary application-facing run testing seam on 2026-11-14. The specification is

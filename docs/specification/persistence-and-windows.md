@@ -1,8 +1,8 @@
 # Profiles, settings, paths, and window ownership
 
 Specification baseline, 2026-11-10. Completes the internal contracts under
-Q109-Q116/Q155-Q158. The trusted profile-activation boundary and saved-setting
-timing rules remain unchanged. No implementation or file migration is authorized.
+Q109-Q116/Q155-Q158. The [profile trust specification](profile-trust.md)
+supersedes the original activation rules. It specifies a future implementation.
 The File Explorer and editor decisions accepted on 2026-11-16 supersede the
 earlier profile-editor tab and terminal-only activation descriptions.
 
@@ -25,9 +25,10 @@ array order is significant. Pretty-printing need not preserve whitespace.
 
 Structural checks and resource/type bounds apply on every load. Detailed
 settings consistency, regex validity, and configuration guidance apply on every
-editor open, edit, and save. Connection still performs ordinary runtime checks
-such as port availability, supported limits, credentials, and file access;
-none introduces a profile approval screen.
+editor open, edit, and save. Apply the profile trust decision at connection
+time, before preparing the log or starting the transport. A permitted
+connection also checks port availability, supported limits, credentials and
+file access.
 
 ## Profile v1 fields
 
@@ -68,13 +69,36 @@ Profile IDs are content identifiers, distinct from local registration identity.
 
 | File | Required payload besides common version fields |
 | --- | --- |
-| settings.json | `language`: `system` (`en/ja/system`), `theme`: `system` (`system/light/dark`), `bell`: `visual` (`visual/off`), `defaultTerminalFont`: family Consolas and sizePoints 12, `defaultRetainedRows`: 5000, optional `autoCloseDisconnectedTabs`: boolean, default `true`, optional `credentialVaultPath`: absolute `.tttykey` path or null for the default, optional `broadcastAcrossWindows`: boolean, default `false` (broadcast extension) |
+| settings.json | `language`: `system` (`en/ja/system`), `theme`: `system` (`system/light/dark`), `bell`: `visual` (`visual/off`), `defaultTerminalFont`: family Consolas and sizePoints 12, `defaultRetainedRows`: 5000, optional `autoCloseDisconnectedTabs`: boolean, default `true`, optional `credentialVaultPath`: absolute `.tttykey` path or null for the default, optional `broadcastAcrossWindows`: boolean, default `false` (broadcast extension), optional `maxPasteTextBytes`: positive integer byte count, default `536870912` (512 MiB) |
 | highlighting.json | `sets`: ordered array, initially empty; each has `setId`, `name`, `enabled`, `rules`; each rule has `ruleId`, `name`, `enabled`, `pattern`, `ignoreCase`, `style` |
 | style | Nullable `foreground`/`background` as `#RRGGBB`; nullable booleans `bold` and `underline`; null inherits terminal attributes, never a lower-priority rule |
 | state.json | `registrations`, `lastWindow`, legacy `selectedVaultPath` for settings that predate the vault path field. Contains application state only. |
 | registration | Independent `registrationId`, canonical opening path plus display spelling, `favorite`, nullable UTC `lastUsed`; missing status is observed locally, not a profile rewrite |
 | lastWindow | Normal bounds in DIPs, monitor identity/work-area/DPI observations, maximized flag; never restore minimized |
 | host-keys.json | Versioned host records defined in the transport contract, independent of vault and portable settings |
+
+Clarified whole-codebase architecture Q26 retains `maxPasteTextBytes` as an
+application-wide user setting independent of connection profiles, alongside
+shared immutable source storage in the existing resource budgets. It measures
+one paste's actual selected Unicode text before target encoding at two bytes
+per UTF-16 code unit, including unchanged CR/LF but excluding the terminating
+NUL, allocation padding, metadata and other clipboard formats. Older supported
+files without this optional field resolve to 536,870,912 bytes. Accept a positive
+finite whole-byte integer with checked representation; zero, negative,
+fractional or overflowing values are invalid, not an unlimited sentinel. Unit
+presentation must not silently round the saved byte value. Use existing validated
+Save/Cancel and persistence-failure behavior, with English/Japanese resources
+explaining the source-size measure and per-operation scope.
+
+A successful save changes subsequently started paste operations. Existing
+capture, preview and send operations retain the limit captured at their start;
+lowering it cannot truncate or cancel those operations. Cancel or failed save
+changes no effective value. Text within the configured limit still requires
+ordinary validation and [resource admission](resources-and-validation.md).
+Q28-Q29's independent aggregate policy is superseded: add no aggregate-limit or
+memory-percentage field/control. Paste delays/Remember remain application-run-only
+as below. Candidate 6's final Q23 review was accepted on 2026-11-18; this
+documentation change implements no file migration.
 
 Language/theme/bell and saved rule content apply live after successful save.
 The auto-close preference applies to subsequent disconnections after saving.
@@ -128,6 +152,12 @@ data streams, and embedded NUL. Do not expand environment variables or a tilde.
 Long-path handling may use an internal extended prefix; it is not a new path
 syntax exposed to users.
 
+The profile editor explains that enabled recording opens the log destination
+before the terminal connection starts. A UNC path, a mapped drive, or a relative
+path beside a profile on a share can cause Windows to authenticate to that
+share and store received output there. Explorer's Edit command opens the profile
+for inspection without starting its connection or recording.
+
 Registration identifies the normalized opened location, not the final link
 target, file ID, or serialized profile UUID. Preserve case-sensitive-directory
 distinctions; compare names using the owning directory's Windows semantics,
@@ -143,6 +173,12 @@ continuity. Without move tracking, an old inaccessible path can remain visibly
 missing until removed; it does not transfer identity to another path. A file
 handle ID/digest is useful for edit-conflict detection, not registration merging.
 
+Successful new registration automatically trusts the registered revision. Manual
+connection to an unregistered profile offers the three connection choices even
+if the revision is already trusted. Opening an editor, saving, or registering
+a profile does not prompt for trust. Unregistering removes all profile trust
+for that opened location. See the [profile trust specification](profile-trust.md).
+
 ## Save and recovery
 
 Keep an editor draft and original file identity/digest. Save validates, compares
@@ -154,8 +190,9 @@ keeps the draft and last effective settings, reports actual outcome, and must
 not falsely label Saved. File replacement is not a multi-file transaction.
 
 If replacement reports an ambiguous outcome, compare target/candidate/backup
-against expected bytes; freeze affected writes until the effective file is
-known. Never assume every error left names/content unchanged. Corrupt files
+against expected bytes; freeze affected writes until the publication and required
+preservation are resolved under the contract below. Never assume every error left
+names/content unchanged. Corrupt files
 stay intact for explicit backup restore, temporary defaults, or exit. Temporary
 defaults keep that store read-only until deliberate recovery/recreation after
 preserving the original under a noncolliding name. Newer schema is not silent
@@ -168,6 +205,128 @@ cannot start or reconnect a session; restore or explicitly save a valid profile
 first. Host-store failures follow explicit recovery and must not silently turn
 known hosts into unrecognized hosts eligible for fresh first-use approval.
 
+### Verified file operations
+
+One shared module owns the complete physical operation for profile, application
+store and encrypted vault publication: same-directory staging, access rules,
+writer exclusion where required, write/flush, original-basis recheck, publication,
+target/candidate/backup inspection and owned-artifact cleanup. Its interface
+accepts complete typed requests for non-overwriting creation, existing-file
+update or explicitly authorized restore. Format owners retain serialization,
+schema validation, unknown properties, allowed locations, preservation policy
+and effective revision adoption; the vault owner retains all cryptography,
+secret ownership and credential-use decisions. Streaming logs and SFTP file
+operations retain their own contracts. A profile save and registration/settings
+save remain separate outcomes, without a multi-file transaction.
+
+Admission is synchronous and does not wait on filesystem I/O. It reserves bounded
+capacity and returns an operation ID with a read-only operation view before a
+caller can cancel observation. Rejection transfers no ownership and changes no
+files. Identity resolution, verification and I/O run in owned execution after
+admission; acceptance alone does not permit mutation. Bind each accepted
+request to its original editing basis and immutable candidate bytes, with
+format-owner evidence of rules, identity/revision, length and digest. Neither
+later draft edits nor another save may change that basis. Required copies and
+buffers count against the limits. Do not expose a caller-managed staging or
+cleanup protocol or a second public per-file owner. An ordinary caller awaits
+one initial observation; bounded current status, reconciliation and actual
+resource release can be observed separately without a required monitoring loop.
+Discarding the operation view does not end owned work or impose a cleanup duty
+on the caller.
+
+Coordinate the normalized opened location, parent namespace and final name
+before mutation, retaining the reservation through replacement and unresolved
+outcomes. Coordinate known aliases and observed physical identities without
+merging registrations or changing opening-path semantics. Track old and
+installed identities separately; replacement can change the file ID. If safe
+coordination of potentially conflicting work cannot be established, refuse or
+defer mutation. Keep existing directory case/short-name semantics and per-format
+access, lock and location rules. This provides no atomic compare-and-swap
+against arbitrary external writers.
+
+Compare each artifact using one bounded acquired image for its digest and
+validation; do not combine facts from different reads into a single observation.
+The three files do not form an atomic snapshot. Detected changes invalidate
+the affected evidence. Equality with a previously authenticated encrypted image
+can establish that vault generation without another unlock; independently
+selected restore content needs its own authentication and schema validation.
+The common module receives no keys, master password or plaintext credentials.
+Verification and domain result handling do not run under a mutex they may need
+to reacquire; logical operation admission remains held.
+
+Report target evidence, required preservation, overall outcome and remaining
+resources/artifacts separately, with the operation ID and a monotonically
+increasing observation revision. Owners ignore obsolete observations rather
+than reverse newer effective state. Filesystem return codes alone do not decide
+whether publication occurred.
+
+| Evidence after relevant issued work settles | Outcome and adoption |
+| --- | --- |
+| Candidate verified at target; all required preservation verified | Complete publication; the format owner may adopt the effective revision. Cleanup may still be pending. |
+| Candidate verified at target; required backup/recovery copy missing or different | Known partial publication; retain prior effective state/draft and freeze ordinary writes. Report that the target changed and preservation failed. |
+| Candidate verified at target; required preservation unreadable/unverified | Target publication is known, preservation unresolved; retain the same adoption restriction without hiding the known target fact. |
+| Original update/restore target verified intact, or create destination verified absent | No effective publication by this operation; distinguish an intact original from a new file that was never created. Report candidate/backup side effects separately. |
+| Unexpected revision or detected external change | Conflict; preserve observed external data and required owned recovery material. No automatic merge or overwrite. |
+| Target missing/damaged or evidence unavailable | Distinguish absence/damage from inability to inspect; retain freeze/recovery restrictions. No automatic restore or empty reset. |
+| Only cleanup fails or remains pending | Keep the verified publication result; report retained artifacts and actual-resource lifetime. Do not describe it as unchanged or nothing saved. |
+
+Ordinary backup preservation concerns the previous validated generation. An
+explicit restore instead preserves the exact observed original bytes, even if
+damaged, under a unique recovery name; that copy is not a validated backup.
+Partial publication is neither ordinary success nor an unchanged file. Reinspect
+unavailable evidence, but do not loop or recreate a known missing artifact.
+Explicit recovery or the next application run must establish the next usable
+state; ordinary reopening cannot clear a partial/unresolved restriction.
+Recovery is a new authorized operation. Transfer the target reservation without
+a gap only once earlier potentially mutating work ends and the domain owner
+selects recovery with the required evidence/artifacts still owned. Failed
+recovery cannot clear the prior restriction. A later run validates actual files
+normally; it does not retroactively make the previous save successful.
+
+Observation cancellation ends only that wait. Serialize cancellation of work
+against issuing publication: cancellation alone proves no publication only
+when issue was prevented. Once mutation may have been issued, retain actual
+work and inspect its result. Seeing an old/absent target is not final while issued
+work could still change it. Concurrent reconciliation joins the same inspection pass
+and never republishes, rebases or restores implicitly. Later reconciliation may
+admit another pass; release of an earlier pass's I/O and verification resources
+is not proof of current quiescence. Only retirement ends inspection admission.
+
+Keep operation/close guards while actual I/O or owner-dependent verification is
+pending. Once both have ended, allow editor closure or application exit with
+partial/unresolved facts and target/recovery paths visible in the existing close
+decision. Serialize this quiescence check and owner termination against further
+inspection/verification admission. Late callbacks cannot use a released owner.
+Leaving does not mark the draft saved, delete recovery files or approve degraded
+adoption. If the application continues, compact evidence and write restrictions
+survive view closure; later inspection uses retained non-secret proof or an
+ordinarily authorized live domain owner. On exit, domain secret lifetimes end
+normally. Operation IDs are not durable, and no journal, automatic recovery,
+hidden process lifetime or post-process cleanup guarantee is introduced. The
+recording five-/ten-second rules do not apply to these file operations.
+
+Set finite, versioned internal limits on operation records, owned bytes and
+retained artifact count/bytes. Reserve capacity before admission/allocation;
+reject or defer new work without effects when full. One conflicting target has
+at most one potentially mutating/unresolved operation, apart from the explicit
+recovery handover. Release large buffers after actual work ends when compact
+evidence is sufficient. Never evict unresolved restrictions by TTL, cancellation
+or memory pressure. Account for recovery ownership transfers explicitly; normal
+user files and validated `.bak` files are distinct from transient/unresolved
+artifacts. Delete only files whose ownership is established, not a replacement
+at a reused candidate path. Retire only resolved, resource-free records; unknown
+or retired IDs cannot replay publication and completed history stays bounded.
+Existing preparation limits are not the entire commit/artifact budget. Fix exact
+new limits in internal policy at implementation start and test at/beyond them;
+no deadline can guarantee completion of unresponsive OS I/O.
+
+The [accepted 15-case verification plan](../drafts/whole-codebase-architecture-deepening.md#candidate-3-verification-plan)
+exercises the ordinary interface with real format/cryptographic validation,
+controlled filesystem/time adapters and real-file integration, including UNC
+only for formats supporting it. It is required future verification, not executed
+evidence. Q7-Q11 of that review establish implementation readiness for this
+design; implementation and prototyping still require a separate user request.
+
 ## Windows, activation, and modal order
 
 One Windows-user application instance of `TabTty.exe` owns terminal and
@@ -175,14 +334,18 @@ standalone editor windows. Use an authenticated same-user local activation
 channel with bounded operation kinds and paths for the profile and vault
 actions, and generation-checked dispatch. Reject invalid operation/path
 combinations. An invalid Edit request must never fall through to connection.
+Before forwarding or accepting file paths or arguments, both processes verify
+the installed TabTty peer and match its user, logon SID, Windows session,
+elevation state and mandatory integrity SID. A mismatch or an unreadable token
+ends forwarding before either process discloses paths or dispatches actions.
 
 Admit file activations FIFO up to the [pending-open capacity](resources-and-validation.md).
 While a blocking modal is active, queue without starting file-preparation
 deadlines. Route profile connection requests to the last active surviving
 terminal window, restoring it if minimized. Create a terminal window when none
 exists and exit is uncommitted. Reserve tabs in the order received before
-asynchronous loading. Each connection action runs its own ordinary preparation
-and connection workflow. Display its failure in its own tab. Q158's separate
+asynchronous loading. Apply the connection decision to each file and continue
+preparation only for a permitted connection. Display its failure in its own tab. Q158's separate
 profile and log 30-second deadlines begin when their respective stages run.
 Standalone editors do not take part in last-active terminal routing.
 
@@ -227,15 +390,19 @@ layout transaction; changed grids go through the session resize contract.
 
 ## File Explorer and editors
 
-Register `.ttty` and `.tttykey` with distinct Open and Edit verbs in the
-existing unpackaged Windows 11 distribution. Windows controls the default
-handler for each extension. The verbs below apply when TabTty is that handler.
+In the unpackaged Windows 11 distribution, register or refresh Explorer file
+types for the current account only when the user selects **Register TabTty file
+types with Windows** under **Maintenance** in the Settings tab.
+
+Register distinct Open and Edit verbs for `.ttty` and `.tttykey`. Windows
+controls the default handler for each extension. The verbs below apply when
+TabTty is that handler.
 The **Show more options** context menu is sufficient for Edit. For multi-select
 use the items Explorer delivers under its desktop verb selection limits.
 
 | File type | Open, double-click, or Enter | Edit |
 | --- | --- | --- |
-| `.ttty` | Register in place after basic loading checks and start one connection attempt in a new terminal tab per delivered file. Open and Enter on a multi-selection use this behavior for every delivered file. | Open one profile editor window per delivered file. Support multi-selection. |
+| `.ttty` | Apply the manual connection decision to each delivered file. Register its opened location if the user chooses registration. Start a connection only for a permitted file. | Open one profile editor window per delivered file. Support multi-selection. |
 | `.tttykey` | Open the vault editor for a single existing file. | Open the same vault editor for a single existing file. |
 
 Process all admitted profile files independently. A file that fails to load
@@ -248,9 +415,11 @@ uses the same profile form, layout, validation, and explicit save workflow as
 TabTty's existing-file editor. An Explorer edit saves in place and leaves
 profile registration and connection startup to Open. Selecting a saved
 credential explicitly may unlock the existing selected vault and select a
-reference. Opening or saving the profile does not unlock a vault. A missing or
-empty vault is reported by the Explorer editor's picker. Initialization is
-available through vault management.
+reference. Opening or saving the profile does not unlock a vault. Every credential
+picker reports a missing/empty vault without creating it. Ordinary Unlock and
+authentication retrieval also do not initialize. Creation or guarded empty-file
+initialization requires an explicit vault-management operation under the
+[complete vault contract](vault-format.md#complete-vault-management-operations).
 
 Use one standalone editor window per normalized opened location within each
 file type. Repeat requests restore and activate that window, preserving its
@@ -270,18 +439,91 @@ manual backups with the `.tttykey` extension open as ordinary files.
 
 When Settings changes the selected vault, any open vault editor keeps its
 target; the management tab and subsequent connections use the new selection.
-Reuse the newly selected file's unlocked owner if its editor is open. Apply
-the change after any active save or unlock for the affected files has settled.
+Reuse the newly selected file's unlocked owner if its editor is open. Reject
+the settings change as Busy before saving while affected work is active; a
+later explicit save can apply it once that work has settled, as detailed below.
 Show the target path for Restore and Archive confirmations. After an Archive
 initiated in a standalone editor succeeds, show the archived path and close
 the editor after acknowledgment. Restore and password changes keep the editor
 open at the same path and refresh its state.
 
+### Vault selection and operation hosting
+
+Management tabs and standalone editors use the vault module's named complete
+operations on a non-secret file-bound context. UI owners provide localized
+forms, input, file pickers, required confirmation/impact display and window
+hosting. They do not acquire an unlocked owner, wrap a mutation in serialization,
+or call a separate refresh after saving. The shared vault owner publishes
+committed metadata with its effective snapshot/root/revision; views can observe
+current state after a notification failure without repeating the operation.
+Contexts, subscriptions and operation views neither own roots nor prolong their
+lifetime. A context is bound to its opening location and selected/editor role
+epoch. Switching A-to-B-to-A does not revive the first A context; closing an
+editor invalidates its context even if another role retains the file owner.
+
+Keep the current Busy rejection before settings save when a requested selected-
+path change affects active old/new vault work. Retain the settings draft and
+effective selection; do not queue an automatic later settings apply. Once the
+affected work has settled, reserve its role transition and validate the settings
+revision before allowing the settings owner to publish. The reservation excludes
+new conflicting work through completion. An unchanged selected path does not
+create a role transition merely because other settings are saved.
+
+The settings owner retains serialization, file outcomes and effective settings
+adoption. Failure or partial settings publication keeps the prior effective
+selected role and the settings store's restrictions. Verified settings adoption
+and the reserved in-memory role/selection-epoch update form one ordered visibility
+transition for new credential requests: no new effective path with an old
+credential owner is observable. Once adoption occurs, UI closure or cancelled
+observation cannot abandon the role transfer. Settings and vault files still
+have separate physical outcomes; this is not a cross-file transaction.
+
+Use the same coordination for settings restore/default recovery and later
+adoption after settings reconciliation, not just the normal Save Settings action.
+Initial startup loading is distinct from changing roles of existing owners.
+Keep non-secret transition evidence if the settings outcome remains unresolved;
+later adoption must reacquire valid ordinary roles rather than use an expired
+owner. An admitted transition retains the old/new owner references needed by
+actual work if an editor closes meanwhile. Promote a usable existing editor
+owner on success; on failure, reevaluate release under the unchanged roles.
+Quiescent unresolved metadata alone cannot extend an editor-only secret lifetime.
+Preserve stale-location restrictions across switching away/back and keep every
+standalone editor's original target.
+
+Shared unlock participation belongs to admitted operations/connections, not
+their observers. Cancelling an observation or disposing a subscription does not
+remove that consumer. A consumer's explicit stop does not cancel other consumers.
+The interaction coordinator may transfer a prompt to a surviving host or end it,
+preserving the operation/target identity and invalidating old-host replies.
+Shared prompt failure or cancellation ends its participants without a prompt
+loop. Late/duplicate input replies have one cleanup owner and are never consent
+for another target. Do not hold a reentrant physical mutex or occupy the expensive
+KDF/import worker while waiting for UI input or confirmation.
+
+The selected credential resolver checks exact references, role epoch and current
+eligibility immediately before handoff. It clears a result invalidated before
+handoff rather than retrying against a different vault. A valid handoff transfers
+the credential to the existing authentication owner and lifetime; selection
+change does not wait for all established terminal sessions to end or disconnect
+them. Vault input and actual native-work cleanup remain under the
+[vault operation contract](vault-format.md#complete-vault-management-operations).
+
+Editor/application termination coordinates prompt hosting, operation-stop
+requests, actual I/O/native/owner-dependent verification and new inspection
+admission. Pending work retains required owners; quiescent partial/unresolved
+outcomes may use the existing visible close decision, with paths and retained
+artifacts reported. Context release alone never disposes a live root. While the
+application continues, non-secret outcome/restriction records survive closed
+views. Archive success ends the old usable owner after dependent work settles;
+display failure after a verified archive does not undo it or authorize another
+move. Keep the established acknowledgement/standalone-editor closure and normal
+final-exit rules. No hidden lifetime or session-recording timeout is introduced.
+
 ### Editor acceptance cases
 
 | Scenario | Expected behavior |
 | --- | --- |
-| Select two `.ttty` files and choose Open or press Enter | Two ordinary connection attempts in distinct tabs, with location-based registrations. With no terminal window, create one to host the tabs. |
+| Select two `.ttty` files and choose Open or press Enter | Evaluate each file independently. Connecting or registering one file does not decide the other. Use distinct tabs for permitted connections. |
 | Select two `.ttty` files and choose Edit | Two editable windows and independent saves. With no running TabTty, the first launch shows only editors. Editing creates neither a registration nor a connection. |
 | Reopen a profile under edit from the other entry point | Restore and activate the existing editor with its draft. A copy at a different location opens separately. |
 | One profile in a multi-selection fails to load | Report that path's error. The other admitted file actions proceed. |

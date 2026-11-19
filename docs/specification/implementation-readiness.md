@@ -1,5 +1,30 @@
 # TabTty initial implementation readiness
 
+Architecture review update, 2026-11-18: the
+[whole-codebase interview](../drafts/whole-codebase-architecture-deepening.md)
+has finalized all six candidates: recording finalization, terminal transport,
+verified file commits, vault management operations, shared SSH channels and
+shared grapheme ownership. The user accepted candidate 6's revised complete
+contract and 39-case future verification plan in Q23, completing the design
+review. Its accepted paste policy uses the original shared-source and
+existing-input-budget accounting while retaining the configurable 512 MiB
+default source cap and confirmation for CR/LF or source size above 1 KiB.
+The later independent Q28-Q29 accounting branch is superseded.
+All six accepted designs are consolidated in the English/Japanese specifications
+and are ready for separately requested implementation. The verification plans
+remain required future evidence. This review performed documentation checks only;
+it provides no new runtime validation and does not authorize implementation or
+prototyping.
+
+On 2026-11-18, the user approved publication of this six-candidate breakdown.
+The [whole-codebase implementation plan #40](https://github.com/TabTty/TabTty/issues/40)
+and its 27 child issues are published: 26 implementation slices and one
+cross-owner verification slice. Read-back verification confirmed the approved
+bodies, labels, 27 native parent relationships and 34 native blocking relationships.
+The 134 accepted verification cases are assigned to the slices. Publication
+does not start implementation or prototyping; those require a separate explicit
+request.
+
 The [current codec decision](../drafts/terminal-codec-consultation.md)
 records 47 supported identities and the use of strict Win32 or Windows ICU
 conversion. The decision includes delegating Japanese JIS designations to ICU.
@@ -115,9 +140,12 @@ development tasks within these contracts, not unresolved product choices.
 - English and Japanese UI follows the system language by default, with English
   as the fallback. The surrounding UI supports system, light, and dark themes.
   The terminal defaults to white on black and honors ANSI colors.
-- Saved `.ttty` profiles are required for SSH/Telnet/COM. Trusted file activation
-  opens a new tab in the last active window. Multi-window drag/merge preserves
-  live sessions. Telnet/serial login remains manual; no initial macro runtime.
+- Saved `.ttty` profiles are required for SSH/Telnet/COM. The revised
+  [profile trust specification](profile-trust.md) defines when file activation
+  may start a connection and when registration trusts the loaded revision.
+  Implementation and validation of these rules are pending. Permitted file
+  connections open in the last active terminal window. Multi-window drag/merge
+  preserves live sessions. Telnet/serial login remains manual; no initial macro runtime.
 - SFTP v3 provides two-pane file and folder transfer and file management on an
   on-demand channel within the invoking tab's authenticated SSH connection.
   Remote names use the effective terminal transmit encoding captured when the

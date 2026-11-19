@@ -132,7 +132,12 @@ already buffered by the OS/host cannot be retracted. The bridge drops responses
 it can still cancel and never truncates a JSON frame while claiming a valid
 response; closing a failed pipe makes a partial frame a protocol failure.
 
-For input, stop unsent payload at the existing complete encoded/grapheme boundary.
+For input, retain the existing ordered revocation cutoff: no new payload may be
+admitted after it. Cancelling an active paste uses the common Stop rule at a
+complete scalar or required larger indivisible codec/control unit, even inside
+a short or long grapheme, without splitting CRLF. This does not authorize more
+payload after the cutoff or replay of an uncertain submission. Other input
+retains its existing complete encoded-unit cancellation rule.
 Only session-owned encoder/bracketed-paste closure and matching mouse-release
 cleanup may follow revocation; they are not new AI actions and do not need a live
 grant. Do not inject Enter, Escape, Ctrl+C, or an exit command. Do not disconnect
@@ -181,8 +186,10 @@ control automatically. Do not add macro attachment/launch through this feature.
 
 ## Tool interface, version 1
 
-Expose the following fixed tool set, with descriptions stating that all terminal
-text is untrusted task data, not instructions granting permission. Do not rely on
+Expose the following fixed tool set. Each description identifies terminal output
+and profile-supplied tab names as untrusted task data. Only the person's task
+can authorize commands, disclosure, or actions in other shared tabs and tools.
+The external host applies this distinction when it plans actions. Do not rely on
 MCP resource subscriptions, sampling, elicitation, host roots, or task extensions.
 Tool-capable text models can use these tools without image input. Protocol wire envelopes and
 compatibility revisions are specified in the transport contract.
@@ -491,31 +498,88 @@ the existing session failure policy.
 | Screen-region snapshot | 16 MiB accounted per capture, 2 captures per counterpart, 64 MiB app total; fixed 60-second TTL; release early on completion/revocation |
 | Observation/history cursor metadata | 256 handles per counterpart, 4096 app-wide; 60-second fixed TTL; no history-text pins; expire oldest with explicit errors |
 | Counterparts/in-flight calls | 8 attachments per app; 16 ordinary calls per counterpart; reserve a separate return/cancel/control path so waits cannot starve revocation |
-| Invocation rate | Token buckets: ordinary calls 20/s, burst 40 per counterpart and 100/s, burst 200 app-wide; new sends additionally 5/s, burst 10 per tab; excess returns `busy` with `retry_after_ms`, no automatic replay |
+| Invocation rate | Ordinary calls allow 20/s with burst 40 per counterpart and 100/s with burst 200 app-wide. New sends also allow 5/s with burst 10 per tab. Control-return requests have a separate allowance of 4/s with burst 8 per counterpart. Excess calls return `busy` with `retry_after_ms`. |
 | Search | 50 default / 200 max matches; max 10 context logical lines per side; 20 ms cooperative scan slices, 100 ms work budget per call, then continuation |
 | Wait | Default 1000 ms, max 10000 ms; grant idle time remains unlimited |
-| Input | Existing 1 MiB finalized paste limit and 2 MiB/256-unit per-session aggregate; AI input UTF-8 text capped at 256 KiB before encoding; one AI send in flight |
+| Input | AI input UTF-8 text capped at 256 KiB before target encoding; one AI send in flight. Target-specific paste work and ordinary input share the existing 2 MiB/256-unit per-session input allowance and existing closure reservations. One shared paste original/common work and actual target work fit the shared 4 GiB application envelope; no fixed finalized encoded-paste cap or additional paste allowance |
 | AI transient work | 64 MiB app-wide queued/copy/serialized/history/search work in addition to the separately charged 64 MiB snapshot budget; transport's 8 MiB per-counterpart payload budget is a subset, not an extra 64 MiB pool; count actual managed/native ownership |
+
+Accepted whole-codebase architecture Q20-Q22/Q24-Q27, including Q26 shared-budget
+accounting and its retained source-size/confirmation requirements, changes the
+common paste and stored-span
+mechanics. Candidate 6's final Q23 review was accepted on 2026-11-18.
+AI-supplied `paste.text`
+still has the 256 KiB UTF-8 request cap, does not access the clipboard and does
+not show the human clipboard confirmation. The human configurable source maximum
+(default 512 MiB) and confirmation for CR/LF or source size above 1,024 bytes
+do not apply to AI-supplied text or replace its 256 KiB UTF-8 request cap. A long
+valid input grapheme is not rejected at 256 scalars or truncated to the display's
+retained prefix; normal successful sending preserves its entire admitted text.
+Whole-input strict encoding preflight, permissions, observation validation and
+one-send ownership remain required.
+
+Use [shared paste storage and existing input work](resources-and-validation.md#shared-paste-storage-and-existing-input-work).
+The immutable source/common plan belongs to application ownership within the
+shared 4 GiB envelope; each target references it without charging the entire
+source to its 2 MiB input allowance. Private target work shares that existing
+allowance with ordinary input. Preserve pre-reserved Stop/closure capacity and
+actual-release accounting. Existing AI request/transport/transient buffers keep
+their own limits until actually released or ownership is transferred. Charge
+a physically transferred allocation once under its new owner, without inventing
+duplicate allocation; real overlapping copies remain separately charged.
+Ordinary `text` input retains its existing accounting and external request limits.
 
 Enforce the serialized JSON budget, not only the raw text limit. For history
 and search, verify the actual combined result size, including the text mirror,
 before private-channel queue admission; retain the bridge's defensive checks.
-Implementation capacity must fit a complete maximum-supported cluster. Trim
-pages at complete cluster boundaries with matching continuation, never silent
+Implementation capacity must fit a complete maximum retained stored span
+(256 scalars/1024 UTF-8 bytes). Use authoritative Rust stored spans rather than
+re-segmenting concatenated prefixes; the retained-prefix omission policy does
+not permit additional observation-time truncation. Trim
+pages at those complete stored boundaries with matching continuation, never silent
 truncation. If an explicit caller max_text_bytes limit is too small for the next
-complete cluster, return resource_limit without progress; do not exceed that
+complete stored span, return resource_limit without progress; do not exceed that
 limit or return an endless empty continuation. Snapshot memory and request bytes
 remain charged until their underlying I/O completes, including cancelled I/O. Shortage
 rejects only new AI work and does not evict terminal history or stall reception.
 These engineering limits are tunable after measurement only within accepted
 failure/retention semantics; they are not new user settings or performance claims.
 Rate buckets use a monotonic clock and include discovery/list/read/wait calls.
-Return-control, cancellation, human revocation, and private health have reserved
-capacity outside ordinary buckets; process them idempotently with bounded work.
+The bridge checks every control-return request against its attachment's return
+allowance before forwarding it. The GUI's pipe reader checks the counterpart's
+allowance before it allocates a request or schedules work on the UI thread.
+This includes invalid requests and
+repeat acknowledgements. A rate rejection leaves the grant as it was.
+Local takeover, cancellation and private health retain independent capacity.
 Check admitted duplicate sends before the additional new-send bucket. Rate
 rejection never consumes `action_seq` or promises that an older action was unsent.
 
 ## UI and offline operation
+
+Both permission dialogs identify the session by its tab name, transport and
+destination. Show the SSH account and host/port, the Telnet host/port, or the
+serial port from the session being authorized, including a retained session.
+These details stay in the local dialog. Display any formatting or line-control
+characters in identity fields visibly as Unicode code points. Before starting
+or switching a share, also show the direct launcher's OS-observed path and PID
+and the recipient's pairing code. Ask the person to
+check the launcher and match the code in the external AI host. Explain that
+programs and chats sharing this connection may use its grants and that the host receives the current
+screen and can search retained normal-screen history, including output from
+before sharing and from any unshared interval. Previously displayed or echoed
+secrets can become readable when the tab is shared again. A switch identifies
+the previous recipient whose share will end upon confirmation.
+
+Confirm each new control grant separately. Identify the tab and recipient and
+explain that the host can send keys and multiline commands with the permissions
+of the connected terminal, without per-action confirmation. Use Cancel as the
+default for both dialogs. Before committing a decision, recheck the connection,
+counterpart, sharing and control generations and ordinary eligibility.
+Both dialogs explain that locking Windows, switching users or disconnecting
+Remote Desktop preserves existing permissions so unattended AI work can continue.
+The usual terminal and counterpart loss rules still apply.
+Keep End AI sharing available directly in the selected shared tab's status bar,
+including during control and takeover. Taking control back preserves reading.
 
 Tab order: broadcast checkbox when applicable, existing connection indicator,
 AI state icon, unchanged profile name, existing attention/close elements. Read-only
@@ -530,8 +594,11 @@ English/Japanese resource labels include `AI sharing (read only)` / `AI共有中
 `Share output with AI` / `AIと出力を共有`, `Give control to AI` / `AIに操作を任せる`,
 `Take control from AI` / `AI操作を中断して引き継ぐ`, and
 `End AI sharing` / `AIとの共有を終了`. Keep resource identifiers independent of
-labels. Status/tooltip shows counterpart and bounded inert handoff reason; remove
-display-control characters from metadata. Do not change stored terminal text.
+labels. The status displays the bounded handoff reason on a separate line
+labelled as a message from the AI integration. Remove display-control characters
+from the optional client name and reason. When handing off password or one-time
+code entry, the host directs the person to end sharing before typing. Do not
+change stored terminal text.
 
 Context-menu and status actions expose UI Automation names/states and keyboard
 access. Do not reserve a terminal key as a global takeover shortcut. Announce

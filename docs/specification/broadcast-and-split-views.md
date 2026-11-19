@@ -62,7 +62,13 @@ setting change restore the checks, including an intentionally empty selection,
 regardless of which tab invokes Start. Stop hides the checkboxes and preserves
 their values for this application run, subject to Q197's scope-change reset.
 Disconnect/reconnect in the same tab and same-window group moves preserve them.
-New tabs start unchecked; closing a tab deletes its remembered selection.
+When a successful reconnect changes the transport, host and port, SSH account, or
+serial port, show a topmost modeless notification with the tab name and both
+destinations. Show it without activating it or moving keyboard focus. Terminal
+and broadcast input continue while it is open. OK dismisses the notice.
+The first connection and reconnects to the same destination do not show this dialog.
+New terminal tabs default to checked. They can receive input from the next operation
+once ready. Closing a tab deletes its remembered selection.
 
 A committed cross-window move sets the moved terminal tab's check to ON.
 Moving it back sets it ON again; there is no per-window remembered value for
@@ -91,9 +97,9 @@ scope before admitting input; never reset an unrelated active local mode.
 Clear each window's pending reset when it participates in that new Start.
 
 An application's first global Start checks all existing terminal tabs. With
-the scope unchanged, a new window joins an already-active global mode, but new
-tabs remain unchecked under Q178 and transferred tabs become checked under
-Q186. Joining counts as that window's first participation; subsequent Starts
+the scope unchanged, a new window joins an already-active global mode. New
+and transferred terminal tabs start checked. Joining counts as that window's
+first participation; subsequent Starts
 do not introduce a delayed first-use reset. Window first-use/reset state is
 runtime-only and disappears when that window closes or the application exits.
 
@@ -141,8 +147,10 @@ to the new connection.
 Serialize input admission for a mode and preserve each session's ordering
 against its other permitted input and automatic replies. Do not create a
 second writer for broadcasting or wait while holding multiple session locks.
-Per-session input budgets remain 2 MiB and 256 queue units, including preflight
-and in-flight ownership; broadcast does not multiply those allowances. A slow
+Ordinary per-session input budgets remain 2 MiB and 256 queue units, including
+preflight and in-flight ownership; broadcast does not multiply those allowances.
+Paste source/common-plan storage is shared in the existing application envelope;
+per-target private work shares the existing input allowance and send owner. A slow
 recipient may delay bounded work; an admission/send failure uses the same
 visible stop policy rather than silently dropping that recipient's input.
 The initial deadline is 30 seconds for broadcast preflight and individual
@@ -150,13 +158,47 @@ non-paste sends. Paste writes use the connection profile's wait setting.
 
 ## Paste and frozen operations
 
-Capture immutable clipboard text and intended recipients before preview.
-Required newline confirmation appears once with the target list and shared
-character/line pacing controls. No-newline paste retains its existing
-no-confirmation rule. Validate the complete payload for every recipient before
-sending any; each finalized encoded payload must satisfy the existing 1 MiB
-limit, with separate reserved codec/bracket closure capacity. Keep the existing
-0-10000 ms pacing fields and application-run-only remembered pacing behavior.
+Bind the paste to the active mode, input source and eligible recipient sessions
+when the user invokes Paste, before requesting text from the Windows clipboard.
+Keep the recipient selection locked while the clipboard provider prepares its
+data. Stop discards a late clipboard result. If a single-session paste is waiting
+for clipboard data or confirmation when broadcast starts, it cannot be sent
+through the newly active mode. Capture the configured source-size maximum at
+invocation and share the immutable source allocation across recipients.
+Accepted whole-codebase architecture Q24-Q27 retain the configurable 512 MiB
+default per-paste maximum measured as actual UTF-16 source-text bytes, captured
+at operation start, alongside original Q26's shared-budget policy. Q28-Q29's
+independent aggregate policy is superseded. Apply the same
+[clipboard-paste contract](session-and-recording.md#clipboard-paste) as the
+single-session path. For otherwise valid text within the captured maximum, show one
+confirmation with the frozen target list and shared character/line pacing fields
+when any CR/LF occurs or the source exceeds 1,024 bytes. Newline-free text at or
+below 1,024 bytes keeps the direct path; source-maximum equality alone does not
+force confirmation. Full text remains accessible through bounded
+scalar-safe preview pages. Keep 0-10000 ms delays and application-run-only
+Remember transitions, including size-confirmed newline-free text. Direct small
+input uses remembered character delay if enabled and changes no remembered values.
+
+Validate the complete payload and strict encoder finalization for every recipient
+before sending any payload/start marker; encoded outputs have no separate size
+cap. Use bounded conversion work rather than retaining one full output per target.
+Reserve each target's remaining bounded send/Stop/healthy closure peak under
+[resource accounting](resources-and-validation.md). Target-private conversion,
+preflight and transmit work share the existing 2 MiB/256-unit input allowance
+and existing closure reservation policy. The shared source/common plan is not
+charged again per target. Broaden the existing 4 GiB application envelope to
+cover terminal state plus owned paste source/work/copies, counting physical
+sharing once; keep the 2 GiB per-session terminal-state bound. Failed admission
+uses existing reject/defer behavior and sends no prefix/start marker. Keep held
+send/closure capacity, release resources only when actually done, and add no
+independent aggregate setting, available-memory percentage or waiting mechanism.
+
+The 30-second broadcast preparation deadline begins after confirmation, or when
+preparation begins if no confirmation is required. Exclude time spent in the
+dialog; do not restart the deadline on retries. Check expiry/cancellation during
+work and again after the final target's conversion immediately before first-send
+commitment. Expiry leaves every target not sent. The configured source maximum
+does not promise completion within that deadline.
 
 Freeze recipients from preparation/preview through completion or cancellation;
 show that target selection is temporarily unavailable. A target that becomes
@@ -165,7 +207,11 @@ quietly change the confirmed list. Cancelled preview sends nothing. Show
 per-target progress and one Stop for the whole paste. Reject additional user
 terminal input during paste under the existing paste rule. Each target's
 framing and unsent-tail cancellation remain session-owned. Stop closes valid
-started frames where possible and does not undo delivered payload.
+started frames where possible and does not undo delivered payload. Apply the
+same Stop rule inside short or long graphemes: the next complete scalar or
+required indivisible codec/control unit, without splitting CRLF. Internal work
+chunks add no pacing/count completion, and normal success sends the exact full
+input independently of each target's local-echo retained prefix.
 
 Mouse button gestures likewise freeze their selection until all buttons in the
 gesture finish or cancellation completes. A target's press recipients are
@@ -389,9 +435,9 @@ keep the existing layout usable. See [resource limits](resources-and-validation.
 | Scope preference | Defaults local; active input scope/selection and frozen recipients survive a save; next Start uses the saved scope and pending all-selection reset. |
 | Stop after saving global | Ordinary Stop ends all old local modes; no separate Stop All item. |
 | First use and restart | First local/global use checks existing terminal tabs in scope. Unchanged-scope restart preserves empty/partial selection regardless of invoking tab. Scope change invalidates all windows' old selections: next global Start checks all tabs, next local Start in each window checks its tabs. |
-| Reset timing and new windows | Same-value save does not reset; changing/saving back leaves reset pending. No reset affects an ongoing operation. New windows in an unchanged active global mode retain unchecked new tabs and checked moved tabs. |
+| Reset timing and new windows | Same-value save does not reset; changing/saving back leaves reset pending. No reset affects an ongoing operation. New windows in an unchanged active global mode start with new and moved terminal tabs checked. |
 | Source versus targets | Unchecked source sends only to checked ready targets; settings inputs and zero-target input send nothing. |
-| Tab identity | Reconnect preserves checks without replay; new tab starts unchecked; cross-window move/back checks ON, same-window move preserves; cancelled move does not reset. |
+| Tab identity | Reconnect preserves checks without replay; new tab starts checked; cross-window move/back checks ON, same-window move preserves; cancelled move does not reset. |
 | Shared panes | Several panes of a checked tab cause one delivery, one receive update, and one recording event. |
 | Per-target semantics | Different Enter/codec/key/bracket modes produce each target's expected operation, with its normal echo/log rules. |
 | Failure boundaries | Preflight failure sends nowhere; post-start failure reports submitted/uncertain targets, stops the affected mode, and never automatically resends. |

@@ -12,6 +12,11 @@ authentication choices, terminal settings, and session-logging settings.
 A local entry for a profile file in TabTty's profile list. An externally moved
 file is registered as a new profile rather than continuing its old registration.
 
+**Profile trust**:
+Permission remembered for the current user on this PC to connect with a particular
+version of a connection profile at its opened location. Both registered and
+unregistered profiles can have a trusted version.
+
 **Terminal session**:
 A connection attempt and the resulting terminal interaction created from a
 connection profile. Its displayed output can remain available after disconnect.
@@ -41,6 +46,11 @@ this does not imply that a remote application has accepted an account login.
 
 **Macro**:
 A reusable set of instructions for automating terminal interaction in TabTty.
+
+**Macro trust decision**:
+A user's remembered choice to allow or block a macro on this PC for a specific
+combination of file contents and ordered invocation arguments. It applies to
+identical copies opened anywhere with those same arguments.
 
 **Macro run**:
 One execution of a macro, distinct from its reusable instructions and the

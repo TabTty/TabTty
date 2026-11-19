@@ -51,9 +51,13 @@ a visible error; never connect to it as a substitute GUI. No endpoint exists
 after the application run ends. The pipe name is discovery, not authentication.
 
 Restrict its DACL to the current logon SID, with no broad user-account,
-Everyone, Anonymous, or network grant; reject remote clients explicitly. Check same user,
-logon session, and elevation on both ends. Run normally without elevation;
-an elevation mismatch fails without prompting for administrator access.
+Everyone, Anonymous, or network grant; reject remote clients explicitly. Both
+ends require matching user, logon SID, Windows session, elevation state and
+mandatory integrity SID before exchanging application data. Low and medium
+integrity can both be non-elevated. If any token field differs or cannot be
+read, reject the attachment. The same comparison applies to the direct launcher.
+Run normally without elevation and retain the current privileges on failure.
+[Windows mandatory integrity control](https://learn.microsoft.com/en-us/windows/win32/secauthz/mandatory-integrity-control).
 Clients request individual read/write rights, not instance creation or generic
 write; the server retains the rights needed to create its instances. Microsoft
 documents the permissive default DACL and logon-SID restriction, while
@@ -80,17 +84,20 @@ version 1 before admitting requests. Nonces distinguish attachments; they are
 not an authentication substitute or transferable permission. Reattachment is a
 new counterpart, even for the same executable, PID value, name, or launch config.
 
-The GUI's counterpart picker shows the display code, validated bridge location,
-and bounded claimed AI name marked as unverified. Its details explain that
+The GUI's counterpart picker shows the pairing code, the executable path and PID
+of the bridge's OS-observed direct launcher, the validated bridge location and
+the bounded claimed AI name marked as unverified. Its details explain that
 access belongs to this integration and may cover multiple chats in that host.
 `tabtty_list_shared_sessions` returns the same code so the person can match them.
-Selecting it to share a tab is the pairing action; it grants read access only
-to that tab. Separate bridges can represent separate integrations where the
+Confirming the selected counterpart grants read access only to that tab. The
+confirmation repeats the direct launcher's path, PID and pairing code. Separate
+bridges can represent separate integrations where the
 host supports that setup, without promising per-chat isolation.
 
 `clientInfo`, titles, icons, URLs, descriptions, request IDs, and chat identifiers
 never establish the authorization principal. Ignore supplied icon/website
-resources without fetching them; display strings as inert bounded text.
+resources without fetching them. Show the attachment's first nonempty claimed
+name as bounded, single-line text with no menu access keys.
 Identity checks bind a local process/channel, not the publisher, model, person,
 or semantic task. This design does not sandbox hostile code with sufficient
 same-user process access, protect a modified installation, or prevent an
@@ -193,12 +200,12 @@ budgets; no budget permits evicting terminal retention early.
 | Item | Planned bound and behavior |
 | --- | --- |
 | Public frame | 2 MiB total UTF-8 JSON bytes excluding LF; enforce incrementally before parsing or allocation growth |
-| Private frame | 2 MiB length-prefixed UTF-8 JSON body, checked before allocation; fixed 4-byte little-endian unsigned length |
-| JSON | Depth 32; reject duplicate property names, invalid UTF-8, non-finite numbers, malformed envelopes, and invalid argument types |
+| Private frame | 2 MiB length-prefixed UTF-8 JSON body, checked before allocation. Reserved control traffic has a 16 KiB frame limit. The length is a fixed 4-byte little-endian unsigned integer |
+| JSON | Depth 32 and at most 65,536 tokens per message. Reject duplicate property names, invalid UTF-8, non-finite numbers, malformed envelopes, and invalid argument types |
 | Metadata | 16 KiB total client metadata; display name/version each <=128 Unicode scalars; ignore unknown optional metadata within bounds |
 | Attachments | 8 bridge attachments per application, including unshared; excess fails without replacing existing counterparts |
 | Outstanding work | 16 ordinary requests per counterpart, at most one admitted input operation per tab; reject excess with busy, never an unbounded queue |
-| Invocation rate | Ordinary calls 20/s, burst 40 per counterpart; 100/s, burst 200 app-wide; new input also 5/s, burst 10 per tab, as specified in the tool contract |
+| Invocation rate | Ordinary calls allow 20/s with burst 40 per counterpart and 100/s with burst 200 app-wide. New input also allows 5/s with burst 10 per tab. Control returns have a separate allowance of 4/s with burst 8 per attachment, checked at stdio ingress and by the GUI's pipe reader. |
 | Serialization | Include text fallback, structured result, metadata, escaping, and envelopes in frame accounting; page before oversize, never split JSON arbitrarily |
 | Tool result | 1 MiB serialized result including text fallback and structured data together, leaving space for the 2 MiB frame's envelope |
 | Buffering | 8 MiB adapter-owned live payload per counterpart, charged within the tool contract's 64 MiB application transient-work total, including in-flight/failed-owned frames |
@@ -221,15 +228,22 @@ or unrecoverable framing failure ends attachment promptly. Protocol errors with
 a valid bounded frame receive the appropriate error; oversize/unframed input
 closes the transport without echoing its content.
 
-The bridge resolves its direct launcher from a Toolhelp process snapshot,
-opens a query/synchronization handle, and rejects an exited process or a creation
-time later than its own. It monitors that handle for exit; launcher information
-is diagnostic, not a trusted host identity.
+The GUI and bridge independently resolve the bridge's direct parent through
+Windows. Each opens and holds a query/synchronization handle, checks the parent
+PID and creation order, and verifies the token fields required above.
+Both monitor the launcher's lifetime. The GUI obtains the executable path from
+its own process handle. This identifies the direct launcher, which can be a
+general-purpose runtime. It does not identify a model, chat or software publisher.
 [Parent PID](https://learn.microsoft.com/en-us/windows/win32/api/tlhelp32/ns-tlhelp32-processentry32w),
 [process creation time](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocesstimes).
 Hosts must retain the directly launched bridge and its streams for the
 integration lifetime. Orphaned/inherited streams cannot preserve grants after
 observed launcher exit. Failure to establish this lifetime binding rejects setup.
+While that launcher remains alive, any program to which the host delegates the
+same live stdio handles can act through the existing attachment. External chats
+using one host connection and a compromised authorized host are indistinguishable
+at this boundary. A program launching a separate bridge receives a fresh,
+unshared attachment even if its path and claimed client name match.
 Process loss revokes all that counterpart's sharing/control through the GUI
 contract. GUI exit closes every attachment and bridge; bridges never keep the
 application run alive. Restart/retry creates a new empty permission state.
@@ -260,7 +274,7 @@ is promised. End sharing before sensitive terminal work when required.
 Primary-source review occurred on 2026-11-14. No implementation, installation,
 runtime, offline, host/model interoperability, or security test was performed.
 Later validation must cover both MCP revisions; absent/closing GUI; different
-users/logons/elevations; remote pipe rejection; endpoint squatting/PID reuse;
+users/logons/elevations and distinct non-elevated integrity levels; remote pipe rejection; endpoint squatting/PID reuse;
 same-name counterparts; multiple chats sharing one counterpart; cross-counterpart
 handle rejection; cancellation and revocation races; malformed/oversize/slow
 frames; quiet inference versus process loss; stale grants after restart; and

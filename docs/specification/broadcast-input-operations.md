@@ -96,18 +96,31 @@ included once regardless of pane count. An unchecked source can originate input
 but receives it only if selected. Preserve the fixed recipient set through
 preview, sending, and gesture lifetime; newly checked or ready tabs cannot join.
 
-The module requests the existing single required newline confirmation, with
-target list and pacing fields. No-newline paste retains its no-confirmation
-rule. The UI adapter returns a choice; it does not change application defaults
-or start sending itself. Accepting a valid answer and updating remembered pacing
+The module applies the [clipboard-paste contract](session-and-recording.md#clipboard-paste):
+share one immutable source across targets and capture the configurable maximum
+(default 512 MiB of actual UTF-16 text bytes) at operation start. Reject text
+above that maximum. For otherwise valid text within it, request one confirmation
+if CR/LF occurs or source size exceeds 1,024 bytes. Include the frozen target
+list, bounded full-text preview and pacing fields. Newline-free text at or below
+1,024 bytes uses the direct path; source-maximum equality alone does not force
+confirmation. The UI adapter returns a choice; it
+does not change application defaults or start sending itself. Accepting a valid
+answer and updating remembered pacing
 is one ordered transition. Keep the existing 0-10000 ms values and application-
 run-only preference lifetime. Late or already-cancelled answers change nothing.
 
-Before any payload is admitted, preflight every required target conversion and
-reserve its bounded input capacity. Recheck connection generation/readiness
+Before any payload/start marker is submitted, preflight every required target's
+whole-text strict conversion/finalization without a separate encoded-size cap,
+and reserve its remaining bounded paste send/Stop/closure peak. Recheck
+connection generation/readiness
 without substituting a changed target list. Preflight failure sends none of the
 operation. Keep all existing per-target encoding, Enter/key/mouse modes, echo,
-and logging rules, and the current post-start failure policy.
+and logging rules, and the current post-start failure policy. The 30-second
+broadcast preparation deadline starts after confirmation, or at preparation
+start when no confirmation is required; dialog time is excluded. Recheck expiry
+and cancellation after the final target's conversion and immediately before
+first-send commitment. Retries do not restart the deadline, and expiry sends
+no target payload/start marker.
 
 ## Stop acknowledgement and operation completion
 
@@ -210,11 +223,28 @@ correctness; native validation remains necessary.
 
 ## Ownership, closure, and bounded resources
 
-Retain the existing input budgets, including 2 MiB and 256 queue units per
-session, the 1 MiB finalized paste limit, and reserved encoder/bracket closure
-capacity. Keep existing broadcast preparation/non-paste deadlines and profile
+Restored whole-codebase architecture Q26 broadens the existing 4 GiB application
+[accounting envelope](resources-and-validation.md) to terminal state plus shared
+paste source/common analysis, capture/preview, target metadata and real private
+work/copies. Keep the 2 GiB per-session terminal-state bound. Target-private
+conversion, preflight, queued/in-flight work and result metadata share the existing
+2 MiB/256-unit input allowance with ordinary input and preserve the existing
+encoder/bracket closure reservation treatment. Do not charge the complete shared
+source/common plan again per target. Count actual sharing once and real copies
+separately until actual release, including inert late resources. Reject/defer
+new work under existing capacity rules and the original deadline; partial
+reservations cannot create a multi-session lock wait cycle. Held remaining
+send/closure capacity is not available to new work. No independent paste pool,
+aggregate setting or available-memory percentage is added; Q28-Q29 are superseded.
+Keep existing broadcast preparation/non-paste deadlines and profile
 paste-write timing. Progress bookkeeping is bounded to owned operations and
 targets; this design does not create a persistent operation-history store.
+
+Normal successful paste sends the full immutable input even when one grapheme
+exceeds 256 scalars. Stop uses the next complete scalar or required indivisible
+codec/control unit inside any grapheme without splitting CRLF, followed by
+healthy reserved closure. Internal chunks do not complete grapheme counts or
+pacing waits, and local-echo storage omission cannot truncate the send payload.
 
 Prepared reservations, buffers, native capture, and callback resources remain
 charged until actual release. Neither Stop, view detachment, nor a closed source

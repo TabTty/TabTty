@@ -107,7 +107,7 @@ authorized terminal data across counterpart/sharing boundaries.
 | --- | --- |
 | W01: stdio framing, Q6/Q32/Q35 | Split/concatenate UTF-8 JSON messages at every relevant boundary; malformed/unknown input, the 2 MiB frame bound, EOF mid-message, cancellation, parallel reads, and legal notifications. Stdout contains protocol messages only; bounded stderr errors contain no terminal/secret payload. |
 | W02: counterpart binding, Q7/Q9/Q31 | Spoof self-reported names and use another attachment's handles. Unshared/unknown sessions return `not_shared` without leaking contents; an invalid cursor within an authorized session returns `cursor_expired`. Same-counterpart conversations can share grants; names and ordinary MCP chats are not authenticated isolation boundaries. |
-| W03: local IPC, Q7/Q31/Q32 | Use real processes under different users, same-user different logons, and different elevations. Test remote pipe rejection, endpoint squatting, stale endpoints, PID reuse, executable mismatch, and duplicate attachments. Record actual access decisions; a string comparison or mocked ACL is insufficient. |
+| W03: local IPC, Q7/Q31/Q32 | Use real processes under different users, same-user different logons, different elevations, and non-elevated low/medium integrity levels. Verify both bridge attachment and file activation reject an integrity mismatch before data exchange. Test remote pipe rejection, endpoint squatting, stale endpoints, PID reuse, executable mismatch, and duplicate attachments. Record actual access decisions; a string comparison or mocked ACL is insufficient. |
 | W04: duplicate sends, Q23/Q24/Q35 | Exercise strict per-grant sequence, one in-flight operation, 256 outcomes and high-water mark. Fix the argument digest at admission; after basic authority checks, consult the ledger before new-sequence stale/encoding preflight. Repeat in-flight, lost-response and expired-observation requests, cache-evicted sequences, and changed arguments: no replay or false `not_sent`. |
 | W05: counterpart loss, Q15/Q26/Q32 | Close stdin/stdout, kill host/bridge with streams inherited by a surviving process, break IPC, suspend/resume, and trigger heartbeat/write deadlines. Confirm loss revokes sharing/control at its cutoff. Slow inference and completed individual requests do not revoke a healthy attachment. |
 | W06: read revocation, Q8/Q15 | End sharing while reads/waits are queued, being captured, serialized, or awaiting transport. No result is newly committed to the bridge channel after GUI revocation. The bridge drops responses it can still cancel; already committed delivery may arrive later, and OS/host-buffered bytes cannot be recalled. |
@@ -131,7 +131,10 @@ burst 40 per counterpart and 100/s with burst 200 application-wide, plus new-sen
 limits of 5/s with burst 10 per tab. Verify exact-boundary admission, bounded
 over-limit rejection, and fair recovery across peers/tabs. Return control, cancel,
 human revocation and private health retain independent reserved capacity under
-both rate and concurrency saturation; repeated cheap calls cannot starve them.
+ordinary rate and concurrency saturation. With a controlled clock, check that
+repeat acknowledgements and unknown sessions consume the counterpart's return
+allowance. Check rejection after eight requests and recovery after 250 ms.
+Other counterparts and local takeover remain available throughout.
 
 ## Layer 3: native Windows UI and input
 
@@ -145,34 +148,41 @@ and input route for each run. Synthetic UI events alone are not IME/capture proo
 | N01: indication, Q17/Q21 | In English and Japanese, test distinct shape-based sharing/control tab icons, tooltip/UIA names, unchanged profile label, and selected-tab details. A disconnected retained shared tab displays both connection and AI state. Light/Dark/system preserve distinguishability. |
 | N02: accessible takeover, Q4/Q17/Q23 | Keyboard-only menus, status-bar takeover, and Narrator reach the same action, including an inactive/minimized window restored by the person. It revokes locally without an AI reply; no ordinary terminal key is consumed as an implicit grant or forwarded takeover key. |
 | N03: IME, Q4/Q29 | Compose Japanese text, attempt a grant, cancel/commit, then grant explicitly. Cross-pane/tab focus changes cancel uncommitted text; commitment is once-only with no extra Enter. During AI control, local selection/copy/scroll work while terminal text/input remains blocked. |
-| N04: paste, Q14/Q23/Q29 | Human multiline clipboard paste still confirms; AI-supplied multiline paste does not read the clipboard or show that confirmation. Takeover at encoded/grapheme boundaries closes only a started valid frame and reports remaining cleanup. |
+| N04: paste, Q14/Q23/Q29, whole-codebase Q26-Q27 | Otherwise valid human text within its captured configured source maximum (default 512 MiB) shows one confirmation for CR/LF or UTF-16 source size >1,024 bytes. Without CR/LF at <=1,024 bytes, neither size nor equality with the maximum forces confirmation. Refuse invalid/over-limit text without prefix transmission. AI-supplied paste retains its 256 KiB UTF-8 cap and exemption from the clipboard, human source setting and confirmation. Takeover preserves the existing revocation cutoff; active paste cancellation uses complete scalar/required indivisible codec-control units, even within short/long graphemes, without splitting CRLF. Close only a started valid frame and report remaining cleanup. |
 | N05: mouse, Q13/Q23/Q29 | Verify supported tracking/coordinate formats, multiple buttons, mode changes, capture failure/loss, and takeover during a gesture. No desktop pointer movement comes from an AI action; matching releases do not target a new connection/mode. |
 | N06: view movement, Q22/Q25/Q28 | Move shared tabs across windows, split panes, resize, switch tabs, minimize, and detach the final tab. Identity/grants survive allowed moves; grid changes invalidate old observations, inner splits alone do not resize the grid, and output never steals focus. |
 | N07: real transports, Q13/Q15/Q24 | Cover SSH/Telnet plus a controlled serial loopback/peer with the actual Windows driver. Disconnect/unplug/stall during sends and cleanup; inspect peer bytes and retained state. Driver completion is not automatically remote command execution. |
 
-## Layer 4: independent hosts, models, and full-screen peers
+## Layer 4: Codex and full-screen peers
 
-Use two independent MCP hosts, not two models behind one host. These are selected
-validation candidates, not a compatibility claim or adopted TabTty dependency:
+On 2026-11-19 the user selected Codex as the host for real-assistant acceptance.
+The product exposes its existing host-independent MCP interface. Start the packaged
+GUI and configure Codex to launch the sibling `TabTty.McpBridge.exe --stdio` in
+the same Windows logon with matching elevation. Use a disposable terminal session
+connected to a peer that records its input and emits unique test markers.
+[Bridge setup](ai-collaboration-transport.md#deployment-and-setup)
 
-| Host path | Planned use and boundary |
-| --- | --- |
-| Goose + Ollama + preprovisioned local model | Exercise Goose's stdio extension path and its Ollama provider. Register the packaged bridge manually, with unrelated developer/desktop/network tools disabled for the acceptance workflow. |
-| LM Studio + preprovisioned local model/runtime | Exercise its independent MCP host/configuration and local inference path. Treat LM Studio as proprietary, not an OSS option; its application terms and each model's license are separate checks. |
+Use a Codex thread that can request approval for the test MCP calls. In the
+November 19 App Server trial, approval policy `never` blocked even the list
+call. With `on-request`, the trial client approved only the named read tools
+on the test connection, and the model listed and read the shared screen.
 
-Primary documentation checked on 2026-11-14 establishes these candidate component
-capabilities, not TabTty compatibility: [Goose providers](https://goose-docs.ai/docs/getting-started/providers/),
-[Goose extensions](https://goose-docs.ai/docs/getting-started/using-extensions/),
-[LM Studio MCP](https://lmstudio.ai/docs/app/mcp),
-[LM Studio offline operation](https://lmstudio.ai/docs/app/offline), and
-[LM Studio application terms](https://lmstudio.ai/app-terms).
-Recheck supported protocol revisions, licenses, and offline prerequisites at
-implementation start; no host, model, SDK, or dependency is installed by this plan.
+1. In a real Codex conversation, call `tabtty_list_shared_sessions`. Match the
+   returned pairing code in TabTty and share only the test tab with that counterpart.
+   Verify that the test tab first appears read-only and an unshared tab stays hidden.
+2. Have the assistant call `tabtty_read_state` and `tabtty_search_history`
+   or `tabtty_read_history`. Compare the screen and pre-sharing history markers
+   it reports with the peer's output. The peer should have received zero input.
+3. Grant control in TabTty, read a fresh observation and use `tabtty_send_input`
+   to send a harmless marker. Compare the peer's recorded bytes and count with
+   one expected delivery. Read the resulting terminal state in the conversation.
+4. Call `tabtty_return_control`. Check that reading continues, input using the
+   old grant is rejected and the peer receives no more bytes. End sharing in
+   TabTty and verify that the tab disappears and its former read handle fails.
 
-For each host, first verify discovery and a scripted read/send/return cycle with
-observed tool messages. Then run the same frozen natural-language task and fixture
-set with a recorded tool-capable model. Keep TabTty/tool-contract correctness
-separate from the host/model's ability to choose valid calls and infer task state.
+Capture the tool calls that Codex itself made and the independent peer observations.
+A bridge subprocess regression records protocol evidence separately. Use the same
+Codex connection for the following application tasks.
 
 | Scenario | Independent result to inspect |
 | --- | --- |
@@ -180,26 +190,15 @@ separate from the host/model's ability to choose valid calls and infer task stat
 | Ordinary editing task | After explicit control, modify one disposable remote fixture, save, verify its expected digest through the test peer, and return control. No per-change TabTty confirmation is introduced; there are no sends outside the current grant. |
 | `top` | Use a pinned peer/version with deterministic workload. Observe refreshed rows, cursor/modes and dimensions, make a supported key operation, resize and re-observe, then return control without needing an image-capable model. Refresh alone must not make all input stale. |
 | `vim` | Open a disposable UTF-8/Japanese fixture, navigate, insert multiline text, save, and verify exact file contents independently. Exercise supported mouse input separately, read parked normal history without exiting `vim`, and take over during a paced insert. |
-| Prompt and help | Use a synthetic password/OTP prompt: AI returns control with an inert reason, human inputs, and fresh grant resumes. End sharing can hide later output; already delivered content remains external. |
+| Prompt and help | Use a synthetic prompt. Returning control preserves reading. End sharing and confirm that reads fail. Display an ordinary marker while unshared, confirm the history disclosure on re-sharing, and verify that a retained marker is readable. A new connection requires fresh authorization. The host may retain content it already received. |
 | Interrupted/uncertain action | Lose the bridge/transport or response during a non-idempotent fixture action. Count peer effects and inspect grant state; no retry automatically reproduces the action. An unknown result must not be called verified success. |
 
 Pin the remote OS, shell, terminfo, `TERM`, `top`/`vim` versions and settings.
-Use only the [supported terminal contract](terminal-and-encodings.md) as the
-compatibility promise; record unsupported control sequences distinctly from an
-AI reasoning mistake. Remote command/file results need a fixture oracle, not the
-model's claim or an unchanged screen. Report task success per host/model as
-observed counts with failures; do not hide a failed run by retrying until success.
-Model hallucinations are not, by themselves, a TabTty protocol failure. An
-unapproved send or replay remains a core failure regardless of model behavior.
-
-For each host, preprovision application, inference runtime, weights, bridge,
-licenses and required configuration, then cold-start with Internet egress blocked.
-Run the full read/grant/edit/return/takeover cycle without package/model fetching
-or fallback to a cloud provider. Record attempted and permitted network traffic,
-including host update/catalog/extension checks. A host's blocked optional check
-is distinct from a required online dependency; neither may silently stall the
-workflow. Repeat with inference on an explicitly allowed closed-network server
-if that deployment is claimed; the controlling host remains on the TabTty PC.
+Use peer-side results to evaluate tool-contract correctness and record Codex task
+outcomes, including failed attempts. Report terminal compatibility limits against
+the [supported terminal contract](terminal-and-encodings.md). Exercise offline
+startup of the bundled bridge in the independent protocol tests. The Codex
+conversation uses its configured provider and the connectivity it requires.
 
 ## Resource, responsiveness, and delivery gates
 
@@ -220,21 +219,18 @@ engineering targets, not benchmark results. Model inference latency is reported
 separately and cannot conceal slow local revocation. Confirm every API/queue/
 snapshot limit from the technical contract at and beyond its boundary.
 
-Each implementation report must include case IDs and pass/fail/not-run status,
-TabTty commit/package hash, bridge/IPC/API/protocol revision, Windows and hardware,
-host/provider/runtime versions, model identifier/weight digest/quantization/license,
-inference settings and prompts, remote fixture digest/configuration, timing/trace
-artifacts, resource peaks, network policy/observations, and known limitations.
-Use synthetic data; do not attach real passwords or private terminal transcripts.
+Record case IDs, pass/fail/not-run status, TabTty package hash and source revision,
+bridge/IPC/API/protocol revisions, Windows and hardware, Codex version or build,
+model identifier when available, test prompt, remote fixture digest/configuration
+and peer results. Record latency, resource peaks and network conditions where
+relevant. Use synthetic data for screenshots and tool traces.
 
-Design readiness requires traceability for Q1-Q35, concrete observable contracts,
-fixed initial bounds, and no unresolved product decision blocking development.
-It permits reporting implementation readiness, not beginning implementation.
-After explicit implementation authorization, delivery requires passing layers
-1-3 and the resource gates, plus demonstrated protocol compatibility and offline
-workflows in both independent hosts. Publish host/model task results separately;
-any reduced supported behavior needs a specification decision, not a silent
-waiver. No evidence row may become Passed merely because its test is planned.
+Design readiness requires traceability for Q1–Q35, fixed initial bounds and resolved
+product decisions. Implementation requires separate authorization.
+Delivery requires passing layers 1–3 and the resource gates, plus assistant-issued
+tool calls and independently observed results through Codex in layer 4. Record
+the two-counterpart authorization and workload cases using independent bridge
+attachments. Report outcomes of the full-screen tasks individually.
 
 ## Retained-history architecture follow-up
 
@@ -255,6 +251,7 @@ coverage. Screen/wait/input observation behavior remains a regression requiremen
 | H04: unpublished successors | Validation failure, cancellation, expiry, or queue rejection leaves no live successor from that attempt and causes no eviction solely for its staged IDs. Source expiry, revocation, and independent quota retirement still apply. |
 | H05: checkpoint reuse | Source handles remain immutable with unchanged fixed expiry; successors receive their own fixed lifetime only at successful admission; each reuse revalidates range and authority. |
 | H06: result sizing | At and beyond the 1 MiB combined result limit, including escaping and the mirror, repaginate before admission with matching coverage and continuation; do not skip withheld matches. |
-| H07: minimum content | Maximum supported clusters fit implementation capacity; an explicit text limit smaller than the next cluster yields resource_limit without progress or an empty-success loop. |
+| H07: minimum retained content | Maximum retained spans of 256 scalars/1024 UTF-8 bytes fit implementation capacity; an explicit text limit smaller than the next stored span yields resource_limit without progress or an empty-success loop. Long incoming graphemes retain their prefix without session failure; exports preserve authoritative spans rather than re-segmenting concatenated prefixes. |
 | H08: bounded verification | Large history and long lines do not cause full-row traversal/index rebuild under the final publication gate; contention has bounded attempts and may return busy. |
 | H09: ownership and compatibility | Account staged, copied, queued, and cancelled-but-still-owned data until actual release; preserve retained read access after ordinary disconnect and invalidate it under reconnect/sharing-loss rules. Screen captures, waits, and input watermarks retain their contracts. |
+| H10: common rules, distinct operations | AI paste preserves admitted original text, including a grapheme beyond 256 scalars, while local display/history use stored prefixes. Preserve the 256 KiB UTF-8 AI request cap and no-human-confirmation path. Count the shared original once in the 4 GiB application envelope; target work shares the existing 2 MiB/256-unit allowance with ordinary input. Competing admission cannot consume reserved sending/Stop/closure capacity; request-buffer limits and authority checks remain unchanged. |
