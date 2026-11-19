@@ -1,10 +1,10 @@
-# AI 協業の検証計画
+# AI コラボレーションの検証計画
 
-2026-11-14 に[AI 協業のヒアリング](../drafts/ai-terminal-collaboration-issue.md)の合意済み Q1～Q35 に対する検証方針を確認した。ユーザーは、UI と AI が共有する協業操作の境界と、それを補完する Windows、MCP、実ホストの統合テストを明示的に確認した。その後、`ready-for-agent` を付けて [GitHub Issue #2](https://github.com/TabTty/TabTty/issues/2) を公開した。本書は受け入れ基準を定める。結果と未実施のケースは[実装状況](implementation-status-ja-jp.md#ai-collaboration-validation-2026-11-14)を参照。ソースと契約の整合性レビューは設計の根拠となる。[アプリケーションと API の契約](ai-collaboration-ja-jp.md)、[トランスポートの契約](ai-collaboration-transport-ja-jp.md)、既存の[セッション契約](session-and-recording-ja-jp.md)を併せて参照。
+2026-11-14 に[AI コラボレーションのヒアリング](../drafts/ai-terminal-collaboration-issue.md)の合意済み Q1～Q35 に対する検証方針を確認した。ユーザーは、UI と AI が共有するコラボレーション操作の境界と、それを補完する Windows、MCP、実ホストの統合テストを明示的に確認した。その後、`ready-for-agent` を付けて [GitHub Issue #2](https://github.com/TabTty/TabTty/issues/2) を公開した。本書は受け入れ基準を定める。結果と未実施のケースは[実装状況](implementation-status-ja-jp.md#ai-collaboration-validation-2026-11-14)を参照。ソースと契約の整合性レビューは設計の根拠となる。[アプリケーションと API の契約](ai-collaboration-ja-jp.md)、[トランスポートの契約](ai-collaboration-transport-ja-jp.md)、既存の[セッション契約](session-and-recording-ja-jp.md)を併せて参照。
 
 ## 検証の層と独立した観測
 
-UI と AI アダプターが使うアプリケーションとセッションのインターフェースを主なテスト境界とする。権限状態、不変の端末スナップショット、上限付きの結果ページ、セッションで順序付けられた入力受付と投入イベントを観測する。非公開メソッドや代替セッション実装だけで検証しない。実装承認後に既存の[端末の境界](tdd-seams-ja-jp.md)を協業操作で拡張する。公開ツール `tabtty_list_shared_sessions`、`tabtty_read_state`、`tabtty_read_history`、`tabtty_search_history`、`tabtty_wait`、`tabtty_send_input`、`tabtty_return_control` をすべて対象とする。GUI 専用の共有と操作権付与も同じ認可の所有者へ届くこと。
+UI と AI アダプターが使うアプリケーションとセッションのインターフェースを主なテスト境界とする。権限状態、不変の端末スナップショット、上限付きの結果ページ、セッションで順序付けられた入力受付と投入イベントを観測する。非公開メソッドや代替セッション実装だけで検証しない。実装承認後に既存の[端末の境界](tdd-seams-ja-jp.md)をコラボレーション操作で拡張する。公開ツール `tabtty_list_shared_sessions`、`tabtty_read_state`、`tabtty_read_history`、`tabtty_search_history`、`tabtty_wait`、`tabtty_send_input`、`tabtty_return_control` をすべて対象とする。GUI 専用の共有と操作権付与も同じ認可の所有者へ届くこと。
 
 期限と競合には差し替え可能な単調時計と制御可能なトランスポート完了境界を使う。実端末モデルにバイトを与え、出力バイトを独立に定めた期待値と照合する。本番エンコーダーの出力を同じ実装でデコードするだけでは不十分。受付、部分投入、完了、失敗を独立に制御する。後の層では実際の stdio、Windows IPC、WPF 入力、接続先ピアを使い、代替手段では確認できない動作を検証する。
 

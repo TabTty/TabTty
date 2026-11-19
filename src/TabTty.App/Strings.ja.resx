@@ -592,7 +592,7 @@ AI アプリは個別の確認なしでキーや複数行のコマンドを入�
   <data name="AiUnattendedConsent" xml:space="preserve"><value>Windows をロックしたとき、ユーザーを切り替えたとき、リモート デスクトップを切断したときも、この権限は続きます。</value></data>
   <data name="AiConsentExpired" xml:space="preserve"><value>端末または共有権限が変わりました。現在のタブと連携先を確認してから、もう一度許可してください。</value></data>
   <data name="AiEndSharing" xml:space="preserve"><value>AIとの共有を終了</value></data>
-  <data name="AiSetup" xml:space="preserve"><value>AI協業の接続設定</value></data>
+  <data name="AiSetup" xml:space="preserve"><value>AI の接続設定</value></data>
   <data name="AiCleanupPending" xml:space="preserve"><value>端末入力の後処理が続いています。接続を切断できます。</value></data>
   <data name="AiUnverified" xml:space="preserve"><value>未確認の名前</value></data>
   <data name="AiNoCounterpart" xml:space="preserve"><value>接続中の AI 連携先がありません。</value></data>
@@ -603,7 +603,7 @@ AI アプリは個別の確認なしでキーや複数行のコマンドを入�
   <data name="AiMacroOwnsInput" xml:space="preserve"><value>一時停止中もマクロが端末入力を占有します。</value></data>
   <data name="AiInputBusy" xml:space="preserve"><value>現在の入力を完了または中止してから、操作権を再度付与してください。</value></data>
   <data name="AiUncertainDelivery" xml:space="preserve"><value>AI の入力がどこまで届いたか確認できません。再送する前に端末を確認してください。</value></data>
-  <data name="AiEndpointUnavailable" xml:space="preserve"><value>AI 協業のローカル接続口を開けませんでした。</value></data>
+  <data name="AiEndpointUnavailable" xml:space="preserve"><value>AI コラボレーションのローカル接続口を開けませんでした。</value></data>
   <data name="AiSetupInstructions" xml:space="preserve"><value>AI アプリにブリッジを登録</value></data>
   <data name="AiSetupConfiguration" xml:space="preserve"><value>MCP 設定</value></data>
   <data name="AiSetupHelp" xml:space="preserve"><value>Goose では、下記の実行ファイルと引数を標準入出力（stdio）の拡張に登録します。LM Studio では、下記の JSON を MCP 設定に追加します。先に TabTty を起動し、連携先を接続してから照合コードを確認してください。オフラインで使う場合は、AI アプリ、実行環境、モデルを事前に用意してください。</value></data>

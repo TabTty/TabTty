@@ -2,7 +2,7 @@
 
 2026-11-14 に設計が承認され、実装準備が完了した。最終認識合わせを含むアーキテクチャ Q21～Q27 は合意済み。この文書は再構成の提案と検証要件を定義する。リファクタリングとテストは今後の作業。
 
-[アーキテクチャのヒアリング](../drafts/architecture-deepening.md)に決定事項と代替案を記録する。[同時送信と分割の契約](broadcast-and-split-views-ja-jp.md)、[AI 協業の契約](ai-collaboration-ja-jp.md)、[セッションと入力の契約](session-and-recording-ja-jp.md)、[リソース上限](resources-and-validation-ja-jp.md)を併せて参照。ADR 0002 の端末タブごとに一つのセッションと、ADR 0005 の AI の権限と出力共有の規則を維持する。
+[アーキテクチャのヒアリング](../drafts/architecture-deepening.md)に決定事項と代替案を記録する。[同時送信と分割の契約](broadcast-and-split-views-ja-jp.md)、[AI コラボレーションの契約](ai-collaboration-ja-jp.md)、[セッションと入力の契約](session-and-recording-ja-jp.md)、[リソース上限](resources-and-validation-ja-jp.md)を併せて参照。ADR 0002 の端末タブごとに一つのセッションと、ADR 0005 の AI の権限と出力共有の規則を維持する。
 
 ## 責務と境界
 
