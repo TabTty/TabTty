@@ -47,10 +47,15 @@ this does not imply that a remote application has accepted an account login.
 **Macro**:
 A reusable set of instructions for automating terminal interaction in TabTty.
 
+**Shared macro constant**:
+A named, read-only value defined outside the macro source and available to each
+macro that explicitly selects its definition file.
+
 **Macro trust decision**:
 A user's remembered choice to allow or block a macro on this PC for a specific
-combination of file contents and ordered invocation arguments. It applies to
-identical copies opened anywhere with those same arguments.
+combination of macro source contents, ordered invocation arguments, and the
+contents of every declared constants file. Identical copies of these files
+share the decision when launched with the same arguments.
 
 **Macro run**:
 One execution of a macro, distinct from its reusable instructions and the
@@ -196,16 +201,17 @@ a transfer window, including the outcomes for the affected entries. A transfer
 batch is a file operation for uploading or downloading.
 
 **Credential reference**:
-A reference to a particular vault entry and its credential kind, without
-containing the secret itself. Connection profiles and macros may share it.
+The name of a vault entry in the selected vault. The profile field or macro
+operation supplies the expected kind. It contains no secret.
 
 **Profile password**:
 The saved password selected by a connection profile, independently of whether
 a connection attempt uses it or successfully authenticates with it.
 
 **Vault entry**:
-A named item of saved authentication material in a credential vault. Its name
-is a label, distinct from the identity used by credential references.
+A saved credential that pairs one required SSH username with a password or an
+imported private key. Its name is unique within the vault and identifies it in
+credential references.
 
 **Credential vault**:
 An encrypted file containing saved authentication material that can be moved

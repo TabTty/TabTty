@@ -6,6 +6,16 @@ The workflow must remain controllable while a remote command is running, receivi
 
 ## Solution
 
+The [shared macro constants follow-up](macro-issue.md#shared-macro-constants-follow-up)
+extends version 1 after the original publication. Q78–Q88 specify external
+read-only definitions and include their captured file contents in macro trust.
+The [language](macro-language.md), [launch](macro-specification.md) and
+[validation](macro-validation.md) contracts describe the extension.
+
+The [current macro language](macro-language.md#session-paths-input-waits-and-window)
+specifies name-based password submission. The original proposal below records
+the former UUID-based interface.
+
 Add attended automation using trusted, externally authored `.tttym` source files and a defined, versioned C#-style language. Each invocation creates one new macro run and terminal tab, can explicitly attempt one saved-profile connection, and shares TabTty's existing session, recording, authentication, and vault behavior.
 
 Provide typed variables and lists, control flow, same-file helpers, string and time operations, line/prompt waits, text and reference-based password submission, optional-input dialogs, and host-window minimize/restore. Check the entire source before effects. Expose Pause, Resume, and Stop throughout execution, with bounded interpreter and matching work. Keep a healthy terminal session usable after the macro ends.

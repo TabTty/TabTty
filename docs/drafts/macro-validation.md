@@ -5,6 +5,8 @@ Drafted under Q69 and confirmed in final review on 2026-11-14. Read the
 Values below are accepted initial engineering
 guards, not measured capacity, completed tests or implementation authorization.
 Q70-Q77 were accepted in full on 2026-11-14; their cases are now required.
+The 2026-11-20 shared macro constants decisions Q78–Q88 add launch budgets
+and acceptance cases M62–M73.
 The existing terminal, input, log, SFTP and AI budgets remain separate
 and binding; macro admission cannot borrow their reserved capacity silently.
 
@@ -12,7 +14,7 @@ and binding; macro admission cannot borrow their reserved capacity silently.
 
 Use one primary feature seam: starting and controlling a macro run through the
 same application-facing run entry point used by Run Macro/file activation.
-Supply source/profile files and ordinary arguments, drive received payload and
+Supply source, constants and profile files and ordinary arguments, drive received payload and
 user Pause/Resume/Stop/dialog responses, and observe outgoing terminal data,
 run state/results, dialog/window requests, profile-registration effects and
 recording files. Assert observable outcomes and ordering, not parser node shapes,
@@ -36,7 +38,7 @@ controlled host. These supplement the primary seam rather than replacing the
 feature contract with private-unit assertions.
 
 The user confirmed this seam plan with the complete specification on 2026-11-14,
-satisfying the invoked to-spec skill. It does not authorize implementation or testing code. The 50-case
+satisfying the invoked to-spec skill. It does not authorize implementation or testing code. The
 matrix below describes the observable contract to verify once implementation is
 explicitly requested.
 
@@ -45,6 +47,9 @@ explicitly requested.
 | Resource | Accepted initial bound |
 | --- | --- |
 | Source file | 1 MiB encoded bytes; 1,048,576 decoded UTF-16 units; reject oversized source before unbounded allocation |
+| Constants declarations | Up to 16 per macro. Each alias counts, including a second alias for the same file. |
+| Constants files | Up to 1 MiB of encoded bytes per file and 1 MiB total across distinct normalized dependency paths per launch, in addition to the macro source allowance. Count BOMs and all whitespace. |
+| Shared macro constants | Up to 4,096 JSON members total across those distinct paths, including unused members. |
 | Parser/checker | 100,000 syntax nodes; lexical/expression/block nesting <=128; at most 256 functions, 32 parameters per function, 1,024 locals per frame; no call-graph cycle |
 | Types/call depth | List type nesting <=4; statically computed longest helper call chain <=64, including unused functions; reject deeper graphs before execution |
 | Active runs | 16 application-wide, including paused/dialog-waiting runs; reject new excess runs without stopping old ones; existing activation queue <=64 still applies |
@@ -73,6 +78,15 @@ owned allocated capacities, not just logical lengths: at least 64 bytes per
 syntax node, 32 bytes per value/list/string/pattern wrapper, 16 bytes per list or
 frame slot, plus string UTF-16 storage, line/gap metadata and explicitly owned
 buffers. Count actually shared immutable storage once; charge clones separately.
+Charge the source and constants from the start of each load. Apply the 32 MiB
+per-launch limit and 256 MiB application total during decoding, validation
+and pending review as well as execution. Include captured bytes, decoded text,
+keys and typed values, parser buffers and review copies. Reuse one captured
+snapshot per normalized dependency path within a launch. Two aliases for that
+path share its byte and member allowances. Reserve capacity before reading or
+materializing data and check variable-length input as it arrives. A failed
+read, rejected declaration, cancelled review or completed run releases its
+storage when the last owner finishes.
 VM metadata and capture/result copies are not free because their underlying
 source has been consumed. Host .NET regex, CLR, WPF, native/driver and OS overhead
 requires measurement and cannot be represented as a guaranteed exact ceiling.
@@ -245,6 +259,18 @@ observable behavior without replacing them.
 | M59 | Compare `[]`, `[""]`, `["a b"]`, `["a","b"]` and `["b","a"]`. Vary case, whitespace and Unicode normalization. Try different CLI quoting that parses to the same strings. | Each distinct ordered list has its own decision. Identical parsed lists match across routes, including Explorer and CLI with zero arguments. |
 | M60 | Edit the picker's arguments after a lookup, then execute. Have the running macro modify its own `Macro.Args`. | Admission uses the decision for the final edited list. A blocked pair cannot run and an unknown pair requires fresh review. Later mutation of the script's copy leaves the stored decision tied to the launch arguments. |
 | M61 | Reset all macro decisions with both allowed and blocked pairs, a launch review open in another window, an active connection, and trusted and registered profiles. | The next launch of each pair asks again. The old review cannot launch a run or restore a decision. The active connection continues. Profile trust and registrations are preserved. |
+| M62 | Open a version-1 macro with no declarations using existing allow and block records. Add a declaration and open the new source in updated and older builds. | The original macro honors both existing decisions for their respective arguments. The updated build accepts `#constants` in version 1 and checks the combined inputs. The older version-1 grammar rejects the declaration before execution. |
+| M63 | Use one UTF-8 macro with constants encoded as UTF-8 with and without BOM or BOM-marked UTF-16LE/BE and UTF-32LE/BE. Include Japanese text. Try malformed bytes and BOM-less UTF-16 JSON. | Each file uses its own encoding detection. All six valid files yield the same text. An invalid file prevents launch and the diagnostic identifies the offending dependency. |
+| M64 | Read strings, booleans, signed 64-bit integer endpoints, a fraction and an exponent from JSON. Try integer overflow, a non-finite conversion, a nested object, an array and null. | JSON strings and booleans retain their types. The integer endpoints bind exactly as long. A fraction or exponent gives a double, including `1e0`. Each invalid file prevents launch. |
+| M65 | Two macros declare the same file. A helper in one macro reads a member. Two different aliases have a member of the same name. Try assigning to a member, declaring a duplicate alias or referring to a missing or mistyped member in an unused helper. | Every macro and helper sees the typed value from the named alias. Each invalid source fails static checking before a run starts. |
+| M66 | A macro reads only `Common.Prompt`. Add an unused valid member, then try a duplicate member with an equivalent escaped key, a malformed trailing entry and a missing second dependency. | All valid definitions are accepted. Each failure prevents creation of a run or tab and all macro effects. Diagnostics identify the file and, for syntax or definition errors, the location. |
+| M67 | Launch from another working directory, move a macro and its relative dependency together, and declare a separate absolute path. Use two aliases for the same normalized path. Change the run's base directory in its first statement. | Relative declarations resolve at load time from the macro source directory. Each alias of one normalized path exposes the same captured values. Absolute declarations continue to select their files. |
+| M68 | Launch a local source declaring a UNC, mapped-drive or redirected dependency through the picker, CLI, Explorer or forwarding. Try cancelling read permission and consenting with a stored execution decision. | Before any possible remote access the user can inspect the affected path and cancel. Cancellation leaves the remote file untouched and ends the launch. After consent, the captured source, dependencies and arguments select the execution decision. |
+| M69 | Exercise exact and just-over declaration, distinct-byte and definition limits, with repeated paths, two individually valid files exceeding the aggregate, and several reviews held open. | A valid set at each limit can launch when memory is available. Excess inputs are rejected before effects. Repeated aliases count as declarations and share one file snapshot. Pending loads and reviews respect per-launch and application memory limits. Cancelling makes their released capacity available to later launches. |
+| M70 | Edit or replace a constants file during execution review and again during an admitted run. Delete the file before accepting a pending review. | Review and execution use the same captured data, including after deletion. The next launch reads the then-current files and a missing file prevents that launch. |
+| M71 | Hold source and arguments fixed. Edit an unused constant, whitespace, a BOM, or line endings. Swap different contents between two declared files, then restore the original bytes. Also open a byte-identical copy of the whole set in another folder. | Each previously unseen combination goes to review. Swapping the two contents changes the combination. Restoring the inputs or opening the identical copy reuses the decision for those bytes and arguments. |
+| M72 | Allow one constants version and block another for the same macro and arguments. Inspect the review, delete the files, and look up those arguments in Settings. | Review shows each alias, resolved path and captured contents. Settings distinguishes the two versions and can forget either decision by itself. Recreating the corresponding files gives review for the forgotten version and honors the decision for the other. |
+| M73 | Launch with a constants declaration when only a legacy source-and-arguments decision exists. Exercise a failed trust write and a reset across both decision formats while a dependency review is open. | Approval requires the exact dependency combination. A failed write stops launch. Reset clears both formats and invalidates the pending review across windows. Subsequent launches ask again. Decision records omit source text, paths, argument values and constants values. |
 
 ## Performance and responsiveness validation plan
 
@@ -285,6 +311,7 @@ does not implement those seams or run a prototype.
 | Q13-Q16, Q29-Q31, Q41, Q45-Q46, Q53, Q58, Q65 | Run/input/window lifecycle, safe sending, integration; M16, M20-M24, M38-M46 |
 | Q17, Q39-Q40, Q48-Q49, Q52, Q56, Q68 | Date/numeric/string/argument/dialog APIs and invariant semantics; M06-M09, M36, M39-M40, M48 |
 | Q18, Q51, Q69 | Error model and routine draft authority; acceptance matrix and final review gates |
+| Q78–Q88 | Shared macro constants in version 1, full-file validation, per-launch snapshots, execution review and individual decisions for each version in Settings. M62–M73. |
 
 Accepted Q70-Q77 refine the corresponding lifecycle, receive and secret-send
 behaviors in M41-M50. Every runtime matrix row is a future verification requirement,

@@ -1,7 +1,8 @@
 # Preserve a path for future macros
 
-The [macro feature interview](macro-issue.md) opened on 2026-11-12. Q1-Q77 are
-accepted and preserve the constraints here. The interview covers
+The [macro feature interview](macro-issue.md) opened on 2026-11-12. Q1–Q77 and
+the [shared macro constants follow-up](macro-issue.md#shared-macro-constants-follow-up)
+are accepted and preserve the constraints here. The interview covers
 specification only; it does not authorize a macro runtime or change the
 initial-release scope.
 
@@ -57,11 +58,17 @@ readable source with a required language-version declaration and execution of
 one validated snapshot. These future-feature decisions do not add macro
 execution, an editor or macro-file activation to the initial release.
 
+Macros may declare external JSON files of named, read-only scalar values.
+Each launch checks the complete set of definitions and uses the captured
+values through the end of that run. The declaration and access syntax are in
+the [language contract](macro-language.md#shared-macro-constants).
+
 The macro-enabled design lets the user remember an allow or block for an exact
-combination of file contents and ordered arguments on this PC. An identical
-copy opened elsewhere with the same arguments uses the same decision. Each
-different argument list has its own decision. A user may also run the macro
-once or reset all remembered macro allows and blocks in Settings. A running
+combination of source bytes, declared constants file bytes and ordered
+arguments on this PC. Identical copies opened elsewhere with the same
+arguments use the same decision. The user can also run the macro once.
+In Settings they can forget an individual decision for a constants version
+or reset all remembered macro decisions. A running
 macro's `Connect` checks the resolved profile's location and version under
 the shared [profile trust contract](../specification/profile-trust.md).
 Trusting that version from a macro leaves an unregistered profile unregistered.

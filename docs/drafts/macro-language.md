@@ -3,6 +3,7 @@
 Drafted under accepted Q69 and confirmed in the consolidated final review on
 2026-11-14, including routine language and API details. Read the
 [behavior contract](macro-specification.md) and [validation](macro-validation.md).
+Q78–Q88 extend version 1 with [shared macro constants](#shared-macro-constants).
 No parser, evaluator, API implementation or executable fixture is supplied.
 Examples below are specification examples, not claims of supported current code.
 
@@ -10,8 +11,10 @@ Examples below are specification examples, not claims of supported current code.
 
 The first non-whitespace/non-comment item is exactly `#tttym 1`, followed by a
 line ending or EOF. There is exactly one version directive. Permit `//` line
-comments and non-nested `/* ... */` comments before/after it. Other directives,
-missing/unsupported versions and malformed comments are source errors.
+comments and non-nested `/* ... */` comments before/after it. Zero or more
+`#constants` declarations may follow the version directive, before the first
+statement or function. An unknown or misplaced directive, a missing or
+unsupported version, or a malformed comment is a source error.
 BOM handling is outside this grammar. Preserve literal string contents while
 counting CRLF/CR/LF source positions as specified in the main contract.
 
@@ -37,7 +40,9 @@ literal/member tables below complete it. Whitespace/comments separate tokens.
 Each simple statement ends with `;`; control-flow bodies require `{ ... }`.
 
 ```text
-file           = version, { function | statement } ;
+file           = version, { constantsFile }, { function | statement } ;
+constantsFile  = "#constants", horizontalSpace, identifier, horizontalSpace,
+                 pathLiteral, directiveEnd ;
 function       = returnType, identifier, "(", [ parameters ], ")", block ;
 parameters     = type, identifier, { ",", type, identifier } ;
 block          = "{", { statement }, "}" ;
@@ -65,10 +70,10 @@ type           = "bool" | "long" | "double" | "string" | "List", "<", type, ">"
 
 `functionIdentifier` names a statically resolved builtin or file-scope helper;
 functions are not first-class values. `expression` consists of literals,
-variable/enum/metadata names, calls, parentheses, list literals and permitted
-postfix member/index access, combined by the precedence rules below. Only a
-local/parameter identifier or a direct index of such a list variable is an
-lvalue. To change `Macro.Args` or a nested list by index, first bind that list to
+variable/enum/metadata names, qualified shared constants, calls, parentheses,
+list literals and permitted postfix member/index access, combined by the
+precedence rules below. Only a local/parameter identifier or a direct index of
+such a list variable is an lvalue. To change `Macro.Args` or a nested list by index, first bind that list to
 a local alias; members themselves are read-only. `foreach` accepts `List<T>`
 only, not a string; an explicit iterator type must accept T by the usual
 assignment conversion, while var infers T.
@@ -89,6 +94,103 @@ Parameters are local variables passed by value; a list value is a shared list
 reference. Helpers do not implicitly capture top-level locals: pass them as
 parameters. They can call builtins, which operate on the same run/session.
 No `ref`, `out`, optional parameters, named arguments or user overloads initially.
+
+## Shared macro constants
+
+A macro declares each constants file on its own line. A version-1 reader that
+predates this extension rejects the unknown directive before execution. Write
+the alias and a literal path, separated by spaces or tabs. Use an ordinary or
+verbatim macro string on that line. For example, `#constants Site @"C:\Ops\site.json"`
+preserves the backslashes in a Windows path. After the literal, allow spaces or
+tabs and an optional `//` comment, followed by the line ending or EOF. A
+semicolon, interpolation, or a computed path is a source error. The directive
+spelling leaves `constants` available as an ordinary identifier.
+
+TabTty resolves relative paths against the macro source directory at launch.
+An absolute path selects its stated location. Each declaration binds its alias
+to the captured file for this run. See the [launch and read permission
+rules](macro-specification.md#loading-launch-and-source-identity).
+
+An alias has file scope. Its name and each constant name follow the macro's
+case-sensitive ASCII identifier and reserved-name rules, including the reserved
+`Macro` root. Reject a repeated alias or a helper, parameter or local that
+reuses an alias. In a top-level statement or any helper, `Alias.Name` yields its
+declared scalar value. The alias can appear only as the qualifier. Two aliases
+may each have a member called `TimeoutMs`. Assignment, compound assignment and
+increment or decrement of a qualified constant are source errors. A local
+initialized from a constant can be reassigned under the usual type rules.
+
+### Constants file format
+
+Decode each file independently using the macro source encoding rules. Match the
+longest BOM first. Accept strict UTF-8 with or without a BOM and strict
+BOM-marked UTF-16LE, UTF-16BE, UTF-32LE and UTF-32BE. An unmarked file uses
+UTF-8. Authors can use the conventional `.json` extension. The reader applies
+the following format to every declared file regardless of its name.
+The decoded text must contain exactly one JSON object, with optional JSON
+whitespace around it. An empty object is valid. Comments, trailing commas,
+duplicate members and malformed Unicode are file errors. Compare member names
+after JSON escape decoding, so `"A"` and `"\u0041"` are duplicates. JSON string
+escapes apply to keys and values. A surrogate pair denotes one Unicode scalar
+and an unpaired surrogate escape is a file error.
+
+| JSON value | Macro type and accepted values |
+| --- | --- |
+| String | `string` containing the decoded text |
+| `true` or `false` | `bool` |
+| Number with integer spelling | `long` parsed directly from the signed decimal spelling within the full signed 64-bit range |
+| Number with a fraction or exponent | `double` parsed as invariant binary64 with the macro's finite-result and underflow rules |
+
+For example, `1000` is a `long` and `1e3` is a `double`. An out-of-range
+integer is a file error even if the value would fit in a `double`. Arrays,
+nested objects and `null` are file errors. A string such as `"1 + 2"` has its
+literal text value. Supply non-secret data in these files.
+
+Check every member of every declared file, including unused members, then
+resolve and type-check every macro reference, including those in unused
+helpers. A file error identifies the constants file and the offending location
+when available. An unknown member or an invalid use of its type points to the
+reference in the macro. These errors end the launch before a run starts. The
+[admission limits](macro-validation.md#admission-and-accounting) apply during
+capture and checking.
+
+### Two macros using one file
+
+An operator keeps `common.json` alongside two macros. Each uses its own profile
+and the same timeout.
+
+```json
+{
+  "Prompt": "Ready>",
+  "ReadyLine": "Service ready",
+  "TimeoutMs": 5000
+}
+```
+
+`inspect.tttym` uses the shared prompt from a helper.
+
+```csharp
+#tttym 1
+#constants Common "common.json"
+
+void AwaitPrompt()
+{
+    WaitPrompt(Literal(Common.Prompt), Common.TimeoutMs);
+}
+
+Connect("inspection.ttty");
+AwaitPrompt();
+```
+
+`startup.tttym` uses the shared timeout while waiting for a completed line.
+
+```csharp
+#tttym 1
+#constants Common "common.json"
+
+Connect("startup.ttty");
+WaitLine(Literal(Common.ReadyLine), Common.TimeoutMs);
+```
 
 ## Types and expressions
 
@@ -217,8 +319,8 @@ captures the list identity/revision, yields a read-only loop variable, and raise
 an alias/helper or element replacement. Mutating an element's separate nested
 list does not mutate the outer list's revision. Bounds and ownership are charged.
 
-Builtin value types are `Instant`, `CredentialRef`, `WaitPattern`, `WaitMatch`,
-`CaptureGroup`, `DialogResult`, `MacroError`, `ErrorCode`, `CredentialKind`,
+Builtin value types are `Instant`, `WaitPattern`, `WaitMatch`,
+`CaptureGroup`, `DialogResult`, `MacroError`, `ErrorCode`,
 `DialogButtons` and `DialogButton`. They expose only
 the listed immutable properties. Lists returned by result APIs are fresh bounded
 mutable copies; changing them never changes the original result or runtime state.
@@ -231,8 +333,6 @@ User code cannot construct builtin records except through their named factories.
 | --- | --- |
 | `Macro` metadata root | Reserved root, not a first-class/declarable type; read-only FullPath/FileName/BaseName/Extension/RunId strings and Args as `List<string>` |
 | `Instant` | Opaque captured instant and offset; use time functions, no arbitrary members |
-| `CredentialKind` | `Password`, `PrivateKey` |
-| `CredentialRef` | Opaque identity; only credential-send/factory operations accept it |
 | `WaitPattern` | Opaque validated literal/regex candidate; no exposed engine object |
 | `WaitMatch` | `long AlternativeIndex`, `string Text`, `long Index`, `long Length`, `List<CaptureGroup> Groups` |
 | `CaptureGroup` | `long Number`, `string Name`, `bool Success`, `string Value`, `long Index`, `long Length`, `List<string> Captures` |
@@ -272,9 +372,8 @@ Arguments below are positional; names shown in signatures explain their roles.
 | `string BaseDirectory()` | Current absolute run-local base |
 | `void Write(string text)` | Ordered text send, no implicit ending |
 | `void WriteLine(string text)` | Append one captured Enter ending |
-| `CredentialRef Credential(string vaultId, string entryId, CredentialKind kind)` | Validate canonical UUID identity/kind without unlocking or retrieving a secret |
-| `void WritePassword()` / `void WritePassword(CredentialRef credential)` | Default profile reference or explicit password reference |
-| `void WritePasswordLine()` / `void WritePasswordLine(CredentialRef credential)` | Same, with captured Enter ending |
+| `void WritePassword()` / `void WritePassword(string name)` | Send the captured profile password or the password with the specified vault name |
+| `void WritePasswordLine()` / `void WritePasswordLine(string name)` | Same, with captured Enter ending |
 | `void MarkReceiveBoundary()` | Advance match-start floor to admitted tail |
 | `WaitPattern Literal(string text)` / `Literal(string text, bool ignoreCase)` | Nonempty literal candidate; default ordinal case-sensitive, optional ordinal ignore-case |
 | `WaitPattern Regex(string pattern)` / `Regex(string pattern, bool ignoreCase)` | Compile/validate bounded pattern; default case-sensitive |
@@ -295,16 +394,13 @@ Sleep cannot use a negative sentinel for infinity. Calls requiring a session
 before Connect/readiness report `NotConnected`; MarkReceiveBoundary also requires
 the run's ready session. Initial history can simply be used by the first wait.
 
-The copy action emits an expression such as:
+The copy action emits a string literal that can be passed as in this example:
 
 ```csharp
-Credential("11111111-1111-4111-8111-111111111111",
-           "22222222-2222-4222-8222-222222222222", CredentialKind.Password)
+WritePassword("Production password");
 ```
 
-These UUIDs are example identifiers, not references to a real vault. Canonical
-input uses hyphenated UUID spelling; compare identity values, not case-sensitive
-display text. No name lookup, vault-path argument or secret-value constructor.
+Use exact, case-sensitive vault names under the [vault format](../specification/vault-format.md#encrypted-payload-schema-and-limits).
 
 ### Dialog and ordinary data operations
 
@@ -373,7 +469,7 @@ effects. Stable ErrorCode members are:
 | --- | --- |
 | Value/type-boundary operations | `InvalidArgument`, `NumericOverflow`, `DivideByZero`, `NumberFormat`, `Format`, `IndexOutOfRange`, `CollectionModified`, `NoTextValue` |
 | Profile/connect preparation | `ProfileLoad`, `ConnectionAlreadyAttempted`, `ConnectionFailed`, `UserCancelled`, `NotConnected`, `Path` |
-| Credential send | `MissingProfilePassword`, `CredentialUnavailable`, `CredentialKindMismatch`, `VaultMismatch`, `VaultStale`, `VaultUnlockCancelled` |
+| Credential send | `MissingProfilePassword`, `CredentialUnavailable`, `CredentialKindMismatch`, `VaultStale`, `VaultUnlockCancelled` |
 | Wait/regex | `WaitTimeout`, `EndOfInput`, `InvalidPattern`, `RegexTimeout`, `ZeroLengthMatch`, `CaptureLimit`, `MatchWorkLimit` |
 | Operation admission | `Encoding`, `PayloadLimit`, `PatternLimit`, `OperationUnavailable` |
 

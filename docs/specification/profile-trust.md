@@ -29,7 +29,8 @@ network or authentication failure leaves the completed registration and trust
 in place. **Trust this version and connect** remembers the version for this
 location and starts this attempt. It never creates a registration.
 
-Macro launch approval covers the macro and its ordered arguments. Evaluate
+Macro launch approval covers the source, ordered arguments and contents of
+every declared constants file. Evaluate
 profile trust separately when its actual `Connect` path has been resolved,
 including after a change of base directory. A trust record created there
 is shared with other approved callers. Opening that unregistered file

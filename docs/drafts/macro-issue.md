@@ -15,13 +15,17 @@ the actual transmitted or manually corrected value. Q60-Q61 accept convenient
 password-send operations and current-value retrieval using that fixed reference.
 Q36 selects only long and double; Q47-Q48 now settle conversions
 and arithmetic. Q39 permits author-selectable dialog text input, and the
-Write/WriteLine analogy for Q45 is confirmed. The interview is complete. This work
-authorizes specification and documentation only, with no implementation or
+Write/WriteLine analogy for Q45 is confirmed. The original interview is
+complete. This work authorizes specification and documentation only, with no implementation or
 prototype. Preserve the initial-release exclusion of macros until explicitly
-amended. This file preserves interview history; the
+amended. The [current macro language](macro-language.md#session-paths-input-waits-and-window)
+uses vault entry names for password lookup. This file preserves interview history; the
 [published body](macro-github-issue.md) follows the invoked to-spec template.
 [GitHub issue #3](https://github.com/TabTty/TabTty/issues/3) was published with
 ready-for-agent on 2026-11-14; its body and label were verified.
+
+The [shared macro constants follow-up](#shared-macro-constants-follow-up)
+records subsequent decisions about external definitions.
 
 ## Confirmed request
 
@@ -362,6 +366,46 @@ macro-run testing seam on 2026-11-14. The to-spec publication uses ready-for-age
 without changing initial-release scope or authorizing code. Specification
 readiness is established; implementation and runtime validation remain unperformed.
 
+## Shared macro constants follow-up
+
+The user confirmed Q78–Q88 on 2026-11-20, with Q81 amended to use the macro
+source encoding rules. The version 1 specification is ready for implementation
+of shared macro constants in a macro-enabled release. The
+[language contract](macro-language.md#shared-macro-constants),
+[launch and trust contract](macro-specification.md#capturing-declared-constants)
+and [acceptance cases](macro-validation.md#acceptance-matrix-for-later-authorized-implementation)
+incorporate these decisions. The [trust decision record](../adr/0009-bind-shared-macro-constants-to-launch-approval.md)
+explains the effect of editing a shared file.
+
+| Decision | Accepted behavior |
+| --- | --- |
+| Q78 — Shared data | An external file defines named, read-only, non-secret values that macro statements and helpers can use. The file supplies data only. |
+| Q79 — Explicit selection | Each consuming macro declares the file it uses. Several macros can declare the same file. |
+| Q80 — Lifetime and approval | Read and hold the constants for one launch. Edits affect subsequent launches. Remembered execution decisions cover the macro source, ordered invocation arguments, and the captured constants. A change to the constants selects the decision for the resulting combination. |
+| Q81 — File format and encoding | Each constants file contains one JSON object with unique member names. Decode each file independently using the macro source rules. Without a BOM, read strict UTF-8. With a BOM, accept UTF-8, UTF-16LE/BE or UTF-32LE/BE, matching the longest BOM first. Reject malformed input. |
+| Q82 — Value types | Accept JSON strings, booleans and numbers. An integer spelling denotes a signed 64-bit `long`. A fraction or exponent denotes a finite `double`. Arrays, objects as values and `null` are invalid. |
+| Q83 — Declarations and names | At the top of the macro, declare each file with `#constants Alias "path"`. Use `Alias.Name` in statements and helpers. Different aliases can expose the same member name. |
+| Q84 — File location | Accept absolute paths and resolve relative paths against the directory of the macro source. Apply the [remote read confirmation rules](macro-specification.md#loading-launch-and-source-identity) to each dependency before any potential remote access. |
+| Q85 — Content identity | Include every declared file's exact encoded bytes in the execution decision. A change to a BOM, encoding, whitespace or line ending selects the decision for the resulting combination, even when all parsed values are equal. |
+| Q86 — Language and compatibility | Extend `#tttym 1` with the optional directive. Earlier readers reject it before execution. A macro with zero declarations continues to use its existing allow or block for its source and arguments. |
+| Q87 — Validation scope | Validate every entry in every declared file before execution, including entries the macro never references. Valid unused entries are welcome. A duplicate or invalid definition stops the launch and identifies the affected file and position. |
+| Q88 — Reviewing and forgetting decisions | At launch, show each declared file's alias and resolved path and let the user inspect its captured contents. In Settings, distinguish earlier and later constants versions for the same macro and arguments. The user can forget one decision even after deleting the original files. |
+
+For example, both a startup macro and a diagnostic macro can declare
+`#constants Common "common.json"`. Given the file below, both can call
+`WaitPrompt(Literal(Common.Prompt), Common.TimeoutMs)` after connecting.
+
+```json
+{
+  "Prompt": "Ready>",
+  "TimeoutMs": 5000
+}
+```
+
+The macro and its constants file may use different encodings. A UTF-8 macro
+can read a UTF-16LE JSON file with a BOM. Saving that file as UTF-8 keeps
+`Common.TimeoutMs` equal to 5000 and changes the content covered by approval.
+
 ## Historical branch inventory
 
 The inventory below records earlier planning, not current blockers or unanswered
@@ -661,8 +705,9 @@ Related documents: [future macro constraints](future-macro-design.md),
 - Existing application vault-path changes discard the old unlock state, and
   wrong/missing/type-mismatched references fail without fallback. Macro behavior
   during an application vault-path change remains a separate unresolved branch.
-  Vault username is optional encrypted metadata; exposing it to macros is not
-  implied by the reference-copy proposal.
+  The proposal exposes the saved password through the password accessor. The
+  account required by the [vault format](../specification/vault-format.md#encrypted-payload-schema-and-limits)
+  stays outside that accessor's return value.
 
 ## Round 6 evidence and constraints, checked 2026-11-14
 

@@ -4,8 +4,9 @@ Published as [GitHub issue #3](https://github.com/TabTty/TabTty/issues/3)
 with ready-for-agent on 2026-11-14. The [published body](macro-github-issue.md)
 contains the confirmed specification and testing decisions.
 
-The 2026-11-19 revision specifies remembered macro trust for a future
-macro-enabled build. Its acceptance cases are M51–M60.
+The 2026-11-19 revision specifies remembered macro trust. The 2026-11-20
+revision incorporates [Q78–Q88 on shared macro constants](macro-issue.md#shared-macro-constants-follow-up)
+for the macro-enabled release.
 
 Final review confirmed on 2026-11-14. Product decisions Q1-Q77 in the
 [interview](macro-issue.md) are accepted, including all Q70-Q77 recommendations.
@@ -33,9 +34,10 @@ Use a TabTty-owned interpreter with whole-source checking and explicit runtime
 pause/Stop checkpoints (Q62, ADR 0004). The language is C#-style, not full C#.
 It does not expose arbitrary .NET members, local files, processes, network
 clients, clipboard access, custom classes, source imports, user threads/tasks,
-or AI/SFTP control. Required profile reads, vault retrieval and session recording
-are application operations, not general script file access. No untrusted-code
-sandbox or safety of arbitrary remote commands is promised.
+or AI/SFTP control. The application reads explicitly declared JSON files of
+non-secret, read-only shared macro constants during launch. Required profile
+reads, vault retrieval and session recording are also application operations.
+No untrusted-code sandbox or safety of arbitrary remote commands is promised.
 
 Execution is attended: a visible application hosts each run and normal host-key,
 vault-unlock and authentication interactions remain available. No headless mode,
@@ -72,8 +74,8 @@ activation behavior; macro dialogs do not become application-wide modals.
 The receiving window applies the same macro trust decision to the file picker,
 Explorer, command-line startup and forwarded requests. Forward macro requests
 only between instances of the same user and integrity level. Use an envelope
-version that receivers without this policy reject. The receiver obtains the
-source and computes its identity independently of the sender.
+version that receivers without this policy reject. The receiver captures the
+source and its declared constants files and computes their identity itself.
 
 The file picker authorizes reading the selected file. For an external request,
 TabTty may read an ordinary local file to identify it. Before any operation that
@@ -82,8 +84,8 @@ request, with **Cancel** selected. This includes UNC paths, mapped network
 drives, redirects and cloud files that need downloading. Establish local access
 without following an unchecked redirect or probing a share, and keep that
 guarantee through the open. If locality is uncertain, ask first. Cancelling
-leaves the remote source untouched. Permission to read only obtains the
-snapshot. Execution requires approval for its contents and invocation arguments.
+leaves the remote source untouched. Execution requires approval for the
+captured source, declared constants and ordered invocation arguments.
 
 Read one bounded source snapshot, detect the longest matching BOM first, and
 strictly decode UTF-8 with/without BOM or BOM-marked UTF-16LE/BE/UTF-32LE/BE.
@@ -93,6 +95,43 @@ snapshot against arbitrary concurrent in-place writes. Compute SHA-256 over
 the exact encoded bytes, including any BOM and original line endings. Decode,
 validate and execute from that same snapshot. Keep it through any user review
 and never reopen the path to execute it. External edits affect later launches.
+
+### Capturing declared constants
+
+Read the version and leading `#constants` declarations from the captured
+macro. Check the declaration syntax, names and count before opening the
+declared paths. Resolve relative paths against the captured macro source
+directory. Accept absolute Windows paths. Apply the macro path rules for
+`.`, `..`, environment variables and `~`. A later `SetBaseDirectory` call
+affects runtime operations. Each declaration identifies an ordinary file.
+Reject directories, devices, pipes and other special stream targets.
+
+Apply the remote-read rule to constants files on every launch route, including
+the picker. Selecting a macro permits reading that macro. Before contacting
+any share, following a redirect of uncertain locality or downloading a cloud
+file, obtain permission to read the displayed dependency path for this launch.
+A single confirmation may list several such paths. **Cancel** is the default.
+A remembered execution decision still requires read permission for any path
+that may contact a remote source. If the user cancels a read, end the request
+before contacting that path, creating a run or saving a trust decision.
+
+Capture each distinct normalized absolute dependency path once per launch.
+Reuse the captured bytes for identical normalized path spellings. Preserve case
+distinctions in case-sensitive directories. Enforce the bounds as files are
+loaded. [Admission and accounting](macro-validation.md#admission-and-accounting)
+Decode each file independently using the same strict BOM rules as the macro
+source. Hash the exact bytes of each file, including any BOM and original
+line endings. Parse the entire object and bind the read-only values to their
+declared aliases. Check every member, including members unused by this macro.
+A missing or unreadable file, detected change during its read, decoding
+error, invalid definition, unknown reference or type error ends the launch
+before execution review or run/tab creation. Identify the file and, where
+available, the error location. See the [language and JSON contract](macro-language.md).
+
+Capture the files individually. The set can contain versions written at
+different times. Bind the exact captured combination for validation, review
+and execution. A later edit, even during review or a pause, affects a future
+launch. Overlapping runs each keep their own validated values.
 
 Validate the required version, entire grammar, types, names, permitted members,
 function call graph and resource admission before running any statement. Dead
@@ -119,11 +158,15 @@ line break and CR or LF one each. BOM is not a source column.
 
 ### Remembered macro trust
 
-An allow or block applies to the pair formed by the SHA-256 digest of the source
-bytes and the exact ordered list of arguments supplied at launch. Renaming, moving
-or copying the file preserves the match when the arguments are the same. A
-change to either part selects the decision for the new pair. Restoring both
-parts reuses the original decision, regardless of launch route.
+An allow or block applies to the exact macro source bytes, the contents of
+each declared constants file in declaration order, and the ordered invocation
+arguments. The source itself binds every alias to its declared path. Identical
+copies loaded from another location with the same arguments match the same
+decision. The resolved location is displayed at review. If a relative path
+selects different bytes at the new location, look up that combination's
+decision. Editing a single unused constant, whitespace, a line ending or a
+BOM can change the match. Restoring all the original bytes and arguments
+restores their previous decision across all launch routes.
 
 Compare the strings after Windows argument parsing or picker entry. Preserve
 argument boundaries, order, case, whitespace and Unicode spelling. Thus
@@ -136,51 +179,78 @@ that produces the same parsed strings gives the same match.
 | Block | End the request before creating a run or tab. The picker also honors the block. |
 | No decision | Offer **Run once**, **Always allow with these arguments**, **Always block with these arguments** and **Cancel**. Cancel is the default. |
 
-Show the full source digest, normalized absolute path and all ordered arguments on the
-review screen. Render quotes, control characters, empty strings and an empty list
-unambiguously. Let the user inspect the captured source. Explain at the point
-of approval that the decision covers identical copies opened anywhere with these
-arguments, including on later external requests. Moving the file can change
+Show the full source digest, normalized absolute path and all ordered arguments
+on the review screen. For each declared file, show its alias, resolved path
+and full SHA-256 digest and allow inspection of the captured JSON. Show the
+combined constants version digest defined below so the user can identify
+this version in Settings. Render quotes, control characters, empty strings
+and an empty argument list unambiguously. Let the user inspect the captured
+macro source. Explain that the decision covers identical copies of these
+files opened anywhere with these arguments, including later external
+requests. Moving the macro can change
 which profile a relative path selects. The resolved profile has its own trust
 decision when the macro calls `Connect`. A macro can issue commands and submit
 saved passwords. The usual SSH host-key review, vault unlock and authentication
-rules apply on every connection.
+rules apply on every connection, including SSH's continuation rules when a
+saved credential is unavailable. [SSH authentication](../specification/transports-and-authentication.md#authentication-and-user-facing-messages)
 
-Capture the final, validated argument list before looking up the pair. The
+Capture the final, validated argument list before looking up the decision. The
 picker can combine review and argument editing. An edit invalidates the review
 and requires lookup for the edited list before admission. Initialize `Macro.Args`
 from the approved list. Later script edits to that run-local copy do not alter
 the remembered decision.
 
-**Run once** uses only the reviewed snapshot and arguments. **Cancel** or
+**Run once** uses the reviewed source, constants and arguments. **Cancel** or
 closing the review ends the request. Neither saves a decision. **Always allow**
 saves the decision before starting this run. **Always block** saves it and ends
-the request. TabTty accepts decision changes only through its local UI. In
-Settings, group decisions by source digest and identify each argument list by
-the pair fingerprint defined below. Let the user match a list by entering its
-arguments and forget an individual decision even after the file has been deleted.
+the request. TabTty accepts decision changes only through its local UI.
+
+In Settings, group decisions by source digest. Within a group, display each
+decision, its fingerprint and its constants version digest when applicable.
+Let the user enter an argument list to find every matching decision in the
+group. Recompute a candidate fingerprint with the entered arguments and the
+stored digests for each record. Compare the result with that record's
+fingerprint. The user can distinguish two versions with the same source and
+arguments by their constants version digests and forget either decision
+individually, even after deleting the source or the constants files.
+
 Settings also offers a single reset for all remembered macro allows and blocks
-for this Windows account on this PC. Forgetting one entry affects that pair.
-Resetting all entries returns every pair to review on its next launch. Order
-these operations and launch admission across windows so pending reviews respect
+for this Windows account on this PC. Forgetting one entry affects its exact
+combination. Resetting all entries returns every combination to review on its
+next launch. Order these operations and launch admission across windows so pending reviews respect
 each individual removal or new block. A macro review already
 open when the reset completes expires, including one for a previously unseen
-pair. An old dialog cannot admit a run or recreate a decision. Admitted runs
+combination. An old dialog cannot admit a run or recreate a decision. Admitted runs
 and connections continue. The reset affects only macro decisions. Profile
 trust and profile registrations retain their own lifetimes.
 
-Derive the pair fingerprint with SHA-256 over the ASCII tag `TabTty/MacroTrust/v2`,
-the 32 raw bytes of the source digest, then the argument count and each argument
-in order. Encode the count and each argument's UTF-8 byte length as unsigned
-32-bit big-endian integers. Follow each length with exactly those bytes, using
-strict UTF-8 without adding a BOM or normalizing the string.
+#### Fingerprints and compatible records
 
-Store one Windows Credential Manager generic credential per pair, scoped to the
-current Windows user on this PC (`CRED_TYPE_GENERIC`, `CRED_PERSIST_LOCAL_MACHINE`).
-Use the pair fingerprint in a versioned TabTty-specific target name. Verify
-the bounded record's version, source digest, pair fingerprint and decision
-before use. Content-only records grant neither an allow nor a block for a pair.
-Omit source text, paths, argument values and passwords. Trust survives sign-out.
+Use SHA-256 over the concatenated fields in the orders below. Tags are exact
+ASCII bytes. Each digest occupies 32 raw bytes. Encode counts and lengths as
+unsigned 32-bit big-endian integers. The argument encoding begins with the
+argument count. For each argument in order, append its strict UTF-8 byte
+length followed by its UTF-8 bytes, preserving the original string, without
+adding a BOM.
+
+| Source declarations | Decision fingerprint |
+| --- | --- |
+| Zero | Hash the tag `TabTty/MacroTrust/v2`, the source digest and the argument encoding. Consult only the v2 record at the resulting fingerprint. The existing v2 allow and block records continue to match. |
+| One or more | Compute a constants version digest by hashing the tag `TabTty/MacroConstants/v1`, the declaration count and one file digest per declaration in source order. Include repeated declarations under different aliases in their respective positions. Hash the tag `TabTty/MacroTrust/v3`, the source digest, the constants version digest and the argument encoding. |
+
+For a launch with declarations, consult only the v3 record for that exact
+fingerprint. A missing v3 decision goes to review even when a source-only or
+v2 decision exists. The constants and trust tags version the stored
+identities independently of the `#tttym 1` language header.
+
+Store one Windows Credential Manager generic credential per fingerprint,
+scoped to the current Windows user on this PC (`CRED_TYPE_GENERIC`,
+`CRED_PERSIST_LOCAL_MACHINE`). Use the fingerprint in its versioned target
+name. Verify the bounded record's version, source digest, fingerprint,
+decision and, for v3, constants version digest against the lookup before
+using it. Store the fixed-size digests and decision metadata. Keep paths,
+source text, JSON contents, argument values and passwords out of the record.
+Individual removal and reset cover both formats. Trust survives sign-out.
 Copying a macro, settings, profile or portable vault to another PC does not
 transfer its approval. Windows protects this store at the user-account boundary.
 Software running as that user
@@ -274,34 +344,38 @@ necessary send cleanup, not before a second writer can safely operate.
 
 ### Profile password and explicit references
 
-`WritePassword()` / `WritePasswordLine()` use the saved-password reference in the
-profile loaded for this connection attempt. The identity is fixed for the run.
+`WritePassword()` / `WritePasswordLine()` use the saved-password name in the
+profile loaded for this connection attempt. The name is fixed for the run.
 It does not depend on success/failure, the chosen authentication method, or what
 password the person corrected in an authentication dialog. A password reference
 can be the default even when public-key authentication established the session.
 The secret is never an ordinary string property, return value or interpolation
 operand. A failed connection still cannot transmit through an unavailable session.
 
-The overloads taking `CredentialRef` use that explicit reference instead. Each
-send retrieves the current value of the exact vault/entry/kind from the sole
-application-selected vault, just before it is needed. Application-committed
-entry updates affect later sends; a profile-file edit does not retarget the run.
-An external vault change is a stale-store error under the vault contract, not
-permission to reload the changed file automatically. Deleted entries, wrong
-kind, different vault, stale store and unlock cancellation fail visibly and
-recoverably. Do not fall back to display names, empty passwords, old vault
-instances, temporary authentication input or a different entry.
+The overloads taking a string use that explicit password name. Each send
+looks up the exact name in the application-selected vault and checks the
+password kind just before use. Application-committed edits, deletion and reuse
+of the same name, and selection of another vault affect later lookups. An edit
+to the profile file leaves the default name captured by the running macro
+intact. Missing names, wrong kinds, stale stores, and unlock cancellation fail
+visibly and recoverably. The selected-vault revision and role checks still
+apply until each credential handoff commits.
+
+If the selected vault file is missing or zero bytes, `WritePassword` and
+`WritePasswordLine` fail before sending and raise a catchable
+`CredentialUnavailable` error. Leave the configured vault path and file as
+observed. For an uncaught error, show the source location and the observed vault
+state in the macro execution status, with guidance to select the original vault
+or restore its backup. Use the shared unlock prompt for an existing locked vault.
 
 Telnet/serial profiles have no initial saved-password binding. Their default
 password calls report `MissingProfilePassword`; explicit-reference calls can
 perform terminal-level login. Imported private keys, key passphrases, master
 passwords and keyboard-interactive answers are never terminal password defaults.
 
-The vault-management Copy Macro Reference action copies a complete non-secret
-`CredentialRef` expression suitable for the external editor. The copied identity
-contains vault UUID, entry UUID and kind, not entry display name or secret value.
-Private-key references cannot be sent with password operations. Existing unlock
-and management rules apply; this is not a macro vault-management API.
+For a password entry, the vault-management Copy Macro Reference action copies
+its name as an escaped string literal suitable for a password operation in an
+external editor. Existing unlock and management rules apply.
 
 Hold references through waits/pauses, not prepared secret plaintext. If a pause
 intervenes before send commitment, dispose any prepared secret and reacquire on
