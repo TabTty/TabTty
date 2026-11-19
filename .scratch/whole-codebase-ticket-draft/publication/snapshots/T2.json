@@ -1,0 +1,50 @@
+{
+  "assignees": [],
+  "blockedBy": {
+    "nodes": [
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNbJOQ",
+        "number": 44,
+        "state": "OPEN",
+        "title": "Run Telnet sessions through complete terminal-payload transport operations",
+        "url": "https://github.com/TabTty/TabTty/issues/44"
+      }
+    ],
+    "totalCount": 1
+  },
+  "body": "## Parent\r\n\r\n[Deepen recording, transport, persistence, vault, SSH and grapheme ownership](https://github.com/TabTty/TabTty/issues/40)\r\n\r\n## What to build\r\n\r\nMigrate the live serial session to the complete transport operations introduced for Telnet. A successfully configured COM port produces ordered payload and lifecycle facts through the same session consumer, while serial line control, BREAK and device-overrun behavior remain dedicated serial responsibilities.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Bind the session consumer before opening the port and keep required recording preparation before device I/O. Report readiness only after the configured COM port opens successfully; do not substitute a port or setting, infer remote login or add automatic reconnection.\r\n- [ ] Route serial receive, encoded input submission and disconnect through the common complete operations with the same source/order, complete-prefix/uncertainty and observation-versus-cancellation distinctions. Geometry reports that serial requires no wire notification rather than pretending to send one.\r\n- [ ] Preserve the selected flow-control and DTR/RTS ownership rules and dedicated BREAK operation, including its existing duration and cleanup attempt. Do not add a generic capabilities framework or change saved profile settings during temporary line operations.\r\n- [ ] Bound pending reads, payload, metadata, sends and late cleanup under existing accounting. Use supported flow control where it can recover, report device overrun explicitly, and never claim lossless backpressure or silently discard received payload.\r\n- [ ] Preserve received output and separately owned recording finalization across EOF/disconnect, cancelled waits, delayed port open/read/write/close and replacement generations. Actual device-resource release remains distinct from operation completion and visual removal.\r\n- [ ] Exercise the ordinary session/Rust/recording path with controlled serial adapters for partial writes, blocked consumers, overrun and late cancellation, and retain actual COM/device integration for driver behavior. Remove the serial caller's obsolete raw-wire recipe after migration.\r\n",
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 45,
+  "parent": {
+    "id": "I_kwDOVmB6dc8AAAABgNbAdw",
+    "number": 40,
+    "state": "OPEN",
+    "title": "Deepen recording, transport, persistence, vault, SSH and grapheme ownership",
+    "url": "https://github.com/TabTty/TabTty/issues/40"
+  },
+  "state": "OPEN",
+  "subIssues": {
+    "nodes": [],
+    "totalCount": 0
+  },
+  "subIssuesSummary": {
+    "completed": 0,
+    "percentCompleted": 0,
+    "total": 0
+  },
+  "title": "Run serial sessions through the terminal-payload transport seam",
+  "url": "https://github.com/TabTty/TabTty/issues/45"
+}

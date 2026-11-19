@@ -1,0 +1,38 @@
+{
+  "body": "## What to build\n\nCoordinate the implementation of the three architecture designs accepted in Q1-Q27 on 2026-11-14. The scope is the existing file-operation policy, retained-terminal-history observation, and broadcast-input operation lifetime. The work consists of ten implementation slices, each with its own complete-path checks, and one final concurrent-workload verification slice.\n\nThe accepted design sources are File-operation module design (Q1-Q11), Retained-history observation module design (Q12-Q20), and Broadcast-input operation module design (Q21-Q27). Their underlying feature, transport, session, resource, and validation contracts remain authoritative.\n\n## Acceptance criteria\n\n- [ ] File operations use one Core policy interface for transfers, create/rename, and deletion, with module-owned confirmation/results/retry and actual I/O ownership retained across view and connection changes.\n- [ ] Retained-history reads and searches use terminal-owned bounded revision/retention information and immutable preparation, plus application-owned authority, staged identifiers, exact response sizing, and nonblocking publication.\n- [ ] Broadcast input remains coordinated in the application module through named intentions; preview, gesture, Stop/cleanup, and native handoff lifetime no longer depend on caller Begin/End discipline.\n- [ ] Each slice preserves the accepted session, input, sharing, movement, SSH/SFTP, localization, resource, and native-validation contracts. No new writer, general input framework, macro runtime, or public tool surface is introduced by this plan.\n- [ ] Complete the native child-ticket dependency graph and the combined runtime evidence. This map tracks the follow-up work from the current design conversation; existing feature issues remain unchanged.\n- [ ] Start only unblocked child tickets. Initial implementation frontier: T01, T05, and T08. The final concurrent-workload ticket follows the completed three branches.\n\n## Blocked by\n\nNone (can start immediately).\n",
+  "comments": [
+    {
+      "id": "IC_kwDOVmB6dc8AAAABmdVAdQ",
+      "author": {
+        "login": "akhs-tkmr"
+      },
+      "authorAssociation": "MEMBER",
+      "body": "The final #15 performance verification passed the 100 ms local p95 target in\nboth 30-minute, 600-interaction runs. Overall p95 was 25.2 ms under equal load\nand 18.1 ms with one busy session. Each run had one tab switch above 100 ms\nout of 200, with maxima of 152.7 ms and 150.6 ms, respectively.\n\n#15 is closed. The results and remaining verification scope are recorded in\nthe [#15 resolution](https://github.com/TabTty/TabTty/issues/15#issuecomment-6875850967).\n",
+      "createdAt": "2026-11-14T10:23:36Z",
+      "includesCreatedEdit": false,
+      "isMinimized": false,
+      "minimizedReason": "",
+      "reactionGroups": [],
+      "url": "https://github.com/TabTty/TabTty/issues/4#issuecomment-6875857013",
+      "viewerDidAuthor": true
+    }
+  ],
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKIw",
+      "name": "wayfinder:map",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 4,
+  "state": "OPEN",
+  "title": "Deepen file-operation, history-observation, and broadcast-input ownership",
+  "url": "https://github.com/TabTty/TabTty/issues/4"
+}

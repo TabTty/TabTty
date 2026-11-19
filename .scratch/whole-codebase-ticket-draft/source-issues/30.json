@@ -1,0 +1,22 @@
+{
+  "body": "## What to build\r\n\r\nComplete the integration between C# recording group/file ownership and native recording operations for preparation, pause, resume/retry, writer failure, cancellation, and stale completion. Preserve healthy terminal interaction when only recording fails.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Exercise Off and all seven nonempty format combinations. Prepare every initial file before transport startup; partial preparation failure leaves the group inactive, closes successful handles, and preserves already-created files without claiming a filesystem transaction.\r\n- [ ] Distinguish native cutoff from successful Pause, which additionally requires accepted writer completion, durable flush, and close. Failed writes or flushes do not publish a successful Paused result.\r\n- [ ] Stop group admission for any format failure and order native cleanup correctly. Preserve valid terminal mutations and unrelated effects such as replies from the same operation; never replay an operation or a partly written batch.\r\n- [ ] Validate session and recording owner identity at completion/failure application. An obsolete opening request or old writer cannot activate an old part or abort a newer interval; explicit retry uses new part owners and numbers.\r\n- [ ] Cover cancellation before and after activation, pause during opening, delayed/partial I/O, cleanup allowance exhaustion, and stale completion. Keep issued resources charged until actual completion despite cancellation or an abandoned wait.\r\n- [ ] Verify through the actual session and recording APIs with real files plus controlled writer failures. Keep wait/loss presentation and explicit closure orchestration with their accepted owners.\r\n",
+  "comments": [],
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 30,
+  "state": "OPEN",
+  "title": "Keep recording files and native state consistent through failures",
+  "url": "https://github.com/TabTty/TabTty/issues/30"
+}

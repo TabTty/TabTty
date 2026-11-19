@@ -1,0 +1,300 @@
+[
+  {
+    "id": "F1",
+    "title": "Save connection profiles through owned verified file operations",
+    "candidate": 3,
+    "blockedBy": [],
+    "relatedIssues": [],
+    "what": "Create and update connection profiles through one owned verified-publication operation, so the editor reports the actual target and backup outcome even after cancellation, replacement errors, or delayed filesystem completion.",
+    "criteria": [
+      "Introduce complete typed publication requests and read-only operation observations through the working profile create/update path. Admission reserves finite versioned record, byte and artifact capacity synchronously and returns an operation identity; rejected admission changes nothing and transfers no input ownership.",
+      "Keep bounded immutable candidate bytes and the original editing basis with format-owner validation evidence. Coordinate target names, missing destinations, observed identities and known aliases before mutation, including replacement identity changes; refuse conflicting or unsafe coordination without claiming an atomic compare-and-swap against arbitrary writers.",
+      "Perform same-directory candidate creation, required access policy, write/flush, baseline recheck and non-overwriting create or replacement. Inspect target, candidate and required backup using individually acquired bounded images; adopt the profile revision only after complete target and preservation proof.",
+      "Distinguish complete publication, intact original or absent create, conflict, partial preservation, unavailable evidence and cleanup failure. Keep the prior effective revision and draft and freeze affected writes for partial/unresolved outcomes. Reconciliation observes the same operation without publishing again, rebasing or restoring automatically.",
+      "Separate observation cancellation, prevented publication, issued mutation, per-inspection resource release and final retirement. Retain actual I/O and owned artifacts until completion or verified handoff; preserve restrictions across view close/reopen, allow visible quiescent unresolved closure, and bound completed history without evicting unresolved facts.",
+      "Exercise the real profile editor-to-file path with controlled post-replacement errors, missing/unreadable backups, stale bases, alias collisions, candidate mutation, cancellation, late inspection, reused candidate names and capacity exhaustion; retain real supported-filesystem checks and exact file-content assertions. Keep profile registration publication a separate outcome."
+    ],
+    "coverage": [
+      "Q7-Q11 complete verified-file contract",
+      "Candidate 3 matrix: profile portions of rows 1-8, 10-11, 13-15"
+    ]
+  },
+  {
+    "id": "F2",
+    "title": "Save and recover application stores through verified operations",
+    "candidate": 3,
+    "blockedBy": [
+      "F1"
+    ],
+    "relatedIssues": [],
+    "what": "Apply settings, highlight catalogs, local state and host-key records only after verified publication, and make explicit JSON recovery preserve the observed original while reporting unresolved outcomes accurately.",
+    "criteria": [
+      "Migrate every application JSON-store publication and authorized recovery caller to the shared operation interface, preserving format validation, unknown properties, schema/version refusal, location policy and existing recovery choices. Remove the duplicated publication recipe after all such callers use the owner.",
+      "Only verified complete publication makes settings, highlights, local state or approved host trust effective. Failure, partial preservation or unavailable evidence retains prior effective state and applicable write restrictions; a display failure or cleanup error does not undo a known commit or trigger replay.",
+      "Explicit restore/default recovery independently validates its candidate and preserves exact observed original bytes under the existing unique recovery policy, even when damaged. Report that recovery copy separately from an ordinary validated backup; never silently restore, merge, empty-reset or overwrite.",
+      "Coordinate recovery from a quiescent unresolved operation with a gap-free target reservation handover. Failed recovery retains earlier restrictions, and ordinary reopen does not bypass them. Later reconciliation uses current operation revisions without reissuing publication.",
+      "Integrate pending versus quiescent unresolved outcomes into existing localized save/recovery/close presentation. Retain compact non-secret evidence and artifact locations after view closure, without a hidden process lifetime or recording-specific wait timers.",
+      "Verify complete settings/highlight/host-trust application paths with real validators and controlled original-preservation failure, external changes, cancellation, late completion, recovery and capacity faults; keep real-file checks for all supported locations."
+    ],
+    "coverage": [
+      "Q7-Q11 application-store adoption and explicit recovery",
+      "Candidate 3 matrix: application-store portions of rows 1-7, 9-11, 13-15"
+    ]
+  },
+  {
+    "id": "F3",
+    "title": "Publish encrypted vault revisions with verified preservation",
+    "candidate": 3,
+    "blockedBy": [
+      "F1"
+    ],
+    "relatedIssues": [],
+    "what": "Route existing encrypted vault creation, saves and explicit restores through the shared verified file operation while the vault owner retains authentication, root adoption and credential eligibility.",
+    "criteria": [
+      "Supply immutable encrypted images, original-basis evidence and existing private-access, writer-lock and preservation policy to the shared file owner. Never transfer master passwords, roots or plaintext credentials to common operation records or diagnostics.",
+      "Verify equality with an already authenticated encrypted image as that generation, not merely a matching vault ID; independently authenticate and validate selected restore content. Each acquired image supplies both validation and digest evidence, and verification never runs under a mutex it must reacquire.",
+      "Adopt the candidate snapshot/root only after verified target publication and required backup/recovery preservation. If candidate bytes reached disk but preservation failed or is unknown, keep the prior effective revision, block writes and new credential retrieval, preserve established roots while actually needed, and report the on-disk candidate generation truthfully.",
+      "Preserve exact original bytes on explicit restore and retain owned conflict-recovery material without overwriting external files. Reinspection never repeats encryption/publication, clears independent external-stale restrictions, or treats ordinary reopening as recovery.",
+      "Keep actual I/O and owner-dependent verification alive through cancellation or view closure; permit visible quiescent unresolved exit and retain only non-secret inspection evidence after the responsible secret lifetime ends. Coordinate operation/artifact accounting and retirement with the common owner.",
+      "Use real vault/OpenSSL validation, independent encrypted fixtures and Windows file checks alongside controlled partial backup, uncertain password change, conflict, late verification and cleanup faults. Verify existing authenticated sessions survive blocked new retrieval."
+    ],
+    "coverage": [
+      "Q7-Q11 vault integration, especially Q9 adoption and Q10 closing",
+      "Candidate 3 matrix: vault portions of rows 1-14"
+    ]
+  },
+  {
+    "id": "V1",
+    "title": "Own shared vault unlock and credential handoff operations",
+    "candidate": 4,
+    "blockedBy": [],
+    "relatedIssues": [],
+    "what": "Unlock the selected vault once through complete operations shared by windows and editors, and deliver exact eligible credentials without caller-managed unlock lifetimes or stale-context reuse.",
+    "criteria": [
+      "Introduce named complete unlock operations on non-secret file-bound contexts, with fixed opened location and role epoch, synchronous bounded admission, operation identity, monotonic observations and coalesced current metadata. Contexts and subscriptions never own roots or prolong their lifetime; same-ID copies remain distinct locations.",
+      "Track actual unlock consumers independently from observers. Cancelling observation leaves the consumer interested; explicit stop removes only that consumer. Retire an attempt when its last consumer leaves while retaining native work, secret buffers and expensive-worker charge until actual completion; late success cannot join or adopt into a fresh attempt.",
+      "Bind typed input replies to the operation, request, source image and live host. Handle host transfer, duplicate/late replies and interaction failure with one cleanup owner and no automatic prompt loop. Do not occupy the expensive worker while awaiting human input or hold reentrant locks across callbacks.",
+      "Ordinary Unlock, authentication, credential pickers and Explorer editors never initialize missing or empty vaults. Preserve existing independent cryptographic validation, selected-owner application-run unlock lifetime and editor-role lifetime without a plaintext-entry cache.",
+      "Resolve only the requested exact vault/entry/kind and recheck selection epoch, revision and restrictions immediately before authentication handoff. Clear invalidated results instead of retargeting or retrying; already handed-off credentials follow the existing authentication lifetime and established sessions remain connected.",
+      "Use real unlock/credential paths and independent invalid/valid encrypted fixtures to verify shared windows, observation-versus-consumer cancellation, last-consumer/native completion races, host loss, A-to-B-to-A contexts, exact-reference refusal, worker/buffer bounds and cleanup without secret diagnostics."
+    ],
+    "coverage": [
+      "Q12-Q16 interface/admission/interaction/shared-unlock contract",
+      "Candidate 4 matrix rows 1, 4-8, 9 ordinary-entry-point refusal, 19-20, 23 shared infrastructure"
+    ]
+  },
+  {
+    "id": "V2",
+    "title": "Manage vault entries and key imports through owned operations",
+    "candidate": 4,
+    "blockedBy": [
+      "V1",
+      "F3"
+    ],
+    "relatedIssues": [],
+    "what": "Add, edit, delete and import vault entries from management tabs and same-file editors through complete operations whose committed metadata is shared immediately with future credential lookup.",
+    "criteria": [
+      "Migrate password add/edit/delete and private-key import to named operations with exact vault/entry/kind/revision anchors. UI callers provide localized forms and present observations without obtaining unlocked owners, assembling mutation serialization or requesting a separate refresh.",
+      "Bind existing known-profile impact confirmations to current revision and known reference facts. Reject stale review without retargeting, same-name substitution or silent rebasing; a kind change creates a new entry, deletion leaves references unresolved, and no profiles or established sessions are rewritten.",
+      "Bind private-key passphrase interaction to one bounded acquired source image. Preserve the accepted key/envelope allowlist, strict source-passphrase encoding and real validation; publish only validated canonical PKCS#8, leave the source intact, and retain neither source path dependency nor passphrase.",
+      "Reserve secret-input, native/import, result and metadata capacity before acceptance or mutation. Clear accepted temporary plaintext and native copies after actual use; failed drafts retain non-secret edits/outcomes, not passphrases or credential caches. Outcome/subscriber failure never triggers mutation replay.",
+      "Adopt and publish shared metadata only after the complete encrypted publication outcome permits it. Late notifications or obsolete contexts cannot overwrite newer state; current-state reads recover from coalesced or failed delivery without re-unlock.",
+      "Verify management/editor/credential-resolution paths with exact identities, changed impact facts, deleted references, independent key fixtures, unsupported input, source changes, native cancellation, stale subscribers and capacity faults."
+    ],
+    "coverage": [
+      "Q12-Q13 and Q16 entry/import results and interaction ownership",
+      "Candidate 4 matrix rows 2, 7, 11, 20, 23 mutation/metadata infrastructure"
+    ]
+  },
+  {
+    "id": "V3",
+    "title": "Change the vault master password through one owned operation",
+    "candidate": 4,
+    "blockedBy": [
+      "V1",
+      "F3"
+    ],
+    "relatedIssues": [],
+    "what": "Change the master password from management or an editor with one complete operation that adopts a new root only after verified publication and accurately reports partial on-disk changes.",
+    "criteria": [
+      "Use the complete operation and bound interaction interface with existing new-password confirmation and normalization rules. Generate fresh root/wrapper/payload encryption under the existing vault format; ordinary views do not own the proposed root or commit choreography.",
+      "Reserve outcome, metadata, root-transfer and actual cryptographic-work capacity before publication. Keep old/candidate roots only for their established owner and active-work lifetimes, clearing temporary master/KEK and working copies after actual use.",
+      "Only complete verified target and preservation evidence adopts the root/snapshot/revision and shared metadata. A candidate on disk with missing/unreadable preservation retains prior effective state and blocks writes/retrieval while identifying the observed candidate generation; existing copies retain their original passwords.",
+      "Observation cancellation, UI loss or metadata delivery failure never repeats encryption/publication. Reconciliation inspects existing work and cannot clear independent external-stale restrictions or release roots still used by native/I/O verification.",
+      "Verify independent cryptographic fixtures, RNG/input failures, native cancellation, verified success after a reported filesystem error, partial preservation and owner-close races through the real management/editor operation and next credential lookup."
+    ],
+    "coverage": [
+      "Q16 master-password change and root adoption",
+      "Candidate 4 matrix rows 1, 7, 12, 20-23 relevant root/secret lifetimes"
+    ]
+  },
+  {
+    "id": "V4",
+    "title": "Back up and restore vaults through complete authenticated operations",
+    "candidate": 4,
+    "blockedBy": [
+      "V1",
+      "F3"
+    ],
+    "relatedIssues": [],
+    "what": "Create verified encrypted backups and explicitly restore a chosen authenticated generation through the same management operation interface, including an allowed rescue copy after external-stale detection.",
+    "criteria": [
+      "Backup the exact authenticated encrypted generation to an explicitly selected non-overwriting destination and verify it without changing the source revision or implying a new password. An external-stale rescue copy may use only a retained authenticated image and must identify its generation/stale status without clearing source restrictions or retrieving credentials.",
+      "Provide one Restore operation for locked and unlocked states. Independently authenticate/validate the backup, enforce an unlocked owner ID or structurally established original ID as specified, and preserve recognizable-newer-version/nonzero-flags refusal; invalid/missing/empty originals do not supply an invented ID.",
+      "Preserve exact original target bytes under the existing recovery policy and adopt only after complete target/preservation proof. Keep the editor target path and distinct old-password generations; missing authenticated rescue evidence is an explicit unavailable result.",
+      "Bind file pickers, master input and confirmation to the admitted target/image. Keep actual work and shared encrypted-image ownership through cancellation, and report target, preservation, restrictions and cleanup separately without blind retry or automatic initialization.",
+      "Exercise real backup/restore operations with independent locked/unlocked fixtures, mismatched IDs, damaged originals, future-version refusal, destination collision, stale rescue, cancelled input and uncertain publication; verify actual encrypted bytes and preserved originals."
+    ],
+    "coverage": [
+      "Q16 encrypted backup, restore and Q108 rescue-copy allowance",
+      "Candidate 4 matrix rows 1, 7, 13-14, 21-23 relevant ownership"
+    ]
+  },
+  {
+    "id": "V5",
+    "title": "Create vaults only through explicit guarded initialization",
+    "candidate": 4,
+    "blockedBy": [
+      "V1",
+      "F3"
+    ],
+    "relatedIssues": [],
+    "what": "Let management explicitly create a missing vault or initialize the confirmed same empty regular file, with verified results and no implicit initialization from credential use.",
+    "criteria": [
+      "Expose the explicit management intent with localized missing/empty explanation and existing new-master rules. A new vault receives a new identity/root and does not rewrite selected settings or credential references; ordinary unlock, authentication, all pickers and Explorer paths keep their refusal.",
+      "Bind confirmation to the opened location and acquired missing/empty evidence. Missing-path creation never overwrites; empty initialization rechecks the same zero-byte regular file and rejects replaced, nonempty, unsupported, stale or unresolved targets.",
+      "Use the same internal target/namespace admission as verified publication for source, destination, candidate and parked names. Preserve the empty original and report parked-original, target, candidate and recovery facts separately through actual completion.",
+      "Permit only the existing narrow compensation in the original execution after installation was prevented or definitively settled: return the exact owned empty original to a proven-absent source without overwriting, verify it and report failure. Reconciliation never performs compensation or blind repair; cleanup-only failure does not erase proven success.",
+      "Adopt root and shared metadata only after required publication/preservation proof, with capacity reserved beforehand and actual secret/I/O owners retained through cancellation. Test the real explicit UI path against collision, changed identity, parking/install/compensation faults, uncertainty and concurrent ordinary commits."
+    ],
+    "coverage": [
+      "Q14, Q16 initialization and common namespace admission",
+      "Candidate 4 matrix rows 3, 9-10, 21-23 relevant ownership"
+    ]
+  },
+  {
+    "id": "V6",
+    "title": "Archive the confirmed vault image without requiring unlock",
+    "candidate": 4,
+    "blockedBy": [
+      "V1",
+      "F1"
+    ],
+    "relatedIssues": [],
+    "what": "Archive a locked, readable damaged or unlocked vault through a source-bound complete operation, then report the actual archive location and end the old usable owner without creating a replacement vault.",
+    "criteria": [
+      "Acquire bounded regular-file identity, length and exact-byte evidence before existing confirmation, rejecting unsupported/reparse/unavailable sources. Recheck the confirmed image and any unlocked editing basis before the move; changed evidence invalidates consent rather than authorizing different bytes.",
+      "Use the shared verified-file namespace admission authority for all affected names, with a unique sibling non-overwriting move. Preserve external-stale/partial restrictions, selected path, profile references and previous backup; never expose a generic public move or implicitly initialize.",
+      "Inspect actual source and destination effects after issued work settles, including error-after-success. Intended destination bytes alone are insufficient if source is unreadable, reappears or changes; retain known archive facts and conflict/unresolved state without moving again or touching the new source.",
+      "Completed archive ends the old usable owner and clears its root after dependent work settles. Notify shared consumers, retain established sessions, display the destination and honor standalone-editor closure after acknowledgement. Presentation failure cannot undo the move or make it replayable.",
+      "Keep bounded evidence/artifact ownership and actual release separate from cancelled observation, using an explicit handoff for a verified final archive file. Verify locked/damaged input, stale confirmation, source replacement, uncertain move, concurrent commit/initialization, late completion and acknowledgement behavior through real operations."
+    ],
+    "coverage": [
+      "Q15 and Q16 archive outcomes/termination",
+      "Candidate 4 matrix rows 3, 7, 15-16, 21-23 relevant ownership"
+    ]
+  },
+  {
+    "id": "V7",
+    "title": "Coordinate vault selection and closing with owned operations",
+    "candidate": 4,
+    "blockedBy": [
+      "V1",
+      "F2"
+    ],
+    "relatedIssues": [],
+    "what": "Apply vault selection changes consistently with saved settings and allow editors/windows to close only under the accepted actual-work and quiescent-outcome rules.",
+    "criteria": [
+      "Keep Busy rejection before saving settings when old/new vault work is active; preserve the draft/current selection with no automatic later apply. Once quiescent, reserve the affected role transition and settings basis so no conflicting operation starts between validation, publication and adoption.",
+      "Make verified settings adoption and in-memory selected role/epoch update one ordered visibility transition for new credential requests. Failed/partial settings keep the old role and settings restrictions; use the same coordination for restore/default recovery and later reconciliation adoption.",
+      "Preserve opened editor paths and reuse an eligible unlocked editor owner on promotion. An A-to-B-to-A switch never revives old contexts or erases stale-location restrictions; an admitted transition retains necessary owner references if an editor closes, while quiescent unresolved metadata does not keep an otherwise unused root alive.",
+      "Coordinate prompt hosting, operation stop, native/I/O/owner-dependent verification and further inspection admission during closure. Pending work retains its actual owners; quiescent unresolved outcomes may close with visible facts/paths, retaining non-secret restrictions while the app lives and applying ordinary final-exit secret cleanup.",
+      "All migrating callers use the same owner-role and busy admission authority; no settings/recovery caller bypass remains. Context/subscription release cannot dispose roots, and no hidden lifetime or recording wait timer is introduced.",
+      "Verify real settings save/recovery and editor/window flows with Busy, partial publication, late reconciliation, destination-editor closure, credential-handoff races, stale switch-back, prompt transfer, delayed owner release and bounded metadata delivery."
+    ],
+    "coverage": [
+      "Q16 selection/settings/closing and ADR 0008 ownership",
+      "Candidate 4 matrix rows 6, 8, 17-23 relevant cross-owner coordination"
+    ]
+  },
+  {
+    "id": "S1",
+    "title": "Preserve committed SSH packets and truthful send progress",
+    "candidate": 5,
+    "blockedBy": [],
+    "relatedIssues": [
+      5,
+      6,
+      7,
+      8
+    ],
+    "what": "Stop terminal or SFTP output without corrupting the shared encrypted stream, while reporting definitely submitted bytes and uncertain effects accurately through existing terminal and file-operation paths.",
+    "criteria": [
+      "Prefactor the existing shared writer through both real consumers so packet commitment precedes the first irreversible outgoing cipher/nonce/sequence change. Only definitively uncommitted work may be dropped and refunded; operation cancellation cannot enter a committed packet encryption/write token.",
+      "Serialize reservations and reply correlation before a packet can cause a peer response. Preserve rekey restrictions, per-channel send order and bounded fair arbitration; no cipher rollback, skipped committed packet or automatic replay is allowed.",
+      "Expose monotonic definite local-submission prefixes and distinguish uncommitted, committed/pending and uncertain ranges. Terminal mapping emits only newly confirmed complete units once for echo/pacing, never a partial encoded character or a claim of peer receipt.",
+      "Close may abandon uncommitted application suffixes and schedule after the current packet settles without waiting for a zero-credit frame. Incomplete SFTP frames cannot be followed by new DATA frames; possible complete delivery of an uncertain final mutation packet propagates UnknownOutcome under the existing file-operation policy.",
+      "Retain actual writer resources and bounded outcome records after stop/observer loss until real settlement. Preserve existing terminal/session cleanup and SFTP mutation/refresh semantics rather than introducing another send-state authority.",
+      "Verify the real terminal/SFTP send paths with independent packet/cryptographic vectors and controlled precommit, cipher-advance, pending-write, uncertain-final-packet, zero-credit and rekey races; retain real-peer encrypted-stream checks."
+    ],
+    "coverage": [
+      "Q17-Q19 packet commitment and sending",
+      "Candidate 5 matrix rows 1 send admission, 3-7 send/correlation, 15 writer/rekey, 26 writer records"
+    ]
+  },
+  {
+    "id": "S2",
+    "title": "Run SFTP through shared SSH channel operations",
+    "candidate": 5,
+    "blockedBy": [
+      "S1"
+    ],
+    "relatedIssues": [
+      5,
+      6,
+      7,
+      8
+    ],
+    "what": "Open an SFTP subsystem and perform real transfers using one shared SSH channel owner for identities, requests, delivery, credit and closure while the existing terminal channel stays usable.",
+    "criteria": [
+      "Introduce the accepted named channel operations with a prebound awaited incremental SFTP consumer and bounded peer-request policy, using the existing authenticated connection. Keep subsystem/INIT/version, SFTP request IDs, file semantics and UI in the SFTP owner; do not replace the SSH/OpenSSL client or add channels/features.",
+      "Reserve instance, registry, receive/control and outcome capacity before OPEN. Maintain distinct local/peer IDs, generation, checked send/receive windows and packet maxima; freeze accepted bytes/request bodies/stop offsets. Rejected admission issues nothing, repeated Close joins existing shutdown, and records/observers/waiters have finite versioned bounds.",
+      "Keep the common reader independent of application consumption, with ordered nonrecursive callbacks outside transport locks. Request-reply FIFO follows actual committed send order; notification has no slot, stopped committed requests retain their original slot, and protocol replies/fixed prior-delivery fences progress without waiting for later output.",
+      "Separate consumption eligibility, queued grant, committed possible peer entitlement and completed WINDOW_ADJUST. Reserve capacity before grants, handle an early peer response safely, retain uncertain ownership and never double-credit. Preserve payload-byte accounting, 1 MiB windows and 32 KiB data limits with independent interoperability evidence.",
+      "Validate SFTP lengths before allocation, retain the 256 KiB body maximum and consume only prefixes adopted into bounded parser ownership without awaiting a future callback or local I/O. Charge copy overlaps, parser/reply/frame storage, live/closing channel buffers and actual I/O under existing 2 MiB/32 MiB and separate request/provider guards.",
+      "Implement opening stop, late confirmation/refusal, directional EOF, once-only CLOSE and distinct protocol closure, delivery, actual release and identity retirement. Unresolved original identities cannot be reused at timeout; preserve SFTP-local versus SSH connection-wide failure semantics and independently observable consumer failure.",
+      "Demonstrate production browse/upload/download with real peers plus controlled different IDs/limits, tiny fragments, paused consumer/request reply, window-grant races, malformed SFTP versus SSH, late OPEN/CLOSE, rejected final callback and capacity thresholds. The terminal transport migration can then use this same owner without another ledger."
+    ],
+    "coverage": [
+      "Q17-Q19 shared-channel interface and first complete SFTP consumer",
+      "Candidate 5 matrix rows 1-2, 7-8, 10-12, 14-16, 19-20, 22-23, 26-27"
+    ]
+  },
+  {
+    "id": "S3",
+    "title": "Preserve SFTP outcomes and bounded reopen through channel shutdown",
+    "candidate": 5,
+    "blockedBy": [
+      "S2"
+    ],
+    "relatedIssues": [
+      5,
+      6,
+      7,
+      8
+    ],
+    "what": "Keep the terminal responsive while an SFTP transfer stalls, is cancelled, or explicitly reopens, retaining old channel and file-operation ownership until their actual work settles.",
+    "criteria": [
+      "Integrate complete-frame stopping and truthful shared-channel send outcomes with existing file-operation cancellation/recovery. Preserve known completed effects and possible UnknownOutcome, never append a frame after an abandoned prefix and never infer non-execution from a missing whole-write success.",
+      "Retain exactly one opening/live/closing SFTP slot per current connection generation until both identity retirement and channel-owned actual release. Explicit reopen uses the existing bounded connection-wait budget; repeated requests neither reset it nor add unbounded waiters, and ended waits never open later.",
+      "An unresolved OPEN/CLOSE reports truthful pending/busy/timeout while a healthy terminal continues, without extra closing slots, forced terminal disconnect, ID reuse or automatic reconnect/replay. A live explicit waiter may start only after safe retirement; an explicitly reconnected generation has a fresh slot subject to shared limits.",
+      "Keep separately transferred parser storage and local provider I/O charged after channel closure. Preserve the already implemented pending-mutation and refresh/recheck guards across view reopen/reconnect; old completions settle only old owners and cannot change new credit, matching, readiness or results.",
+      "Complete bounded cross-channel service under tiny frames, eight outstanding file requests, blocked local I/O, zero credit and rekey. Allowed control and terminal traffic progress without consumer/reducer/credit cycles or starvation, with mandatory close/control capacity retained.",
+      "Verify real transfer-window-to-file-operation paths against delayed/uncertain mutation packets, never-arriving OPEN/CLOSE, repeated explicit reopen, old completion after reconnect, parser/provider buffers surviving channel release and threshold exhaustion. Retain real OpenSSH alongside terminal output and existing file-operation regression evidence."
+    ],
+    "coverage": [
+      "Q19 SFTP lifecycle, bounded service and upper-owner integration",
+      "Candidate 5 matrix rows 5-6, 12-13, 15, 17-18, 20, 22, 24-27; T3 owns terminal-specific rows 4, 9, 10 (terminal exit facts) and 21, plus terminal integration of rows 19-20, 23 and 25."
+    ]
+  }
+]

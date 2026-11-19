@@ -1,0 +1,21 @@
+## Parent
+
+Whole-codebase ownership implementation plan (new map issue; identifier assigned on publication).
+
+## What to build
+
+Add, edit, delete and import vault entries from management tabs and same-file editors through complete operations whose committed metadata is shared immediately with future credential lookup.
+
+## Acceptance criteria
+
+- [ ] Migrate password add/edit/delete and private-key import to named operations with exact vault/entry/kind/revision anchors. UI callers provide localized forms and present observations without obtaining unlocked owners, assembling mutation serialization or requesting a separate refresh.
+- [ ] Bind existing known-profile impact confirmations to current revision and known reference facts. Reject stale review without retargeting, same-name substitution or silent rebasing; a kind change creates a new entry, deletion leaves references unresolved, and no profiles or established sessions are rewritten.
+- [ ] Bind private-key passphrase interaction to one bounded acquired source image. Preserve the accepted key/envelope allowlist, strict source-passphrase encoding and real validation; publish only validated canonical PKCS#8, leave the source intact, and retain neither source path dependency nor passphrase.
+- [ ] Reserve secret-input, native/import, result and metadata capacity before acceptance or mutation. Clear accepted temporary plaintext and native copies after actual use; failed drafts retain non-secret edits/outcomes, not passphrases or credential caches. Outcome/subscriber failure never triggers mutation replay.
+- [ ] Adopt and publish shared metadata only after the complete encrypted publication outcome permits it. Late notifications or obsolete contexts cannot overwrite newer state; current-state reads recover from coalesced or failed delivery without re-unlock.
+- [ ] Verify management/editor/credential-resolution paths with exact identities, changed impact facts, deleted references, independent key fixtures, unsupported input, source changes, native cancellation, stale subscribers and capacity faults.
+
+## Blocked by
+
+- Draft ticket 09: Own shared vault unlock and credential handoff operations.
+- Draft ticket 08: Publish encrypted vault revisions with verified preservation.

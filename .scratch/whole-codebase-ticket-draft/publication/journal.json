@@ -1,0 +1,453 @@
+{
+  "repository": "TabTty/TabTty",
+  "approval": "User approved the breakdown and explicitly requested publication in this chat.",
+  "entries": {
+    "map": {
+      "title": "Deepen recording, transport, persistence, vault, SSH and grapheme ownership",
+      "status": "created",
+      "bodyFile": "map.md",
+      "bodySha256": "086b9c592d824cdda1b5d5db2ce10f6eaa7d3bea93ea2bee00f85acb3c39e341",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:map"
+      ],
+      "parent": null,
+      "blockedBy": [],
+      "number": 40,
+      "url": "https://github.com/TabTty/TabTty/issues/40"
+    },
+    "R1": {
+      "title": "Own recording pause, resume and retry through complete operations",
+      "status": "created",
+      "bodyFile": "R1.md",
+      "bodySha256": "a33bff8d772846b64225ed36b05674d641004627513ff7ca51800ddab0eb9d37",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "parent": 40,
+      "blockedBy": [],
+      "number": 41,
+      "url": "https://github.com/TabTty/TabTty/issues/41"
+    },
+    "R2": {
+      "title": "Finalize recordings once across receive EOF and disconnect",
+      "status": "created",
+      "bodyFile": "R2.md",
+      "bodySha256": "6ec0265ca25ebd55498a085efe2220fdeb291a29deaeec6ec9dfce7daaa29a49",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "parent": 40,
+      "blockedBy": [
+        41
+      ],
+      "number": 42,
+      "url": "https://github.com/TabTty/TabTty/issues/42"
+    },
+    "R3": {
+      "title": "Preserve recording work throughout close waiting and later loss decisions",
+      "status": "created",
+      "bodyFile": "R3.md",
+      "bodySha256": "184447885141f932a522c3ca1257b17737eca3d54988ab94f148ad19d42b3162",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "parent": 40,
+      "blockedBy": [
+        42
+      ],
+      "number": 43,
+      "url": "https://github.com/TabTty/TabTty/issues/43"
+    },
+    "T1": {
+      "title": "Run Telnet sessions through complete terminal-payload transport operations",
+      "status": "created",
+      "bodyFile": "T1.md",
+      "bodySha256": "049c46c4c7b83a22dd821e23d4bdf5e2f8b1756dd7219bb655850321cd920e08",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "parent": 40,
+      "blockedBy": [],
+      "number": 44,
+      "url": "https://github.com/TabTty/TabTty/issues/44"
+    },
+    "T2": {
+      "title": "Run serial sessions through the terminal-payload transport seam",
+      "status": "created",
+      "bodyFile": "T2.md",
+      "bodySha256": "15d374cba43b225e53bcb80b4462bc74713c9396fed170ded4fe5b6aecd12d23",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "parent": 40,
+      "blockedBy": [
+        44
+      ],
+      "number": 45,
+      "url": "https://github.com/TabTty/TabTty/issues/45"
+    },
+    "F1": {
+      "title": "Save connection profiles through owned verified file operations",
+      "status": "created",
+      "bodyFile": "F1.md",
+      "bodySha256": "348a3f2924532e358ec995e26151bb54ab4dbaf516187260320bc1014b3e8e27",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "parent": 40,
+      "blockedBy": [],
+      "number": 46,
+      "url": "https://github.com/TabTty/TabTty/issues/46"
+    },
+    "F2": {
+      "title": "Save and recover application stores through verified operations",
+      "status": "created",
+      "bodyFile": "F2.md",
+      "bodySha256": "a68cf1cfc70b8793a2e33882791f438f87a4faceebda27125f5d4cf6fce9491c",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "parent": 40,
+      "blockedBy": [
+        46
+      ],
+      "number": 47,
+      "url": "https://github.com/TabTty/TabTty/issues/47"
+    },
+    "F3": {
+      "title": "Publish encrypted vault revisions with verified preservation",
+      "status": "created",
+      "bodyFile": "F3.md",
+      "bodySha256": "92fe5517d46ed45bd86eb312657c0e1ca42e7cbd9af1c9198be3ed1191c67356",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "parent": 40,
+      "blockedBy": [
+        46
+      ],
+      "number": 48,
+      "url": "https://github.com/TabTty/TabTty/issues/48"
+    },
+    "V1": {
+      "title": "Own shared vault unlock and credential handoff operations",
+      "status": "created",
+      "bodyFile": "V1.md",
+      "bodySha256": "0358513d6b9b5dcd00b7e4fceb96013e8a36695c36380cc4e4115f55eb123ec8",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "parent": 40,
+      "blockedBy": [],
+      "number": 49,
+      "url": "https://github.com/TabTty/TabTty/issues/49"
+    },
+    "V2": {
+      "title": "Manage vault entries and key imports through owned operations",
+      "status": "created",
+      "bodyFile": "V2.md",
+      "bodySha256": "cc780d46d1176115d5a3efdba67bed8efaf58343e3106977bc92678b69b14273",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "parent": 40,
+      "blockedBy": [
+        49,
+        48
+      ],
+      "number": 50,
+      "url": "https://github.com/TabTty/TabTty/issues/50"
+    },
+    "V3": {
+      "title": "Change the vault master password through one owned operation",
+      "status": "created",
+      "bodyFile": "V3.md",
+      "bodySha256": "843805bb423908176a451085814b43cfa0b3db3c1b128afd01e5eca903d84b05",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "parent": 40,
+      "blockedBy": [
+        49,
+        48
+      ],
+      "number": 51,
+      "url": "https://github.com/TabTty/TabTty/issues/51"
+    },
+    "V4": {
+      "title": "Back up and restore vaults through complete authenticated operations",
+      "status": "created",
+      "bodyFile": "V4.md",
+      "bodySha256": "83d43ac7b4e44705850ef7b6007cfebdba873b7d9f2ca367ae80ba516ce756ef",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "parent": 40,
+      "blockedBy": [
+        49,
+        48
+      ],
+      "number": 52,
+      "url": "https://github.com/TabTty/TabTty/issues/52"
+    },
+    "V5": {
+      "title": "Create vaults only through explicit guarded initialization",
+      "status": "created",
+      "bodyFile": "V5.md",
+      "bodySha256": "fbaa14985affce5a2af91f71b704e7eae340f655d9a9759536afea174f147377",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "parent": 40,
+      "blockedBy": [
+        49,
+        48
+      ],
+      "number": 53,
+      "url": "https://github.com/TabTty/TabTty/issues/53"
+    },
+    "V6": {
+      "title": "Archive the confirmed vault image without requiring unlock",
+      "status": "created",
+      "bodyFile": "V6.md",
+      "bodySha256": "a4908632b695b3d1f11d63b5c50578d96e56463c1789478867e8b336a817f21b",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "parent": 40,
+      "blockedBy": [
+        49,
+        46
+      ],
+      "number": 54,
+      "url": "https://github.com/TabTty/TabTty/issues/54"
+    },
+    "V7": {
+      "title": "Coordinate vault selection and closing with owned operations",
+      "status": "created",
+      "bodyFile": "V7.md",
+      "bodySha256": "9ba585579b1e29fa4b9f0bf54a0d1ea20333b24f6d50b2cac49be80f9458f88d",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "parent": 40,
+      "blockedBy": [
+        49,
+        47
+      ],
+      "number": 55,
+      "url": "https://github.com/TabTty/TabTty/issues/55"
+    },
+    "S1": {
+      "title": "Preserve committed SSH packets and truthful send progress",
+      "status": "created",
+      "bodyFile": "S1.md",
+      "bodySha256": "dde0e91be20269659562b32c1bd8aa571206ef6d0a0198d88c59378d0c57ff0d",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "parent": 40,
+      "blockedBy": [],
+      "number": 56,
+      "url": "https://github.com/TabTty/TabTty/issues/56"
+    },
+    "S2": {
+      "title": "Run SFTP through shared SSH channel operations",
+      "status": "created",
+      "bodyFile": "S2.md",
+      "bodySha256": "f71d8106d2420759ddbb57629c6b9c4225157a3a37228354a97d735600ff3828",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "parent": 40,
+      "blockedBy": [
+        56
+      ],
+      "number": 57,
+      "url": "https://github.com/TabTty/TabTty/issues/57"
+    },
+    "T3": {
+      "title": "Deliver SSH terminal startup and interaction through the shared transport and channel owners",
+      "status": "created",
+      "bodyFile": "T3.md",
+      "bodySha256": "f9ea76015707fa55831c88ab7405456bd34c7c45064135ade3539a358e0a7de2",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "parent": 40,
+      "blockedBy": [
+        44,
+        57
+      ],
+      "number": 58,
+      "url": "https://github.com/TabTty/TabTty/issues/58"
+    },
+    "S3": {
+      "title": "Preserve SFTP outcomes and bounded reopen through channel shutdown",
+      "status": "created",
+      "bodyFile": "S3.md",
+      "bodySha256": "647d41fda05a902e82514ade0d3adfdb32aeb7cda3617e9b8ed389081dc119f7",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "parent": 40,
+      "blockedBy": [
+        57
+      ],
+      "number": 59,
+      "url": "https://github.com/TabTty/TabTty/issues/59"
+    },
+    "G1": {
+      "title": "Apply pinned grapheme and emoji rules to received terminal output",
+      "status": "created",
+      "bodyFile": "G1.md",
+      "bodySha256": "656f452a945004e04be540f92d3dd2d3a96cb924070e479055d1987373975247",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "parent": 40,
+      "blockedBy": [],
+      "number": 60,
+      "url": "https://github.com/TabTty/TabTty/issues/60"
+    },
+    "G2": {
+      "title": "Preserve authoritative stored spans in rendering, UIA and history",
+      "status": "created",
+      "bodyFile": "G2.md",
+      "bodySha256": "cdab9b836407743e81e436962903c8c225e157a5a665f8b0754717b90d089893",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "parent": 40,
+      "blockedBy": [
+        60
+      ],
+      "number": 61,
+      "url": "https://github.com/TabTty/TabTty/issues/61"
+    },
+    "G3": {
+      "title": "Continue long received graphemes with bounded stored spelling",
+      "status": "created",
+      "bodyFile": "G3.md",
+      "bodySha256": "864e4cb4c55021bbc6b09007207a438c0968292857125d86afe98f5d14d81f0c",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "parent": 40,
+      "blockedBy": [
+        61
+      ],
+      "number": 62,
+      "url": "https://github.com/TabTty/TabTty/issues/62"
+    },
+    "G4": {
+      "title": "Analyze paste previews through owned Rust input plans",
+      "status": "created",
+      "bodyFile": "G4.md",
+      "bodySha256": "c613b7195e6ca32c0af43c684b6bb30769caa9e8c6cfd35780cba421ea3b478f",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "parent": 40,
+      "blockedBy": [
+        60
+      ],
+      "number": 63,
+      "url": "https://github.com/TabTty/TabTty/issues/63"
+    },
+    "G5": {
+      "title": "Send exact long-grapheme input with scalar-safe Stop",
+      "status": "created",
+      "bodyFile": "G5.md",
+      "bodySha256": "42c44dd9de26e7c1bca619f4c840616904a159a641569e4faff763432cffc490",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "parent": 40,
+      "blockedBy": [
+        62,
+        63
+      ],
+      "number": 64,
+      "url": "https://github.com/TabTty/TabTty/issues/64"
+    },
+    "G6": {
+      "title": "Admit shared large pastes within existing application and input budgets",
+      "status": "created",
+      "bodyFile": "G6.md",
+      "bodySha256": "b05eab602faaff48fc1cbda418b7ea8d33a1777dde48f25e3afdc66b29f1fd21",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "parent": 40,
+      "blockedBy": [
+        64
+      ],
+      "number": 65,
+      "url": "https://github.com/TabTty/TabTty/issues/65"
+    },
+    "G7": {
+      "title": "Configure large clipboard pastes with bounded full-text confirmation",
+      "status": "created",
+      "bodyFile": "G7.md",
+      "bodySha256": "33e666cd1b60715f8b3797e45c357f9e780821257450bb2a701c5c9202b37272",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "parent": 40,
+      "blockedBy": [
+        65
+      ],
+      "number": 66,
+      "url": "https://github.com/TabTty/TabTty/issues/66"
+    },
+    "X1": {
+      "title": "Verify cross-owner close and actual resource release",
+      "status": "created",
+      "bodyFile": "X1.md",
+      "bodySha256": "7959ff36d5ddf4e890d4af21451c616d8b09eb47644c690605e8ac970fbc7de7",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "parent": 40,
+      "blockedBy": [
+        43,
+        58,
+        59,
+        51,
+        55,
+        66
+      ],
+      "number": 67,
+      "url": "https://github.com/TabTty/TabTty/issues/67"
+    }
+  }
+}

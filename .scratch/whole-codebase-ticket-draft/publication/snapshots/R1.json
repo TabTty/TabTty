@@ -1,0 +1,42 @@
+{
+  "assignees": [],
+  "blockedBy": {
+    "nodes": [],
+    "totalCount": 0
+  },
+  "body": "## Parent\r\n\r\n[Deepen recording, transport, persistence, vault, SSH and grapheme ownership](https://github.com/TabTty/TabTty/issues/40)\r\n\r\n## What to build\r\n\r\nDeepen the existing C# recording owner so the actual session and recording controls request complete pause, resume and explicit retry operations. The owner retains file completion, failure and release duties after a caller stops waiting, while preserving the already specified Rust recording content and interval behavior. This implements the whole-codebase Q1-Q3 ownership refinement to the existing native-recording work rather than rebuilding its projections.\r\n\r\nRelated existing work: [#27](https://github.com/TabTty/TabTty/issues/27), [#28](https://github.com/TabTty/TabTty/issues/28), [#29](https://github.com/TabTty/TabTty/issues/29), [#30](https://github.com/TabTty/TabTty/issues/30). These references identify established behavior or adjacent acceptance work; they are not blocking dependencies and are not to be reopened or reimplemented by this ticket.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Route production pause, resume, retry and initial recording preparation through named complete operations on one session-generation recording owner; ordinary callers no longer assemble native cutoff, writer completion, durable flush and handle-release steps or own operation leases.\r\n- [ ] Expose bounded immutable results/status and a read-only actual-release observation. Distinguish inactive/no-change, accepted work, successful save/pause, failed or incomplete recording, and resources still owned; cancelling observation does not cancel the accepted operation.\r\n- [ ] Preserve whole-selected-format preparation before transport startup, disabled recording behavior, interval eligibility, fresh parts without backfill, and cancellation before activation. A partial open never activates a subset; its original owner closes successful handles and leaves created files as already specified.\r\n- [ ] A successful Pause requires the ordered Rust cutoff, completion of accepted writes, durable flush and part close. Actual write/flush/close errors stop group admission without replay, guessed byte counts or damage to healthy terminal effects and replies.\r\n- [ ] Keep the 8 MiB group allowance, approximately one-second batching and ten-second pending-I/O no-progress policy. Idle time without pending I/O does not fail recording; issued and failed-but-owned buffers remain charged until actual completion.\r\n- [ ] Explicit Retry creates fresh part owners and numbers. Delayed opening or prior-part completion/failure cannot activate or mutate the replacement; unavailable existing cleanup capacity rejects or defers new preparation visibly without accumulating owners.\r\n- [ ] Exercise the ordinary production interface with real Rust semantics, independent expected log bytes, controlled blocked/partial/failed/late file I/O and time, plus real-file and recording-control integration. Preserve the native content cases from the related issues rather than replacing them with helper-count assertions.\r\n",
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 41,
+  "parent": {
+    "id": "I_kwDOVmB6dc8AAAABgNbAdw",
+    "number": 40,
+    "state": "OPEN",
+    "title": "Deepen recording, transport, persistence, vault, SSH and grapheme ownership",
+    "url": "https://github.com/TabTty/TabTty/issues/40"
+  },
+  "state": "OPEN",
+  "subIssues": {
+    "nodes": [],
+    "totalCount": 0
+  },
+  "subIssuesSummary": {
+    "completed": 0,
+    "percentCompleted": 0,
+    "total": 0
+  },
+  "title": "Own recording pause, resume and retry through complete operations",
+  "url": "https://github.com/TabTty/TabTty/issues/41"
+}

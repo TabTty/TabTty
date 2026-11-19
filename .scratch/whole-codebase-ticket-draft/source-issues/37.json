@@ -1,0 +1,22 @@
+{
+  "body": "## What to build\r\n\r\nConnect the complete closure operation to the Rust terminal owner's final lifetime. Disconnect preserves authoritative native state for retained output; committed final tab removal releases that ownership deterministically while independent results and issued I/O retain their own lifetimes.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Retained disconnected output remains available from Rust. Receive EOF and transport cleanup do not destroy the retained terminal state or select a managed terminal fallback.\r\n- [ ] Successful final visual removal releases the applicable terminal ownership exactly once through its owner. A failed removal preserves usable state for the surviving view.\r\n- [ ] Tab movement, pane removal, and WPF unloading do not dispose the terminal session. Old-generation completions cannot release or mutate a replacement session.\r\n- [ ] Held immutable snapshots and results remain valid and charged until their independent release. Issued I/O and its buffers retain their original owner and charges until actual completion.\r\n- [ ] Real native/session recording integration verifies once-only receive and EOF finalization, eligible tail delivery, and independent transport and log cleanup. Visual removal and release do not imply a successful durable save.\r\n- [ ] Production-interface tests plus actual WPF tab-close and retained-output interactions verify held results, duplicate requests, failed removal, movement, delayed I/O, and deterministic release without relying on garbage collection.\r\n- [ ] The implemented ownership integration is exercised through the real single-tab close and shared per-target execution. Other closure commands reuse that release boundary when their own slices are integrated; complete native-only cross-command acceptance belongs to the final integration gate.\r\n",
+  "comments": [],
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 37,
+  "state": "OPEN",
+  "title": "Retain native terminal state until final tab removal",
+  "url": "https://github.com/TabTty/TabTty/issues/37"
+}

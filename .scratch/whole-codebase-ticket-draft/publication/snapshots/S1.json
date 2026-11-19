@@ -1,0 +1,42 @@
+{
+  "assignees": [],
+  "blockedBy": {
+    "nodes": [],
+    "totalCount": 0
+  },
+  "body": "## Parent\r\n\r\n[Deepen recording, transport, persistence, vault, SSH and grapheme ownership](https://github.com/TabTty/TabTty/issues/40)\r\n\r\n## What to build\r\n\r\nStop terminal or SFTP output without corrupting the shared encrypted stream, while reporting definitely submitted bytes and uncertain effects accurately through existing terminal and file-operation paths.\r\n\r\nRelated existing work: [#5](https://github.com/TabTty/TabTty/issues/5), [#6](https://github.com/TabTty/TabTty/issues/6), [#7](https://github.com/TabTty/TabTty/issues/7), [#8](https://github.com/TabTty/TabTty/issues/8). These references identify established behavior or adjacent acceptance work; they are not blocking dependencies and are not to be reopened or reimplemented by this ticket.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Prefactor the existing shared writer through both real consumers so packet commitment precedes the first irreversible outgoing cipher/nonce/sequence change. Only definitively uncommitted work may be dropped and refunded; operation cancellation cannot enter a committed packet encryption/write token.\r\n- [ ] Serialize reservations and reply correlation before a packet can cause a peer response. Preserve rekey restrictions, per-channel send order and bounded fair arbitration; no cipher rollback, skipped committed packet or automatic replay is allowed.\r\n- [ ] Expose monotonic definite local-submission prefixes and distinguish uncommitted, committed/pending and uncertain ranges. Terminal mapping emits only newly confirmed complete units once for echo/pacing, never a partial encoded character or a claim of peer receipt.\r\n- [ ] Close may abandon uncommitted application suffixes and schedule after the current packet settles without waiting for a zero-credit frame. Incomplete SFTP frames cannot be followed by new DATA frames; possible complete delivery of an uncertain final mutation packet propagates UnknownOutcome under the existing file-operation policy.\r\n- [ ] Retain actual writer resources and bounded outcome records after stop/observer loss until real settlement. Preserve existing terminal/session cleanup and SFTP mutation/refresh semantics rather than introducing another send-state authority.\r\n- [ ] Verify the real terminal/SFTP send paths with independent packet/cryptographic vectors and controlled precommit, cipher-advance, pending-write, uncertain-final-packet, zero-credit and rekey races; retain real-peer encrypted-stream checks.\r\n",
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 56,
+  "parent": {
+    "id": "I_kwDOVmB6dc8AAAABgNbAdw",
+    "number": 40,
+    "state": "OPEN",
+    "title": "Deepen recording, transport, persistence, vault, SSH and grapheme ownership",
+    "url": "https://github.com/TabTty/TabTty/issues/40"
+  },
+  "state": "OPEN",
+  "subIssues": {
+    "nodes": [],
+    "totalCount": 0
+  },
+  "subIssuesSummary": {
+    "completed": 0,
+    "percentCompleted": 0,
+    "total": 0
+  },
+  "title": "Preserve committed SSH packets and truthful send progress",
+  "url": "https://github.com/TabTty/TabTty/issues/56"
+}

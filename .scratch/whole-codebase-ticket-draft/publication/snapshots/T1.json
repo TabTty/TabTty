@@ -1,0 +1,42 @@
+{
+  "assignees": [],
+  "blockedBy": {
+    "nodes": [],
+    "totalCount": 0
+  },
+  "body": "## Parent\r\n\r\n[Deepen recording, transport, persistence, vault, SSH and grapheme ownership](https://github.com/TabTty/TabTty/issues/40)\r\n\r\n## What to build\r\n\r\nIntroduce the accepted complete transport seam through the live Telnet connection path. The transport owns Telnet startup, negotiation, framing and geometry notifications; the terminal session receives ordered terminal payload and facts and retains input permission, local-echo policy, Rust processing and recording delivery. This is the exercised prefactoring path for migrating the other transports.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Bind one typed awaited receive consumer and access to current committed geometry before I/O. Use named Start, Send prepared input, Apply committed geometry and Disconnect operations with bounded status/results and separate actual-release observation; retain compatible existing paths for transports not yet migrated.\r\n- [ ] Prepare the session and required recording files before starting I/O. Telnet becomes ready on TCP availability without remote-login inference, credential retrieval or waiting for every option negotiation; repeated Start observes one attempt rather than reconnecting.\r\n- [ ] Move IAC/NVT conversion, option negotiation, NAWS representation and dedicated Telnet commands behind the transport. Preserve source/payload/fact order through fragmented IAC and CR state, including negotiated echo changes inside a mixed read. Raw contains de-framed payload before Rust decoding, never negotiation bytes.\r\n- [ ] Keep local-echo policy, encoded complete-unit interpretation, input permission and pacing in the session/Rust owners. Send reports rejected, accepted-unsent, definitely submitted complete units and any partial/uncertain suffix promptly enough for pacing/echo; do not replay input or echo partial units.\r\n- [ ] Consume one nonrecursive ordered callback at a time. Completion follows Rust processing, separately accounted recording admission or its narrow failure, bounded reply admission and release of the received allocation; it never waits for disk flush, painting or reply transmission. Account queued/in-flight payload and ordered metadata and keep protocol control/cancellation progress possible without holding locks or the session reducer across waits.\r\n- [ ] Apply current committed geometry without holding the reducer through startup or I/O. Distinguish supersession and notification failure without claiming remote rendering; preserve dedicated Telnet actions without introducing a universal capability collection.\r\n- [ ] Deliver EOF/closed through the session-owned receive-cutoff and recording-lifecycle entry points; the transport consumer never owns file finalization or awaits its aggregate completion. Retain a compatible session bridge during migration so the recording owner can be deepened independently. Directional recording-part retention is accepted and verified by R2, not reimplemented in this transport slice.\r\n- [ ] Distinguish directional EOF, final closed facts and transport release. Disconnect joins one shutdown, observation cancellation leaves accepted work owned, and attempt cancellation prevents activation while already-admitted delivery settles in its original generation. Consumer failure after partial application causes independent observable failure without redelivery or a required final callback.\r\n- [ ] Verify the live session/Rust/log path with independent Telnet bytes, controlled fragmentation/echo-order/partial-write/slow-consumer/late-I/O cases and real loopback-peer coverage. Source extraction alone or a forwarding wrapper that leaves framing in the session does not satisfy this ticket.\r\n",
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 44,
+  "parent": {
+    "id": "I_kwDOVmB6dc8AAAABgNbAdw",
+    "number": 40,
+    "state": "OPEN",
+    "title": "Deepen recording, transport, persistence, vault, SSH and grapheme ownership",
+    "url": "https://github.com/TabTty/TabTty/issues/40"
+  },
+  "state": "OPEN",
+  "subIssues": {
+    "nodes": [],
+    "totalCount": 0
+  },
+  "subIssuesSummary": {
+    "completed": 0,
+    "percentCompleted": 0,
+    "total": 0
+  },
+  "title": "Run Telnet sessions through complete terminal-payload transport operations",
+  "url": "https://github.com/TabTty/TabTty/issues/44"
+}

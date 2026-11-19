@@ -1,0 +1,1080 @@
+{
+  "status": "published",
+  "repository": "TabTty/TabTty",
+  "source": "Six whole-codebase architecture candidates finalized on 2026-11-18",
+  "baselineCommit": "b0a10cfbe90beb048e5e250db9a1335182250b05",
+  "map": {
+    "title": "Deepen recording, transport, persistence, vault, SSH and grapheme ownership",
+    "labels": [
+      "ready-for-agent",
+      "wayfinder:map"
+    ],
+    "file": "map.md",
+    "github": {
+      "number": 40,
+      "url": "https://github.com/TabTty/TabTty/issues/40"
+    }
+  },
+  "tickets": [
+    {
+      "id": "R1",
+      "title": "Own recording pause, resume and retry through complete operations",
+      "candidate": 1,
+      "blockedBy": [],
+      "relatedIssues": [
+        27,
+        28,
+        29,
+        30
+      ],
+      "what": "Deepen the existing C# recording owner so the actual session and recording controls request complete pause, resume and explicit retry operations. The owner retains file completion, failure and release duties after a caller stops waiting, while preserving the already specified Rust recording content and interval behavior. This implements the whole-codebase Q1-Q3 ownership refinement to the existing native-recording work rather than rebuilding its projections.",
+      "criteria": [
+        "Route production pause, resume, retry and initial recording preparation through named complete operations on one session-generation recording owner; ordinary callers no longer assemble native cutoff, writer completion, durable flush and handle-release steps or own operation leases.",
+        "Expose bounded immutable results/status and a read-only actual-release observation. Distinguish inactive/no-change, accepted work, successful save/pause, failed or incomplete recording, and resources still owned; cancelling observation does not cancel the accepted operation.",
+        "Preserve whole-selected-format preparation before transport startup, disabled recording behavior, interval eligibility, fresh parts without backfill, and cancellation before activation. A partial open never activates a subset; its original owner closes successful handles and leaves created files as already specified.",
+        "A successful Pause requires the ordered Rust cutoff, completion of accepted writes, durable flush and part close. Actual write/flush/close errors stop group admission without replay, guessed byte counts or damage to healthy terminal effects and replies.",
+        "Keep the 8 MiB group allowance, approximately one-second batching and ten-second pending-I/O no-progress policy. Idle time without pending I/O does not fail recording; issued and failed-but-owned buffers remain charged until actual completion.",
+        "Explicit Retry creates fresh part owners and numbers. Delayed opening or prior-part completion/failure cannot activate or mutate the replacement; unavailable existing cleanup capacity rejects or defers new preparation visibly without accumulating owners.",
+        "Exercise the ordinary production interface with real Rust semantics, independent expected log bytes, controlled blocked/partial/failed/late file I/O and time, plus real-file and recording-control integration. Preserve the native content cases from the related issues rather than replacing them with helper-count assertions."
+      ],
+      "coverage": [
+        "Whole-codebase Q1-Q3: selected named recording operations and lifetime seam",
+        "Candidate 1 verification rows 1, 2, 4, 5, 10, 15, 16; observation-cancellation portion of row 14"
+      ],
+      "number": 1,
+      "blockedByNumbers": [],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "file": "issues/01-own-recording-pause-resume-and-retry-through-complete-operations.md",
+      "github": {
+        "number": 41,
+        "url": "https://github.com/TabTty/TabTty/issues/41"
+      }
+    },
+    {
+      "id": "R2",
+      "title": "Finalize recordings once across receive EOF and disconnect",
+      "candidate": 1,
+      "blockedBy": [
+        "R1"
+      ],
+      "relatedIssues": [
+        27,
+        29,
+        30,
+        37
+      ],
+      "what": "Route receive EOF and disconnect through the same complete recording owner used for pause and retry. A peer ending its receive direction flushes the eligible received content once while preserving recording-part ownership and any permitted opposite-direction interaction; a later pause, disconnect or close shares that work instead of repeating it.",
+      "criteria": [
+        "Add and use named complete receive-completion and disconnect-completion operations on the existing session-generation recording owner, preserving the distinction from Pause and final Close.",
+        "Apply source decoder/parser finalization and eligible Text tails once at their ordered receive cutoff; flush accepted work through that position while EOF retains part/session ownership and does not globally pause otherwise permitted local-echo recording. SSH local echo remains disabled.",
+        "Preserve reverse input where the transport permits it after receive EOF. Retained disconnected output remains usable, and EOF or recording completion never claims to release transport or retained-terminal ownership.",
+        "Repeated EOF, disconnect after EOF, pause after EOF and overlapping drains share admitted I/O and once-only terminal finalization while reporting each operation's own completion condition.",
+        "Complete only the required session ordering step from EOF/disconnect callbacks. Do not await aggregate close/session completion that depends on that callback, and retain observation and original-generation cleanup when a caller stops waiting.",
+        "Verify exact Raw/Text/Terminal bytes and file lifetime through real Rust/session paths for split source tails, EOF then permitted input, EOF followed by pause/disconnect, repeated facts, overlapping pause drains, failed flush and delayed old-generation completion."
+      ],
+      "coverage": [
+        "Whole-codebase Q1-Q3: distinct EOF/disconnect meanings and overlapping completion",
+        "Candidate 1 verification rows 3, 4, 12, 15; EOF/overlap portions of row 11"
+      ],
+      "number": 2,
+      "blockedByNumbers": [
+        1
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "file": "issues/02-finalize-recordings-once-across-receive-eof-and-disconnect.md",
+      "github": {
+        "number": 42,
+        "url": "https://github.com/TabTty/TabTty/issues/42"
+      }
+    },
+    {
+      "id": "R3",
+      "title": "Preserve recording work throughout close waiting and later loss decisions",
+      "candidate": 1,
+      "blockedBy": [
+        "R2"
+      ],
+      "relatedIssues": [
+        30,
+        34,
+        35,
+        36,
+        37
+      ],
+      "what": "Connect the existing tab/window closure workflow to the recording owner's protected close operation. Accepting closure immediately protects its pending log work, Continue waiting keeps that protection, and the same close remains able to accept a later explicit loss decision. The log-loss choice reflects recording work rather than unrelated transport cleanup.",
+      "criteria": [
+        "Acceptance of explicit close joins or starts one recording close and protects its admitted work before waiting for an existing pause/EOF/disconnect drain, final cutoff, the five-second question or the user's answer. A prior completed I/O failure is not reversed.",
+        "Only unresolved recording work triggers the existing five-second log-loss choice. Transport-only cleanup does not trigger it; Continue waiting preserves the existing timer/choice without repeated prompts and prevents automatic ten-second abandonment.",
+        "Keep a later explicit close-with-unsaved-data action accessible on the same close owner. Forward that decision through the complete recording operation without a caller cleanup recipe or a new allowance; when required cleanup admission is unavailable, report it and preserve the pending wait.",
+        "Loss permission abandons only unissued work and requests cancellation of issued work where possible. Preserve issued buffers, file handles and charges until actual completion, including blocked synchronous flush; cleanup adoption and visual removal do not prove actual release.",
+        "Distinguish save success, incomplete/uncertain recording, pending release and cleanup adoption. A late loss answer cannot damage a completed save or another generation, and late completion cannot overwrite an established incomplete outcome with an unqualified save-success claim.",
+        "Repeated tab/window/bulk/automatic closure requests join existing recording work and decisions through the already specified closure owner. A missing view, cancelled observation or failed question presentation supplies no implicit loss permission and creates no cyclic completion wait.",
+        "Use localized English/Japanese presentation for any affected visible choice/status. Verify through real WPF closure and session/Rust recording paths with controlled blocked writes/flushes, clocks, actual I/O errors, late completion and cleanup-capacity pressure across both five- and ten-second thresholds.",
+        "Verify recording-versus-transport completion using the existing transport/session seam, including a completed log with transport cleanup still held. The close owner depends on the recording result and does not require the new transport interface to distinguish those outcomes."
+      ],
+      "coverage": [
+        "Whole-codebase Q1-Q3: close protection, Continue waiting, later explicit loss and independent release",
+        "Candidate 1 verification rows 6-9, 11-14, 16; delayed failure/release portions of rows 10 and 15"
+      ],
+      "number": 3,
+      "blockedByNumbers": [
+        2
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "file": "issues/03-preserve-recording-work-throughout-close-waiting-and-later-loss-decisions.md",
+      "github": {
+        "number": 43,
+        "url": "https://github.com/TabTty/TabTty/issues/43"
+      }
+    },
+    {
+      "id": "T1",
+      "title": "Run Telnet sessions through complete terminal-payload transport operations",
+      "candidate": 2,
+      "blockedBy": [],
+      "relatedIssues": [],
+      "what": "Introduce the accepted complete transport seam through the live Telnet connection path. The transport owns Telnet startup, negotiation, framing and geometry notifications; the terminal session receives ordered terminal payload and facts and retains input permission, local-echo policy, Rust processing and recording delivery. This is the exercised prefactoring path for migrating the other transports.",
+      "criteria": [
+        "Bind one typed awaited receive consumer and access to current committed geometry before I/O. Use named Start, Send prepared input, Apply committed geometry and Disconnect operations with bounded status/results and separate actual-release observation; retain compatible existing paths for transports not yet migrated.",
+        "Prepare the session and required recording files before starting I/O. Telnet becomes ready on TCP availability without remote-login inference, credential retrieval or waiting for every option negotiation; repeated Start observes one attempt rather than reconnecting.",
+        "Move IAC/NVT conversion, option negotiation, NAWS representation and dedicated Telnet commands behind the transport. Preserve source/payload/fact order through fragmented IAC and CR state, including negotiated echo changes inside a mixed read. Raw contains de-framed payload before Rust decoding, never negotiation bytes.",
+        "Keep local-echo policy, encoded complete-unit interpretation, input permission and pacing in the session/Rust owners. Send reports rejected, accepted-unsent, definitely submitted complete units and any partial/uncertain suffix promptly enough for pacing/echo; do not replay input or echo partial units.",
+        "Consume one nonrecursive ordered callback at a time. Completion follows Rust processing, separately accounted recording admission or its narrow failure, bounded reply admission and release of the received allocation; it never waits for disk flush, painting or reply transmission. Account queued/in-flight payload and ordered metadata and keep protocol control/cancellation progress possible without holding locks or the session reducer across waits.",
+        "Apply current committed geometry without holding the reducer through startup or I/O. Distinguish supersession and notification failure without claiming remote rendering; preserve dedicated Telnet actions without introducing a universal capability collection.",
+        "Deliver EOF/closed through the session-owned receive-cutoff and recording-lifecycle entry points; the transport consumer never owns file finalization or awaits its aggregate completion. Retain a compatible session bridge during migration so the recording owner can be deepened independently. Directional recording-part retention is accepted and verified by R2, not reimplemented in this transport slice.",
+        "Distinguish directional EOF, final closed facts and transport release. Disconnect joins one shutdown, observation cancellation leaves accepted work owned, and attempt cancellation prevents activation while already-admitted delivery settles in its original generation. Consumer failure after partial application causes independent observable failure without redelivery or a required final callback.",
+        "Verify the live session/Rust/log path with independent Telnet bytes, controlled fragmentation/echo-order/partial-write/slow-consumer/late-I/O cases and real loopback-peer coverage. Source extraction alone or a forwarding wrapper that leaves framing in the session does not satisfy this ticket."
+      ],
+      "coverage": [
+        "Whole-codebase Q4-Q6: selected interface and terminal/transport responsibility split, Telnet production adoption",
+        "Candidate 2 verification rows 1, 3, 6-13 as applicable to Telnet; dedicated Telnet actions from row 14",
+        "No R2 prerequisite: session lifecycle entry points form the migration boundary; full recording-plus-transport acceptance requires both slices after integration."
+      ],
+      "number": 4,
+      "blockedByNumbers": [],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "file": "issues/04-run-telnet-sessions-through-complete-terminal-payload-transport-operations.md",
+      "github": {
+        "number": 44,
+        "url": "https://github.com/TabTty/TabTty/issues/44"
+      }
+    },
+    {
+      "id": "T2",
+      "title": "Run serial sessions through the terminal-payload transport seam",
+      "candidate": 2,
+      "blockedBy": [
+        "T1"
+      ],
+      "relatedIssues": [],
+      "what": "Migrate the live serial session to the complete transport operations introduced for Telnet. A successfully configured COM port produces ordered payload and lifecycle facts through the same session consumer, while serial line control, BREAK and device-overrun behavior remain dedicated serial responsibilities.",
+      "criteria": [
+        "Bind the session consumer before opening the port and keep required recording preparation before device I/O. Report readiness only after the configured COM port opens successfully; do not substitute a port or setting, infer remote login or add automatic reconnection.",
+        "Route serial receive, encoded input submission and disconnect through the common complete operations with the same source/order, complete-prefix/uncertainty and observation-versus-cancellation distinctions. Geometry reports that serial requires no wire notification rather than pretending to send one.",
+        "Preserve the selected flow-control and DTR/RTS ownership rules and dedicated BREAK operation, including its existing duration and cleanup attempt. Do not add a generic capabilities framework or change saved profile settings during temporary line operations.",
+        "Bound pending reads, payload, metadata, sends and late cleanup under existing accounting. Use supported flow control where it can recover, report device overrun explicitly, and never claim lossless backpressure or silently discard received payload.",
+        "Preserve received output and separately owned recording finalization across EOF/disconnect, cancelled waits, delayed port open/read/write/close and replacement generations. Actual device-resource release remains distinct from operation completion and visual removal.",
+        "Exercise the ordinary session/Rust/recording path with controlled serial adapters for partial writes, blocked consumers, overrun and late cancellation, and retain actual COM/device integration for driver behavior. Remove the serial caller's obsolete raw-wire recipe after migration."
+      ],
+      "coverage": [
+        "Whole-codebase Q4-Q6: serial production adoption and dedicated device actions",
+        "Candidate 2 verification rows 1, 7, 9-14 as applicable to serial"
+      ],
+      "number": 5,
+      "blockedByNumbers": [
+        4
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "file": "issues/05-run-serial-sessions-through-the-terminal-payload-transport-seam.md",
+      "github": {
+        "number": 45,
+        "url": "https://github.com/TabTty/TabTty/issues/45"
+      }
+    },
+    {
+      "id": "F1",
+      "title": "Save connection profiles through owned verified file operations",
+      "candidate": 3,
+      "blockedBy": [],
+      "relatedIssues": [],
+      "what": "Create and update connection profiles through one owned verified-publication operation, so the editor reports the actual target and backup outcome even after cancellation, replacement errors, or delayed filesystem completion.",
+      "criteria": [
+        "Introduce complete typed publication requests and read-only operation observations through the working profile create/update path. Admission reserves finite versioned record, byte and artifact capacity synchronously and returns an operation identity; rejected admission changes nothing and transfers no input ownership.",
+        "Keep bounded immutable candidate bytes and the original editing basis with format-owner validation evidence. Coordinate target names, missing destinations, observed identities and known aliases before mutation, including replacement identity changes; refuse conflicting or unsafe coordination without claiming an atomic compare-and-swap against arbitrary writers.",
+        "Perform same-directory candidate creation, required access policy, write/flush, baseline recheck and non-overwriting create or replacement. Inspect target, candidate and required backup using individually acquired bounded images; adopt the profile revision only after complete target and preservation proof.",
+        "Distinguish complete publication, intact original or absent create, conflict, partial preservation, unavailable evidence and cleanup failure. Keep the prior effective revision and draft and freeze affected writes for partial/unresolved outcomes. Reconciliation observes the same operation without publishing again, rebasing or restoring automatically.",
+        "Separate observation cancellation, prevented publication, issued mutation, per-inspection resource release and final retirement. Retain actual I/O and owned artifacts until completion or verified handoff; preserve restrictions across view close/reopen, allow visible quiescent unresolved closure, and bound completed history without evicting unresolved facts.",
+        "Exercise the real profile editor-to-file path with controlled post-replacement errors, missing/unreadable backups, stale bases, alias collisions, candidate mutation, cancellation, late inspection, reused candidate names and capacity exhaustion; retain real supported-filesystem checks and exact file-content assertions. Keep profile registration publication a separate outcome."
+      ],
+      "coverage": [
+        "Q7-Q11 complete verified-file contract",
+        "Candidate 3 matrix: profile portions of rows 1-8, 10-11, 13-15"
+      ],
+      "number": 6,
+      "blockedByNumbers": [],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "file": "issues/06-save-connection-profiles-through-owned-verified-file-operations.md",
+      "github": {
+        "number": 46,
+        "url": "https://github.com/TabTty/TabTty/issues/46"
+      }
+    },
+    {
+      "id": "F2",
+      "title": "Save and recover application stores through verified operations",
+      "candidate": 3,
+      "blockedBy": [
+        "F1"
+      ],
+      "relatedIssues": [],
+      "what": "Apply settings, highlight catalogs, local state and host-key records only after verified publication, and make explicit JSON recovery preserve the observed original while reporting unresolved outcomes accurately.",
+      "criteria": [
+        "Migrate every application JSON-store publication and authorized recovery caller to the shared operation interface, preserving format validation, unknown properties, schema/version refusal, location policy and existing recovery choices. Remove the duplicated publication recipe after all such callers use the owner.",
+        "Only verified complete publication makes settings, highlights, local state or approved host trust effective. Failure, partial preservation or unavailable evidence retains prior effective state and applicable write restrictions; a display failure or cleanup error does not undo a known commit or trigger replay.",
+        "Explicit restore/default recovery independently validates its candidate and preserves exact observed original bytes under the existing unique recovery policy, even when damaged. Report that recovery copy separately from an ordinary validated backup; never silently restore, merge, empty-reset or overwrite.",
+        "Coordinate recovery from a quiescent unresolved operation with a gap-free target reservation handover. Failed recovery retains earlier restrictions, and ordinary reopen does not bypass them. Later reconciliation uses current operation revisions without reissuing publication.",
+        "Integrate pending versus quiescent unresolved outcomes into existing localized save/recovery/close presentation. Retain compact non-secret evidence and artifact locations after view closure, without a hidden process lifetime or recording-specific wait timers.",
+        "Verify complete settings/highlight/host-trust application paths with real validators and controlled original-preservation failure, external changes, cancellation, late completion, recovery and capacity faults; keep real-file checks for all supported locations."
+      ],
+      "coverage": [
+        "Q7-Q11 application-store adoption and explicit recovery",
+        "Candidate 3 matrix: application-store portions of rows 1-7, 9-11, 13-15"
+      ],
+      "number": 7,
+      "blockedByNumbers": [
+        6
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "file": "issues/07-save-and-recover-application-stores-through-verified-operations.md",
+      "github": {
+        "number": 47,
+        "url": "https://github.com/TabTty/TabTty/issues/47"
+      }
+    },
+    {
+      "id": "F3",
+      "title": "Publish encrypted vault revisions with verified preservation",
+      "candidate": 3,
+      "blockedBy": [
+        "F1"
+      ],
+      "relatedIssues": [],
+      "what": "Route existing encrypted vault creation, saves and explicit restores through the shared verified file operation while the vault owner retains authentication, root adoption and credential eligibility.",
+      "criteria": [
+        "Supply immutable encrypted images, original-basis evidence and existing private-access, writer-lock and preservation policy to the shared file owner. Never transfer master passwords, roots or plaintext credentials to common operation records or diagnostics.",
+        "Verify equality with an already authenticated encrypted image as that generation, not merely a matching vault ID; independently authenticate and validate selected restore content. Each acquired image supplies both validation and digest evidence, and verification never runs under a mutex it must reacquire.",
+        "Adopt the candidate snapshot/root only after verified target publication and required backup/recovery preservation. If candidate bytes reached disk but preservation failed or is unknown, keep the prior effective revision, block writes and new credential retrieval, preserve established roots while actually needed, and report the on-disk candidate generation truthfully.",
+        "Preserve exact original bytes on explicit restore and retain owned conflict-recovery material without overwriting external files. Reinspection never repeats encryption/publication, clears independent external-stale restrictions, or treats ordinary reopening as recovery.",
+        "Keep actual I/O and owner-dependent verification alive through cancellation or view closure; permit visible quiescent unresolved exit and retain only non-secret inspection evidence after the responsible secret lifetime ends. Coordinate operation/artifact accounting and retirement with the common owner.",
+        "Use real vault/OpenSSL validation, independent encrypted fixtures and Windows file checks alongside controlled partial backup, uncertain password change, conflict, late verification and cleanup faults. Verify existing authenticated sessions survive blocked new retrieval."
+      ],
+      "coverage": [
+        "Q7-Q11 vault integration, especially Q9 adoption and Q10 closing",
+        "Candidate 3 matrix: vault portions of rows 1-14"
+      ],
+      "number": 8,
+      "blockedByNumbers": [
+        6
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "file": "issues/08-publish-encrypted-vault-revisions-with-verified-preservation.md",
+      "github": {
+        "number": 48,
+        "url": "https://github.com/TabTty/TabTty/issues/48"
+      }
+    },
+    {
+      "id": "V1",
+      "title": "Own shared vault unlock and credential handoff operations",
+      "candidate": 4,
+      "blockedBy": [],
+      "relatedIssues": [],
+      "what": "Unlock the selected vault once through complete operations shared by windows and editors, and deliver exact eligible credentials without caller-managed unlock lifetimes or stale-context reuse.",
+      "criteria": [
+        "Introduce named complete unlock operations on non-secret file-bound contexts, with fixed opened location and role epoch, synchronous bounded admission, operation identity, monotonic observations and coalesced current metadata. Contexts and subscriptions never own roots or prolong their lifetime; same-ID copies remain distinct locations.",
+        "Track actual unlock consumers independently from observers. Cancelling observation leaves the consumer interested; explicit stop removes only that consumer. Retire an attempt when its last consumer leaves while retaining native work, secret buffers and expensive-worker charge until actual completion; late success cannot join or adopt into a fresh attempt.",
+        "Bind typed input replies to the operation, request, source image and live host. Handle host transfer, duplicate/late replies and interaction failure with one cleanup owner and no automatic prompt loop. Do not occupy the expensive worker while awaiting human input or hold reentrant locks across callbacks.",
+        "Ordinary Unlock, authentication, credential pickers and Explorer editors never initialize missing or empty vaults. Preserve existing independent cryptographic validation, selected-owner application-run unlock lifetime and editor-role lifetime without a plaintext-entry cache.",
+        "Resolve only the requested exact vault/entry/kind and recheck selection epoch, revision and restrictions immediately before authentication handoff. Clear invalidated results instead of retargeting or retrying; already handed-off credentials follow the existing authentication lifetime and established sessions remain connected.",
+        "Use real unlock/credential paths and independent invalid/valid encrypted fixtures to verify shared windows, observation-versus-consumer cancellation, last-consumer/native completion races, host loss, A-to-B-to-A contexts, exact-reference refusal, worker/buffer bounds and cleanup without secret diagnostics."
+      ],
+      "coverage": [
+        "Q12-Q16 interface/admission/interaction/shared-unlock contract",
+        "Candidate 4 matrix rows 1, 4-8, 9 ordinary-entry-point refusal, 19-20, 23 shared infrastructure"
+      ],
+      "number": 9,
+      "blockedByNumbers": [],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "file": "issues/09-own-shared-vault-unlock-and-credential-handoff-operations.md",
+      "github": {
+        "number": 49,
+        "url": "https://github.com/TabTty/TabTty/issues/49"
+      }
+    },
+    {
+      "id": "V2",
+      "title": "Manage vault entries and key imports through owned operations",
+      "candidate": 4,
+      "blockedBy": [
+        "V1",
+        "F3"
+      ],
+      "relatedIssues": [],
+      "what": "Add, edit, delete and import vault entries from management tabs and same-file editors through complete operations whose committed metadata is shared immediately with future credential lookup.",
+      "criteria": [
+        "Migrate password add/edit/delete and private-key import to named operations with exact vault/entry/kind/revision anchors. UI callers provide localized forms and present observations without obtaining unlocked owners, assembling mutation serialization or requesting a separate refresh.",
+        "Bind existing known-profile impact confirmations to current revision and known reference facts. Reject stale review without retargeting, same-name substitution or silent rebasing; a kind change creates a new entry, deletion leaves references unresolved, and no profiles or established sessions are rewritten.",
+        "Bind private-key passphrase interaction to one bounded acquired source image. Preserve the accepted key/envelope allowlist, strict source-passphrase encoding and real validation; publish only validated canonical PKCS#8, leave the source intact, and retain neither source path dependency nor passphrase.",
+        "Reserve secret-input, native/import, result and metadata capacity before acceptance or mutation. Clear accepted temporary plaintext and native copies after actual use; failed drafts retain non-secret edits/outcomes, not passphrases or credential caches. Outcome/subscriber failure never triggers mutation replay.",
+        "Adopt and publish shared metadata only after the complete encrypted publication outcome permits it. Late notifications or obsolete contexts cannot overwrite newer state; current-state reads recover from coalesced or failed delivery without re-unlock.",
+        "Verify management/editor/credential-resolution paths with exact identities, changed impact facts, deleted references, independent key fixtures, unsupported input, source changes, native cancellation, stale subscribers and capacity faults."
+      ],
+      "coverage": [
+        "Q12-Q13 and Q16 entry/import results and interaction ownership",
+        "Candidate 4 matrix rows 2, 7, 11, 20, 23 mutation/metadata infrastructure"
+      ],
+      "number": 10,
+      "blockedByNumbers": [
+        9,
+        8
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "file": "issues/10-manage-vault-entries-and-key-imports-through-owned-operations.md",
+      "github": {
+        "number": 50,
+        "url": "https://github.com/TabTty/TabTty/issues/50"
+      }
+    },
+    {
+      "id": "V3",
+      "title": "Change the vault master password through one owned operation",
+      "candidate": 4,
+      "blockedBy": [
+        "V1",
+        "F3"
+      ],
+      "relatedIssues": [],
+      "what": "Change the master password from management or an editor with one complete operation that adopts a new root only after verified publication and accurately reports partial on-disk changes.",
+      "criteria": [
+        "Use the complete operation and bound interaction interface with existing new-password confirmation and normalization rules. Generate fresh root/wrapper/payload encryption under the existing vault format; ordinary views do not own the proposed root or commit choreography.",
+        "Reserve outcome, metadata, root-transfer and actual cryptographic-work capacity before publication. Keep old/candidate roots only for their established owner and active-work lifetimes, clearing temporary master/KEK and working copies after actual use.",
+        "Only complete verified target and preservation evidence adopts the root/snapshot/revision and shared metadata. A candidate on disk with missing/unreadable preservation retains prior effective state and blocks writes/retrieval while identifying the observed candidate generation; existing copies retain their original passwords.",
+        "Observation cancellation, UI loss or metadata delivery failure never repeats encryption/publication. Reconciliation inspects existing work and cannot clear independent external-stale restrictions or release roots still used by native/I/O verification.",
+        "Verify independent cryptographic fixtures, RNG/input failures, native cancellation, verified success after a reported filesystem error, partial preservation and owner-close races through the real management/editor operation and next credential lookup."
+      ],
+      "coverage": [
+        "Q16 master-password change and root adoption",
+        "Candidate 4 matrix rows 1, 7, 12, 20-23 relevant root/secret lifetimes"
+      ],
+      "number": 11,
+      "blockedByNumbers": [
+        9,
+        8
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "file": "issues/11-change-the-vault-master-password-through-one-owned-operation.md",
+      "github": {
+        "number": 51,
+        "url": "https://github.com/TabTty/TabTty/issues/51"
+      }
+    },
+    {
+      "id": "V4",
+      "title": "Back up and restore vaults through complete authenticated operations",
+      "candidate": 4,
+      "blockedBy": [
+        "V1",
+        "F3"
+      ],
+      "relatedIssues": [],
+      "what": "Create verified encrypted backups and explicitly restore a chosen authenticated generation through the same management operation interface, including an allowed rescue copy after external-stale detection.",
+      "criteria": [
+        "Backup the exact authenticated encrypted generation to an explicitly selected non-overwriting destination and verify it without changing the source revision or implying a new password. An external-stale rescue copy may use only a retained authenticated image and must identify its generation/stale status without clearing source restrictions or retrieving credentials.",
+        "Provide one Restore operation for locked and unlocked states. Independently authenticate/validate the backup, enforce an unlocked owner ID or structurally established original ID as specified, and preserve recognizable-newer-version/nonzero-flags refusal; invalid/missing/empty originals do not supply an invented ID.",
+        "Preserve exact original target bytes under the existing recovery policy and adopt only after complete target/preservation proof. Keep the editor target path and distinct old-password generations; missing authenticated rescue evidence is an explicit unavailable result.",
+        "Bind file pickers, master input and confirmation to the admitted target/image. Keep actual work and shared encrypted-image ownership through cancellation, and report target, preservation, restrictions and cleanup separately without blind retry or automatic initialization.",
+        "Exercise real backup/restore operations with independent locked/unlocked fixtures, mismatched IDs, damaged originals, future-version refusal, destination collision, stale rescue, cancelled input and uncertain publication; verify actual encrypted bytes and preserved originals."
+      ],
+      "coverage": [
+        "Q16 encrypted backup, restore and Q108 rescue-copy allowance",
+        "Candidate 4 matrix rows 1, 7, 13-14, 21-23 relevant ownership"
+      ],
+      "number": 12,
+      "blockedByNumbers": [
+        9,
+        8
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "file": "issues/12-back-up-and-restore-vaults-through-complete-authenticated-operations.md",
+      "github": {
+        "number": 52,
+        "url": "https://github.com/TabTty/TabTty/issues/52"
+      }
+    },
+    {
+      "id": "V5",
+      "title": "Create vaults only through explicit guarded initialization",
+      "candidate": 4,
+      "blockedBy": [
+        "V1",
+        "F3"
+      ],
+      "relatedIssues": [],
+      "what": "Let management explicitly create a missing vault or initialize the confirmed same empty regular file, with verified results and no implicit initialization from credential use.",
+      "criteria": [
+        "Expose the explicit management intent with localized missing/empty explanation and existing new-master rules. A new vault receives a new identity/root and does not rewrite selected settings or credential references; ordinary unlock, authentication, all pickers and Explorer paths keep their refusal.",
+        "Bind confirmation to the opened location and acquired missing/empty evidence. Missing-path creation never overwrites; empty initialization rechecks the same zero-byte regular file and rejects replaced, nonempty, unsupported, stale or unresolved targets.",
+        "Use the same internal target/namespace admission as verified publication for source, destination, candidate and parked names. Preserve the empty original and report parked-original, target, candidate and recovery facts separately through actual completion.",
+        "Permit only the existing narrow compensation in the original execution after installation was prevented or definitively settled: return the exact owned empty original to a proven-absent source without overwriting, verify it and report failure. Reconciliation never performs compensation or blind repair; cleanup-only failure does not erase proven success.",
+        "Adopt root and shared metadata only after required publication/preservation proof, with capacity reserved beforehand and actual secret/I/O owners retained through cancellation. Test the real explicit UI path against collision, changed identity, parking/install/compensation faults, uncertainty and concurrent ordinary commits."
+      ],
+      "coverage": [
+        "Q14, Q16 initialization and common namespace admission",
+        "Candidate 4 matrix rows 3, 9-10, 21-23 relevant ownership"
+      ],
+      "number": 13,
+      "blockedByNumbers": [
+        9,
+        8
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "file": "issues/13-create-vaults-only-through-explicit-guarded-initialization.md",
+      "github": {
+        "number": 53,
+        "url": "https://github.com/TabTty/TabTty/issues/53"
+      }
+    },
+    {
+      "id": "V6",
+      "title": "Archive the confirmed vault image without requiring unlock",
+      "candidate": 4,
+      "blockedBy": [
+        "V1",
+        "F1"
+      ],
+      "relatedIssues": [],
+      "what": "Archive a locked, readable damaged or unlocked vault through a source-bound complete operation, then report the actual archive location and end the old usable owner without creating a replacement vault.",
+      "criteria": [
+        "Acquire bounded regular-file identity, length and exact-byte evidence before existing confirmation, rejecting unsupported/reparse/unavailable sources. Recheck the confirmed image and any unlocked editing basis before the move; changed evidence invalidates consent rather than authorizing different bytes.",
+        "Use the shared verified-file namespace admission authority for all affected names, with a unique sibling non-overwriting move. Preserve external-stale/partial restrictions, selected path, profile references and previous backup; never expose a generic public move or implicitly initialize.",
+        "Inspect actual source and destination effects after issued work settles, including error-after-success. Intended destination bytes alone are insufficient if source is unreadable, reappears or changes; retain known archive facts and conflict/unresolved state without moving again or touching the new source.",
+        "Completed archive ends the old usable owner and clears its root after dependent work settles. Notify shared consumers, retain established sessions, display the destination and honor standalone-editor closure after acknowledgement. Presentation failure cannot undo the move or make it replayable.",
+        "Keep bounded evidence/artifact ownership and actual release separate from cancelled observation, using an explicit handoff for a verified final archive file. Verify locked/damaged input, stale confirmation, source replacement, uncertain move, concurrent commit/initialization, late completion and acknowledgement behavior through real operations."
+      ],
+      "coverage": [
+        "Q15 and Q16 archive outcomes/termination",
+        "Candidate 4 matrix rows 3, 7, 15-16, 21-23 relevant ownership"
+      ],
+      "number": 14,
+      "blockedByNumbers": [
+        9,
+        6
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "file": "issues/14-archive-the-confirmed-vault-image-without-requiring-unlock.md",
+      "github": {
+        "number": 54,
+        "url": "https://github.com/TabTty/TabTty/issues/54"
+      }
+    },
+    {
+      "id": "V7",
+      "title": "Coordinate vault selection and closing with owned operations",
+      "candidate": 4,
+      "blockedBy": [
+        "V1",
+        "F2"
+      ],
+      "relatedIssues": [],
+      "what": "Apply vault selection changes consistently with saved settings and allow editors/windows to close only under the accepted actual-work and quiescent-outcome rules.",
+      "criteria": [
+        "Keep Busy rejection before saving settings when old/new vault work is active; preserve the draft/current selection with no automatic later apply. Once quiescent, reserve the affected role transition and settings basis so no conflicting operation starts between validation, publication and adoption.",
+        "Make verified settings adoption and in-memory selected role/epoch update one ordered visibility transition for new credential requests. Failed/partial settings keep the old role and settings restrictions; use the same coordination for restore/default recovery and later reconciliation adoption.",
+        "Preserve opened editor paths and reuse an eligible unlocked editor owner on promotion. An A-to-B-to-A switch never revives old contexts or erases stale-location restrictions; an admitted transition retains necessary owner references if an editor closes, while quiescent unresolved metadata does not keep an otherwise unused root alive.",
+        "Coordinate prompt hosting, operation stop, native/I/O/owner-dependent verification and further inspection admission during closure. Pending work retains its actual owners; quiescent unresolved outcomes may close with visible facts/paths, retaining non-secret restrictions while the app lives and applying ordinary final-exit secret cleanup.",
+        "All migrating callers use the same owner-role and busy admission authority; no settings/recovery caller bypass remains. Context/subscription release cannot dispose roots, and no hidden lifetime or recording wait timer is introduced.",
+        "Verify real settings save/recovery and editor/window flows with Busy, partial publication, late reconciliation, destination-editor closure, credential-handoff races, stale switch-back, prompt transfer, delayed owner release and bounded metadata delivery."
+      ],
+      "coverage": [
+        "Q16 selection/settings/closing and ADR 0008 ownership",
+        "Candidate 4 matrix rows 6, 8, 17-23 relevant cross-owner coordination"
+      ],
+      "number": 15,
+      "blockedByNumbers": [
+        9,
+        7
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "file": "issues/15-coordinate-vault-selection-and-closing-with-owned-operations.md",
+      "github": {
+        "number": 55,
+        "url": "https://github.com/TabTty/TabTty/issues/55"
+      }
+    },
+    {
+      "id": "S1",
+      "title": "Preserve committed SSH packets and truthful send progress",
+      "candidate": 5,
+      "blockedBy": [],
+      "relatedIssues": [
+        5,
+        6,
+        7,
+        8
+      ],
+      "what": "Stop terminal or SFTP output without corrupting the shared encrypted stream, while reporting definitely submitted bytes and uncertain effects accurately through existing terminal and file-operation paths.",
+      "criteria": [
+        "Prefactor the existing shared writer through both real consumers so packet commitment precedes the first irreversible outgoing cipher/nonce/sequence change. Only definitively uncommitted work may be dropped and refunded; operation cancellation cannot enter a committed packet encryption/write token.",
+        "Serialize reservations and reply correlation before a packet can cause a peer response. Preserve rekey restrictions, per-channel send order and bounded fair arbitration; no cipher rollback, skipped committed packet or automatic replay is allowed.",
+        "Expose monotonic definite local-submission prefixes and distinguish uncommitted, committed/pending and uncertain ranges. Terminal mapping emits only newly confirmed complete units once for echo/pacing, never a partial encoded character or a claim of peer receipt.",
+        "Close may abandon uncommitted application suffixes and schedule after the current packet settles without waiting for a zero-credit frame. Incomplete SFTP frames cannot be followed by new DATA frames; possible complete delivery of an uncertain final mutation packet propagates UnknownOutcome under the existing file-operation policy.",
+        "Retain actual writer resources and bounded outcome records after stop/observer loss until real settlement. Preserve existing terminal/session cleanup and SFTP mutation/refresh semantics rather than introducing another send-state authority.",
+        "Verify the real terminal/SFTP send paths with independent packet/cryptographic vectors and controlled precommit, cipher-advance, pending-write, uncertain-final-packet, zero-credit and rekey races; retain real-peer encrypted-stream checks."
+      ],
+      "coverage": [
+        "Q17-Q19 packet commitment and sending",
+        "Candidate 5 matrix rows 1 send admission, 3-7 send/correlation, 15 writer/rekey, 26 writer records"
+      ],
+      "number": 16,
+      "blockedByNumbers": [],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "file": "issues/16-preserve-committed-ssh-packets-and-truthful-send-progress.md",
+      "github": {
+        "number": 56,
+        "url": "https://github.com/TabTty/TabTty/issues/56"
+      }
+    },
+    {
+      "id": "S2",
+      "title": "Run SFTP through shared SSH channel operations",
+      "candidate": 5,
+      "blockedBy": [
+        "S1"
+      ],
+      "relatedIssues": [
+        5,
+        6,
+        7,
+        8
+      ],
+      "what": "Open an SFTP subsystem and perform real transfers using one shared SSH channel owner for identities, requests, delivery, credit and closure while the existing terminal channel stays usable.",
+      "criteria": [
+        "Introduce the accepted named channel operations with a prebound awaited incremental SFTP consumer and bounded peer-request policy, using the existing authenticated connection. Keep subsystem/INIT/version, SFTP request IDs, file semantics and UI in the SFTP owner; do not replace the SSH/OpenSSL client or add channels/features.",
+        "Reserve instance, registry, receive/control and outcome capacity before OPEN. Maintain distinct local/peer IDs, generation, checked send/receive windows and packet maxima; freeze accepted bytes/request bodies/stop offsets. Rejected admission issues nothing, repeated Close joins existing shutdown, and records/observers/waiters have finite versioned bounds.",
+        "Keep the common reader independent of application consumption, with ordered nonrecursive callbacks outside transport locks. Request-reply FIFO follows actual committed send order; notification has no slot, stopped committed requests retain their original slot, and protocol replies/fixed prior-delivery fences progress without waiting for later output.",
+        "Separate consumption eligibility, queued grant, committed possible peer entitlement and completed WINDOW_ADJUST. Reserve capacity before grants, handle an early peer response safely, retain uncertain ownership and never double-credit. Preserve payload-byte accounting, 1 MiB windows and 32 KiB data limits with independent interoperability evidence.",
+        "Validate SFTP lengths before allocation, retain the 256 KiB body maximum and consume only prefixes adopted into bounded parser ownership without awaiting a future callback or local I/O. Charge copy overlaps, parser/reply/frame storage, live/closing channel buffers and actual I/O under existing 2 MiB/32 MiB and separate request/provider guards.",
+        "Implement opening stop, late confirmation/refusal, directional EOF, once-only CLOSE and distinct protocol closure, delivery, actual release and identity retirement. Unresolved original identities cannot be reused at timeout; preserve SFTP-local versus SSH connection-wide failure semantics and independently observable consumer failure.",
+        "Demonstrate production browse/upload/download with real peers plus controlled different IDs/limits, tiny fragments, paused consumer/request reply, window-grant races, malformed SFTP versus SSH, late OPEN/CLOSE, rejected final callback and capacity thresholds. The terminal transport migration can then use this same owner without another ledger."
+      ],
+      "coverage": [
+        "Q17-Q19 shared-channel interface and first complete SFTP consumer",
+        "Candidate 5 matrix rows 1-2, 7-8, 10-12, 14-16, 19-20, 22-23, 26-27"
+      ],
+      "number": 17,
+      "blockedByNumbers": [
+        16
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "file": "issues/17-run-sftp-through-shared-ssh-channel-operations.md",
+      "github": {
+        "number": 57,
+        "url": "https://github.com/TabTty/TabTty/issues/57"
+      }
+    },
+    {
+      "id": "T3",
+      "title": "Deliver SSH terminal startup and interaction through the shared transport and channel owners",
+      "candidate": 2,
+      "blockedBy": [
+        "T1",
+        "S2"
+      ],
+      "relatedIssues": [],
+      "what": "Connect the SSH terminal path to the complete terminal-payload transport seam and the shared SSH channel owner first exercised by SFTP. Early DATA/stderr is processed before PTY/shell readiness, protocol control progresses during a slow terminal consumer or blocked send, and startup/closure results preserve the original session's output and resource ownership.",
+      "criteria": [
+        "Bind the typed terminal consumer and current committed geometry before transport I/O; eliminate the SSH transport's dependency on constructing or calling a concrete terminal-session class. Reuse the shared channel owner for terminal open/PTY/shell/send/credit/close instead of copying its state, request or ownership machinery.",
+        "Preserve the existing host-trust, authentication, crypto and secret-lifetime owners. Deliver early DATA/stderr in source order while PTY/shell startup is pending, including output preceding refusal, timeout or cancellation; readiness follows protocol success and consumption of prior facts and never activates a stopped generation.",
+        "Use current dimensions when requesting the PTY after authentication/dialog delays. Coalesce subsequent startup geometry to the latest permitted notification without occupying the session reducer, and prevent stale geometry results from replacing current commitments.",
+        "Return eligible receive credit only after Rust processing, recording admission or its narrow failure, bounded reply admission and allocation release. Do not wait for generated-reply transmission, disk flush or painting; keep window adjustments, rekey and closure progressing with zero send credit or a held consumer.",
+        "Account advertised credit, outstanding reads, packed payload, source metadata and control work together. Verify more than 1,024 tiny alternating DATA/stderr messages and metadata-only pressure without unbounded item growth, silent loss or a healthy-looking deadlock; use recoverable pressure or the existing affected-session failure scope.",
+        "Use shared send outcomes to expose definitely submitted complete input units promptly for echo/pacing, preserve partial/uncertain suffixes without replay, and distinguish Stop Paste, abandoned observation and Disconnect. Preserve the existing unit boundaries supplied by the input owner, including the amended scalar/codec-safe Stop when that input slice is integrated.",
+        "Treat exit-status, exit-signal and other terminal-channel metadata as ordered inert facts, never terminal/log payload or implied EOF; valid later output and permitted reverse traffic continue. While application consumption is paused, mandatory replies including unknown want-reply requests remain bounded, ordered and once-only, and make protocol progress independently of the terminal callback.",
+        "Keep directional EOF and final cutoff separate. During the existing up-to-two-second peer-close grace, continue valid terminal delivery until channel/protocol/transport termination; do not treat late post-termination socket bytes as payload. EOF/closed facts hand off recording completion without awaiting it or claiming recording/retained-output release.",
+        "Startup failure and cancellation settle previously admitted delivery against its original generation. Consumer failure after partial mutation stops ordinary delivery without replay, false credit or dependence on a final closed callback; independent status reports the failure and actual resources stay owned through delayed I/O.",
+        "Verify the ordinary session/Rust/log path with controlled SSH packet/consumer/time/I/O schedules and real scripted-peer coverage for early output followed by failure, startup resize, zero-credit replies, rekey, partial sends, EOF with permitted reverse input and late generation cleanup. Exercise concurrent SFTP traffic to prove payload isolation and shared-writer progress, while retaining separate SFTP parsing/reopen acceptance.",
+        "Remove the obsolete session-facing raw read/acknowledge and concrete-session startup paths for SSH after its consumers migrate; preserve independent protocol vectors and the dedicated SFTP API. No external SSH client library or new terminal implementation is introduced."
+      ],
+      "coverage": [
+        "Whole-codebase Q4-Q6: SSH production adoption and full bounded progress/failure contract",
+        "Whole-codebase Q17-Q19: terminal consumer of the shared SSH channel owner; S1/S2 own common writer/channel implementation",
+        "Candidate 2 verification rows 1-14 as applicable to SSH; transport closure and recording completion remain independent",
+        "Candidate 5 verification rows 4, 9, 10 terminal exit facts, 19 terminal directional/exit behavior, and 21"
+      ],
+      "number": 18,
+      "blockedByNumbers": [
+        4,
+        17
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "file": "issues/18-deliver-ssh-terminal-startup-and-interaction-through-the-shared-transport-and-channel-owners.md",
+      "github": {
+        "number": 58,
+        "url": "https://github.com/TabTty/TabTty/issues/58"
+      }
+    },
+    {
+      "id": "S3",
+      "title": "Preserve SFTP outcomes and bounded reopen through channel shutdown",
+      "candidate": 5,
+      "blockedBy": [
+        "S2"
+      ],
+      "relatedIssues": [
+        5,
+        6,
+        7,
+        8
+      ],
+      "what": "Keep the terminal responsive while an SFTP transfer stalls, is cancelled, or explicitly reopens, retaining old channel and file-operation ownership until their actual work settles.",
+      "criteria": [
+        "Integrate complete-frame stopping and truthful shared-channel send outcomes with existing file-operation cancellation/recovery. Preserve known completed effects and possible UnknownOutcome, never append a frame after an abandoned prefix and never infer non-execution from a missing whole-write success.",
+        "Retain exactly one opening/live/closing SFTP slot per current connection generation until both identity retirement and channel-owned actual release. Explicit reopen uses the existing bounded connection-wait budget; repeated requests neither reset it nor add unbounded waiters, and ended waits never open later.",
+        "An unresolved OPEN/CLOSE reports truthful pending/busy/timeout while a healthy terminal continues, without extra closing slots, forced terminal disconnect, ID reuse or automatic reconnect/replay. A live explicit waiter may start only after safe retirement; an explicitly reconnected generation has a fresh slot subject to shared limits.",
+        "Keep separately transferred parser storage and local provider I/O charged after channel closure. Preserve the already implemented pending-mutation and refresh/recheck guards across view reopen/reconnect; old completions settle only old owners and cannot change new credit, matching, readiness or results.",
+        "Complete bounded cross-channel service under tiny frames, eight outstanding file requests, blocked local I/O, zero credit and rekey. Allowed control and terminal traffic progress without consumer/reducer/credit cycles or starvation, with mandatory close/control capacity retained.",
+        "Verify real transfer-window-to-file-operation paths against delayed/uncertain mutation packets, never-arriving OPEN/CLOSE, repeated explicit reopen, old completion after reconnect, parser/provider buffers surviving channel release and threshold exhaustion. Retain real OpenSSH alongside terminal output and existing file-operation regression evidence."
+      ],
+      "coverage": [
+        "Q19 SFTP lifecycle, bounded service and upper-owner integration",
+        "Candidate 5 matrix rows 5-6, 12-13, 15, 17-18, 20, 22, 24-27; T3 owns terminal-specific rows 4, 9, 10 (terminal exit facts) and 21, plus terminal integration of rows 19-20, 23 and 25."
+      ],
+      "number": 19,
+      "blockedByNumbers": [
+        17
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "file": "issues/19-preserve-sftp-outcomes-and-bounded-reopen-through-channel-shutdown.md",
+      "github": {
+        "number": 59,
+        "url": "https://github.com/TabTty/TabTty/issues/59"
+      }
+    },
+    {
+      "id": "G1",
+      "title": "Apply pinned grapheme and emoji rules to received terminal output",
+      "candidate": 6,
+      "blockedBy": [],
+      "relatedIssues": [
+        18,
+        38
+      ],
+      "what": "Render received terminal output using one Rust-owned Unicode rule implementation with the accepted emoji recognition, width transitions and independent source state. Exercise the shared rules through actual terminal admission, execution and presentation rather than introducing an unused utility.",
+      "criteria": [
+        "Pin Unicode 17.0.0, UAX29 r47, UAX11 r44 and Emoji 17 / UTS51 r29. Supply reproducible generation/checking, exact versioned source hashes and schema checks, property defaults and range expansion, and required Unicode notices. Missing, corrupt or incompatible native code/data fails explicitly; no runtime download, OS-data substitution or new third-party dependency.",
+        "Recognize the accepted union of RGI sequences, emoji-style variation pairs and listed multi-scalar minimally/unqualified emoji spellings. Bare text-default singletons remain ordinary. Preserve VS15 priority and exact full-core lookup after removing only the permitted maximal trailing decoration whose General_Category is Mn/Mc/Me and whose Grapheme_Cluster_Break is Extend/SpacingMark, excluding the complete Variation_Selector property and U+20E3. Unsupported structures use ordinary width without recognizing a substring.",
+        "Use shared definitions with independent admission/execution, source/REP, grid and projection state. Preserve CRLF, FEFF/signature handling, isolated-mark one-cell behavior, source separation and VT continuation cutoffs. An arbitrary input chunk does not finalize a grapheme.",
+        "Observe every intermediate width growth or shrink during a receive operation, including right-edge wrap, whole-cluster erase and reflow, with independently expected cells, revisions and recording content. Shaping does not decide terminal width and the dotted circle remains drawing-only.",
+        "Verify the official pinned GraphemeBreakTest corpus and independent width/membership vectors through the production terminal path, including all relevant splits. Include supported variation pairs outside RGI-only lookup and unsupported prefix/interior-decoration cases; neither the old managed algorithm nor generated production tables serve as the expected-result oracle.",
+        "Preserve no-prefix native admission rejection, independently admitted Raw/log outcomes and the existing failure scope after execution starts. Expand the shared implementation beside only the existing managed consumers, then migrate those consumers in later tickets and delete their production rule implementation when its final consumer moves. Add no fallback, engine selection or new duplicate authority. Each slice keeps existing functional checks green; the complete amended contract is accepted only when all seven slices pass."
+      ],
+      "coverage": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        12,
+        14,
+        28
+      ],
+      "number": 20,
+      "blockedByNumbers": [],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "file": "issues/20-apply-pinned-grapheme-and-emoji-rules-to-received-terminal-output.md",
+      "github": {
+        "number": 60,
+        "url": "https://github.com/TabTty/TabTty/issues/60"
+      }
+    },
+    {
+      "id": "G2",
+      "title": "Preserve authoritative stored spans in rendering, UIA and history",
+      "candidate": 6,
+      "blockedBy": [
+        "G1"
+      ],
+      "relatedIssues": [
+        31,
+        32
+      ],
+      "what": "Make copy, rendering, UIA navigation and AI screen/history observations consume owned native text and the exact stored spans that produced it, so exported concatenation cannot invent or merge terminal characters.",
+      "criteria": [
+        "Extend the existing owned observation path with text, authoritative stored spans, explicit offset units and required cell/drawing-aid facts bound to one capture, session generation, projection and range. Do not reconstruct segmentation from exported strings or pair text with metadata from another result.",
+        "Preserve VT-separated adjacent spans, zero-cell FEFF content, wide-cell continuations, generated separators and soft-wrap relationships. WPF consumes native drawing-aid eligibility instead of runtime Unicode categories; aids remain absent from text, copy and offsets.",
+        "Keep combined active screen, parked combined normal history and the contracted UIA active projection distinct. Copy, UIA character movement and AI pages/search consume those real projections without a mutable managed replica.",
+        "Owned results remain readable after mutation or disposal, while live operations still validate generation, projection, stable anchors and their existing authority/content/retention evidence. Preserve UIA collapse on eviction, AI error precedence, edit-then-restore detection, pure-reflow anchors and unchanged-prefix survival.",
+        "UIA full-result requests return the complete requested retained text or explicitly fail. AI retains its external page limits; insufficient capacity for the next complete stored span returns resource_limit without truncation, false progress or an empty-success loop. Account result ownership until actual release.",
+        "Verify real rendering/copy/UIA/history/search calls under VT separation, mutation/disposal, reflow, alternate screens, eviction and maximum stored-span capacity. Reuse the existing observation foundation rather than rebuilding the work described by the related issues."
+      ],
+      "coverage": [
+        22,
+        23,
+        24,
+        25,
+        29
+      ],
+      "number": 21,
+      "blockedByNumbers": [
+        20
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "file": "issues/21-preserve-authoritative-stored-spans-in-rendering-uia-and-history.md",
+      "github": {
+        "number": 61,
+        "url": "https://github.com/TabTty/TabTty/issues/61"
+      }
+    },
+    {
+      "id": "G3",
+      "title": "Continue long received graphemes with bounded stored spelling",
+      "candidate": 6,
+      "blockedBy": [
+        "G2"
+      ],
+      "relatedIssues": [
+        18,
+        31,
+        32
+      ],
+      "what": "Keep a terminal session running when a received grapheme exceeds 256 Unicode scalars, retain its first 256 scalars for stored terminal content and correctly recognize the following grapheme across all terminal and recording projections.",
+      "criteria": [
+        "Retain exactly the first 256 Unicode scalars of each stored spelling while bounded complete-stream segmentation state advances over every eligible omitted continuation. Preserve the next real boundary without an artificial split, unbounded accumulator, disconnect, new warning or incomplete-recording result solely for normal omission.",
+        "Keep source/REP, each editable grid/projection tail and serialized Text-position state independent. Saturation of one owner must not return early from the source operation or suppress another projection or eligible recording stream. Admission and execution start from their own valid state.",
+        "Use only retained spelling for width and drawing eligibility. Preserve all intermediate geometry changes through scalar 256; later omitted scalars cannot change geometry. Verify 255/256/257, supplementary scalars, and long RI/Indic/ZWJ/combining continuations across chunks.",
+        "Render, copy, UIA, retained history/search and normal-screen receive-only Text logs expose the retained spelling. Alternate-screen Text, Terminal and Raw retain their eligible original input under existing recording rules. REP replays its retained source spelling; no synthetic separators or omission characters enter content.",
+        "Preserve whole-cluster erase, wrapping, reflow and stable retained anchors using authoritative stored spans. Serialized Text position stays bounded and independent; do not replay an emitted prefix or emit TAB without proven faithful expansion.",
+        "Include the heart + VS16 + 254 accents + VS15 case versus 253 accents, and woman + 254 accents + ZWJ + laptop + grinning face. Confirm omitted VS15 cannot shrink geometry and omitted laptop still advances break state so the final face starts a new stored span.",
+        "Preserve real admission, allocation, I/O and invariant failures and their existing narrow/affected-session outcomes. Earlier Raw/log admission is not rolled back by a later failure; no managed fallback is introduced."
+      ],
+      "coverage": [
+        3,
+        7,
+        10,
+        13,
+        14,
+        15,
+        28,
+        34,
+        35
+      ],
+      "number": 22,
+      "blockedByNumbers": [
+        21
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "file": "issues/22-continue-long-received-graphemes-with-bounded-stored-spelling.md",
+      "github": {
+        "number": 62,
+        "url": "https://github.com/TabTty/TabTty/issues/62"
+      }
+    },
+    {
+      "id": "G4",
+      "title": "Analyze paste previews through owned Rust input plans",
+      "candidate": 6,
+      "blockedBy": [
+        "G1"
+      ],
+      "relatedIssues": [
+        12,
+        19
+      ],
+      "what": "Use the same immutable Rust-derived input plan for actual paste preview counts and complete source validation, without requiring a live terminal or exposing scalar-loop and page-management protocols to callers.",
+      "criteria": [
+        "Provide complete source analysis through the existing paste/input seam and use it in the real preview/counting path. Return immutable source identity, grapheme/newline facts and bounded traversal; ordinary callers do not manage a Unicode cursor, reservation recipe or internal page protocol.",
+        "Validate the entire exact finalized input, including the final page, before success. Unpaired surrogates and forbidden controls reject the whole not-yet-started operation without replacement, normalization, live encoder progress, payload or echo. Carry surrogate and segmentation context over internal page boundaries.",
+        "Traverse giant graphemes using offsets and bounded continuation state rather than collecting another whole-grapheme buffer or requiring a descriptor per scalar/grapheme. The input plan is never the display-retention prefix; source and plan allocation belongs to the existing input/preview owner and remains charged until release.",
+        "Produce identical source counts and semantic units without a live terminal and through the actual preview path. Target encoding, current mode, authority and local-echo continuation remain separate target preparation obligations.",
+        "Use an expand/migrate approach that keeps currently supported paste behavior green until the sender migration is complete. Keep enlarged send eligibility behind the existing admission boundary until the exact-streaming ticket lands; no preview-only acceptance may let an unsupported sender emit a prefix. Remove the temporary compatibility boundary with that migration.",
+        "Verify empty/basic/newline input, split surrogates, RI/Indic/ZWJ/combining sequences, giant-grapheme analysis and invalid final-page input through the complete operation. Retain the existing broadcast preview owner and late-answer cancellation semantics."
+      ],
+      "coverage": [
+        3,
+        11,
+        16
+      ],
+      "number": 23,
+      "blockedByNumbers": [
+        20
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "file": "issues/23-analyze-paste-previews-through-owned-rust-input-plans.md",
+      "github": {
+        "number": 63,
+        "url": "https://github.com/TabTty/TabTty/issues/63"
+      }
+    },
+    {
+      "id": "G5",
+      "title": "Send exact long-grapheme input with scalar-safe Stop",
+      "candidate": 6,
+      "blockedBy": [
+        "G3",
+        "G4"
+      ],
+      "relatedIssues": [
+        12,
+        19
+      ],
+      "what": "Send the complete original paste through the existing session writer, including graphemes longer than 256 scalars, while Stop remains responsive at valid encoding boundaries and local echo reflects only definitely submitted content.",
+      "criteria": [
+        "Migrate actual paste sending to owned Rust input plans and target-derived encoded units; remove the temporary sender eligibility boundary. With observation consumers already migrated, remove the remaining production managed terminal grapheme rules and unused data when this final consumer moves. Never apply stored-prefix omission to outbound input. Keep C# ownership of authority, ordered input, pacing, transport and broadcast coordination.",
+        "Preflight complete target encoding/finalization without advancing live state before first send. Keep source identity, current target generation, mode, encoder/configuration and authority valid until ordered use; target-neutral analysis does not bypass local-echo continuation admission.",
+        "Normally successful transmission preserves exact input even for one giant grapheme. Encode and send in bounded work chunks without treating a chunk as a completed grapheme or adding pacing delays. No 256-scalar input rejection remains.",
+        "An explicit Stop may end at the next complete Unicode scalar or required larger indivisible codec/control unit inside either a short or long grapheme. Keep CRLF indivisible and never intentionally cut a multibyte character or stateful control unit.",
+        "Only definitely submitted complete units advance encoder and local-echo commitment. Reuse the existing transport seam: previously successful complete submissions are definite, unattempted work is unsent, and a failed attempted unit is conservatively uncertain unless the transport supplies finer authoritative evidence. Never infer successful bytes from an exception, replay uncertain bytes or require a separate transport refactor merely to obtain finer progress. Perform healthy reserved codec/bracket closure once under the existing ordered writer and automatic-reply rules.",
+        "Local echo uses the bounded stored-spelling contract while the successful outbound payload remains complete. Preserve actual source/chunk ownership until workers and transport operations release it, including cancelled waits and old-generation completion.",
+        "Verify exact bytes, counts, pacing, echo, short/long-cluster Stop, CRLF, legacy/stateful encodings, partial/uncertain writes and healthy closure through actual session/input/transport paths. Keep the AI input authority and 256 KiB UTF-8 limit unchanged.",
+        "After observation and input consumers have migrated, remove the remaining production managed grapheme/width/drawing-category rule implementation and compatibility shims. Preserve unrelated protocol or diagnostic character-safety checks; no new managed fallback is introduced."
+      ],
+      "coverage": [
+        11,
+        16,
+        19,
+        20,
+        21,
+        36
+      ],
+      "number": 24,
+      "blockedByNumbers": [
+        22,
+        23
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "file": "issues/24-send-exact-long-grapheme-input-with-scalar-safe-stop.md",
+      "github": {
+        "number": 64,
+        "url": "https://github.com/TabTty/TabTty/issues/64"
+      }
+    },
+    {
+      "id": "G6",
+      "title": "Admit shared large pastes within existing application and input budgets",
+      "candidate": 6,
+      "blockedBy": [
+        "G5"
+      ],
+      "relatedIssues": [
+        12,
+        18,
+        19
+      ],
+      "what": "Prepare and send an admitted large paste to one or more frozen targets using one shared original source, bounded per-target work and the existing all-target-before-send guarantee, without adding a separate paste memory pool.",
+      "criteria": [
+        "Broaden the existing 4 GiB application envelope to terminal state plus source/common analysis/preview/capture and actual private paste storage/work. Physically shared source/plan allocations count once; real copies and capture/compaction overlaps count separately. Preserve the 2 GiB per-session terminal-state sublimit.",
+        "Charge each target conversion/preflight/queued/in-flight work to its existing 2 MiB/256-unit input allowance together with ordinary input and replies. Do not charge the full shared source again per target, create another 2 MiB pool or retain every target complete encoded payload.",
+        "Remove the former 1 MiB finalized encoded-payload cap and add no replacement encoded-output cap. Source-size eligibility and confirmation do not prove resource availability. Exercise a valid paste beyond the old cap through real session/broadcast paths.",
+        "All frozen targets complete strict whole-source encoding/finalization checks and required reservation admission before any target payload or bracket-start marker. A final-page encoding error or one target reservation failure leaves every target not sent.",
+        "Keep the 30-second broadcast preparation deadline, starting after confirmation or at preparation start when no dialog is needed. Dialog time is excluded; waits/retries do not reset it. Check cancellation/expiry after the last target conversion and immediately before first-send commitment.",
+        "Revalidate source/target generation, encoder/mode, authority and capacity basis without double charging held reservations or redirecting stale work. Before first submission reserve remaining bounded send/Stop/closure peaks; competing new work cannot consume them.",
+        "Count capacities/reservations until actual release, including late capture results, cancellation, old-generation work and source/native/managed overlaps. Consuming a reservation replaces its future charge rather than adding a duplicate charge. Subsequent terminal mutations still undergo admission.",
+        "Use existing reject/defer/backpressure behavior and the original deadline for capacity waits. Do not evict retained output, terminate unrelated sessions, serialize all pastes, spool to disk or introduce an independent aggregate setting or 80% memory rule.",
+        "Verify competing windows, shared versus copied source, terminal growth, ordinary input/replies, delayed cleanup, reserved closure and full-target failure through the production path. Report attributable actual memory/latency measurements without treating accounting as a whole-process RAM guarantee."
+      ],
+      "coverage": [
+        17,
+        18,
+        19,
+        26,
+        27,
+        29,
+        31,
+        33,
+        37,
+        38
+      ],
+      "number": 25,
+      "blockedByNumbers": [
+        24
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "file": "issues/25-admit-shared-large-pastes-within-existing-application-and-input-budgets.md",
+      "github": {
+        "number": 65,
+        "url": "https://github.com/TabTty/TabTty/issues/65"
+      }
+    },
+    {
+      "id": "G7",
+      "title": "Configure large clipboard pastes with bounded full-text confirmation",
+      "candidate": 6,
+      "blockedBy": [
+        "G6"
+      ],
+      "relatedIssues": [
+        12,
+        39
+      ],
+      "what": "Let users configure the per-paste clipboard text maximum, defaulting to 512 MiB, and review the entire immutable text through the normal confirmation whenever it contains a newline or exceeds 1 KiB.",
+      "criteria": [
+        "Persist application-wide maxPasteTextBytes as a positive finite checked whole-byte value, default 536870912 when absent in an older supported settings file. Zero, negative and overflowing values are invalid; preserve ordinary Save/Cancel/failure semantics and provide English/Japanese UI resources.",
+        "Capture the effective maximum when each operation starts. Measure the actual selected Unicode text as two bytes per UTF-16 code unit before target conversion, counting unchanged CR/LF and both units of supplementary scalars while excluding the terminating NUL, allocation padding, metadata and other clipboard formats. Equality is eligible; excess rejects the whole source without trimming.",
+        "For otherwise valid within-limit text, display exactly one existing confirmation iff CR/LF occurs or source size is strictly greater than 1024 bytes. Exactly 1024 bytes without CR/LF uses the direct path; equality with a configured maximum does not independently force confirmation. Use the same captured source and frozen broadcast recipients through preview, preparation and send.",
+        "Preserve Cancel default, counts, ending-newline indication, pacing and application-run-only Remember transitions. Size-confirmed newline-free text uses the same Send/Cancel behavior with no line-delay events. A direct small paste retains the existing remembered character delay without updating memory.",
+        "Keep every part of the immutable text accessible through bounded read-only scalar-safe preview pages/ranges, including a huge single line or grapheme. Do not make a whole-text visual copy, split surrogate pairs, apply terminal-storage omission, invent separators or send a preview page instead of the original source.",
+        "Keep capture, analysis and preflight under actual shared resource ownership with bounded cancellation work. A delayed clipboard provider need not be immediately cancellable; late results remain owned and charged until released without accumulating detached workers.",
+        "A later saved maximum applies only to newly started operations and never truncates or cancels an existing capture/preview/send. No aggregate setting, persistent confirmation bypass or memory-percentage policy is added. Supplied AI text keeps its separate 256 KiB UTF-8 limit and receives neither clipboard access nor human clipboard confirmation.",
+        "Verify ASCII/Japanese/supplementary source-size boundaries, maxima below/equal/above 1 KiB, CR/LF independence, old/invalid settings, failed Save/Cancel, concurrent limit changes and full-text access through actual settings, clipboard, WPF/UIA and send paths. Record affected responsiveness/resource evidence and distinguish failed, blocked and not-run checks without claiming unmeasured gains."
+      ],
+      "coverage": [
+        17,
+        26,
+        29,
+        30,
+        32,
+        39
+      ],
+      "number": 26,
+      "blockedByNumbers": [
+        25
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "file": "issues/26-configure-large-clipboard-pastes-with-bounded-full-text-confirmation.md",
+      "github": {
+        "number": 66,
+        "url": "https://github.com/TabTty/TabTty/issues/66"
+      }
+    },
+    {
+      "id": "X1",
+      "title": "Verify cross-owner close and actual resource release",
+      "candidate": 0,
+      "blockedBy": [
+        "R3",
+        "T3",
+        "S3",
+        "V3",
+        "V7",
+        "G7"
+      ],
+      "relatedIssues": [
+        15,
+        39
+      ],
+      "what": "Verify the integrated ownership changes under controlled races that cross recording, SSH, clipboard paste, file publication and vault selection/closure. Each feature ticket remains responsible for its own passing acceptance checks; this ticket adds focused cross-owner evidence without replacing the existing deployment and sustained-workload gates.",
+      "criteria": [
+        "Record the exact integrated source/build, fixtures and applicable configured internal capacity values. Use ordinary application operations and real Rust/session/vault behavior with independent expected bytes and controlled peer, file, time and interaction adapters; preserve independent real-file, cryptographic and protocol coverage.",
+        "Combine a zero-credit SSH send, a generated terminal reply and slow recording admission/completion. Prove permitted receive/control/rekey and SFTP work progress without reducer/consumer/credit cycles. In a separate controlled close case, preserve recording protection through Continue waiting and a later explicit loss choice without treating transport-only work as unsaved logs.",
+        "Start a confirmed clipboard paste through the configured large-source path while SFTP/provider work and terminal retention are active. Stop or close at controlled commitment boundaries; verify shared source/private work accounting, no first payload before all-target preparation, exact definitely submitted units, no replay of uncertain input and healthy reserved closure where applicable.",
+        "Close an editor or the last window during master-password publication or owner-dependent verification, and during a reserved selected-vault settings transition. Observe physical file facts, effective settings/root adoption and pending versus quiescent release separately; no new selected path may be visible with the previous credential owner, and no stale credential handoff is delivered.",
+        "Deliver old-generation I/O, native/consumer completion and observation notifications after Stop, view closure, explicit reopen or a replacement generation. Only original ownership settles; live handles/buffers/roots/reservations remain charged until actual completion, without false release, resurrected bindings or duplicate prompts/publication.",
+        "Keep the scenarios separately controlled so a failed invariant has an attributable cause. Run the relevant existing regression paths on the integrated candidate and report passes, failures, blocked checks and not-run external checks distinctly. Do not copy historical performance results or recreate the broader deployment/performance scope of the related acceptance issue."
+      ],
+      "coverage": [
+        "Cross-candidate lifetime and ordering composition; supplements rather than replaces all six accepted verification matrices"
+      ],
+      "number": 27,
+      "blockedByNumbers": [
+        3,
+        18,
+        19,
+        11,
+        15,
+        26
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "file": "issues/27-verify-cross-owner-close-and-actual-resource-release.md",
+      "github": {
+        "number": 67,
+        "url": "https://github.com/TabTty/TabTty/issues/67"
+      }
+    }
+  ],
+  "approval": "User approved the breakdown and explicitly requested publication in this chat."
+}

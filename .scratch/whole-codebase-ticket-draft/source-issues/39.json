@@ -1,0 +1,22 @@
+{
+  "body": "## What to build\r\n\r\nCollect new attributable functional, deployment, presentation, ownership, and performance evidence for the complete native-only candidate, then determine whether integration and production cutover satisfy the accepted gates. Historical partial-native results do not establish this candidate's readiness.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Record exact source, build, artifact, dependency/data identities, machine, and workload inputs. Preserve passed, failed, blocked, and not-run results distinctly; do not turn a missing environment or historical result into a pass.\r\n- [ ] Recheck affected real transport, file, WPF, UIA, English/Japanese, and lifecycle integration behavior, including full-screen applications, disconnected retained output, and snapshots held through cleanup. Preserve distinct external-environment checks rather than rebuilding already accepted features.\r\n- [ ] Run the accepted 20-session responsiveness workloads and overload control checks, including the specified runtime, interaction sampling, storage, concurrent transfer conditions, and p95/max reporting. Include paths crossing resize, alternate screens, recording transitions, and observation.\r\n- [ ] Run the 1-to-6 receiving-tab memory workload with reference retention and all three logs, across visible seeding, hidden reception, EOF/log drain, and restoration. Report whole-process private-memory and working-set peaks against the stated decimal-GB objective.\r\n- [ ] Report queue and resource peaks, refusals, output/log completeness, CPU/storage, retained ownership, and failures without reducing accepted retention or features, dropping output, or silently weakening targets.\r\n- [ ] Verify clean supported Windows deployment with matching bundled native dependencies and explicit missing/mismatched-binary failure. Approve cutover only against the applicable completed gates; leave unresolved failures and unexecuted external checks visible.\r\n",
+  "comments": [],
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 39,
+  "state": "OPEN",
+  "title": "Validate native terminal deployment and acceptance workloads",
+  "url": "https://github.com/TabTty/TabTty/issues/39"
+}

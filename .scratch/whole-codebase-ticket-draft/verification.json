@@ -1,0 +1,22 @@
+{
+  "status": "published-and-verified",
+  "published": true,
+  "implementationPerformed": false,
+  "runtimeTestsPerformed": false,
+  "verifiedRepository": "TabTty/TabTty",
+  "mapIssuesPlanned": 1,
+  "childIssuesPlanned": 27,
+  "acceptedMatrixCasesAssigned": 134,
+  "nativeParentAndBlockingCliSupported": true,
+  "requiredLabelsExist": true,
+  "dagAcyclic": true,
+  "draftsInDependencyOrder": true,
+  "independentReview": [
+    "Dependency/granularity/overlap review completed; terminal exit facts and independent want-reply progress added to ticket 18, candidate 5 case 19 coverage extended.",
+    "Candidate 6 contract and 39-case coverage review completed without findings."
+  ],
+  "mapUrl": "https://github.com/TabTty/TabTty/issues/40",
+  "nativeParentEdges": 27,
+  "nativeBlockingEdges": 34,
+  "publicationVerification": "publication/verification.json"
+}

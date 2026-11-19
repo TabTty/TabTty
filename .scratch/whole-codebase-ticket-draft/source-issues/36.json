@@ -1,0 +1,22 @@
+{
+  "body": "## What to build\r\n\r\nRoute the current window's Close disconnected tabs command and automatic disconnected-tab closure through the complete per-target closure workflow. Both close the affected tabs' associated transfer windows while a disconnect that retains its terminal tab preserves transfer results.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Bulk closure targets only eligible disconnected tabs in the specified window; automatic closure targets only its affected tab. Live or connecting tabs, other windows, and unrelated transfer-result windows are unaffected.\r\n- [ ] Both paths close associated transfer windows using the same cleanup and reporting policy as explicit closure. Disconnect or peer loss that leaves the terminal tab open preserves its output, ownership, and transfer results.\r\n- [ ] Disconnected targets receive no connection-ending warning, while applicable active-file-work approval, unresolved-outcome reporting, and unsaved-log decisions remain required. Automatic closure grants no implicit loss permission.\r\n- [ ] Targets shared with explicit or window closure join the existing execution without duplicate termination, cleanup charges, finalization, release requests, or decisions.\r\n- [ ] Disconnect notification does not await complete closure when closure awaits session completion. Repeated notifications after a declined automatic-closure decision do not create a confirmation loop.\r\n- [ ] Final-tab removal uses existing layout coordination, counts settings/editor tabs, and preserves the final-window exit rule. Failed reporting, cleanup, or visual removal remains observable rather than producing false success.\r\n- [ ] Real WPF commands and automatic lifecycle entry paths, backed by real session and transfer integration, verify target scope, preserved results versus automatic removal, duplicate events, declined decisions, failures, and last-tab window closure.\r\n",
+  "comments": [],
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 36,
+  "state": "OPEN",
+  "title": "Close disconnected tabs and their transfer windows consistently",
+  "url": "https://github.com/TabTty/TabTty/issues/36"
+}

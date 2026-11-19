@@ -1,0 +1,22 @@
+{
+  "body": "## What to build\r\n\r\nUse Rust for strict UTF-8 input preparation and terminal-side input commitment through the existing interactive input and paced-paste paths. Commit encoder progress and local echo at the accepted transport-submission boundaries while C# retains authorization, queue ordering, pacing, and transport ownership.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Preflight a complete input unit without advancing live state or sending a prefix on invalid UTF-16, unmappable input, or resource rejection. Charge preflight and outgoing ownership before allocation.\r\n- [ ] Echo only successfully submitted complete characters, graphemes, or mapped input operations. Preserve the accepted Enter, Backspace, Tab, and navigation echo policy; partial transport failure does not trigger replay.\r\n- [ ] Capture validated paste payload and bracket mode before first send, reserve closure capacity, stop at a complete boundary, close a started bracket wrapper once on a healthy connection, and order automatic replies after closure.\r\n- [ ] Preserve interactive-input exclusion while paste owns sending, with Cancel and Disconnect still usable. Later mode changes apply to the next paste.\r\n- [ ] Verify ordinary keyboard text, one IME commit, paste, cancellation, and transport failure through the actual session/input path with resulting bytes, terminal output, and Terminal recording effects.\r\n",
+  "comments": [],
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 19,
+  "state": "OPEN",
+  "title": "Submit native UTF-8 input with committed local echo",
+  "url": "https://github.com/TabTty/TabTty/issues/19"
+}

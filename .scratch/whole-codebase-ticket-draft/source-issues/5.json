@@ -1,0 +1,38 @@
+{
+  "body": "## Parent\n\nhttps://github.com/TabTty/TabTty/issues/4\n\n## What to build\n\nUpload and download selected files or folders through the production file-operation module, with one coherent path for admission, confirmation, progress, cancellation, results, and eligible retry. This is the first working slice of the SFTP refactor and establishes the controlled I/O seam used by the later file-operation slices.\n\n## Acceptance criteria\n\n- [ ] Move transfer policy into the WPF-independent Core module and connect the existing transfer window to its named operations and read-only state. The window no longer owns transfer completion choreography.\n- [ ] Use the existing authenticated SSH connection and SFTP implementation. Production and controlled I/O adapters report actual I/O facts; approval, target rechecks, and retry decisions remain in the production policy module.\n- [ ] Preserve recursive transfer behavior, staging/replacement, bounded planning, cancellation, and per-entry completed/skipped/failed/unfinished/unknown outcomes. A lost commit reply never causes automatic replay or deletion of the final path.\n- [ ] Bind confirmation answers and progress to the operation and connection. Reject stale answers, recheck changed overwrite targets, and release admission without requiring a caller End or disposal call.\n- [ ] While the view remains open, reject a new mutation while cancelled transfer I/O is still outstanding. Keep the four-transfer-batch limit distinct from the eight-local-provider-call limit and retain actual provider ownership.\n- [ ] Retain the latest transfer result and eligible failed-item retry metadata together; a rejected start preserves both. Retry rechecks items on the original live connection. Existing create/rename/delete paths continue to work during migration under coordinated admission.\n- [ ] Exercise the real operation interface with controlled target changes, lost replies, child failure, and delayed completion, and preserve real local-file and SSH/SFTP transfer checks.\n\n## Blocked by\n\nNone (can start immediately).\n",
+  "comments": [
+    {
+      "id": "IC_kwDOVmB6dc8AAAABmaRW3w",
+      "author": {
+        "login": "akhs-tkmr"
+      },
+      "authorAssociation": "MEMBER",
+      "body": "The transfer window now calls the Core copy and retry operations. The operation owns admission, overwrite confirmation and rechecks, staging, cancellation, and results. Release validation passed for the controlled changed-target, lost-commit, and late-confirmation cases and real local/loopback SSH transfers including nested folders and overwrite. Changes are in the TabTty working tree.\n\nOverall plan [#4](https://github.com/TabTty/TabTty/issues/4).\n",
+      "createdAt": "2026-11-14T05:50:07Z",
+      "includesCreatedEdit": false,
+      "isMinimized": false,
+      "minimizedReason": "",
+      "reactionGroups": [],
+      "url": "https://github.com/TabTty/TabTty/issues/5#issuecomment-6872651487",
+      "viewerDidAuthor": true
+    }
+  ],
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 5,
+  "state": "CLOSED",
+  "title": "Manage transfers through one file-operation interface",
+  "url": "https://github.com/TabTty/TabTty/issues/5"
+}

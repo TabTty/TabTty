@@ -1,0 +1,38 @@
+{
+  "body": "## Parent\n\nhttps://github.com/TabTty/TabTty/issues/4\n\n## What to build\n\nStart a broadcast paste from the normal UI with one named operation, and let the existing application module own confirmation, progress, cancellation, and actual completion without caller-managed Begin/End steps.\n\n## Acceptance criteria\n\n- [ ] Keep broadcast coordination in the application module, with production/controlled confirmation adapters and immutable request/state values. Reuse the real session input owner and existing wire seam.\n- [ ] Capture immutable text, effective scope, source identity, and eligible recipient generations before preview. Deliver once per selected session, preflight all targets before payload, and preserve zero-target/no-fallback behavior, pacing, and existing budgets.\n- [ ] Validate the preview answer and any remembered pacing update in one ordered transition. Cancelled preview requests closure and releases broadcast admission without awaiting inert callbacks; those callbacks cannot send, update defaults, or affect a replacement operation.\n- [ ] Retire cancelled broadcast-preview busy flags so an inert dialog alone cannot block a replacement paste or otherwise eligible AI grant. Preserve independent single-session preview, IME, native capture, pending sends, and real preflight ownership.\n- [ ] Distinguish Stop Paste from full Stop and Stop acknowledgement from actual cleanup completion. Show pending cleanup and retain real session/buffer ownership until it ends.\n- [ ] Preserve conflicting-scope Start checks, whole-operation source/target AI exclusion including unchecked sources, ordinary per-session input after full Stop, and existing movement rules.\n- [ ] Test the full UI-intent-to-bytes/results path with late answers, rejection, preflight failure, delayed writes/closure, cancellation, source movement, and stale progress. Existing gesture behavior continues to work during this migration.\n\n## Blocked by\n\nNone (can start immediately).\n",
+  "comments": [
+    {
+      "id": "IC_kwDOVmB6dc8AAAABmaRoqw",
+      "author": {
+        "login": "akhs-tkmr"
+      },
+      "authorAssociation": "MEMBER",
+      "body": "BroadcastInput now owns preview, recipient and source lifetime, pacing, and completion. The Release WPF/loopback tests passed late preview cancellation and replacement, stale pacing answers, cross-window recipients, zero-send encoding preflight failure, and Stop Paste during real paced transmission. Changes are in the TabTty working tree.\n\nOverall plan [#4](https://github.com/TabTty/TabTty/issues/4).\n",
+      "createdAt": "2026-11-14T05:50:28Z",
+      "includesCreatedEdit": false,
+      "isMinimized": false,
+      "minimizedReason": "",
+      "reactionGroups": [],
+      "url": "https://github.com/TabTty/TabTty/issues/12#issuecomment-6872656043",
+      "viewerDidAuthor": true
+    }
+  ],
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 12,
+  "state": "CLOSED",
+  "title": "Own broadcast paste from preview through cleanup",
+  "url": "https://github.com/TabTty/TabTty/issues/12"
+}

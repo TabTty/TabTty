@@ -1,0 +1,57 @@
+{
+  "assignees": [],
+  "blockedBy": {
+    "nodes": [
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNbxdQ",
+        "number": 48,
+        "state": "OPEN",
+        "title": "Publish encrypted vault revisions with verified preservation",
+        "url": "https://github.com/TabTty/TabTty/issues/48"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNb0nw",
+        "number": 49,
+        "state": "OPEN",
+        "title": "Own shared vault unlock and credential handoff operations",
+        "url": "https://github.com/TabTty/TabTty/issues/49"
+      }
+    ],
+    "totalCount": 2
+  },
+  "body": "## Parent\r\n\r\n[Deepen recording, transport, persistence, vault, SSH and grapheme ownership](https://github.com/TabTty/TabTty/issues/40)\r\n\r\n## What to build\r\n\r\nLet management explicitly create a missing vault or initialize the confirmed same empty regular file, with verified results and no implicit initialization from credential use.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Expose the explicit management intent with localized missing/empty explanation and existing new-master rules. A new vault receives a new identity/root and does not rewrite selected settings or credential references; ordinary unlock, authentication, all pickers and Explorer paths keep their refusal.\r\n- [ ] Bind confirmation to the opened location and acquired missing/empty evidence. Missing-path creation never overwrites; empty initialization rechecks the same zero-byte regular file and rejects replaced, nonempty, unsupported, stale or unresolved targets.\r\n- [ ] Use the same internal target/namespace admission as verified publication for source, destination, candidate and parked names. Preserve the empty original and report parked-original, target, candidate and recovery facts separately through actual completion.\r\n- [ ] Permit only the existing narrow compensation in the original execution after installation was prevented or definitively settled: return the exact owned empty original to a proven-absent source without overwriting, verify it and report failure. Reconciliation never performs compensation or blind repair; cleanup-only failure does not erase proven success.\r\n- [ ] Adopt root and shared metadata only after required publication/preservation proof, with capacity reserved beforehand and actual secret/I/O owners retained through cancellation. Test the real explicit UI path against collision, changed identity, parking/install/compensation faults, uncertainty and concurrent ordinary commits.\r\n",
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 53,
+  "parent": {
+    "id": "I_kwDOVmB6dc8AAAABgNbAdw",
+    "number": 40,
+    "state": "OPEN",
+    "title": "Deepen recording, transport, persistence, vault, SSH and grapheme ownership",
+    "url": "https://github.com/TabTty/TabTty/issues/40"
+  },
+  "state": "OPEN",
+  "subIssues": {
+    "nodes": [],
+    "totalCount": 0
+  },
+  "subIssuesSummary": {
+    "completed": 0,
+    "percentCompleted": 0,
+    "total": 0
+  },
+  "title": "Create vaults only through explicit guarded initialization",
+  "url": "https://github.com/TabTty/TabTty/issues/53"
+}

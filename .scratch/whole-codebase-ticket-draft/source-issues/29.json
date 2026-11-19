@@ -1,0 +1,22 @@
+{
+  "body": "## What to build\r\n\r\nProduce alternate-screen Text and combined Terminal recordings in Rust across source, screen, interval, and EOF boundaries, delivering their complete bounded effects to the actual file-owning recording module.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Record alternate printable text and TAB, preserve LF, resolve pending CR as contracted, and omit other nonprinting controls. Do not combine CR/LF across incompatible sources, intervals, or screen boundaries.\r\n- [ ] Flush eligible normal tails once without LF on alternate entry, preserve parked normal provenance, and return without a normal-screen dump or recording restore-state prefix.\r\n- [ ] Admit a completed received unit only when all source bytes belong to the current uninterrupted interval. Preserve incomplete-unit provenance and independent eligibility of an embedded executable C0 operation.\r\n- [ ] Serialize Terminal output as UTF-8 text and canonical supported seven-bit controls with complete parameters, aliases normalized and REP resolved to source text. Include accepted local echo and display operations even when they do not change cells.\r\n- [ ] Exclude queries/replies, BEL, excluded OSC effects, incomplete/unsupported fragments, resize, transport data, and diagnostics. Preserve source CR/LF and local echoed Enter as CRLF.\r\n- [ ] Verify complete file bytes through the actual recording path for screen transitions, pause/resume inside units, source interleaving, EOF followed by cutoff, and recording admission refusal, without native state replacement.\r\n",
+  "comments": [],
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 29,
+  "state": "OPEN",
+  "title": "Record native alternate Text and canonical Terminal operations",
+  "url": "https://github.com/TabTty/TabTty/issues/29"
+}

@@ -1,0 +1,57 @@
+{
+  "assignees": [],
+  "blockedBy": {
+    "nodes": [
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNb0nw",
+        "number": 49,
+        "state": "OPEN",
+        "title": "Own shared vault unlock and credential handoff operations",
+        "url": "https://github.com/TabTty/TabTty/issues/49"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNbxdQ",
+        "number": 48,
+        "state": "OPEN",
+        "title": "Publish encrypted vault revisions with verified preservation",
+        "url": "https://github.com/TabTty/TabTty/issues/48"
+      }
+    ],
+    "totalCount": 2
+  },
+  "body": "## Parent\r\n\r\n[Deepen recording, transport, persistence, vault, SSH and grapheme ownership](https://github.com/TabTty/TabTty/issues/40)\r\n\r\n## What to build\r\n\r\nAdd, edit, delete and import vault entries from management tabs and same-file editors through complete operations whose committed metadata is shared immediately with future credential lookup.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Migrate password add/edit/delete and private-key import to named operations with exact vault/entry/kind/revision anchors. UI callers provide localized forms and present observations without obtaining unlocked owners, assembling mutation serialization or requesting a separate refresh.\r\n- [ ] Bind existing known-profile impact confirmations to current revision and known reference facts. Reject stale review without retargeting, same-name substitution or silent rebasing; a kind change creates a new entry, deletion leaves references unresolved, and no profiles or established sessions are rewritten.\r\n- [ ] Bind private-key passphrase interaction to one bounded acquired source image. Preserve the accepted key/envelope allowlist, strict source-passphrase encoding and real validation; publish only validated canonical PKCS#8, leave the source intact, and retain neither source path dependency nor passphrase.\r\n- [ ] Reserve secret-input, native/import, result and metadata capacity before acceptance or mutation. Clear accepted temporary plaintext and native copies after actual use; failed drafts retain non-secret edits/outcomes, not passphrases or credential caches. Outcome/subscriber failure never triggers mutation replay.\r\n- [ ] Adopt and publish shared metadata only after the complete encrypted publication outcome permits it. Late notifications or obsolete contexts cannot overwrite newer state; current-state reads recover from coalesced or failed delivery without re-unlock.\r\n- [ ] Verify management/editor/credential-resolution paths with exact identities, changed impact facts, deleted references, independent key fixtures, unsupported input, source changes, native cancellation, stale subscribers and capacity faults.\r\n",
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 50,
+  "parent": {
+    "id": "I_kwDOVmB6dc8AAAABgNbAdw",
+    "number": 40,
+    "state": "OPEN",
+    "title": "Deepen recording, transport, persistence, vault, SSH and grapheme ownership",
+    "url": "https://github.com/TabTty/TabTty/issues/40"
+  },
+  "state": "OPEN",
+  "subIssues": {
+    "nodes": [],
+    "totalCount": 0
+  },
+  "subIssuesSummary": {
+    "completed": 0,
+    "percentCompleted": 0,
+    "total": 0
+  },
+  "title": "Manage vault entries and key imports through owned operations",
+  "url": "https://github.com/TabTty/TabTty/issues/50"
+}

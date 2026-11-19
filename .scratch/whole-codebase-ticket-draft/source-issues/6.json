@@ -1,0 +1,38 @@
+{
+  "body": "## Parent\n\nhttps://github.com/TabTty/TabTty/issues/4\n\n## What to build\n\nCreate folders and rename entries from the transfer window using the same operation admission, state, and outcome rules as transfers.\n\n## Acceptance criteria\n\n- [ ] Route both local and remote create/rename commands through named file operations while preserving existing path, raw-name, identity, and no-follow behavior.\n- [ ] Capture the request and connection identity; cancellation, disconnect, or stale completion cannot retarget another operation. Shared presentation renders read-only state instead of releasing an operation manually.\n- [ ] Keep these operations outside the four-transfer-batch restriction while enforcing actual provider limits and required mutation serialization.\n- [ ] Only an accepted operation replaces the latest result and transfer-retry metadata together. Rejected starts preserve both; create/rename do not inherit a previous transfer's retry list.\n- [ ] Report uncertain sent mutations accurately and require the existing refresh/rechecks before further mutation. Do not add automatic create/rename replay.\n- [ ] Verify the complete window-to-operation path with controlled admission/target-change/reply-loss cases plus real local and SFTP operations.\n",
+  "comments": [
+    {
+      "id": "IC_kwDOVmB6dc8AAAABmaRcxQ",
+      "author": {
+        "login": "akhs-tkmr"
+      },
+      "authorAssociation": "MEMBER",
+      "body": "Named create and rename operations now share admission, result replacement, and unknown-outcome handling. Release validation passed for Windows folder create and rename and loopback SSH/SFTP folder create and file rename using the production operations. Changes are in the TabTty working tree.\n\nOverall plan [#4](https://github.com/TabTty/TabTty/issues/4).\n",
+      "createdAt": "2026-11-14T05:50:14Z",
+      "includesCreatedEdit": false,
+      "isMinimized": false,
+      "minimizedReason": "",
+      "reactionGroups": [],
+      "url": "https://github.com/TabTty/TabTty/issues/6#issuecomment-6872652997",
+      "viewerDidAuthor": true
+    }
+  ],
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 6,
+  "state": "CLOSED",
+  "title": "Manage folder creation and rename through file operations",
+  "url": "https://github.com/TabTty/TabTty/issues/6"
+}

@@ -1,0 +1,222 @@
+[
+  {
+    "id": "G1",
+    "title": "Apply pinned grapheme and emoji rules to received terminal output",
+    "candidate": 6,
+    "blockedBy": [],
+    "relatedIssues": [
+      18,
+      38
+    ],
+    "what": "Render received terminal output using one Rust-owned Unicode rule implementation with the accepted emoji recognition, width transitions and independent source state. Exercise the shared rules through actual terminal admission, execution and presentation rather than introducing an unused utility.",
+    "criteria": [
+      "Pin Unicode 17.0.0, UAX29 r47, UAX11 r44 and Emoji 17 / UTS51 r29. Supply reproducible generation/checking, exact versioned source hashes and schema checks, property defaults and range expansion, and required Unicode notices. Missing, corrupt or incompatible native code/data fails explicitly; no runtime download, OS-data substitution or new third-party dependency.",
+      "Recognize the accepted union of RGI sequences, emoji-style variation pairs and listed multi-scalar minimally/unqualified emoji spellings. Bare text-default singletons remain ordinary. Preserve VS15 priority and exact full-core lookup after removing only the permitted maximal trailing Mn/Mc/Me plus Extend/SpacingMark decoration, excluding the complete Variation_Selector property and U+20E3. Unsupported structures use ordinary width without recognizing a substring.",
+      "Use shared definitions with independent admission/execution, source/REP, grid and projection state. Preserve CRLF, FEFF/signature handling, isolated-mark one-cell behavior, source separation and VT continuation cutoffs. An arbitrary input chunk does not finalize a grapheme.",
+      "Observe every intermediate width growth or shrink during a receive operation, including right-edge wrap, whole-cluster erase and reflow, with independently expected cells, revisions and recording content. Shaping does not decide terminal width and the dotted circle remains drawing-only.",
+      "Verify the official pinned GraphemeBreakTest corpus and independent width/membership vectors through the production terminal path, including all relevant splits. Include supported variation pairs outside RGI-only lookup and unsupported prefix/interior-decoration cases; neither the old managed algorithm nor generated production tables serve as the expected-result oracle.",
+      "Preserve no-prefix native admission rejection, independently admitted Raw/log outcomes and the existing failure scope after execution starts. Expand the shared implementation beside only the existing managed consumers, then migrate those consumers in later tickets and delete their production rule implementation when its final consumer moves. Add no fallback, engine selection or new duplicate authority. Each slice keeps existing functional checks green; the complete amended contract is accepted only when all seven slices pass."
+    ],
+    "coverage": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      12,
+      14,
+      28
+    ]
+  },
+  {
+    "id": "G2",
+    "title": "Preserve authoritative stored spans in rendering, UIA and history",
+    "candidate": 6,
+    "blockedBy": [
+      "G1"
+    ],
+    "relatedIssues": [
+      31,
+      32
+    ],
+    "what": "Make copy, rendering, UIA navigation and AI screen/history observations consume owned native text and the exact stored spans that produced it, so exported concatenation cannot invent or merge terminal characters.",
+    "criteria": [
+      "Extend the existing owned observation path with text, authoritative stored spans, explicit offset units and required cell/drawing-aid facts bound to one capture, session generation, projection and range. Do not reconstruct segmentation from exported strings or pair text with metadata from another result.",
+      "Preserve VT-separated adjacent spans, zero-cell FEFF content, wide-cell continuations, generated separators and soft-wrap relationships. WPF consumes native drawing-aid eligibility instead of runtime Unicode categories; aids remain absent from text, copy and offsets.",
+      "Keep combined active screen, parked combined normal history and the contracted UIA active projection distinct. Copy, UIA character movement and AI pages/search consume those real projections without a mutable managed replica.",
+      "Owned results remain readable after mutation or disposal, while live operations still validate generation, projection, stable anchors and their existing authority/content/retention evidence. Preserve UIA collapse on eviction, AI error precedence, edit-then-restore detection, pure-reflow anchors and unchanged-prefix survival.",
+      "UIA full-result requests return the complete requested retained text or explicitly fail. AI retains its external page limits; insufficient capacity for the next complete stored span returns resource_limit without truncation, false progress or an empty-success loop. Account result ownership until actual release.",
+      "Verify real rendering/copy/UIA/history/search calls under VT separation, mutation/disposal, reflow, alternate screens, eviction and maximum stored-span capacity. Reuse the existing observation foundation rather than rebuilding the work described by the related issues."
+    ],
+    "coverage": [
+      22,
+      23,
+      24,
+      25,
+      29
+    ]
+  },
+  {
+    "id": "G3",
+    "title": "Continue long received graphemes with bounded stored spelling",
+    "candidate": 6,
+    "blockedBy": [
+      "G2"
+    ],
+    "relatedIssues": [
+      18,
+      31,
+      32
+    ],
+    "what": "Keep a terminal session running when a received grapheme exceeds 256 Unicode scalars, retain its first 256 scalars for stored terminal content and correctly recognize the following grapheme across all terminal and recording projections.",
+    "criteria": [
+      "Retain exactly the first 256 Unicode scalars of each stored spelling while bounded complete-stream segmentation state advances over every eligible omitted continuation. Preserve the next real boundary without an artificial split, unbounded accumulator, disconnect, new warning or incomplete-recording result solely for normal omission.",
+      "Keep source/REP, each editable grid/projection tail and serialized Text-position state independent. Saturation of one owner must not return early from the source operation or suppress another projection or eligible recording stream. Admission and execution start from their own valid state.",
+      "Use only retained spelling for width and drawing eligibility. Preserve all intermediate geometry changes through scalar 256; later omitted scalars cannot change geometry. Verify 255/256/257, supplementary scalars, and long RI/Indic/ZWJ/combining continuations across chunks.",
+      "Render, copy, UIA, retained history/search and normal-screen receive-only Text logs expose the retained spelling. Alternate-screen Text, Terminal and Raw retain their eligible original input under existing recording rules. REP replays its retained source spelling; no synthetic separators or omission characters enter content.",
+      "Preserve whole-cluster erase, wrapping, reflow and stable retained anchors using authoritative stored spans. Serialized Text position stays bounded and independent; do not replay an emitted prefix or emit TAB without proven faithful expansion.",
+      "Include the heart + VS16 + 254 accents + VS15 case versus 253 accents, and woman + 254 accents + ZWJ + laptop + grinning face. Confirm omitted VS15 cannot shrink geometry and omitted laptop still advances break state so the final face starts a new stored span.",
+      "Preserve real admission, allocation, I/O and invariant failures and their existing narrow/affected-session outcomes. Earlier Raw/log admission is not rolled back by a later failure; no managed fallback is introduced."
+    ],
+    "coverage": [
+      3,
+      7,
+      10,
+      13,
+      14,
+      15,
+      28,
+      34,
+      35
+    ]
+  },
+  {
+    "id": "G4",
+    "title": "Analyze paste previews through owned Rust input plans",
+    "candidate": 6,
+    "blockedBy": [
+      "G1"
+    ],
+    "relatedIssues": [
+      12,
+      19
+    ],
+    "what": "Use the same immutable Rust-derived input plan for actual paste preview counts and complete source validation, without requiring a live terminal or exposing scalar-loop and page-management protocols to callers.",
+    "criteria": [
+      "Provide complete source analysis through the existing paste/input seam and use it in the real preview/counting path. Return immutable source identity, grapheme/newline facts and bounded traversal; ordinary callers do not manage a Unicode cursor, reservation recipe or internal page protocol.",
+      "Validate the entire exact finalized input, including the final page, before success. Unpaired surrogates and forbidden controls reject the whole not-yet-started operation without replacement, normalization, live encoder progress, payload or echo. Carry surrogate and segmentation context over internal page boundaries.",
+      "Traverse giant graphemes using offsets and bounded continuation state rather than collecting another whole-grapheme buffer or requiring a descriptor per scalar/grapheme. The input plan is never the display-retention prefix; source and plan allocation belongs to the existing input/preview owner and remains charged until release.",
+      "Produce identical source counts and semantic units without a live terminal and through the actual preview path. Target encoding, current mode, authority and local-echo continuation remain separate target preparation obligations.",
+      "Use an expand/migrate approach that keeps currently supported paste behavior green until the sender migration is complete. Keep enlarged send eligibility behind the existing admission boundary until the exact-streaming ticket lands; no preview-only acceptance may let an unsupported sender emit a prefix. Remove the temporary compatibility boundary with that migration.",
+      "Verify empty/basic/newline input, split surrogates, RI/Indic/ZWJ/combining sequences, giant-grapheme analysis and invalid final-page input through the complete operation. Retain the existing broadcast preview owner and late-answer cancellation semantics."
+    ],
+    "coverage": [
+      3,
+      11,
+      16
+    ]
+  },
+  {
+    "id": "G5",
+    "title": "Send exact long-grapheme input with scalar-safe Stop",
+    "candidate": 6,
+    "blockedBy": [
+      "G3",
+      "G4"
+    ],
+    "relatedIssues": [
+      12,
+      19
+    ],
+    "what": "Send the complete original paste through the existing session writer, including graphemes longer than 256 scalars, while Stop remains responsive at valid encoding boundaries and local echo reflects only definitely submitted content.",
+    "criteria": [
+      "Migrate actual paste sending to owned Rust input plans and target-derived encoded units; remove the temporary sender eligibility boundary. With observation consumers already migrated, remove the remaining production managed terminal grapheme rules and unused data when this final consumer moves. Never apply stored-prefix omission to outbound input. Keep C# ownership of authority, ordered input, pacing, transport and broadcast coordination.",
+      "Preflight complete target encoding/finalization without advancing live state before first send. Keep source identity, current target generation, mode, encoder/configuration and authority valid until ordered use; target-neutral analysis does not bypass local-echo continuation admission.",
+      "Normally successful transmission preserves exact input even for one giant grapheme. Encode and send in bounded work chunks without treating a chunk as a completed grapheme or adding pacing delays. No 256-scalar input rejection remains.",
+      "An explicit Stop may end at the next complete Unicode scalar or required larger indivisible codec/control unit inside either a short or long grapheme. Keep CRLF indivisible and never intentionally cut a multibyte character or stateful control unit.",
+      "Only definitely submitted complete units advance encoder and local-echo commitment. Reuse the existing transport seam: previously successful complete submissions are definite, unattempted work is unsent, and a failed attempted unit is conservatively uncertain unless the transport supplies finer authoritative evidence. Never infer successful bytes from an exception, replay uncertain bytes or require a separate transport refactor merely to obtain finer progress. Perform healthy reserved codec/bracket closure once under the existing ordered writer and automatic-reply rules.",
+      "Local echo uses the bounded stored-spelling contract while the successful outbound payload remains complete. Preserve actual source/chunk ownership until workers and transport operations release it, including cancelled waits and old-generation completion.",
+      "Verify exact bytes, counts, pacing, echo, short/long-cluster Stop, CRLF, legacy/stateful encodings, partial/uncertain writes and healthy closure through actual session/input/transport paths. Keep the AI input authority and 256 KiB UTF-8 limit unchanged."
+    ],
+    "coverage": [
+      11,
+      16,
+      19,
+      20,
+      21,
+      36
+    ]
+  },
+  {
+    "id": "G6",
+    "title": "Admit shared large pastes within existing application and input budgets",
+    "candidate": 6,
+    "blockedBy": [
+      "G5"
+    ],
+    "relatedIssues": [
+      12,
+      18,
+      19
+    ],
+    "what": "Prepare and send an admitted large paste to one or more frozen targets using one shared original source, bounded per-target work and the existing all-target-before-send guarantee, without adding a separate paste memory pool.",
+    "criteria": [
+      "Broaden the existing 4 GiB application envelope to terminal state plus source/common analysis/preview/capture and actual private paste storage/work. Physically shared source/plan allocations count once; real copies and capture/compaction overlaps count separately. Preserve the 2 GiB per-session terminal-state sublimit.",
+      "Charge each target conversion/preflight/queued/in-flight work to its existing 2 MiB/256-unit input allowance together with ordinary input and replies. Do not charge the full shared source again per target, create another 2 MiB pool or retain every target complete encoded payload.",
+      "Remove the former 1 MiB finalized encoded-payload cap and add no replacement encoded-output cap. Source-size eligibility and confirmation do not prove resource availability. Exercise a valid paste beyond the old cap through real session/broadcast paths.",
+      "All frozen targets complete strict whole-source encoding/finalization checks and required reservation admission before any target payload or bracket-start marker. A final-page encoding error or one target reservation failure leaves every target not sent.",
+      "Keep the 30-second broadcast preparation deadline, starting after confirmation or at preparation start when no dialog is needed. Dialog time is excluded; waits/retries do not reset it. Check cancellation/expiry after the last target conversion and immediately before first-send commitment.",
+      "Revalidate source/target generation, encoder/mode, authority and capacity basis without double charging held reservations or redirecting stale work. Before first submission reserve remaining bounded send/Stop/closure peaks; competing new work cannot consume them.",
+      "Count capacities/reservations until actual release, including late capture results, cancellation, old-generation work and source/native/managed overlaps. Consuming a reservation replaces its future charge rather than adding a duplicate charge. Subsequent terminal mutations still undergo admission.",
+      "Use existing reject/defer/backpressure behavior and the original deadline for capacity waits. Do not evict retained output, terminate unrelated sessions, serialize all pastes, spool to disk or introduce an independent aggregate setting or 80% memory rule.",
+      "Verify competing windows, shared versus copied source, terminal growth, ordinary input/replies, delayed cleanup, reserved closure and full-target failure through the production path. Report attributable actual memory/latency measurements without treating accounting as a whole-process RAM guarantee."
+    ],
+    "coverage": [
+      17,
+      18,
+      19,
+      26,
+      27,
+      29,
+      31,
+      33,
+      37,
+      38
+    ]
+  },
+  {
+    "id": "G7",
+    "title": "Configure large clipboard pastes with bounded full-text confirmation",
+    "candidate": 6,
+    "blockedBy": [
+      "G6"
+    ],
+    "relatedIssues": [
+      12,
+      39
+    ],
+    "what": "Let users configure the per-paste clipboard text maximum, defaulting to 512 MiB, and review the entire immutable text through the normal confirmation whenever it contains a newline or exceeds 1 KiB.",
+    "criteria": [
+      "Persist application-wide maxPasteTextBytes as a positive finite checked whole-byte value, default 536870912 when absent in an older supported settings file. Zero, negative and overflowing values are invalid; preserve ordinary Save/Cancel/failure semantics and provide English/Japanese UI resources.",
+      "Capture the effective maximum when each operation starts. Measure the actual selected Unicode text as two bytes per UTF-16 code unit before target conversion, counting unchanged CR/LF and both units of supplementary scalars while excluding the terminating NUL, allocation padding, metadata and other clipboard formats. Equality is eligible; excess rejects the whole source without trimming.",
+      "For otherwise valid within-limit text, display exactly one existing confirmation iff CR/LF occurs or source size is strictly greater than 1024 bytes. Exactly 1024 bytes without CR/LF uses the direct path; equality with a configured maximum does not independently force confirmation. Use the same captured source and frozen broadcast recipients through preview, preparation and send.",
+      "Preserve Cancel default, counts, ending-newline indication, pacing and application-run-only Remember transitions. Size-confirmed newline-free text uses the same Send/Cancel behavior with no line-delay events. A direct small paste retains the existing remembered character delay without updating memory.",
+      "Keep every part of the immutable text accessible through bounded read-only scalar-safe preview pages/ranges, including a huge single line or grapheme. Do not make a whole-text visual copy, split surrogate pairs, apply terminal-storage omission, invent separators or send a preview page instead of the original source.",
+      "Keep capture, analysis and preflight under actual shared resource ownership with bounded cancellation work. A delayed clipboard provider need not be immediately cancellable; late results remain owned and charged until released without accumulating detached workers.",
+      "A later saved maximum applies only to newly started operations and never truncates or cancels an existing capture/preview/send. No aggregate setting, persistent confirmation bypass or memory-percentage policy is added. Supplied AI text keeps its separate 256 KiB UTF-8 limit and receives neither clipboard access nor human clipboard confirmation.",
+      "Verify ASCII/Japanese/supplementary source-size boundaries, maxima below/equal/above 1 KiB, CR/LF independence, old/invalid settings, failed Save/Cancel, concurrent limit changes and full-text access. Run attributable affected WPF/UIA, paste, recording, history, transport and responsiveness integrations against the completed shared-rule path; preserve required not-run or failure evidence rather than claiming unmeasured gains. Close the 39-case coverage matrix across all seven slices and confirm one production Rust rule authority; passing an individual migration slice is not a claim that the whole amended contract is complete."
+    ],
+    "coverage": [
+      17,
+      26,
+      29,
+      30,
+      32,
+      39
+    ]
+  }
+]

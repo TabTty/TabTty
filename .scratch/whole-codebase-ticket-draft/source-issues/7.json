@@ -1,0 +1,38 @@
+{
+  "body": "## Parent\n\nhttps://github.com/TabTty/TabTty/issues/4\n\n## What to build\n\nDelete selected local or remote entries through the same file-operation interface, including recursive outcomes, Windows recycling, and the existing permanent-deletion fallback decision.\n\n## Acceptance criteria\n\n- [ ] Move deletion planning and policy into the production operation module; the transfer window presents the module's questions and results.\n- [ ] Bind initial deletion and permitted permanent-delete fallback answers to the current operation and connection. Cancellation or disconnect invalidates pending answers before any further mutation.\n- [ ] Preserve no-follow and entry-identity checks. An unknown recycling outcome never authorizes a second destructive attempt.\n- [ ] If a selected child fails, retain completed effects, stop that top-level tree, distinguish failed from unfinished entries, and continue other selected trees where the contract permits.\n- [ ] Accepted deletion replaces the latest result/retry set; rejected admission preserves it. Deletion does not become replayable or acquire the four-transfer-batch restriction.\n- [ ] Test the complete confirmation-to-result path with controlled child failures, late approvals, and uncertain replies; preserve real Windows recycling and SSH/SFTP deletion checks.\n",
+  "comments": [
+    {
+      "id": "IC_kwDOVmB6dc8AAAABmaRiCQ",
+      "author": {
+        "login": "akhs-tkmr"
+      },
+      "authorAssociation": "MEMBER",
+      "body": "Named delete operations now own recursive planning, confirmation lifetime, and per-item outcomes. Release validation passed for Windows Shell recycling and recursive loopback SFTP removal, plus controlled child failure, late approval, failed rechecks, and unknown recycle results. Changes are in the TabTty working tree.\n\nOverall plan [#4](https://github.com/TabTty/TabTty/issues/4).\n",
+      "createdAt": "2026-11-14T05:50:20Z",
+      "includesCreatedEdit": false,
+      "isMinimized": false,
+      "minimizedReason": "",
+      "reactionGroups": [],
+      "url": "https://github.com/TabTty/TabTty/issues/7#issuecomment-6872654345",
+      "viewerDidAuthor": true
+    }
+  ],
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 7,
+  "state": "CLOSED",
+  "title": "Manage recursive deletion and fallback confirmation through file operations",
+  "url": "https://github.com/TabTty/TabTty/issues/7"
+}

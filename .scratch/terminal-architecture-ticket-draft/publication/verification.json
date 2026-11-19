@@ -1,0 +1,356 @@
+{
+  "checkedAtUtc": "2026-11-16T15:45:20.9227202Z",
+  "repository": "TabTty/TabTty",
+  "map": "https://github.com/TabTty/TabTty/issues/16",
+  "issueCount": 24,
+  "subIssueCount": 23,
+  "dependencyCount": 35,
+  "success": true,
+  "problems": [],
+  "issues": [
+    {
+      "key": "map",
+      "number": 16,
+      "url": "https://github.com/TabTty/TabTty/issues/16",
+      "title": "Complete Rust terminal processing and unify terminal closure",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:map"
+      ],
+      "blockedBy": [],
+      "body": "## What to build\n\nImplement the three architecture designs confirmed through Q14: terminal-owned recording operations, one set of Rust interpretation rules for admission and execution, and complete tab/window closure operations. Complete the native terminal coverage required by ADR 0007 so supported terminal behavior never switches to a managed terminal implementation.\n\nThe accepted Complete Rust terminal module design and Tab and window closure design are authoritative, together with the existing terminal/encoding, session/recording, retained-history observation, file-operation, window and resource contracts. Keep application coordination, transports, actual files, AI authority/publication and WPF presentation in their existing owners. This plan adds no macro runtime, authentication policy, public terminal selector or third-party dependency.\n\nThe native migration uses a shared integration branch. When implementation is authorized, record the exact current working tree, including untracked source, and toolchain as a reproducible baseline; the current workspace has no commit to use as an assumed source baseline. Each feature ticket connects its delivered scenario through the real application/session/terminal path and verifies that scenario. Incomplete native coverage is an integration defect, not permission to add a fallback. Whole-product green and the final integrated release candidate are promised only by the final cutover and validation gates. The former C# terminal may be isolated as a test reference, never a new production fallback.\n\nClosure preparation and application coordination can proceed independently of most native feature migration. Only native retained-state integration and the final combined acceptance require the corresponding native capabilities. Existing feature issues and the earlier architecture map remain unchanged. The open broadcast-movement issue has a remaining physical cross-DPI capture check; it is not a reason to block work that uses the already implemented move ownership.\n\n## Acceptance criteria\n\n- [ ] Preserve the recorded codec decisions: existing ISO-8859-10/11/14/16 Unicode tables (approved 2026-11-16), and the Japanese compatibility layer over Microsoft CP932 plus specified shared recovery/exact-send policy (approved 2026-11-17). Use native Microsoft conversion for the remaining code pages, subject to exact acceptance checks. Consult before adopting newly discovered custom corrections/data, including any managed CP932 override port; do not reconfirm already approved scope.\n\n- [ ] Every supported terminal encoding, receive/input operation, screen/reflow transition, recording path and bounded observation uses the authoritative Rust model after cutover; product-excluded controls preserve their specified behavior.\n- [ ] Native admission and execution share interpretation definitions, maintain independent source state, and preserve pre-mutation rejection, bounded owned results and actual resource accounting.\n- [ ] Recording callers use complete named operations; files, all-format outcomes and actual disk cleanup stay with their existing C# owners.\n- [ ] Explicit, bulk and automatic tab closure close associated transfer windows under the accepted cleanup/reporting policy. Retained-tab disconnect preserves results.\n- [ ] Repeated and overlapping close intents share target execution, ordinary progress does not restart confirmation, invalid approval starts no new effects, and all outstanding cleanup remains owned and observable.\n- [ ] Complete the child-ticket dependency graph and combined functional, failure, ownership, packaging, presentation and measured workload validation. Historical partial-native results are not evidence of this replacement.\n- [ ] Each implementation slice includes independent expected outcomes and relevant existing integration checks, not only agreement with the former managed implementation or private helper-call counts.\n\nThis issue records the approved implementation plan. Publication does not start implementation; begin only after a separate explicit implementation request.\n\r\n"
+    },
+    {
+      "key": "T01",
+      "number": 17,
+      "url": "https://github.com/TabTty/TabTty/issues/17",
+      "title": "Establish the native-only UTF-8 integration baseline",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "blockedBy": [],
+      "body": "## What to build\r\n\r\nRecord the exact starting workspace and establish the shared integration branch on which complete terminal replacement will be implemented. Run the existing UTF-8 scenario through the actual profile, session, Rust adapter, transport, rendering, and recording paths. Freeze the existing managed implementation as an isolated comparison reference.\r\n\r\nThis is an intermediate integration baseline, not replacement readiness. Preserve the recorded pre-migration baseline while the candidate evolves on the integration branch; do not introduce a user-facing engine selector or new fallback. Whole-product green is required at the final gate, while each intervening ticket must demonstrate its delivered native scenario through the real application path.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Record the exact workspace, dependencies, generated data, and build inputs before implementation. Do not assume a committed baseline or existing HEAD; establish an attributable baseline without losing existing work.\r\n- [ ] Activate the candidate adapter through the actual session construction path on the integration branch. Verify ordinary UTF-8 receive, send, display, recording, and retained disconnected output using the existing production interfaces and a real transport integration case.\r\n- [ ] Keep the comparison implementation isolated from the candidate production call graph. Retain independent expected byte/state cases; comparison against the old implementation is supplementary evidence.\r\n- [ ] State which existing tests depend on managed starts or handoff and which scenarios remain unported. Do not report those incomplete scenarios as accepted product exclusions or overall readiness.\r\n- [ ] Preserve session ordering, projection ownership, and existing resource policies. Add no runtime engine selector, new codec handoff, mutable managed replica, or macro runtime.\r\n"
+    },
+    {
+      "key": "T02",
+      "number": 18,
+      "url": "https://github.com/TabTty/TabTty/issues/18",
+      "title": "Share interpretation and admit complete native operations",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "blockedBy": [
+        17
+      ],
+      "body": "## What to build\r\n\r\nReplace duplicated source interpretation on the active UTF-8 path with one private interpretation interface consumed by Estimate and Execute. Make the production adapter own the complete preflight, reservation, execution, effect delivery, and cleanup operation, so the session caller does not manage preparation handles or drain native results.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Use common decoding, BOM, framing, parameter, completed-unit, limit, and continuation definitions. Preserve independent DATA/stderr states, source-local REP, chunk versus EOF behavior, and independently executed embedded C0 controls.\r\n- [ ] Estimate uses isolated source state and bounded charged workspace, emits no effects, and changes no authoritative projection or recording state. Execute starts from the original authoritative source state, not the preview end state.\r\n- [ ] Reserve complete bounded peak state, workspace, input ownership, effects, and overlapping copies before mutation. Use read-only state, bounded preview changes, shared transition definitions, or conservative bounds without creating a second screen engine.\r\n- [ ] Validate exact input and the relevant source, configuration, projection, recording, geometry, pending-effect, and capacity basis. Reprepare stale work; account the operation's held reservation without double charging or self-invalidating it.\r\n- [ ] Demonstrate no native prefix or live-state change on rejection and cancellation before execution. After execution starts, retain delivery and cleanup ownership; unexpected execution failure follows the affected-session policy without replay.\r\n- [ ] Exercise the actual session/adapter path with independent expected state, replies, and recording bytes. Owned immutable results remain valid across mutation and disposal, and delayed release remains charged. Later feature tickets extend this same path.\r\n"
+    },
+    {
+      "key": "T03",
+      "number": 19,
+      "url": "https://github.com/TabTty/TabTty/issues/19",
+      "title": "Submit native UTF-8 input with committed local echo",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "blockedBy": [
+        18
+      ],
+      "body": "## What to build\r\n\r\nUse Rust for strict UTF-8 input preparation and terminal-side input commitment through the existing interactive input and paced-paste paths. Commit encoder progress and local echo at the accepted transport-submission boundaries while C# retains authorization, queue ordering, pacing, and transport ownership.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Preflight a complete input unit without advancing live state or sending a prefix on invalid UTF-16, unmappable input, or resource rejection. Charge preflight and outgoing ownership before allocation.\r\n- [ ] Echo only successfully submitted complete characters, graphemes, or mapped input operations. Preserve the accepted Enter, Backspace, Tab, and navigation echo policy; partial transport failure does not trigger replay.\r\n- [ ] Capture validated paste payload and bracket mode before first send, reserve closure capacity, stop at a complete boundary, close a started bracket wrapper once on a healthy connection, and order automatic replies after closure.\r\n- [ ] Preserve interactive-input exclusion while paste owns sending, with Cancel and Disconnect still usable. Later mode changes apply to the next paste.\r\n- [ ] Verify ordinary keyboard text, one IME commit, paste, cancellation, and transport failure through the actual session/input path with resulting bytes, terminal output, and Terminal recording effects.\r\n"
+    },
+    {
+      "key": "T04",
+      "number": 20,
+      "url": "https://github.com/TabTty/TabTty/issues/20",
+      "title": "Complete native normal-screen editing and rendition",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "blockedBy": [
+        18
+      ],
+      "body": "## What to build\r\n\r\nComplete contracted normal-screen cursor movement, editing, scrolling regions, tabs, cursor save/restore, charset invocation, rendition, and source-local REP in the Rust terminal. Make their display and copy results observable through the active application path. Preserve existing recording regressions; complete native recording semantics belong to the later recording slices.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Implement the contracted C0, ESC, CSI cursor/edit/scroll/tab operations, origin/insert/autowrap/LNM behavior, and distinct cursor-position versus full cursor saves. Preserve invalid-margin, erase, ED2, and ED3 behavior.\r\n- [ ] Interpret complete private/parameter/intermediate/final spellings. Consume excluded well-framed controls, handle string terminators and cancellation, execute eligible embedded C0 once, and enforce parser limits and checked numeric arithmetic through shared Estimate/Execute rules.\r\n- [ ] Preserve fixed terminal defaults, all contracted SGR forms and resets, true RGB, DEC graphics, and exact source-local REP. Excluded OSC controls cause no title, clipboard, hyperlink, or other external effects.\r\n- [ ] Preserve Unicode 17 cluster rules, incremental width changes, interior FEFF, isolated marks, wide right-edge placement, and whole-cluster edit/erase. Cluster overflow is explicit failure rather than splitting or truncation.\r\n- [ ] Verify representative complete operations through profile/session/render/copy and existing recording paths with independent expected output. Include malformed spelling, chunk/EOF, source interleaving, allocation rejection, and unchanged-content versus actual text revisions.\r\n"
+    },
+    {
+      "key": "T05",
+      "number": 21,
+      "url": "https://github.com/TabTty/TabTty/issues/21",
+      "title": "Run alternate-screen applications with native input modes",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "blockedBy": [
+        19,
+        20
+      ],
+      "body": "## What to build\r\n\r\nSupport contracted alternate screens, resets, terminal replies, cursor presentation, and mode-dependent keyboard and mouse input in real native terminal sessions. Keep existing presentation, gesture ownership, broadcast coordination, and transport responsibilities with their current owners.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Implement distinct 47, 1047, 1048, and 1049 behavior, including save/restore, clearing, and repeated set/reset idempotence. Keep parked normal content and its metadata intact.\r\n- [ ] Implement DECSTR and RIS with their different reset scopes, primary DA, DSR and private/nonprivate CPR, and cursor visibility/style. Resets do not change profile settings, transport, logs, or application theme.\r\n- [ ] Encode all contracted cursor, keypad, function, navigation, modifier, and mouse modes in Rust through the actual input path. Preserve bracketed-paste mode and exclude unsupported enhanced protocols.\r\n- [ ] Preserve Shift gesture ownership, coordinate bounds, same-session pane coordinates, mode/generation cancellation, and existing broadcast skip/clamp rules without reimplementing BroadcastInput policy.\r\n- [ ] Exercise representative full-screen applications and independent state/byte cases through the real application path, including replies during paste, mode transitions, repeated screen changes, and native admission failure.\r\n"
+    },
+    {
+      "key": "T06",
+      "number": 22,
+      "url": "https://github.com/TabTty/TabTty/issues/22",
+      "title": "Resize native normal and parked terminal output",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "blockedBy": [
+        21
+      ],
+      "body": "## What to build\r\n\r\nKeep the authoritative terminal in Rust when the user resizes after reception. Reflow normal output and parked normal content while alternate content clips or pads according to the existing terminal contract.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Reflow only soft-wrapped normal logical lines and preserve hard boundaries, attributes, whole clusters, content anchors, revisions, and recording provenance.\r\n- [ ] Clip/pad alternate content without reflow and reflow parked normal content once at the final dimensions when returning to it.\r\n- [ ] Enforce captured physical-row retention before publication. Preserve the distinction between quota retirement and explicit erase/delete/overwrite; expose eligible retirement effects without inventing LF.\r\n- [ ] Admit peak resize state and owned results before mutation, reject without a partial geometry change, and retain accurate ownership of snapshots held across resize and disposal.\r\n- [ ] Verify continuous resize, wide/combining text, retained-row boundaries, alternate transitions, selection/copy, and disconnected retained tabs through the real session and presentation paths without managed handoff.\r\n"
+    },
+    {
+      "key": "T07",
+      "number": 23,
+      "url": "https://github.com/TabTty/TabTty/issues/23",
+      "title": "Use all single-byte encodings in native sessions",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "blockedBy": [
+        19
+      ],
+      "body": "## What to build\r\n\r\nSupport all 41 accepted single-byte encoding identities for independent receive and transmit settings through actual connection profiles and native sessions. Use the common one-byte framing and exact mapping policy without managed codec callbacks.\r\n\r\n## Acceptance criteria\r\n\r\nConsultation outcomes: existing Unicode table reuse for ISO-8859-10/11/14/16 in Rust was approved on 2026-11-16, and the specified shared recovery/exact whole-send policy on 2026-11-17. Preserve exact mappings and provenance. For the other 37 single-byte identities, use explicit native Microsoft code pages with that shared policy; static assessment found no additional identity-specific table or patch. Native equivalence remains acceptance work. Consult before adopting any newly required mapping correction, replacement data or custom behavior; do not reconfirm the approved scope. These design decisions do not authorize implementation.\r\n\r\n- [ ] Cover the 15 accepted ISO-8859 identities, 15 accepted OEM identities, and cp874, cp1250 through cp1258, and koi8-r without collapsing distinct profile identities.\r\n- [ ] Verify every input byte position, undefined-position replacement, C0 handling, and decoded C1 nonexecution against independently fixed mapping expectations. Include CP864 low-byte mappings, CP1258 combining marks, and embedded NUL with explicit lengths. Verify supported-platform code-page availability; document accepted Microsoft/Unicode data provenance and licensing.\r\n- [ ] Use strict exact reverse mapping with no best-fit, normalization, or width substitution. Rejected sends do not emit a prefix or change encoder/local-echo state.\r\n- [ ] Exercise independently selected receive/transmit identities, DATA/stderr ordering, display, input, and recording through the actual profile/session path. Every delivered scenario remains native.\r\n- [ ] Extend shared interpretation and admission accounting; add no third-party codec dependency, managed codec callback, temporary codec handoff, or runtime selector.\r\n"
+    },
+    {
+      "key": "T08",
+      "number": 24,
+      "url": "https://github.com/TabTty/TabTty/issues/24",
+      "title": "Use native Chinese and Korean multibyte encodings",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "blockedBy": [
+        19
+      ],
+      "body": "## What to build\r\n\r\nSupport cp936, cp949, and cp950 receive and strict transmit behavior in actual native terminal sessions, independently of the selected encoding in the other direction.\r\n\r\n## Acceptance criteria\r\n\r\nConsultation outcome, 2026-11-17: the user approved the specified shared recovery and exact whole-send policy. Use explicit native Microsoft CP936/949/950 conversion with that policy. Static assessment found no additional identity-specific table or patch; native equivalence remains acceptance work. Consult before adopting any newly required mapping correction, replacement data or custom behavior. Do not reconfirm the approved shared scope or silently substitute a near-equivalent encoding. These design decisions do not authorize implementation.\r\n\r\n- [ ] Preserve all three profile identities and exact accepted mappings using permitted Microsoft sources/offerings, with recorded data provenance.\r\n- [ ] Compare defined/undefined shaped pairs and standalone-byte mappings against independent expectations. Cover every byte split, invalid-continuation prefix replacement and byte reprocessing, pending-prefix EOF, chunk boundaries, and malformed-to-control resynchronization; valid delimiter-looking trail bytes remain part of their unit. Verify supported-platform availability.\r\n- [ ] Preserve independent source partials and initial-state rules. Raw bytes remain unchanged while decoded C1 scalars do not execute VT commands.\r\n- [ ] Strictly preflight outgoing units, reject substitutions and unmappable input without live encoder changes or prefix sends, and preserve accepted local-echo boundaries.\r\n- [ ] Verify receive, display, send, and recording through the actual profile/session/adapter path with independent expected bytes and text, including resource rejection. Add no managed codec callback or temporary handoff.\r\n"
+    },
+    {
+      "key": "T09",
+      "number": 25,
+      "url": "https://github.com/TabTty/TabTty/issues/25",
+      "title": "Use native CP932 and EUC-JP terminal encoding",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "blockedBy": [
+        19
+      ],
+      "body": "## What to build\r\n\r\nSupport exact CP932 and EUC-JP receive/transmit behavior in actual native sessions, including the accepted Japanese table, extension duplicates, kana, and malformed-unit rules.\r\n\r\n## Acceptance criteria\r\n\r\nConsultation outcome, 2026-11-17: the user approved native Microsoft CP932 as the planned base mapper, with Rust owning the selected JIS/EUC repertoire and exact reverse choices, optional CP932 SO/SI receive handling, EUC SS2/unsupported SS3, shared malformed/control recovery, and complete-send preflight. Do not infer a CP932 SO/SI transmit feature. Native API equivalence remains acceptance work. Existing managed CP932 overrides are excluded from this approval; any concrete native mapping mismatch and proposed correction require separate consultation. Do not reconfirm the approved scope. These design decisions do not authorize implementation.\r\n\r\n- [ ] Preserve the specified CP932 mapping vectors. For the JIS/EUC-compatible 94-by-94 table, exclude undefined cells and the specified private-use mappings outside that grid, and select the smallest adopted row/cell for duplicate reverse mappings. Do not apply those grid exclusions to ordinary CP932 support.\r\n- [ ] Implement accepted CP932 kana and EUC SS2 behavior; treat a well-shaped unsupported SS3 unit as one replacement. Verify every representative byte split, invalid continuation reprocessing, EOF, and independent receive sources.\r\n- [ ] Verify the accepted extension vectors and exact distinctions such as U+301C versus U+FF5E, with no best-fit or normalization substitutions.\r\n- [ ] Exercise independently configured receive/transmit, strict rejection, local echo, display, and recording through the real profile/session path without managed codec callbacks or temporary codec handoff.\r\n- [ ] Preserve the existing strict SFTP filename behavior where codec services are shared, without expanding file-operation scope. Record mapping provenance and keep the common shared interpretation/admission contract.\r\n"
+    },
+    {
+      "key": "T10",
+      "number": 26,
+      "url": "https://github.com/TabTty/TabTty/issues/26",
+      "title": "Use native stateful JIS terminal encoding",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "blockedBy": [
+        25
+      ],
+      "body": "## What to build\r\n\r\nComplete JIS receive/transmit state in Rust, using the accepted Japanese mapping and exact ASCII, Roman, Kanji, unsupported-repertoire, and kana behavior through actual terminal input and receive paths.\r\n\r\n## Acceptance criteria\r\n\r\nConsultation outcome, 2026-11-17: the user approved the shared selected JIS/EUC repertoire, JIS ASCII/Roman and IN/OUT order, kana choices, unsupported repertoire states, and shared recovery/exact-send policy in Rust over a planned Microsoft CP932 base mapper. Native 5022x conversion is not an approved substitute for these explicit terminal policies. Native equivalence remains acceptance work; additional CP932 mapping overrides need separate consultation if an actual mismatch is found. Do not reconfirm the approved scope. These design decisions do not authorize implementation.\r\n\r\n- [ ] Implement accepted designations, IN/OUT choices, eight-bit and SO/SI kana, return to the relevant single-byte state, and unsupported two-byte repertoires until redesignation. Preserve independent DATA/stderr partial and charset state.\r\n- [ ] Verify exact backslash, tilde, yen, and overline behavior, extension reverse mappings, and required output designation order even when a designation is redundant.\r\n- [ ] Distinguish incomplete charset/VT controls from incomplete printable units, and verify malformed-unit, chunk, EOF, embedded-control, and recording-provenance boundaries.\r\n- [ ] Preflight complete outgoing text with isolated state. Reject without changing live state or sending a prefix; reserve and issue necessary codec closure and one started paste wrapper at the accepted stop boundary, before automatic replies.\r\n- [ ] Verify profile-to-session display, sending, paste, local echo, and recording with independent expected bytes. Add no managed codec callback, new dependency, or extension of the old UTF-8 handoff exporter.\r\n"
+    },
+    {
+      "key": "T11",
+      "number": 27,
+      "url": "https://github.com/TabTty/TabTty/issues/27",
+      "title": "Own complete native recording interval operations",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "blockedBy": [
+        18
+      ],
+      "body": "## What to build\r\n\r\nReplace recording callers' terminal attachment and position-management obligations with complete BeginRecording, CutoffRecording, and AbortRecording operations. Rust and its managed adapter own interval mechanics, bounded Text/Terminal delivery, and terminal-side cleanup; C# retains format, group, Raw, and file ownership.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Route the actual recording caller through the named operations and verify existing normal UTF-8 start, pause, resume, and abort behavior through real files. Do not expose callback repair, interval counters, a public interval handle, or a native-result draining recipe.\r\n- [ ] Return applied, inactive/no-change, or rejected outcomes with resulting terminal recording activity, terminal usability, and failure reason. Native activity does not pretend to describe Raw admission or disk durability.\r\n- [ ] Reject Begin while active before mutation; leave all selected projections inactive after a valid new-interval preparation failure; preserve decoder/parser/position state on inactive Cutoff/Abort.\r\n- [ ] Keep receive-only projection updates while inactive, preserve the captured format selection, and distinguish orderly cutoff, abort, source EOF, and terminal disposal. EOF followed by cutoff does not repeat tails.\r\n- [ ] Keep activation and nonfailing group publication in one ordered event. Validate owner identity there, preserve cancellation-before-commit behavior, and retain delivery/cleanup after a caller stops waiting following commit.\r\n- [ ] Exercise the real Rust operation seam with controlled capture/rejection and actual session/file integration, observing resulting bytes and state rather than callback invocation counts.\r\n"
+    },
+    {
+      "key": "T12",
+      "number": 28,
+      "url": "https://github.com/TabTty/TabTty/issues/28",
+      "title": "Record edited native normal-screen Text across intervals",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "blockedBy": [
+        22,
+        27
+      ],
+      "body": "## What to build\r\n\r\nProduce normal-screen Text files from the Rust receive-only projection, including edited revisions, logical boundaries, retirement, serialized TAB position, reflow, and interval eligibility.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Exclude local echo and preserve source-local CRLF pairing across chunks. Only genuine received LF boundaries add log newline; cursor movement, wrapping, resize, erase, and local input do not manufacture one.\r\n- [ ] Serialize surviving logical content and explicit spaces, join soft wraps, keep clusters whole, and emit TAB only when its final span matches ordinary eight-column expansion at the serialized position without hiding text.\r\n- [ ] Mark exactly submitted content revisions and boundaries. Same-content rewrites do not create a revision; later actual edits append the updated surviving revision without rewriting old file regions.\r\n- [ ] Before retention loss, emit eligible unrecorded spans without LF and later emit only remaining eligible continuation. Explicit erase/delete/overwrite/truncation does not take a pre-edit snapshot.\r\n- [ ] Continue receive-only updates during pauses. On resume exclude retained mixed logical lines and their future continuation through the first received LF, with no backfill or duplicate tails.\r\n- [ ] Verify complete old/new file bytes through actual recording operations across reflow, retirement, TAB edits, source interleaving, repeated finalization, and resource rejection, with serialized position owned inside the native module.\r\n"
+    },
+    {
+      "key": "T13",
+      "number": 29,
+      "url": "https://github.com/TabTty/TabTty/issues/29",
+      "title": "Record native alternate Text and canonical Terminal operations",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "blockedBy": [
+        21,
+        27
+      ],
+      "body": "## What to build\r\n\r\nProduce alternate-screen Text and combined Terminal recordings in Rust across source, screen, interval, and EOF boundaries, delivering their complete bounded effects to the actual file-owning recording module.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Record alternate printable text and TAB, preserve LF, resolve pending CR as contracted, and omit other nonprinting controls. Do not combine CR/LF across incompatible sources, intervals, or screen boundaries.\r\n- [ ] Flush eligible normal tails once without LF on alternate entry, preserve parked normal provenance, and return without a normal-screen dump or recording restore-state prefix.\r\n- [ ] Admit a completed received unit only when all source bytes belong to the current uninterrupted interval. Preserve incomplete-unit provenance and independent eligibility of an embedded executable C0 operation.\r\n- [ ] Serialize Terminal output as UTF-8 text and canonical supported seven-bit controls with complete parameters, aliases normalized and REP resolved to source text. Include accepted local echo and display operations even when they do not change cells.\r\n- [ ] Exclude queries/replies, BEL, excluded OSC effects, incomplete/unsupported fragments, resize, transport data, and diagnostics. Preserve source CR/LF and local echoed Enter as CRLF.\r\n- [ ] Verify complete file bytes through the actual recording path for screen transitions, pause/resume inside units, source interleaving, EOF followed by cutoff, and recording admission refusal, without native state replacement.\r\n"
+    },
+    {
+      "key": "T14",
+      "number": 30,
+      "url": "https://github.com/TabTty/TabTty/issues/30",
+      "title": "Keep recording files and native state consistent through failures",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "blockedBy": [
+        21,
+        27
+      ],
+      "body": "## What to build\r\n\r\nComplete the integration between C# recording group/file ownership and native recording operations for preparation, pause, resume/retry, writer failure, cancellation, and stale completion. Preserve healthy terminal interaction when only recording fails.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Exercise Off and all seven nonempty format combinations. Prepare every initial file before transport startup; partial preparation failure leaves the group inactive, closes successful handles, and preserves already-created files without claiming a filesystem transaction.\r\n- [ ] Distinguish native cutoff from successful Pause, which additionally requires accepted writer completion, durable flush, and close. Failed writes or flushes do not publish a successful Paused result.\r\n- [ ] Stop group admission for any format failure and order native cleanup correctly. Preserve valid terminal mutations and unrelated effects such as replies from the same operation; never replay an operation or a partly written batch.\r\n- [ ] Validate session and recording owner identity at completion/failure application. An obsolete opening request or old writer cannot activate an old part or abort a newer interval; explicit retry uses new part owners and numbers.\r\n- [ ] Cover cancellation before and after activation, pause during opening, delayed/partial I/O, cleanup allowance exhaustion, and stale completion. Keep issued resources charged until actual completion despite cancellation or an abandoned wait.\r\n- [ ] Verify through the actual session and recording APIs with real files plus controlled writer failures. Keep wait/loss presentation and explicit closure orchestration with their accepted owners.\r\n"
+    },
+    {
+      "key": "T15",
+      "number": 31,
+      "url": "https://github.com/TabTty/TabTty/issues/31",
+      "title": "Read retained native output through presentation and history APIs",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "blockedBy": [
+        22
+      ],
+      "body": "## What to build\r\n\r\nServe rendering, copy, UIA, and existing AI screen/history capture from the authoritative Rust terminal through bounded owned immutable results. Preserve stable content and retention evidence without constructing a mutable managed terminal replica.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Route the actual presentation and observation callers to native captures, preserving normal, parked normal, alternate, retained disconnected, and reconnect-generation behavior without managed handoff.\r\n- [ ] Preserve distinct cell, Unicode-scalar, grapheme, UTF-16, and UTF-8 units at the seam, with stable content anchors through pure reflow and accurate collapse or loss behavior after eviction.\r\n- [ ] Maintain bounded intrinsic revision/retention metadata for subsequent validation, detecting intervening edits even when final text is restored. Attribute/layout-only changes retain their distinct semantics.\r\n- [ ] Reserve requested result ownership before copying. UIA full-range requests either return the complete contractually requested result or explicitly fail, without implicit truncation or invented pagination.\r\n- [ ] Keep snapshots and observation results valid across later mutation and terminal disposal, account held results until release, and preserve existing capture lifetimes, layout epochs, and input-completion watermarks.\r\n- [ ] Verify real render/copy/UIA/history paths with reflow, eviction, alternate screens, disconnect, and disposal. Ordered receive observers must not steal data or require rendering; add no macro runtime or speculative macro API.\r\n"
+    },
+    {
+      "key": "T16",
+      "number": 32,
+      "url": "https://github.com/TabTty/TabTty/issues/32",
+      "title": "Search and publish native terminal history consistently",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "blockedBy": [
+        31
+      ],
+      "body": "## What to build\r\n\r\nUse Rust-owned bounded history/search preparation and terminal consistency validation through the existing AI observation path. Preserve C# ownership of counterpart authorization, external handles, expiry, framing, queue admission, and ordered publication.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Preserve literal Ordinal and OrdinalIgnoreCase semantics, UTF-16 query/overlap bounds, whole-cluster positions, UTF-8 text limits, and complete response-size checks. Native lowercase or normalization is not a substitute.\r\n- [ ] Produce bounded pages, search coverage, and matching successor metadata; repagination shares the original work budget. A text limit too small for the next cluster returns a resource outcome without splitting or empty-success loops.\r\n- [ ] Validate all relevant content, including negative scanned regions, overlap, context, and remaining continuation range. Detect edit-then-restore, distinguish known retention loss from unavailable proof metadata, and preserve unchanged prefixes and fixed search ends.\r\n- [ ] Keep final terminal validation and existing authority, cancellation, fixed-expiry, staged-handle, and nonblocking queue admission checks in one ordered outcome with terminal mutation excluded. Serialization and proportional allocation remain outside that gate.\r\n- [ ] Failed publication neither activates successors nor consumes source checkpoints or evicts live handles solely for unpublished work. Preserve error precedence and original resource ownership through delayed cancellation and delivery.\r\n- [ ] Verify the actual AI operation and publication path with real native terminal state and controlled clock/queue races. Do not redesign AI permissions, the existing handle registry, or the transport contract.\r\n"
+    },
+    {
+      "key": "T17",
+      "number": 33,
+      "url": "https://github.com/TabTty/TabTty/issues/33",
+      "title": "Preserve transfer cleanup outcomes when a terminal closes",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "blockedBy": [],
+      "body": "## What to build\r\n\r\nMake terminal-initiated transfer-window closure observe the existing file-operation owner, apply its cleanup and reporting policy, and return the actual outcome. This preparatory vertical slice makes the existing visible close paths safe to reuse without introducing a new transfer policy.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Repeated transfer-window close requests observe the same execution and result; an already-closing window is not reported as completed cleanup.\r\n- [ ] Known unresolved temporary paths and unknown outcomes are reported before dismissal where required. Failure to present a required report prevents silent dismissal and produces a bounded failure result.\r\n- [ ] Issued provider work and its resource charges remain with the actual owner until completion. Visual dismissal, permitted cleanup adoption, and actual completion remain distinct.\r\n- [ ] Existing terminal-tab and terminal-window close paths consume the transfer outcome and do not claim successful closure when required dismissal or reporting failed.\r\n- [ ] Retained disconnected transfer windows preserve their results. Tab movement preserves their association with the terminal tab and connection generation.\r\n- [ ] Real WPF close interactions and file-operation/provider integration verify normal completion, delayed cleanup, duplicate requests, unresolved outcomes, and failed reporting through visible results and actual ownership.\r\n"
+    },
+    {
+      "key": "T18",
+      "number": 34,
+      "url": "https://github.com/TabTty/TabTty/issues/34",
+      "title": "Close a terminal tab through one owned operation",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "blockedBy": [
+        33
+      ],
+      "body": "## What to build\r\n\r\nRoute the terminal-tab close command through one complete application operation. It owns review, approved termination, cleanup waiting, transfer-window closure, and coordinated visual removal. The UI supplies a stable target, presents decisions, and observes an outcome without assembling a cleanup sequence.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Required connection and file-work confirmation precedes new close-induced effects. Declined, cancelled, invalid, or unavailable confirmation produces a no-new-effects result without rolling back independent work.\r\n- [ ] Validate stable tab lifetime, connection generation, transfer ownership, placement, and approved effects before execution. Ordinary same-target transfer completion or peer disconnect does not restart confirmation.\r\n- [ ] Stale approval for a replacement generation or additional effects ends the request with a localized changed-target explanation and no new effects. It does not automatically recapture targets or repeat confirmation.\r\n- [ ] Exact duplicates share one per-target execution and observable result, including after the tab leaves the live UI. Callers acquire no review-token, cleanup, or disposal obligation.\r\n- [ ] The target owns its five-second recording-cleanup decision. Continue waiting remains authoritative; closing with unsaved data requires explicit permission and existing cleanup-capacity admission. Failure to show that choice grants no loss permission.\r\n- [ ] Started owners and operation tasks remain observed after a caller stops waiting or a view disappears. Immutable bounded outcomes distinguish actual visual disposition, known failures or loss, unresolved work, cleanup adoption, and actual release; expected failures do not become unobserved faults.\r\n- [ ] Delegate session, input, recording, transfer, AI, resource, and layout decisions to their existing owners. Preserve state for a view whose removal fails, and introduce no macro runtime or settings/editor policy change.\r\n- [ ] Production-interface tests with controlled decisions, time, I/O, and layout faults, together with real WPF tab-close, session, file, and transport integration, verify visible outcomes and actual ownership rather than private helper invocation counts.\r\n"
+    },
+    {
+      "key": "T19",
+      "number": 35,
+      "url": "https://github.com/TabTty/TabTty/issues/35",
+      "title": "Close windows by joining existing tab closures",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "blockedBy": [
+        34
+      ],
+      "body": "## What to build\r\n\r\nRoute window-close intent through a complete operation that joins already accepted tab closures and obtains the applicable combined confirmation for remaining targets. Close the window when its actual targets satisfy the existing removal requirements, without requiring a second user request.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] When tab A is already closing and waiting for cleanup, closing its A/B window joins A, reviews B and other newly affected targets as required, and completes without another close click.\r\n- [ ] Declining the later review leaves newly affected targets untouched while A continues. Outcomes distinguish joined or independently completed effects from effects introduced by the later request.\r\n- [ ] Joining repeats none of A's confirmation, termination, recording finalization, transfer-window closure, release request, cleanup charge, timer, or loss decision. A prior Continue waiting choice remains authoritative.\r\n- [ ] Overlapping reviews revalidate target ownership, committed executions, placement, and approval scope. Invalid approval ends the affected request with a changed-target explanation and no automatic reconfirmation loop.\r\n- [ ] Requests wait on target executions rather than mutually dependent window requests. Disconnect, final-tab, and native window-close callbacks observe or revalidate existing execution without cyclic waits or duplicate disposal; coordinator ordering is not held across dialogs or asynchronous cleanup.\r\n- [ ] A failed or pending required target removal prevents false whole-window success. Final visual commit includes all tab kinds and preserves existing settings/editor behavior, movement guards, activation ordering, and final-exit policy.\r\n- [ ] Real WPF window-close interactions and session/resource integration cover A/B joining, refusal, overlapping reviews, duplicate native callbacks, target failure, settings/editor tabs, activation and movement races, and final-window exit through visible outcomes and actual ownership.\r\n"
+    },
+    {
+      "key": "T20",
+      "number": 36,
+      "url": "https://github.com/TabTty/TabTty/issues/36",
+      "title": "Close disconnected tabs and their transfer windows consistently",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "blockedBy": [
+        34
+      ],
+      "body": "## What to build\r\n\r\nRoute the current window's Close disconnected tabs command and automatic disconnected-tab closure through the complete per-target closure workflow. Both close the affected tabs' associated transfer windows while a disconnect that retains its terminal tab preserves transfer results.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Bulk closure targets only eligible disconnected tabs in the specified window; automatic closure targets only its affected tab. Live or connecting tabs, other windows, and unrelated transfer-result windows are unaffected.\r\n- [ ] Both paths close associated transfer windows using the same cleanup and reporting policy as explicit closure. Disconnect or peer loss that leaves the terminal tab open preserves its output, ownership, and transfer results.\r\n- [ ] Disconnected targets receive no connection-ending warning, while applicable active-file-work approval, unresolved-outcome reporting, and unsaved-log decisions remain required. Automatic closure grants no implicit loss permission.\r\n- [ ] Targets shared with explicit or window closure join the existing execution without duplicate termination, cleanup charges, finalization, release requests, or decisions.\r\n- [ ] Disconnect notification does not await complete closure when closure awaits session completion. Repeated notifications after a declined automatic-closure decision do not create a confirmation loop.\r\n- [ ] Final-tab removal uses existing layout coordination, counts settings/editor tabs, and preserves the final-window exit rule. Failed reporting, cleanup, or visual removal remains observable rather than producing false success.\r\n- [ ] Real WPF commands and automatic lifecycle entry paths, backed by real session and transfer integration, verify target scope, preserved results versus automatic removal, duplicate events, declined decisions, failures, and last-tab window closure.\r\n"
+    },
+    {
+      "key": "T21",
+      "number": 37,
+      "url": "https://github.com/TabTty/TabTty/issues/37",
+      "title": "Retain native terminal state until final tab removal",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "blockedBy": [
+        27,
+        34
+      ],
+      "body": "## What to build\r\n\r\nConnect the complete closure operation to the Rust terminal owner's final lifetime. Disconnect preserves authoritative native state for retained output; committed final tab removal releases that ownership deterministically while independent results and issued I/O retain their own lifetimes.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Retained disconnected output remains available from Rust. Receive EOF and transport cleanup do not destroy the retained terminal state or select a managed terminal fallback.\r\n- [ ] Successful final visual removal releases the applicable terminal ownership exactly once through its owner. A failed removal preserves usable state for the surviving view.\r\n- [ ] Tab movement, pane removal, and WPF unloading do not dispose the terminal session. Old-generation completions cannot release or mutate a replacement session.\r\n- [ ] Held immutable snapshots and results remain valid and charged until their independent release. Issued I/O and its buffers retain their original owner and charges until actual completion.\r\n- [ ] Real native/session recording integration verifies once-only receive and EOF finalization, eligible tail delivery, and independent transport and log cleanup. Visual removal and release do not imply a successful durable save.\r\n- [ ] Production-interface tests plus actual WPF tab-close and retained-output interactions verify held results, duplicate requests, failed removal, movement, delayed I/O, and deterministic release without relying on garbage collection.\r\n- [ ] The implemented ownership integration is exercised through the real single-tab close and shared per-target execution. Other closure commands reuse that release boundary when their own slices are integrated; complete native-only cross-command acceptance belongs to the final integration gate.\r\n"
+    },
+    {
+      "key": "T22",
+      "number": 38,
+      "url": "https://github.com/TabTty/TabTty/issues/38",
+      "title": "Integrate the complete native-only terminal candidate",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "blockedBy": [
+        23,
+        24,
+        26,
+        28,
+        29,
+        30,
+        32,
+        35,
+        36,
+        37
+      ],
+      "body": "## What to build\r\n\r\nIntegrate all completed native terminal behavior into one production candidate and remove production managed terminal selection, handoff, mutable replicas, and diagnostic switching. Close the full contracted feature and encoding coverage matrix through actual application paths before whole-product integration is claimed.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Demonstrate all 48 receive/transmit identities and every contracted VT, screen, Unicode, input, reflow, recording, and observation family through the real profile/session/application paths, with no unresolved supported feature treated as an exclusion.\r\n- [ ] Remove production managed starts, handoff/export-import execution, fallback calls, mutable managed terminal replicas, and runtime/diagnostic engine selectors. An isolated comparison reference may remain test-only.\r\n- [ ] Verify crossed encoding, source, resize, alternate-screen, interval, local-echo, and observation scenarios, including terminal replies and recording failure in one operation. Preserve independent expected outputs rather than relying only on reference comparisons.\r\n- [ ] Verify resource refusal, stale generation completion, retained disconnected state, immutable results held across disposal, and actual cleanup ownership. Neither pressure nor an unimplemented supported operation selects managed execution.\r\n- [ ] Treat absent or mismatched native binaries as explicit packaging failure. Preserve the accepted Rust/standard-library dependency boundary and pinned Unicode/mapping data, without new third-party dependencies or macro runtime.\r\n- [ ] Record the exact completed candidate and integrated functional results. Whole-product functional green is assessed here; the subsequent deployment and measured-acceptance gate determines cutover readiness rather than inferring it from native residency.\r\n\r\n- [ ] Verify explicit tab/window, bulk and automatic closure against the complete native candidate, including joined A/B requests, refused later review, retained disconnected output, held snapshots, recording faults, stale completion, movement/final-exit ordering and deterministic final release.\r\n"
+    },
+    {
+      "key": "T23",
+      "number": 39,
+      "url": "https://github.com/TabTty/TabTty/issues/39",
+      "title": "Validate native terminal deployment and acceptance workloads",
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "blockedBy": [
+        38
+      ],
+      "body": "## What to build\r\n\r\nCollect new attributable functional, deployment, presentation, ownership, and performance evidence for the complete native-only candidate, then determine whether integration and production cutover satisfy the accepted gates. Historical partial-native results do not establish this candidate's readiness.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Record exact source, build, artifact, dependency/data identities, machine, and workload inputs. Preserve passed, failed, blocked, and not-run results distinctly; do not turn a missing environment or historical result into a pass.\r\n- [ ] Recheck affected real transport, file, WPF, UIA, English/Japanese, and lifecycle integration behavior, including full-screen applications, disconnected retained output, and snapshots held through cleanup. Preserve distinct external-environment checks rather than rebuilding already accepted features.\r\n- [ ] Run the accepted 20-session responsiveness workloads and overload control checks, including the specified runtime, interaction sampling, storage, concurrent transfer conditions, and p95/max reporting. Include paths crossing resize, alternate screens, recording transitions, and observation.\r\n- [ ] Run the 1-to-6 receiving-tab memory workload with reference retention and all three logs, across visible seeding, hidden reception, EOF/log drain, and restoration. Report whole-process private-memory and working-set peaks against the stated decimal-GB objective.\r\n- [ ] Report queue and resource peaks, refusals, output/log completeness, CPU/storage, retained ownership, and failures without reducing accepted retention or features, dropping output, or silently weakening targets.\r\n- [ ] Verify clean supported Windows deployment with matching bundled native dependencies and explicit missing/mismatched-binary failure. Approve cutover only against the applicable completed gates; leave unresolved failures and unexecuted external checks visible.\r\n"
+    }
+  ]
+}

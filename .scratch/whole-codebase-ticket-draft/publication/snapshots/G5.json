@@ -1,0 +1,57 @@
+{
+  "assignees": [],
+  "blockedBy": {
+    "nodes": [
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNdJBg",
+        "number": 63,
+        "state": "OPEN",
+        "title": "Analyze paste previews through owned Rust input plans",
+        "url": "https://github.com/TabTty/TabTty/issues/63"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNdGcw",
+        "number": 62,
+        "state": "OPEN",
+        "title": "Continue long received graphemes with bounded stored spelling",
+        "url": "https://github.com/TabTty/TabTty/issues/62"
+      }
+    ],
+    "totalCount": 2
+  },
+  "body": "## Parent\r\n\r\n[Deepen recording, transport, persistence, vault, SSH and grapheme ownership](https://github.com/TabTty/TabTty/issues/40)\r\n\r\n## What to build\r\n\r\nSend the complete original paste through the existing session writer, including graphemes longer than 256 scalars, while Stop remains responsive at valid encoding boundaries and local echo reflects only definitely submitted content.\r\n\r\nRelated existing work: [#12](https://github.com/TabTty/TabTty/issues/12), [#19](https://github.com/TabTty/TabTty/issues/19). These references identify established behavior or adjacent acceptance work; they are not blocking dependencies and are not to be reopened or reimplemented by this ticket.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Migrate actual paste sending to owned Rust input plans and target-derived encoded units; remove the temporary sender eligibility boundary. With observation consumers already migrated, remove the remaining production managed terminal grapheme rules and unused data when this final consumer moves. Never apply stored-prefix omission to outbound input. Keep C# ownership of authority, ordered input, pacing, transport and broadcast coordination.\r\n- [ ] Preflight complete target encoding/finalization without advancing live state before first send. Keep source identity, current target generation, mode, encoder/configuration and authority valid until ordered use; target-neutral analysis does not bypass local-echo continuation admission.\r\n- [ ] Normally successful transmission preserves exact input even for one giant grapheme. Encode and send in bounded work chunks without treating a chunk as a completed grapheme or adding pacing delays. No 256-scalar input rejection remains.\r\n- [ ] An explicit Stop may end at the next complete Unicode scalar or required larger indivisible codec/control unit inside either a short or long grapheme. Keep CRLF indivisible and never intentionally cut a multibyte character or stateful control unit.\r\n- [ ] Only definitely submitted complete units advance encoder and local-echo commitment. Reuse the existing transport seam: previously successful complete submissions are definite, unattempted work is unsent, and a failed attempted unit is conservatively uncertain unless the transport supplies finer authoritative evidence. Never infer successful bytes from an exception, replay uncertain bytes or require a separate transport refactor merely to obtain finer progress. Perform healthy reserved codec/bracket closure once under the existing ordered writer and automatic-reply rules.\r\n- [ ] Local echo uses the bounded stored-spelling contract while the successful outbound payload remains complete. Preserve actual source/chunk ownership until workers and transport operations release it, including cancelled waits and old-generation completion.\r\n- [ ] Verify exact bytes, counts, pacing, echo, short/long-cluster Stop, CRLF, legacy/stateful encodings, partial/uncertain writes and healthy closure through actual session/input/transport paths. Keep the AI input authority and 256 KiB UTF-8 limit unchanged.\r\n- [ ] After observation and input consumers have migrated, remove the remaining production managed grapheme/width/drawing-category rule implementation and compatibility shims. Preserve unrelated protocol or diagnostic character-safety checks; no new managed fallback is introduced.\r\n",
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 64,
+  "parent": {
+    "id": "I_kwDOVmB6dc8AAAABgNbAdw",
+    "number": 40,
+    "state": "OPEN",
+    "title": "Deepen recording, transport, persistence, vault, SSH and grapheme ownership",
+    "url": "https://github.com/TabTty/TabTty/issues/40"
+  },
+  "state": "OPEN",
+  "subIssues": {
+    "nodes": [],
+    "totalCount": 0
+  },
+  "subIssuesSummary": {
+    "completed": 0,
+    "percentCompleted": 0,
+    "total": 0
+  },
+  "title": "Send exact long-grapheme input with scalar-safe Stop",
+  "url": "https://github.com/TabTty/TabTty/issues/64"
+}

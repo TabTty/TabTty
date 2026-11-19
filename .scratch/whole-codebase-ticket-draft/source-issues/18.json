@@ -1,0 +1,22 @@
+{
+  "body": "## What to build\r\n\r\nReplace duplicated source interpretation on the active UTF-8 path with one private interpretation interface consumed by Estimate and Execute. Make the production adapter own the complete preflight, reservation, execution, effect delivery, and cleanup operation, so the session caller does not manage preparation handles or drain native results.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Use common decoding, BOM, framing, parameter, completed-unit, limit, and continuation definitions. Preserve independent DATA/stderr states, source-local REP, chunk versus EOF behavior, and independently executed embedded C0 controls.\r\n- [ ] Estimate uses isolated source state and bounded charged workspace, emits no effects, and changes no authoritative projection or recording state. Execute starts from the original authoritative source state, not the preview end state.\r\n- [ ] Reserve complete bounded peak state, workspace, input ownership, effects, and overlapping copies before mutation. Use read-only state, bounded preview changes, shared transition definitions, or conservative bounds without creating a second screen engine.\r\n- [ ] Validate exact input and the relevant source, configuration, projection, recording, geometry, pending-effect, and capacity basis. Reprepare stale work; account the operation's held reservation without double charging or self-invalidating it.\r\n- [ ] Demonstrate no native prefix or live-state change on rejection and cancellation before execution. After execution starts, retain delivery and cleanup ownership; unexpected execution failure follows the affected-session policy without replay.\r\n- [ ] Exercise the actual session/adapter path with independent expected state, replies, and recording bytes. Owned immutable results remain valid across mutation and disposal, and delayed release remains charged. Later feature tickets extend this same path.\r\n",
+  "comments": [],
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 18,
+  "state": "OPEN",
+  "title": "Share interpretation and admit complete native operations",
+  "url": "https://github.com/TabTty/TabTty/issues/18"
+}

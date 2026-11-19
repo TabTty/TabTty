@@ -1,0 +1,22 @@
+{
+  "body": "## What to build\r\n\r\nProduce normal-screen Text files from the Rust receive-only projection, including edited revisions, logical boundaries, retirement, serialized TAB position, reflow, and interval eligibility.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Exclude local echo and preserve source-local CRLF pairing across chunks. Only genuine received LF boundaries add log newline; cursor movement, wrapping, resize, erase, and local input do not manufacture one.\r\n- [ ] Serialize surviving logical content and explicit spaces, join soft wraps, keep clusters whole, and emit TAB only when its final span matches ordinary eight-column expansion at the serialized position without hiding text.\r\n- [ ] Mark exactly submitted content revisions and boundaries. Same-content rewrites do not create a revision; later actual edits append the updated surviving revision without rewriting old file regions.\r\n- [ ] Before retention loss, emit eligible unrecorded spans without LF and later emit only remaining eligible continuation. Explicit erase/delete/overwrite/truncation does not take a pre-edit snapshot.\r\n- [ ] Continue receive-only updates during pauses. On resume exclude retained mixed logical lines and their future continuation through the first received LF, with no backfill or duplicate tails.\r\n- [ ] Verify complete old/new file bytes through actual recording operations across reflow, retirement, TAB edits, source interleaving, repeated finalization, and resource rejection, with serialized position owned inside the native module.\r\n",
+  "comments": [],
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 28,
+  "state": "OPEN",
+  "title": "Record edited native normal-screen Text across intervals",
+  "url": "https://github.com/TabTty/TabTty/issues/28"
+}

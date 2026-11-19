@@ -1,0 +1,57 @@
+{
+  "assignees": [],
+  "blockedBy": {
+    "nodes": [
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNb0nw",
+        "number": 49,
+        "state": "OPEN",
+        "title": "Own shared vault unlock and credential handoff operations",
+        "url": "https://github.com/TabTty/TabTty/issues/49"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNbxdQ",
+        "number": 48,
+        "state": "OPEN",
+        "title": "Publish encrypted vault revisions with verified preservation",
+        "url": "https://github.com/TabTty/TabTty/issues/48"
+      }
+    ],
+    "totalCount": 2
+  },
+  "body": "## Parent\r\n\r\n[Deepen recording, transport, persistence, vault, SSH and grapheme ownership](https://github.com/TabTty/TabTty/issues/40)\r\n\r\n## What to build\r\n\r\nChange the master password from management or an editor with one complete operation that adopts a new root only after verified publication and accurately reports partial on-disk changes.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Use the complete operation and bound interaction interface with existing new-password confirmation and normalization rules. Generate fresh root/wrapper/payload encryption under the existing vault format; ordinary views do not own the proposed root or commit choreography.\r\n- [ ] Reserve outcome, metadata, root-transfer and actual cryptographic-work capacity before publication. Keep old/candidate roots only for their established owner and active-work lifetimes, clearing temporary master/KEK and working copies after actual use.\r\n- [ ] Only complete verified target and preservation evidence adopts the root/snapshot/revision and shared metadata. A candidate on disk with missing/unreadable preservation retains prior effective state and blocks writes/retrieval while identifying the observed candidate generation; existing copies retain their original passwords.\r\n- [ ] Observation cancellation, UI loss or metadata delivery failure never repeats encryption/publication. Reconciliation inspects existing work and cannot clear independent external-stale restrictions or release roots still used by native/I/O verification.\r\n- [ ] Verify independent cryptographic fixtures, RNG/input failures, native cancellation, verified success after a reported filesystem error, partial preservation and owner-close races through the real management/editor operation and next credential lookup.\r\n",
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 51,
+  "parent": {
+    "id": "I_kwDOVmB6dc8AAAABgNbAdw",
+    "number": 40,
+    "state": "OPEN",
+    "title": "Deepen recording, transport, persistence, vault, SSH and grapheme ownership",
+    "url": "https://github.com/TabTty/TabTty/issues/40"
+  },
+  "state": "OPEN",
+  "subIssues": {
+    "nodes": [],
+    "totalCount": 0
+  },
+  "subIssuesSummary": {
+    "completed": 0,
+    "percentCompleted": 0,
+    "total": 0
+  },
+  "title": "Change the vault master password through one owned operation",
+  "url": "https://github.com/TabTty/TabTty/issues/51"
+}

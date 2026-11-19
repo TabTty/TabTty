@@ -1,0 +1,50 @@
+{
+  "assignees": [],
+  "blockedBy": {
+    "nodes": [
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNdBsA",
+        "number": 60,
+        "state": "OPEN",
+        "title": "Apply pinned grapheme and emoji rules to received terminal output",
+        "url": "https://github.com/TabTty/TabTty/issues/60"
+      }
+    ],
+    "totalCount": 1
+  },
+  "body": "## Parent\r\n\r\n[Deepen recording, transport, persistence, vault, SSH and grapheme ownership](https://github.com/TabTty/TabTty/issues/40)\r\n\r\n## What to build\r\n\r\nMake copy, rendering, UIA navigation and AI screen/history observations consume owned native text and the exact stored spans that produced it, so exported concatenation cannot invent or merge terminal characters.\r\n\r\nRelated existing work: [#31](https://github.com/TabTty/TabTty/issues/31), [#32](https://github.com/TabTty/TabTty/issues/32). These references identify established behavior or adjacent acceptance work; they are not blocking dependencies and are not to be reopened or reimplemented by this ticket.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Extend the existing owned observation path with text, authoritative stored spans, explicit offset units and required cell/drawing-aid facts bound to one capture, session generation, projection and range. Do not reconstruct segmentation from exported strings or pair text with metadata from another result.\r\n- [ ] Preserve VT-separated adjacent spans, zero-cell FEFF content, wide-cell continuations, generated separators and soft-wrap relationships. WPF consumes native drawing-aid eligibility instead of runtime Unicode categories; aids remain absent from text, copy and offsets.\r\n- [ ] Keep combined active screen, parked combined normal history and the contracted UIA active projection distinct. Copy, UIA character movement and AI pages/search consume those real projections without a mutable managed replica.\r\n- [ ] Owned results remain readable after mutation or disposal, while live operations still validate generation, projection, stable anchors and their existing authority/content/retention evidence. Preserve UIA collapse on eviction, AI error precedence, edit-then-restore detection, pure-reflow anchors and unchanged-prefix survival.\r\n- [ ] UIA full-result requests return the complete requested retained text or explicitly fail. AI retains its external page limits; insufficient capacity for the next complete stored span returns resource_limit without truncation, false progress or an empty-success loop. Account result ownership until actual release.\r\n- [ ] Verify real rendering/copy/UIA/history/search calls under VT separation, mutation/disposal, reflow, alternate screens, eviction and maximum stored-span capacity. Reuse the existing observation foundation rather than rebuilding the work described by the related issues.\r\n",
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 61,
+  "parent": {
+    "id": "I_kwDOVmB6dc8AAAABgNbAdw",
+    "number": 40,
+    "state": "OPEN",
+    "title": "Deepen recording, transport, persistence, vault, SSH and grapheme ownership",
+    "url": "https://github.com/TabTty/TabTty/issues/40"
+  },
+  "state": "OPEN",
+  "subIssues": {
+    "nodes": [],
+    "totalCount": 0
+  },
+  "subIssuesSummary": {
+    "completed": 0,
+    "percentCompleted": 0,
+    "total": 0
+  },
+  "title": "Preserve authoritative stored spans in rendering, UIA and history",
+  "url": "https://github.com/TabTty/TabTty/issues/61"
+}

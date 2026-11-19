@@ -1,0 +1,514 @@
+{
+  "status": "published-and-verified",
+  "targetRepository": "TabTty/TabTty",
+  "mapFile": "map.md",
+  "mapLabels": [
+    "ready-for-agent",
+    "wayfinder:map"
+  ],
+  "ticketLabels": [
+    "ready-for-agent",
+    "wayfinder:task"
+  ],
+  "publication": "Published on 2026-11-17 after explicit user approval: one new map and 23 child issues with native parent/blocking relationships. Implementation remains separately authorized; newly discovered custom codec work still requires consultation.",
+  "codecConsultation": {
+    "record": "../../docs/drafts/terminal-codec-consultation.md",
+    "approved": [
+      {
+        "date": "2026-11-16",
+        "scope": "Reuse the current Unicode conversion tables for ISO-8859-10/11/14/16 in Rust with bounded lookup/reverse lookup",
+        "ticket": "T07"
+      },
+      {
+        "date": "2026-11-17",
+        "scope": "Proposal A: selected JIS/EUC repertoire and reverse choices, Japanese kana and JIS designation/state policy in Rust over a planned native Microsoft CP932 base",
+        "tickets": [
+          "T09",
+          "T10"
+        ]
+      },
+      {
+        "date": "2026-11-17",
+        "scope": "Proposal B: specified shared receive recovery and exact whole-send preflight policy in Rust",
+        "tickets": [
+          "T02",
+          "T03",
+          "T07",
+          "T08",
+          "T09",
+          "T10"
+        ]
+      }
+    ],
+    "pending": [],
+    "remainingCodePages": "Static assessment completed 2026-11-17: native Microsoft conversion plus approved shared policy for the other 37 single-byte identities and CP936/949/950; no additional identity-specific table or patch identified",
+    "verification": "Native exactness and supported-platform availability are future implementation acceptance checks, not verified by the static review",
+    "excluded": "No speculative port of managed CP932 overrides or other new mapping corrections/data; consult separately if a concrete native mismatch requires them",
+    "implementationAuthorized": false
+  },
+  "initialFrontier": [
+    "T01",
+    "T17"
+  ],
+  "tickets": [
+    {
+      "key": "T01",
+      "source": "N01",
+      "file": "N01.md",
+      "title": "Establish the native-only UTF-8 integration baseline",
+      "blockedBy": [],
+      "delivers": "Capture a reproducible baseline and run the existing basic UTF-8 profile/session/display path using the candidate native integration.",
+      "publishedIssue": {
+        "number": 17,
+        "url": "https://github.com/TabTty/TabTty/issues/17",
+        "parent": 16,
+        "blockedBy": []
+      }
+    },
+    {
+      "key": "T02",
+      "source": "N02",
+      "file": "N02.md",
+      "title": "Share interpretation and admit complete native operations",
+      "blockedBy": [
+        "T01"
+      ],
+      "delivers": "Use one interpretation definition for Estimate and Execute, with bounded admission, owned results and rejection before native mutation.",
+      "publishedIssue": {
+        "number": 18,
+        "url": "https://github.com/TabTty/TabTty/issues/18",
+        "parent": 16,
+        "blockedBy": [
+          17
+        ]
+      }
+    },
+    {
+      "key": "T03",
+      "source": "N03",
+      "file": "N03.md",
+      "title": "Submit native UTF-8 input with committed local echo",
+      "blockedBy": [
+        "T02"
+      ],
+      "delivers": "Send input and pasted text through strict native preparation, with local echo committed only at the accepted send boundary.",
+      "publishedIssue": {
+        "number": 19,
+        "url": "https://github.com/TabTty/TabTty/issues/19",
+        "parent": 16,
+        "blockedBy": [
+          18
+        ]
+      }
+    },
+    {
+      "key": "T04",
+      "source": "N04",
+      "file": "N04.md",
+      "title": "Complete native normal-screen editing and rendition",
+      "blockedBy": [
+        "T02"
+      ],
+      "delivers": "Render and copy contracted normal-screen editing, scrolling, tabs, character sets, colors and Unicode clusters from Rust.",
+      "publishedIssue": {
+        "number": 20,
+        "url": "https://github.com/TabTty/TabTty/issues/20",
+        "parent": 16,
+        "blockedBy": [
+          18
+        ]
+      }
+    },
+    {
+      "key": "T05",
+      "source": "N05",
+      "file": "N05.md",
+      "title": "Run alternate-screen applications with native input modes",
+      "blockedBy": [
+        "T03",
+        "T04"
+      ],
+      "delivers": "Run full-screen terminal interactions with alternate screens, resets, replies, application keys and mouse modes in Rust.",
+      "publishedIssue": {
+        "number": 21,
+        "url": "https://github.com/TabTty/TabTty/issues/21",
+        "parent": 16,
+        "blockedBy": [
+          19,
+          20
+        ]
+      }
+    },
+    {
+      "key": "T06",
+      "source": "N06",
+      "file": "N06.md",
+      "title": "Resize native normal and parked terminal output",
+      "blockedBy": [
+        "T05"
+      ],
+      "delivers": "Resize and restore output without leaving Rust, preserving reflow, anchors, clusters and recording provenance.",
+      "publishedIssue": {
+        "number": 22,
+        "url": "https://github.com/TabTty/TabTty/issues/22",
+        "parent": 16,
+        "blockedBy": [
+          21
+        ]
+      }
+    },
+    {
+      "key": "T07",
+      "source": "N07",
+      "file": "N07.md",
+      "title": "Use all single-byte encodings in native sessions",
+      "blockedBy": [
+        "T03"
+      ],
+      "delivers": "Receive and strictly transmit the 41 single-byte encoding identities through actual profile/session paths.",
+      "consultationRequired": false,
+      "additionalCustomWorkRequiresConsultation": true,
+      "readiness": "published-ready-for-agent",
+      "publishedIssue": {
+        "number": 23,
+        "url": "https://github.com/TabTty/TabTty/issues/23",
+        "parent": 16,
+        "blockedBy": [
+          19
+        ]
+      }
+    },
+    {
+      "key": "T08",
+      "source": "N08",
+      "file": "N08.md",
+      "title": "Use native Chinese and Korean multibyte encodings",
+      "blockedBy": [
+        "T03"
+      ],
+      "delivers": "Use cp936, cp949 and cp950 in native receive/transmit with exact mappings, split-input and malformed-unit behavior.",
+      "consultationRequired": false,
+      "additionalCustomWorkRequiresConsultation": true,
+      "readiness": "published-ready-for-agent",
+      "publishedIssue": {
+        "number": 24,
+        "url": "https://github.com/TabTty/TabTty/issues/24",
+        "parent": 16,
+        "blockedBy": [
+          19
+        ]
+      }
+    },
+    {
+      "key": "T09",
+      "source": "N09",
+      "file": "N09.md",
+      "title": "Use native CP932 and EUC-JP terminal encoding",
+      "blockedBy": [
+        "T03"
+      ],
+      "delivers": "Use CP932 and EUC-JP with the accepted Japanese mappings, kana and strict transmit behavior.",
+      "consultationRequired": false,
+      "additionalCustomWorkRequiresConsultation": true,
+      "readiness": "published-ready-for-agent",
+      "publishedIssue": {
+        "number": 25,
+        "url": "https://github.com/TabTty/TabTty/issues/25",
+        "parent": 16,
+        "blockedBy": [
+          19
+        ]
+      }
+    },
+    {
+      "key": "T10",
+      "source": "N10",
+      "file": "N10.md",
+      "title": "Use native stateful JIS terminal encoding",
+      "blockedBy": [
+        "T09"
+      ],
+      "delivers": "Keep JIS receive/transmit and paced-paste closure state inside Rust, preserving source independence and exact byte order.",
+      "consultationRequired": false,
+      "additionalCustomWorkRequiresConsultation": true,
+      "readiness": "published-ready-for-agent",
+      "publishedIssue": {
+        "number": 26,
+        "url": "https://github.com/TabTty/TabTty/issues/26",
+        "parent": 16,
+        "blockedBy": [
+          25
+        ]
+      }
+    },
+    {
+      "key": "T11",
+      "source": "N11",
+      "file": "N11.md",
+      "title": "Own complete native recording interval operations",
+      "blockedBy": [
+        "T02"
+      ],
+      "delivers": "Start, pause, resume and abort recording through complete terminal operations and real files without caller-owned repair.",
+      "publishedIssue": {
+        "number": 27,
+        "url": "https://github.com/TabTty/TabTty/issues/27",
+        "parent": 16,
+        "blockedBy": [
+          18
+        ]
+      }
+    },
+    {
+      "key": "T12",
+      "source": "N12",
+      "file": "N12.md",
+      "title": "Record edited native normal-screen Text across intervals",
+      "blockedBy": [
+        "T06",
+        "T11"
+      ],
+      "delivers": "Write receive-only normal-screen Text with the accepted editing, line, retirement, tab and pause/resume rules.",
+      "publishedIssue": {
+        "number": 28,
+        "url": "https://github.com/TabTty/TabTty/issues/28",
+        "parent": 16,
+        "blockedBy": [
+          22,
+          27
+        ]
+      }
+    },
+    {
+      "key": "T13",
+      "source": "N13",
+      "file": "N13.md",
+      "title": "Record native alternate Text and canonical Terminal operations",
+      "blockedBy": [
+        "T05",
+        "T11"
+      ],
+      "delivers": "Write alternate-screen Text and combined canonical Terminal output across screen, source and recording-interval transitions.",
+      "publishedIssue": {
+        "number": 29,
+        "url": "https://github.com/TabTty/TabTty/issues/29",
+        "parent": 16,
+        "blockedBy": [
+          21,
+          27
+        ]
+      }
+    },
+    {
+      "key": "T14",
+      "source": "N14",
+      "file": "N14.md",
+      "title": "Keep recording files and native state consistent through failures",
+      "blockedBy": [
+        "T05",
+        "T11"
+      ],
+      "delivers": "Handle opening, retry, cancellation and write/flush failure across all format selections while preserving healthy native terminal work.",
+      "publishedIssue": {
+        "number": 30,
+        "url": "https://github.com/TabTty/TabTty/issues/30",
+        "parent": 16,
+        "blockedBy": [
+          21,
+          27
+        ]
+      }
+    },
+    {
+      "key": "T15",
+      "source": "N15",
+      "file": "N15.md",
+      "title": "Read retained native output through presentation and history APIs",
+      "blockedBy": [
+        "T06"
+      ],
+      "delivers": "Render, copy, expose UIA and capture screen/history using owned Rust results, including retained disconnected output.",
+      "publishedIssue": {
+        "number": 31,
+        "url": "https://github.com/TabTty/TabTty/issues/31",
+        "parent": 16,
+        "blockedBy": [
+          22
+        ]
+      }
+    },
+    {
+      "key": "T16",
+      "source": "N16",
+      "file": "N16.md",
+      "title": "Search and publish native terminal history consistently",
+      "blockedBy": [
+        "T15"
+      ],
+      "delivers": "Use native bounded search and revision/retention evidence through the existing ordered AI publication path.",
+      "publishedIssue": {
+        "number": 32,
+        "url": "https://github.com/TabTty/TabTty/issues/32",
+        "parent": 16,
+        "blockedBy": [
+          31
+        ]
+      }
+    },
+    {
+      "key": "T17",
+      "source": "C1",
+      "file": "C1.md",
+      "title": "Preserve transfer cleanup outcomes when a terminal closes",
+      "blockedBy": [],
+      "delivers": "Report transfer-window cleanup outcomes through the existing visible close paths while retaining actual provider ownership.",
+      "publishedIssue": {
+        "number": 33,
+        "url": "https://github.com/TabTty/TabTty/issues/33",
+        "parent": 16,
+        "blockedBy": []
+      }
+    },
+    {
+      "key": "T18",
+      "source": "C2",
+      "file": "C2.md",
+      "title": "Close a terminal tab through one owned operation",
+      "blockedBy": [
+        "T17"
+      ],
+      "delivers": "Own a single tab's confirmation, termination, waiting, cleanup outcome and visual removal through one operation.",
+      "publishedIssue": {
+        "number": 34,
+        "url": "https://github.com/TabTty/TabTty/issues/34",
+        "parent": 16,
+        "blockedBy": [
+          33
+        ]
+      }
+    },
+    {
+      "key": "T19",
+      "source": "C3",
+      "file": "C3.md",
+      "title": "Close windows by joining existing tab closures",
+      "blockedBy": [
+        "T18"
+      ],
+      "delivers": "Join already closing tabs, confirm remaining targets and close the window without duplicate work or a second click.",
+      "publishedIssue": {
+        "number": 35,
+        "url": "https://github.com/TabTty/TabTty/issues/35",
+        "parent": 16,
+        "blockedBy": [
+          34
+        ]
+      }
+    },
+    {
+      "key": "T20",
+      "source": "C4",
+      "file": "C4.md",
+      "title": "Close disconnected tabs and their transfer windows consistently",
+      "blockedBy": [
+        "T18"
+      ],
+      "delivers": "Use the complete closure workflow for bulk and automatic removal, including associated transfer windows and required reporting.",
+      "publishedIssue": {
+        "number": 36,
+        "url": "https://github.com/TabTty/TabTty/issues/36",
+        "parent": 16,
+        "blockedBy": [
+          34
+        ]
+      }
+    },
+    {
+      "key": "T21",
+      "source": "C5",
+      "file": "C5.md",
+      "title": "Retain native terminal state until final tab removal",
+      "blockedBy": [
+        "T11",
+        "T18"
+      ],
+      "delivers": "Retain Rust output after disconnect and release its owner on final removal while independent results and I/O keep their lifetimes.",
+      "publishedIssue": {
+        "number": 37,
+        "url": "https://github.com/TabTty/TabTty/issues/37",
+        "parent": 16,
+        "blockedBy": [
+          27,
+          34
+        ]
+      }
+    },
+    {
+      "key": "T22",
+      "source": "N17",
+      "file": "N17.md",
+      "title": "Integrate the complete native-only terminal candidate",
+      "blockedBy": [
+        "T07",
+        "T08",
+        "T10",
+        "T12",
+        "T13",
+        "T14",
+        "T16",
+        "T19",
+        "T20",
+        "T21"
+      ],
+      "delivers": "Integrate all 48 encodings and terminal/recording/observation/closure paths, remove production managed selection and verify native-only behavior.",
+      "publishedIssue": {
+        "number": 38,
+        "url": "https://github.com/TabTty/TabTty/issues/38",
+        "parent": 16,
+        "blockedBy": [
+          23,
+          24,
+          26,
+          28,
+          29,
+          30,
+          32,
+          35,
+          36,
+          37
+        ]
+      }
+    },
+    {
+      "key": "T23",
+      "source": "N18",
+      "file": "N18.md",
+      "title": "Validate native terminal deployment and acceptance workloads",
+      "blockedBy": [
+        "T22"
+      ],
+      "delivers": "Verify deployment, actual integration, presentation and measured response/memory workloads for the complete candidate.",
+      "publishedIssue": {
+        "number": 39,
+        "url": "https://github.com/TabTty/TabTty/issues/39",
+        "parent": 16,
+        "blockedBy": [
+          38
+        ]
+      }
+    }
+  ],
+  "publicationPrerequisites": [],
+  "publicationApprovedOn": "2026-11-17",
+  "mapIssue": {
+    "number": 16,
+    "url": "https://github.com/TabTty/TabTty/issues/16"
+  },
+  "publicationVerification": {
+    "checkedAtUtc": "2026-11-16T15:45:20.9227202Z",
+    "issues": 24,
+    "nativeSubIssues": 23,
+    "nativeDependencyEdges": 35,
+    "report": "publication/verification.json"
+  }
+}

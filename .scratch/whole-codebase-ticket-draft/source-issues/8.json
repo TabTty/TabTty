@@ -1,0 +1,38 @@
+{
+  "body": "## Parent\n\nhttps://github.com/TabTty/TabTty/issues/4\n\n## What to build\n\nKeep pending file effects correctly owned when the transfer window closes or the terminal reconnects, across every migrated operation kind.\n\n## Acceptance criteria\n\n- [ ] Track outstanding I/O application-wide by its original connection and operation, independently of the transfer window. Retain provider slots and required same-resolved-destination serialization until actual completion.\n- [ ] Reopening a transfer window on the same connection inherits the pending-I/O mutation restriction while browsing and closing remain available.\n- [ ] An explicit transfer open after reconnect uses a new connection-bound operation context; old answers, progress, results, and completions cannot attach to it. New connection identity does not release old provider ownership or local serialization.\n- [ ] Closing the view discards displayed results and retry metadata; a disconnected view that remains open keeps them. No restorable operation history is introduced.\n- [ ] Apply the existing bounded close/application-exit policy and report unresolved outcomes or temporary paths. Do not treat exit or waiter cancellation as proof that external effects ended.\n- [ ] Complete the migration of all file-operation callers and retire superseded UI policy/lifetime paths after their coverage has moved to the shared interface.\n- [ ] Verify delayed copy/create/rename/delete completion, view close/reopen, reconnect, admission, and resource counts through controlled adapters and relevant Windows/SSH integration.\n",
+  "comments": [
+    {
+      "id": "IC_kwDOVmB6dc8AAAABmafy0g",
+      "author": {
+        "login": "akhs-tkmr"
+      },
+      "authorAssociation": "MEMBER",
+      "body": "Connection-scoped file-operation ownership now outlives the transfer view. The controlled provider and loopback SSH tests passed close and reopen of the SFTP channel while the prior provider is pending, continued browsing, rejected mutation, successful mutation on a fresh connection, and admission after actual provider completion. The transfer view presents known unresolved outcomes before dismissal. Changes are in the TabTty working tree.\n\nOverall plan [#4](https://github.com/TabTty/TabTty/issues/4).\n",
+      "createdAt": "2026-11-14T06:10:35Z",
+      "includesCreatedEdit": false,
+      "isMinimized": false,
+      "minimizedReason": "",
+      "reactionGroups": [],
+      "url": "https://github.com/TabTty/TabTty/issues/8#issuecomment-6872888018",
+      "viewerDidAuthor": true
+    }
+  ],
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 8,
+  "state": "CLOSED",
+  "title": "Preserve file-operation ownership across close, reopen, and reconnect",
+  "url": "https://github.com/TabTty/TabTty/issues/8"
+}

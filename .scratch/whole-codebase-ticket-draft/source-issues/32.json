@@ -1,0 +1,22 @@
+{
+  "body": "## What to build\r\n\r\nUse Rust-owned bounded history/search preparation and terminal consistency validation through the existing AI observation path. Preserve C# ownership of counterpart authorization, external handles, expiry, framing, queue admission, and ordered publication.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Preserve literal Ordinal and OrdinalIgnoreCase semantics, UTF-16 query/overlap bounds, whole-cluster positions, UTF-8 text limits, and complete response-size checks. Native lowercase or normalization is not a substitute.\r\n- [ ] Produce bounded pages, search coverage, and matching successor metadata; repagination shares the original work budget. A text limit too small for the next cluster returns a resource outcome without splitting or empty-success loops.\r\n- [ ] Validate all relevant content, including negative scanned regions, overlap, context, and remaining continuation range. Detect edit-then-restore, distinguish known retention loss from unavailable proof metadata, and preserve unchanged prefixes and fixed search ends.\r\n- [ ] Keep final terminal validation and existing authority, cancellation, fixed-expiry, staged-handle, and nonblocking queue admission checks in one ordered outcome with terminal mutation excluded. Serialization and proportional allocation remain outside that gate.\r\n- [ ] Failed publication neither activates successors nor consumes source checkpoints or evicts live handles solely for unpublished work. Preserve error precedence and original resource ownership through delayed cancellation and delivery.\r\n- [ ] Verify the actual AI operation and publication path with real native terminal state and controlled clock/queue races. Do not redesign AI permissions, the existing handle registry, or the transport contract.\r\n",
+  "comments": [],
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 32,
+  "state": "OPEN",
+  "title": "Search and publish native terminal history consistently",
+  "url": "https://github.com/TabTty/TabTty/issues/32"
+}

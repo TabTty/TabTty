@@ -1,0 +1,50 @@
+{
+  "assignees": [],
+  "blockedBy": {
+    "nodes": [
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNcsXA",
+        "number": 57,
+        "state": "OPEN",
+        "title": "Run SFTP through shared SSH channel operations",
+        "url": "https://github.com/TabTty/TabTty/issues/57"
+      }
+    ],
+    "totalCount": 1
+  },
+  "body": "## Parent\r\n\r\n[Deepen recording, transport, persistence, vault, SSH and grapheme ownership](https://github.com/TabTty/TabTty/issues/40)\r\n\r\n## What to build\r\n\r\nKeep the terminal responsive while an SFTP transfer stalls, is cancelled, or explicitly reopens, retaining old channel and file-operation ownership until their actual work settles.\r\n\r\nRelated existing work: [#5](https://github.com/TabTty/TabTty/issues/5), [#6](https://github.com/TabTty/TabTty/issues/6), [#7](https://github.com/TabTty/TabTty/issues/7), [#8](https://github.com/TabTty/TabTty/issues/8). These references identify established behavior or adjacent acceptance work; they are not blocking dependencies and are not to be reopened or reimplemented by this ticket.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Integrate complete-frame stopping and truthful shared-channel send outcomes with existing file-operation cancellation/recovery. Preserve known completed effects and possible UnknownOutcome, never append a frame after an abandoned prefix and never infer non-execution from a missing whole-write success.\r\n- [ ] Retain exactly one opening/live/closing SFTP slot per current connection generation until both identity retirement and channel-owned actual release. Explicit reopen uses the existing bounded connection-wait budget; repeated requests neither reset it nor add unbounded waiters, and ended waits never open later.\r\n- [ ] An unresolved OPEN/CLOSE reports truthful pending/busy/timeout while a healthy terminal continues, without extra closing slots, forced terminal disconnect, ID reuse or automatic reconnect/replay. A live explicit waiter may start only after safe retirement; an explicitly reconnected generation has a fresh slot subject to shared limits.\r\n- [ ] Keep separately transferred parser storage and local provider I/O charged after channel closure. Preserve the already implemented pending-mutation and refresh/recheck guards across view reopen/reconnect; old completions settle only old owners and cannot change new credit, matching, readiness or results.\r\n- [ ] Complete bounded cross-channel service under tiny frames, eight outstanding file requests, blocked local I/O, zero credit and rekey. Allowed control and terminal traffic progress without consumer/reducer/credit cycles or starvation, with mandatory close/control capacity retained.\r\n- [ ] Verify real transfer-window-to-file-operation paths against delayed/uncertain mutation packets, never-arriving OPEN/CLOSE, repeated explicit reopen, old completion after reconnect, parser/provider buffers surviving channel release and threshold exhaustion. Retain real OpenSSH alongside terminal output and existing file-operation regression evidence.\r\n",
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 59,
+  "parent": {
+    "id": "I_kwDOVmB6dc8AAAABgNbAdw",
+    "number": 40,
+    "state": "OPEN",
+    "title": "Deepen recording, transport, persistence, vault, SSH and grapheme ownership",
+    "url": "https://github.com/TabTty/TabTty/issues/40"
+  },
+  "state": "OPEN",
+  "subIssues": {
+    "nodes": [],
+    "totalCount": 0
+  },
+  "subIssuesSummary": {
+    "completed": 0,
+    "percentCompleted": 0,
+    "total": 0
+  },
+  "title": "Preserve SFTP outcomes and bounded reopen through channel shutdown",
+  "url": "https://github.com/TabTty/TabTty/issues/59"
+}

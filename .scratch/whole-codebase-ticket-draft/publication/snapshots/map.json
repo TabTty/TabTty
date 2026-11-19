@@ -1,0 +1,226 @@
+{
+  "assignees": [],
+  "blockedBy": {
+    "nodes": [],
+    "totalCount": 0
+  },
+  "body": "## What to build\r\n\r\nImplement the six whole-codebase architecture designs finalized on 2026-11-18: recording finalization/waiting ownership (Q1-Q3), terminal-payload transport ownership (Q4-Q6), verified file publication/reconciliation (Q7-Q11), vault management-operation ownership (Q12-Q16), shared SSH channel invariants (Q17-Q19), and shared grapheme ownership with amended paste behavior (Q20-Q27, including final Q23 acceptance). The independent aggregate-paste Q28/Q29 branch is superseded.\r\n\r\nThe plan contains 26 implementation slices and one focused cross-owner integration-verification slice. It builds on the current Rust terminal, file-operation, broadcast, history and closure paths, rather than recreating those features. The related [earlier architecture map](https://github.com/TabTty/TabTty/issues/4) and [Rust terminal/closure map](https://github.com/TabTty/TabTty/issues/16) remain unchanged. Their issue state alone is not evidence of missing or completed runtime behavior; each slice establishes its own attributable evidence for the current accepted contract.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Ordinary callers use the accepted complete operations with immutable observations. Keep terminal semantics in Rust, application/session/transport/file coordination in C#, and presentation/localization in WPF resources. No new generic provider framework, managed terminal fallback, external SSH client or macro runtime is introduced.\r\n- [ ] Recording owns its file completion and protected wait policy; transports and shared SSH channels distinguish protocol results, ordered consumption, definite submission and actual release. Complete-operation cancellation and cancellation of observation remain distinct.\r\n- [ ] Profile/store/vault publication reports actual target and preservation facts and adopts only under the accepted proof rules. Reconciliation never repeats mutations. Vault operations keep shared unlock, explicit initialization/archive, selection-role atomic visibility and original secret lifetimes.\r\n- [ ] Unicode uses the accepted pinned definitions and authoritative owned spans. Long received graphemes retain their first 256 scalars while full-stream break state continues; outbound input remains exact except an explicitly stopped scalar/codec-safe prefix.\r\n- [ ] Retain a configurable per-paste maximum of 512 MiB by default, measured in actual preconversion UTF-16 text bytes. Confirm otherwise valid within-limit clipboard text for CR/LF or strictly more than 1 KiB. Use shared-source accounting in the existing 4 GiB application envelope, the existing 2 MiB/256-unit input-work allowance per target and the original 30-second broadcast preparation deadline; add no independent aggregate setting or 80% rule.\r\n- [ ] Every slice exercises a complete real consumer path with independent expectations and its relevant accepted verification cases. Preserve existing English/Japanese text, system language/theme behavior, file-backed connection profiles, supported locations and the accepted Microsoft/OpenSSL/Rust dependency boundaries.\r\n- [ ] Before implementation, record a reproducible current baseline and recheck affected authentication/vault/SSH guidance as required. Freeze the specified finite internal ownership limits in versioned implementation policy and test configured boundaries; do not invent new product preferences or claim measured capacity from design accounting.\r\n- [ ] Keep existing callers working during exercised prefactoring and staged migration, then remove retired recipes after their last consumer moves. Each implementation slice validates its delivered path; the cross-owner verification ticket adds combined race evidence without deferring those checks or replacing the existing deployment/performance acceptance issue.\r\n- [ ] Publish children with ready-for-agent and wayfinder:task labels, native sub-issue relationships and native blocked-by edges. Work only the unblocked frontier after implementation is separately authorized. Do not close, relabel or modify the earlier parent issues as part of publication.\r\n\r\nPublication records the approved ticket plan and does not start implementation or prototyping; those require the user's separate explicit request.\r\n",
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKIw",
+      "name": "wayfinder:map",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 40,
+  "parent": null,
+  "state": "OPEN",
+  "subIssues": {
+    "nodes": [
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNbBww",
+        "number": 41,
+        "state": "OPEN",
+        "title": "Own recording pause, resume and retry through complete operations",
+        "url": "https://github.com/TabTty/TabTty/issues/41"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNbENA",
+        "number": 42,
+        "state": "OPEN",
+        "title": "Finalize recordings once across receive EOF and disconnect",
+        "url": "https://github.com/TabTty/TabTty/issues/42"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNbGjg",
+        "number": 43,
+        "state": "OPEN",
+        "title": "Preserve recording work throughout close waiting and later loss decisions",
+        "url": "https://github.com/TabTty/TabTty/issues/43"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNbJOQ",
+        "number": 44,
+        "state": "OPEN",
+        "title": "Run Telnet sessions through complete terminal-payload transport operations",
+        "url": "https://github.com/TabTty/TabTty/issues/44"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNbMVw",
+        "number": 45,
+        "state": "OPEN",
+        "title": "Run serial sessions through the terminal-payload transport seam",
+        "url": "https://github.com/TabTty/TabTty/issues/45"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNbr6Q",
+        "number": 46,
+        "state": "OPEN",
+        "title": "Save connection profiles through owned verified file operations",
+        "url": "https://github.com/TabTty/TabTty/issues/46"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNbuTQ",
+        "number": 47,
+        "state": "OPEN",
+        "title": "Save and recover application stores through verified operations",
+        "url": "https://github.com/TabTty/TabTty/issues/47"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNbxdQ",
+        "number": 48,
+        "state": "OPEN",
+        "title": "Publish encrypted vault revisions with verified preservation",
+        "url": "https://github.com/TabTty/TabTty/issues/48"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNb0nw",
+        "number": 49,
+        "state": "OPEN",
+        "title": "Own shared vault unlock and credential handoff operations",
+        "url": "https://github.com/TabTty/TabTty/issues/49"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNb3dg",
+        "number": 50,
+        "state": "OPEN",
+        "title": "Manage vault entries and key imports through owned operations",
+        "url": "https://github.com/TabTty/TabTty/issues/50"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNb65Q",
+        "number": 51,
+        "state": "OPEN",
+        "title": "Change the vault master password through one owned operation",
+        "url": "https://github.com/TabTty/TabTty/issues/51"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNb-zA",
+        "number": 52,
+        "state": "OPEN",
+        "title": "Back up and restore vaults through complete authenticated operations",
+        "url": "https://github.com/TabTty/TabTty/issues/52"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNcfuw",
+        "number": 53,
+        "state": "OPEN",
+        "title": "Create vaults only through explicit guarded initialization",
+        "url": "https://github.com/TabTty/TabTty/issues/53"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNcjIA",
+        "number": 54,
+        "state": "OPEN",
+        "title": "Archive the confirmed vault image without requiring unlock",
+        "url": "https://github.com/TabTty/TabTty/issues/54"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNcmFw",
+        "number": 55,
+        "state": "OPEN",
+        "title": "Coordinate vault selection and closing with owned operations",
+        "url": "https://github.com/TabTty/TabTty/issues/55"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNcp9A",
+        "number": 56,
+        "state": "OPEN",
+        "title": "Preserve committed SSH packets and truthful send progress",
+        "url": "https://github.com/TabTty/TabTty/issues/56"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNcsXA",
+        "number": 57,
+        "state": "OPEN",
+        "title": "Run SFTP through shared SSH channel operations",
+        "url": "https://github.com/TabTty/TabTty/issues/57"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNcvkw",
+        "number": 58,
+        "state": "OPEN",
+        "title": "Deliver SSH terminal startup and interaction through the shared transport and channel owners",
+        "url": "https://github.com/TabTty/TabTty/issues/58"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNcywg",
+        "number": 59,
+        "state": "OPEN",
+        "title": "Preserve SFTP outcomes and bounded reopen through channel shutdown",
+        "url": "https://github.com/TabTty/TabTty/issues/59"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNdBsA",
+        "number": 60,
+        "state": "OPEN",
+        "title": "Apply pinned grapheme and emoji rules to received terminal output",
+        "url": "https://github.com/TabTty/TabTty/issues/60"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNdD-w",
+        "number": 61,
+        "state": "OPEN",
+        "title": "Preserve authoritative stored spans in rendering, UIA and history",
+        "url": "https://github.com/TabTty/TabTty/issues/61"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNdGcw",
+        "number": 62,
+        "state": "OPEN",
+        "title": "Continue long received graphemes with bounded stored spelling",
+        "url": "https://github.com/TabTty/TabTty/issues/62"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNdJBg",
+        "number": 63,
+        "state": "OPEN",
+        "title": "Analyze paste previews through owned Rust input plans",
+        "url": "https://github.com/TabTty/TabTty/issues/63"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNdLmw",
+        "number": 64,
+        "state": "OPEN",
+        "title": "Send exact long-grapheme input with scalar-safe Stop",
+        "url": "https://github.com/TabTty/TabTty/issues/64"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNdPOA",
+        "number": 65,
+        "state": "OPEN",
+        "title": "Admit shared large pastes within existing application and input budgets",
+        "url": "https://github.com/TabTty/TabTty/issues/65"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNdSGA",
+        "number": 66,
+        "state": "OPEN",
+        "title": "Configure large clipboard pastes with bounded full-text confirmation",
+        "url": "https://github.com/TabTty/TabTty/issues/66"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNdU-w",
+        "number": 67,
+        "state": "OPEN",
+        "title": "Verify cross-owner close and actual resource release",
+        "url": "https://github.com/TabTty/TabTty/issues/67"
+      }
+    ],
+    "totalCount": 27
+  },
+  "subIssuesSummary": {
+    "completed": 0,
+    "percentCompleted": 0,
+    "total": 27
+  },
+  "title": "Deepen recording, transport, persistence, vault, SSH and grapheme ownership",
+  "url": "https://github.com/TabTty/TabTty/issues/40"
+}

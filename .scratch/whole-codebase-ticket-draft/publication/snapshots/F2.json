@@ -1,0 +1,50 @@
+{
+  "assignees": [],
+  "blockedBy": {
+    "nodes": [
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNbr6Q",
+        "number": 46,
+        "state": "OPEN",
+        "title": "Save connection profiles through owned verified file operations",
+        "url": "https://github.com/TabTty/TabTty/issues/46"
+      }
+    ],
+    "totalCount": 1
+  },
+  "body": "## Parent\r\n\r\n[Deepen recording, transport, persistence, vault, SSH and grapheme ownership](https://github.com/TabTty/TabTty/issues/40)\r\n\r\n## What to build\r\n\r\nApply settings, highlight catalogs, local state and host-key records only after verified publication, and make explicit JSON recovery preserve the observed original while reporting unresolved outcomes accurately.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Migrate every application JSON-store publication and authorized recovery caller to the shared operation interface, preserving format validation, unknown properties, schema/version refusal, location policy and existing recovery choices. Remove the duplicated publication recipe after all such callers use the owner.\r\n- [ ] Only verified complete publication makes settings, highlights, local state or approved host trust effective. Failure, partial preservation or unavailable evidence retains prior effective state and applicable write restrictions; a display failure or cleanup error does not undo a known commit or trigger replay.\r\n- [ ] Explicit restore/default recovery independently validates its candidate and preserves exact observed original bytes under the existing unique recovery policy, even when damaged. Report that recovery copy separately from an ordinary validated backup; never silently restore, merge, empty-reset or overwrite.\r\n- [ ] Coordinate recovery from a quiescent unresolved operation with a gap-free target reservation handover. Failed recovery retains earlier restrictions, and ordinary reopen does not bypass them. Later reconciliation uses current operation revisions without reissuing publication.\r\n- [ ] Integrate pending versus quiescent unresolved outcomes into existing localized save/recovery/close presentation. Retain compact non-secret evidence and artifact locations after view closure, without a hidden process lifetime or recording-specific wait timers.\r\n- [ ] Verify complete settings/highlight/host-trust application paths with real validators and controlled original-preservation failure, external changes, cancellation, late completion, recovery and capacity faults; keep real-file checks for all supported locations.\r\n",
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 47,
+  "parent": {
+    "id": "I_kwDOVmB6dc8AAAABgNbAdw",
+    "number": 40,
+    "state": "OPEN",
+    "title": "Deepen recording, transport, persistence, vault, SSH and grapheme ownership",
+    "url": "https://github.com/TabTty/TabTty/issues/40"
+  },
+  "state": "OPEN",
+  "subIssues": {
+    "nodes": [],
+    "totalCount": 0
+  },
+  "subIssuesSummary": {
+    "completed": 0,
+    "percentCompleted": 0,
+    "total": 0
+  },
+  "title": "Save and recover application stores through verified operations",
+  "url": "https://github.com/TabTty/TabTty/issues/47"
+}

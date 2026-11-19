@@ -1,0 +1,57 @@
+{
+  "assignees": [],
+  "blockedBy": {
+    "nodes": [
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNb0nw",
+        "number": 49,
+        "state": "OPEN",
+        "title": "Own shared vault unlock and credential handoff operations",
+        "url": "https://github.com/TabTty/TabTty/issues/49"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNbxdQ",
+        "number": 48,
+        "state": "OPEN",
+        "title": "Publish encrypted vault revisions with verified preservation",
+        "url": "https://github.com/TabTty/TabTty/issues/48"
+      }
+    ],
+    "totalCount": 2
+  },
+  "body": "## Parent\r\n\r\n[Deepen recording, transport, persistence, vault, SSH and grapheme ownership](https://github.com/TabTty/TabTty/issues/40)\r\n\r\n## What to build\r\n\r\nCreate verified encrypted backups and explicitly restore a chosen authenticated generation through the same management operation interface, including an allowed rescue copy after external-stale detection.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Backup the exact authenticated encrypted generation to an explicitly selected non-overwriting destination and verify it without changing the source revision or implying a new password. An external-stale rescue copy may use only a retained authenticated image and must identify its generation/stale status without clearing source restrictions or retrieving credentials.\r\n- [ ] Provide one Restore operation for locked and unlocked states. Independently authenticate/validate the backup, enforce an unlocked owner ID or structurally established original ID as specified, and preserve recognizable-newer-version/nonzero-flags refusal; invalid/missing/empty originals do not supply an invented ID.\r\n- [ ] Preserve exact original target bytes under the existing recovery policy and adopt only after complete target/preservation proof. Keep the editor target path and distinct old-password generations; missing authenticated rescue evidence is an explicit unavailable result.\r\n- [ ] Bind file pickers, master input and confirmation to the admitted target/image. Keep actual work and shared encrypted-image ownership through cancellation, and report target, preservation, restrictions and cleanup separately without blind retry or automatic initialization.\r\n- [ ] Exercise real backup/restore operations with independent locked/unlocked fixtures, mismatched IDs, damaged originals, future-version refusal, destination collision, stale rescue, cancelled input and uncertain publication; verify actual encrypted bytes and preserved originals.\r\n",
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 52,
+  "parent": {
+    "id": "I_kwDOVmB6dc8AAAABgNbAdw",
+    "number": 40,
+    "state": "OPEN",
+    "title": "Deepen recording, transport, persistence, vault, SSH and grapheme ownership",
+    "url": "https://github.com/TabTty/TabTty/issues/40"
+  },
+  "state": "OPEN",
+  "subIssues": {
+    "nodes": [],
+    "totalCount": 0
+  },
+  "subIssuesSummary": {
+    "completed": 0,
+    "percentCompleted": 0,
+    "total": 0
+  },
+  "title": "Back up and restore vaults through complete authenticated operations",
+  "url": "https://github.com/TabTty/TabTty/issues/52"
+}

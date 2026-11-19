@@ -1,0 +1,85 @@
+{
+  "assignees": [],
+  "blockedBy": {
+    "nodes": [
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNcvkw",
+        "number": 58,
+        "state": "OPEN",
+        "title": "Deliver SSH terminal startup and interaction through the shared transport and channel owners",
+        "url": "https://github.com/TabTty/TabTty/issues/58"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNbGjg",
+        "number": 43,
+        "state": "OPEN",
+        "title": "Preserve recording work throughout close waiting and later loss decisions",
+        "url": "https://github.com/TabTty/TabTty/issues/43"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNcywg",
+        "number": 59,
+        "state": "OPEN",
+        "title": "Preserve SFTP outcomes and bounded reopen through channel shutdown",
+        "url": "https://github.com/TabTty/TabTty/issues/59"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNdSGA",
+        "number": 66,
+        "state": "OPEN",
+        "title": "Configure large clipboard pastes with bounded full-text confirmation",
+        "url": "https://github.com/TabTty/TabTty/issues/66"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNcmFw",
+        "number": 55,
+        "state": "OPEN",
+        "title": "Coordinate vault selection and closing with owned operations",
+        "url": "https://github.com/TabTty/TabTty/issues/55"
+      },
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNb65Q",
+        "number": 51,
+        "state": "OPEN",
+        "title": "Change the vault master password through one owned operation",
+        "url": "https://github.com/TabTty/TabTty/issues/51"
+      }
+    ],
+    "totalCount": 6
+  },
+  "body": "## Parent\r\n\r\n[Deepen recording, transport, persistence, vault, SSH and grapheme ownership](https://github.com/TabTty/TabTty/issues/40)\r\n\r\n## What to build\r\n\r\nVerify the integrated ownership changes under controlled races that cross recording, SSH, clipboard paste, file publication and vault selection/closure. Each feature ticket remains responsible for its own passing acceptance checks; this ticket adds focused cross-owner evidence without replacing the existing deployment and sustained-workload gates.\r\n\r\nRelated existing work: [#15](https://github.com/TabTty/TabTty/issues/15), [#39](https://github.com/TabTty/TabTty/issues/39). These references identify established behavior or adjacent acceptance work; they are not blocking dependencies and are not to be reopened or reimplemented by this ticket.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Record the exact integrated source/build, fixtures and applicable configured internal capacity values. Use ordinary application operations and real Rust/session/vault behavior with independent expected bytes and controlled peer, file, time and interaction adapters; preserve independent real-file, cryptographic and protocol coverage.\r\n- [ ] Combine a zero-credit SSH send, a generated terminal reply and slow recording admission/completion. Prove permitted receive/control/rekey and SFTP work progress without reducer/consumer/credit cycles. In a separate controlled close case, preserve recording protection through Continue waiting and a later explicit loss choice without treating transport-only work as unsaved logs.\r\n- [ ] Start a confirmed clipboard paste through the configured large-source path while SFTP/provider work and terminal retention are active. Stop or close at controlled commitment boundaries; verify shared source/private work accounting, no first payload before all-target preparation, exact definitely submitted units, no replay of uncertain input and healthy reserved closure where applicable.\r\n- [ ] Close an editor or the last window during master-password publication or owner-dependent verification, and during a reserved selected-vault settings transition. Observe physical file facts, effective settings/root adoption and pending versus quiescent release separately; no new selected path may be visible with the previous credential owner, and no stale credential handoff is delivered.\r\n- [ ] Deliver old-generation I/O, native/consumer completion and observation notifications after Stop, view closure, explicit reopen or a replacement generation. Only original ownership settles; live handles/buffers/roots/reservations remain charged until actual completion, without false release, resurrected bindings or duplicate prompts/publication.\r\n- [ ] Keep the scenarios separately controlled so a failed invariant has an attributable cause. Run the relevant existing regression paths on the integrated candidate and report passes, failures, blocked checks and not-run external checks distinctly. Do not copy historical performance results or recreate the broader deployment/performance scope of the related acceptance issue.\r\n",
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 67,
+  "parent": {
+    "id": "I_kwDOVmB6dc8AAAABgNbAdw",
+    "number": 40,
+    "state": "OPEN",
+    "title": "Deepen recording, transport, persistence, vault, SSH and grapheme ownership",
+    "url": "https://github.com/TabTty/TabTty/issues/40"
+  },
+  "state": "OPEN",
+  "subIssues": {
+    "nodes": [],
+    "totalCount": 0
+  },
+  "subIssuesSummary": {
+    "completed": 0,
+    "percentCompleted": 0,
+    "total": 0
+  },
+  "title": "Verify cross-owner close and actual resource release",
+  "url": "https://github.com/TabTty/TabTty/issues/67"
+}

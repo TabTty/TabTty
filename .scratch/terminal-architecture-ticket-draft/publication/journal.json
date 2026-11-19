@@ -1,0 +1,422 @@
+{
+  "repository": "TabTty/TabTty",
+  "approvedOn": "2026-11-17",
+  "entries": [
+    {
+      "key": "map",
+      "number": 16,
+      "url": "https://github.com/TabTty/TabTty/issues/16",
+      "title": "Complete Rust terminal processing and unify terminal closure",
+      "bodyFile": "map.md",
+      "parentNumber": null,
+      "blockedByNumbers": [],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:map"
+      ],
+      "status": "created",
+      "createdAtUtc": "2026-11-16T15:40:54.1733483Z"
+    },
+    {
+      "key": "T01",
+      "number": 17,
+      "url": "https://github.com/TabTty/TabTty/issues/17",
+      "title": "Establish the native-only UTF-8 integration baseline",
+      "bodyFile": "N01.md",
+      "parentNumber": 16,
+      "blockedByNumbers": [],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "status": "created",
+      "createdAtUtc": "2026-11-16T15:41:06.9027928Z"
+    },
+    {
+      "key": "T02",
+      "number": 18,
+      "url": "https://github.com/TabTty/TabTty/issues/18",
+      "title": "Share interpretation and admit complete native operations",
+      "bodyFile": "N02.md",
+      "parentNumber": 16,
+      "blockedByNumbers": [
+        17
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "status": "created",
+      "createdAtUtc": "2026-11-16T15:41:10.3824142Z"
+    },
+    {
+      "key": "T03",
+      "number": 19,
+      "url": "https://github.com/TabTty/TabTty/issues/19",
+      "title": "Submit native UTF-8 input with committed local echo",
+      "bodyFile": "N03.md",
+      "parentNumber": 16,
+      "blockedByNumbers": [
+        18
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "status": "created",
+      "createdAtUtc": "2026-11-16T15:41:14.6988982Z"
+    },
+    {
+      "key": "T04",
+      "number": 20,
+      "url": "https://github.com/TabTty/TabTty/issues/20",
+      "title": "Complete native normal-screen editing and rendition",
+      "bodyFile": "N04.md",
+      "parentNumber": 16,
+      "blockedByNumbers": [
+        18
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "status": "created",
+      "createdAtUtc": "2026-11-16T15:41:18.021739Z"
+    },
+    {
+      "key": "T05",
+      "number": 21,
+      "url": "https://github.com/TabTty/TabTty/issues/21",
+      "title": "Run alternate-screen applications with native input modes",
+      "bodyFile": "N05.md",
+      "parentNumber": 16,
+      "blockedByNumbers": [
+        19,
+        20
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "status": "created",
+      "createdAtUtc": "2026-11-16T15:41:21.6698936Z"
+    },
+    {
+      "key": "T06",
+      "number": 22,
+      "url": "https://github.com/TabTty/TabTty/issues/22",
+      "title": "Resize native normal and parked terminal output",
+      "bodyFile": "N06.md",
+      "parentNumber": 16,
+      "blockedByNumbers": [
+        21
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "status": "created",
+      "createdAtUtc": "2026-11-16T15:41:54.2383561Z"
+    },
+    {
+      "key": "T07",
+      "number": 23,
+      "url": "https://github.com/TabTty/TabTty/issues/23",
+      "title": "Use all single-byte encodings in native sessions",
+      "bodyFile": "N07.md",
+      "parentNumber": 16,
+      "blockedByNumbers": [
+        19
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "status": "created",
+      "createdAtUtc": "2026-11-16T15:41:57.5874654Z"
+    },
+    {
+      "key": "T08",
+      "number": 24,
+      "url": "https://github.com/TabTty/TabTty/issues/24",
+      "title": "Use native Chinese and Korean multibyte encodings",
+      "bodyFile": "N08.md",
+      "parentNumber": 16,
+      "blockedByNumbers": [
+        19
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "status": "created",
+      "createdAtUtc": "2026-11-16T15:42:01.3447791Z"
+    },
+    {
+      "key": "T09",
+      "number": 25,
+      "url": "https://github.com/TabTty/TabTty/issues/25",
+      "title": "Use native CP932 and EUC-JP terminal encoding",
+      "bodyFile": "N09.md",
+      "parentNumber": 16,
+      "blockedByNumbers": [
+        19
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "status": "created",
+      "createdAtUtc": "2026-11-16T15:42:05.5130021Z"
+    },
+    {
+      "key": "T10",
+      "number": 26,
+      "url": "https://github.com/TabTty/TabTty/issues/26",
+      "title": "Use native stateful JIS terminal encoding",
+      "bodyFile": "N10.md",
+      "parentNumber": 16,
+      "blockedByNumbers": [
+        25
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "status": "created",
+      "createdAtUtc": "2026-11-16T15:42:09.3430789Z"
+    },
+    {
+      "key": "T11",
+      "number": 27,
+      "url": "https://github.com/TabTty/TabTty/issues/27",
+      "title": "Own complete native recording interval operations",
+      "bodyFile": "N11.md",
+      "parentNumber": 16,
+      "blockedByNumbers": [
+        18
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "status": "created",
+      "createdAtUtc": "2026-11-16T15:42:25.3740612Z"
+    },
+    {
+      "key": "T12",
+      "number": 28,
+      "url": "https://github.com/TabTty/TabTty/issues/28",
+      "title": "Record edited native normal-screen Text across intervals",
+      "bodyFile": "N12.md",
+      "parentNumber": 16,
+      "blockedByNumbers": [
+        22,
+        27
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "status": "created",
+      "createdAtUtc": "2026-11-16T15:42:29.6340963Z"
+    },
+    {
+      "key": "T13",
+      "number": 29,
+      "url": "https://github.com/TabTty/TabTty/issues/29",
+      "title": "Record native alternate Text and canonical Terminal operations",
+      "bodyFile": "N13.md",
+      "parentNumber": 16,
+      "blockedByNumbers": [
+        21,
+        27
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "status": "created",
+      "createdAtUtc": "2026-11-16T15:42:33.6330966Z"
+    },
+    {
+      "key": "T14",
+      "number": 30,
+      "url": "https://github.com/TabTty/TabTty/issues/30",
+      "title": "Keep recording files and native state consistent through failures",
+      "bodyFile": "N14.md",
+      "parentNumber": 16,
+      "blockedByNumbers": [
+        21,
+        27
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "status": "created",
+      "createdAtUtc": "2026-11-16T15:42:37.9519281Z"
+    },
+    {
+      "key": "T15",
+      "number": 31,
+      "url": "https://github.com/TabTty/TabTty/issues/31",
+      "title": "Read retained native output through presentation and history APIs",
+      "bodyFile": "N15.md",
+      "parentNumber": 16,
+      "blockedByNumbers": [
+        22
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "status": "created",
+      "createdAtUtc": "2026-11-16T15:42:41.3903539Z"
+    },
+    {
+      "key": "T16",
+      "number": 32,
+      "url": "https://github.com/TabTty/TabTty/issues/32",
+      "title": "Search and publish native terminal history consistently",
+      "bodyFile": "N16.md",
+      "parentNumber": 16,
+      "blockedByNumbers": [
+        31
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "status": "created",
+      "createdAtUtc": "2026-11-16T15:43:10.8023351Z"
+    },
+    {
+      "key": "T17",
+      "number": 33,
+      "url": "https://github.com/TabTty/TabTty/issues/33",
+      "title": "Preserve transfer cleanup outcomes when a terminal closes",
+      "bodyFile": "C1.md",
+      "parentNumber": 16,
+      "blockedByNumbers": [],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "status": "created",
+      "createdAtUtc": "2026-11-16T15:43:14.9168942Z"
+    },
+    {
+      "key": "T18",
+      "number": 34,
+      "url": "https://github.com/TabTty/TabTty/issues/34",
+      "title": "Close a terminal tab through one owned operation",
+      "bodyFile": "C2.md",
+      "parentNumber": 16,
+      "blockedByNumbers": [
+        33
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "status": "created",
+      "createdAtUtc": "2026-11-16T15:43:18.1661404Z"
+    },
+    {
+      "key": "T19",
+      "number": 35,
+      "url": "https://github.com/TabTty/TabTty/issues/35",
+      "title": "Close windows by joining existing tab closures",
+      "bodyFile": "C3.md",
+      "parentNumber": 16,
+      "blockedByNumbers": [
+        34
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "status": "created",
+      "createdAtUtc": "2026-11-16T15:43:21.6194869Z"
+    },
+    {
+      "key": "T20",
+      "number": 36,
+      "url": "https://github.com/TabTty/TabTty/issues/36",
+      "title": "Close disconnected tabs and their transfer windows consistently",
+      "bodyFile": "C4.md",
+      "parentNumber": 16,
+      "blockedByNumbers": [
+        34
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "status": "created",
+      "createdAtUtc": "2026-11-16T15:43:24.8680912Z"
+    },
+    {
+      "key": "T21",
+      "number": 37,
+      "url": "https://github.com/TabTty/TabTty/issues/37",
+      "title": "Retain native terminal state until final tab removal",
+      "bodyFile": "C5.md",
+      "parentNumber": 16,
+      "blockedByNumbers": [
+        27,
+        34
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "status": "created",
+      "createdAtUtc": "2026-11-16T15:44:20.3929318Z"
+    },
+    {
+      "key": "T22",
+      "number": 38,
+      "url": "https://github.com/TabTty/TabTty/issues/38",
+      "title": "Integrate the complete native-only terminal candidate",
+      "bodyFile": "N17.md",
+      "parentNumber": 16,
+      "blockedByNumbers": [
+        23,
+        24,
+        26,
+        28,
+        29,
+        30,
+        32,
+        35,
+        36,
+        37
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "status": "created",
+      "createdAtUtc": "2026-11-16T15:44:28.3380525Z"
+    },
+    {
+      "key": "T23",
+      "number": 39,
+      "url": "https://github.com/TabTty/TabTty/issues/39",
+      "title": "Validate native terminal deployment and acceptance workloads",
+      "bodyFile": "N18.md",
+      "parentNumber": 16,
+      "blockedByNumbers": [
+        38
+      ],
+      "labels": [
+        "ready-for-agent",
+        "wayfinder:task"
+      ],
+      "status": "created",
+      "createdAtUtc": "2026-11-16T15:44:32.1795956Z"
+    }
+  ]
+}

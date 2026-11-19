@@ -1,0 +1,50 @@
+{
+  "assignees": [],
+  "blockedBy": {
+    "nodes": [
+      {
+        "id": "I_kwDOVmB6dc8AAAABgNdBsA",
+        "number": 60,
+        "state": "OPEN",
+        "title": "Apply pinned grapheme and emoji rules to received terminal output",
+        "url": "https://github.com/TabTty/TabTty/issues/60"
+      }
+    ],
+    "totalCount": 1
+  },
+  "body": "## Parent\r\n\r\n[Deepen recording, transport, persistence, vault, SSH and grapheme ownership](https://github.com/TabTty/TabTty/issues/40)\r\n\r\n## What to build\r\n\r\nUse the same immutable Rust-derived input plan for actual paste preview counts and complete source validation, without requiring a live terminal or exposing scalar-loop and page-management protocols to callers.\r\n\r\nRelated existing work: [#12](https://github.com/TabTty/TabTty/issues/12), [#19](https://github.com/TabTty/TabTty/issues/19). These references identify established behavior or adjacent acceptance work; they are not blocking dependencies and are not to be reopened or reimplemented by this ticket.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Provide complete source analysis through the existing paste/input seam and use it in the real preview/counting path. Return immutable source identity, grapheme/newline facts and bounded traversal; ordinary callers do not manage a Unicode cursor, reservation recipe or internal page protocol.\r\n- [ ] Validate the entire exact finalized input, including the final page, before success. Unpaired surrogates and forbidden controls reject the whole not-yet-started operation without replacement, normalization, live encoder progress, payload or echo. Carry surrogate and segmentation context over internal page boundaries.\r\n- [ ] Traverse giant graphemes using offsets and bounded continuation state rather than collecting another whole-grapheme buffer or requiring a descriptor per scalar/grapheme. The input plan is never the display-retention prefix; source and plan allocation belongs to the existing input/preview owner and remains charged until release.\r\n- [ ] Produce identical source counts and semantic units without a live terminal and through the actual preview path. Target encoding, current mode, authority and local-echo continuation remain separate target preparation obligations.\r\n- [ ] Use an expand/migrate approach that keeps currently supported paste behavior green until the sender migration is complete. Keep enlarged send eligibility behind the existing admission boundary until the exact-streaming ticket lands; no preview-only acceptance may let an unsupported sender emit a prefix. Remove the temporary compatibility boundary with that migration.\r\n- [ ] Verify empty/basic/newline input, split surrogates, RI/Indic/ZWJ/combining sequences, giant-grapheme analysis and invalid final-page input through the complete operation. Retain the existing broadcast preview owner and late-answer cancellation semantics.\r\n",
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 63,
+  "parent": {
+    "id": "I_kwDOVmB6dc8AAAABgNbAdw",
+    "number": 40,
+    "state": "OPEN",
+    "title": "Deepen recording, transport, persistence, vault, SSH and grapheme ownership",
+    "url": "https://github.com/TabTty/TabTty/issues/40"
+  },
+  "state": "OPEN",
+  "subIssues": {
+    "nodes": [],
+    "totalCount": 0
+  },
+  "subIssuesSummary": {
+    "completed": 0,
+    "percentCompleted": 0,
+    "total": 0
+  },
+  "title": "Analyze paste previews through owned Rust input plans",
+  "url": "https://github.com/TabTty/TabTty/issues/63"
+}

@@ -1,0 +1,17 @@
+{
+  "repository": "TabTty/TabTty",
+  "map": "https://github.com/TabTty/TabTty/issues/40",
+  "children": 27,
+  "nativeParentEdges": 27,
+  "nativeBlockingEdges": 34,
+  "initialFrontier": [
+    41,
+    44,
+    46,
+    49,
+    56,
+    60
+  ],
+  "issues": [],
+  "snapshots": "publication/snapshots"
+}

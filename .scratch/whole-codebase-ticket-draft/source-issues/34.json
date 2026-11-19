@@ -1,0 +1,22 @@
+{
+  "body": "## What to build\r\n\r\nRoute the terminal-tab close command through one complete application operation. It owns review, approved termination, cleanup waiting, transfer-window closure, and coordinated visual removal. The UI supplies a stable target, presents decisions, and observes an outcome without assembling a cleanup sequence.\r\n\r\n## Acceptance criteria\r\n\r\n- [ ] Required connection and file-work confirmation precedes new close-induced effects. Declined, cancelled, invalid, or unavailable confirmation produces a no-new-effects result without rolling back independent work.\r\n- [ ] Validate stable tab lifetime, connection generation, transfer ownership, placement, and approved effects before execution. Ordinary same-target transfer completion or peer disconnect does not restart confirmation.\r\n- [ ] Stale approval for a replacement generation or additional effects ends the request with a localized changed-target explanation and no new effects. It does not automatically recapture targets or repeat confirmation.\r\n- [ ] Exact duplicates share one per-target execution and observable result, including after the tab leaves the live UI. Callers acquire no review-token, cleanup, or disposal obligation.\r\n- [ ] The target owns its five-second recording-cleanup decision. Continue waiting remains authoritative; closing with unsaved data requires explicit permission and existing cleanup-capacity admission. Failure to show that choice grants no loss permission.\r\n- [ ] Started owners and operation tasks remain observed after a caller stops waiting or a view disappears. Immutable bounded outcomes distinguish actual visual disposition, known failures or loss, unresolved work, cleanup adoption, and actual release; expected failures do not become unobserved faults.\r\n- [ ] Delegate session, input, recording, transfer, AI, resource, and layout decisions to their existing owners. Preserve state for a view whose removal fails, and introduce no macro runtime or settings/editor policy change.\r\n- [ ] Production-interface tests with controlled decisions, time, I/O, and layout faults, together with real WPF tab-close, session, file, and transport integration, verify visible outcomes and actual ownership rather than private helper invocation counts.\r\n",
+  "comments": [],
+  "labels": [
+    {
+      "id": "LA_kwDOVmB6dc8AAAADBl6snQ",
+      "name": "ready-for-agent",
+      "description": "Fully specified and ready for an agent",
+      "color": "0e8a16"
+    },
+    {
+      "id": "LA_kwDOVmB6dc8AAAADC1vKSg",
+      "name": "wayfinder:task",
+      "description": "",
+      "color": "1d76db"
+    }
+  ],
+  "number": 34,
+  "state": "OPEN",
+  "title": "Close a terminal tab through one owned operation",
+  "url": "https://github.com/TabTty/TabTty/issues/34"
+}
