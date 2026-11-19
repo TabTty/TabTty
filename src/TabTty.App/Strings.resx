@@ -235,7 +235,7 @@
   <data name="PrimarySshMethod" xml:space="preserve"><value>First authentication method</value></data>
   <data name="SecondarySshMethod" xml:space="preserve"><value>Second authentication method</value></data>
   <data name="SshInstructions" xml:space="preserve"><value>Server instructions</value></data>
-  <data name="ProfileCatalog" xml:space="preserve"><value>Registered profiles</value></data>
+  <data name="ProfileCatalog" xml:space="preserve"><value>Connection profile management</value></data>
   <data name="SearchProfiles" xml:space="preserve"><value>Search profiles</value></data>
   <data name="ProfileDetails" xml:space="preserve"><value>Profile details</value></data>
   <data name="RegisterProfile" xml:space="preserve"><value>Register file…</value></data>

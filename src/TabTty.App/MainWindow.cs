@@ -130,6 +130,9 @@ internal sealed partial class MainWindow : Window
         vaultHint.Text = Text("VaultHint");
         Resources["NewTabLabel"] = Text("NewTab");
         Resources["TabListLabel"] = Text("TabList");
+        Resources["SplitGroupsStackLabel"] = Text("SplitGroupsStack");
+        Resources["SplitGroupsSideLabel"] = Text("SplitGroupsSide");
+        Resources["RemoveTabGroupLabel"] = Text("RemoveTabGroup");
         SetButtonLabel(menuButton, "ApplicationMenu");
         SetButtonLabel(minimizeButton, "MinimizeWindow");
         SetButtonLabel(closeButton, "CloseWindow");
@@ -139,7 +142,6 @@ internal sealed partial class MainWindow : Window
         BeginMenu("FileMenu", Key.F);
         AddButton("Open", ChooseProfile);
         AddButton("RunMacro", async () => await ChooseMacroAsync());
-        AddButton("ProfileCatalog", () => app.Profiles.Show(this));
         AddButton("New", CreateProfile);
         AddButton("CloseTab", CloseSelectedTab);
         AddButton("CloseWithLoss", async () =>
@@ -212,6 +214,7 @@ internal sealed partial class MainWindow : Window
             SelectedTab?.StopPaste();
         });
         BeginMenu("ToolsMenu", Key.T);
+        AddButton("ProfileCatalog", () => app.Profiles.Show(this));
         var vaultMenu = new MenuItem { Header = Text("Vault") };
         vaultMenu.Items.Add(MenuAction("UnlockVault", async () => await app.Vault.UnlockFromMenuAsync(this)));
         vaultMenu.Items.Add(MenuAction("ManageVault", async () => await app.Vault.ManageAsync(this)));
@@ -585,8 +588,7 @@ internal sealed partial class MainWindow : Window
             Item: CreateProfileMenuItem(profile.Name, profile.Path, OpenProfile))).ToArray();
         foreach (var entry in entries) menu.Items.Add(entry.Item);
         if (entries.Length > 0) menu.Items.Add(new Separator());
-        menu.Items.Add(MenuAction("New", CreateProfile));
-        menu.Items.Add(MenuAction("Open", ChooseProfile));
+        menu.Items.Add(MenuAction("ProfileCatalog", () => app.Profiles.Show(this)));
         menu.Closed += (_, _) => button.ClearValue(ContextMenuProperty);
         using var lifetime = new CancellationTokenSource();
         RoutedEventHandler closed = (_, _) => lifetime.Cancel();

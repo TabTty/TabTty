@@ -349,13 +349,12 @@ active group. External profile connection requests use the last active group
 of the destination terminal window. Each new terminal window starts with one
 group and no inner splits. Both layouts are run-local.
 
-Under accepted Q198, removing a group offers the other groups
-in that window as destinations, distinguished by position and selected-tab
-label. Move the removed group's tabs, in their current order, to the end of
-the chosen group's tab list, preserving all sessions and checks. Focus the
-destination and collapse the removed layout branch. The final group cannot
-be removed. This makes the destination explicit instead of assuming a unique
-neighbor in a recursively split layout.
+Remove an empty group immediately and focus the first remaining group in layout
+order. When removing a group with tabs, move them directly to the only remaining
+group in that window. If several groups remain, offer them as destinations
+identified by position and selected-tab label. Append the tabs in their current
+order, preserve all sessions and checks, and focus the destination. Collapse
+the removed layout branch. The final group cannot be removed.
 
 Expose distinct group-split and terminal-pane-split commands through the main
 menu and appropriate tab/group context menus; enable them according to the
@@ -445,7 +444,7 @@ keep the existing layout usable. See [resource limits](resources-and-validation.
 | Mouse edge and re-entry | Narrow target skips out-of-grid motion, resumes on re-entry, and gets release clamped only at physical button-up. |
 | Mouse identity | No release to a non-press recipient; overlapping buttons, press-only/wheel modes, generation changes, classic limits, capture failure/loss, and Stop have explicit outcomes. |
 | Mouse host transfer | Capture success and one physical release verified across same/different window moves, source closure, DPI changes, and drag-and-drop; no reliance on unreliable GetPosition. |
-| Split creation/removal | Both axes and both levels work recursively; outer creates empty group, inner shares session; removal never disconnects. Q198 offers a destination, appends tabs in order, focuses it, preserves checks, and prohibits removal of the last group. |
+| Split creation/removal | Both axes and both levels work recursively. An outer split creates an empty group and an inner split shares the session. An empty group can be removed immediately. For a group with tabs, removal moves them directly to the sole destination or prompts for a choice among several. Tabs keep their order, sessions, and checks. Focus moves to the destination or the first remaining group. The final group stays open. |
 | Grid versus view | Inner split/focus/scroll leaves grid unchanged; outer resize/shared zoom can resize; per-pane offsets/selections/current matches remain independent. |
 | IME | Same-tab cross-pane focus cancels uncommitted text; commit once, later Enter normal; menus/dialogs retain Windows semantics. |
 | Empty lifetime | Manual, automatic, and bulk closure leave the window and its groups open when the last tab closes. The empty groups accept new tabs. |

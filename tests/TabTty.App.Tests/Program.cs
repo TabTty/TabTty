@@ -565,7 +565,7 @@ internal static partial class Program
             finally { editor.Close(); }
             Click("ToolsMenu", "HighlightSets");
             var highlights = (TabItem)tabs.SelectedItem;
-            Click("FileMenu", "ProfileCatalog");
+            Click("ToolsMenu", "ProfileCatalog");
             if (tabs.Items.Count != 3 || tabs.SelectedContent is not FormView || settings == highlights)
                 throw new InvalidOperationException("Management commands did not open independent tabs.");
             Click("ToolsMenu", "Settings");
@@ -584,9 +584,8 @@ internal static partial class Program
             try
             {
                 MenuItem[] actions = add.ContextMenu.Items.OfType<MenuItem>().ToArray();
-                if (!add.ContextMenu.IsOpen || !actions.TakeLast(2).Select(item => item.Header)
-                    .SequenceEqual(new[] { App.Text("New"), App.Text("Open") }) ||
-                    actions.SkipLast(2).Any(item => item.HasItems || item.ToolTip is not string))
+                if (!add.ContextMenu.IsOpen || !Equals(actions.LastOrDefault()?.Header, App.Text("ProfileCatalog")) ||
+                    actions.SkipLast(1).Any(item => item.HasItems || item.ToolTip is not string))
                     throw new InvalidOperationException("The new-tab menu did not open with direct profile actions.");
             }
             finally { add.ContextMenu.IsOpen = false; }
@@ -805,7 +804,9 @@ internal static partial class Program
             var tools = (MenuItem)menu.Items[^1];
             if (!tools.IsKeyboardFocused) throw new InvalidOperationException("Up did not wrap to the last category.");
             Press(Key.Enter);
-            var vault = (MenuItem)tools.Items[0];
+            var vault = tools.Items.OfType<MenuItem>().Single(item => Equals(item.Header, App.Text("Vault")));
+            if (!vault.IsKeyboardFocused) Press(Key.Down);
+            if (!vault.IsKeyboardFocused) throw new InvalidOperationException("Down did not focus the vault submenu.");
             Press(Key.Left);
             var unlock = (MenuItem)vault.Items[0];
             if (!unlock.IsKeyboardFocused)
@@ -901,7 +902,7 @@ internal static partial class Program
             var button = (Button)window.FindName("menuButton");
             var menu = (Menu)window.FindName("mainMenu");
             var tools = (MenuItem)menu.Items[^1];
-            var vault = (MenuItem)tools.Items[0];
+            var vault = tools.Items.OfType<MenuItem>().Single(item => Equals(item.Header, App.Text("Vault")));
             var unlock = (MenuItem)vault.Items[0];
             CheckCascade();
             window.Width = window.MinWidth;
@@ -996,7 +997,7 @@ internal static partial class Program
 
     private static void CheckTabStripLayout(Window window, Button menu, TabItem item)
     {
-        const int width = 1000, height = 620;
+        const int width = 1120, height = 620;
         var root = (FrameworkElement)window.Content;
         root.Measure(new Size(width, height));
         root.Arrange(new Rect(0, 0, width, height));
@@ -1267,6 +1268,9 @@ internal static partial class Program
         ExpectFades(left: false, right: false);
         try
         {
+            Layout(new Size(window.MinWidth + 60, wide.Height));
+            if (strip.ViewportWidth < firstTab.ActualWidth)
+                throw new InvalidOperationException("The split controls and window buttons left no room for a full tab.");
             Layout(new Size(window.MinWidth, wide.Height));
             if (strip.ViewportWidth < firstTab.ActualWidth || strip.ScrollableWidth <= 0 ||
                 strip.HorizontalScrollBarVisibility != ScrollBarVisibility.Hidden ||

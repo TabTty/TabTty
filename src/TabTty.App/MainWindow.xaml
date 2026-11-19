@@ -24,6 +24,21 @@
             <Setter Property="FontFamily" Value="Segoe MDL2 Assets" />
             <Setter Property="FontSize" Value="13" />
         </Style>
+        <Style x:Key="GroupSplitButton" TargetType="Button" BasedOn="{StaticResource WindowButton}">
+            <Setter Property="Width" Value="30" />
+            <Setter Property="ToolTipService.ShowOnDisabled" Value="True" />
+        </Style>
+        <Style x:Key="GroupSplitIcon" TargetType="Path">
+            <Setter Property="Width" Value="16" />
+            <Setter Property="Height" Value="16" />
+            <Setter Property="Stroke" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+            <Setter Property="StrokeThickness" Value="1.25" />
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.45" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
         <Style x:Key="ApplicationMenuSurface" TargetType="Border">
             <Setter Property="Background" Value="{DynamicResource ContextMenuBackground}" />
             <Setter Property="BorderBrush" Value="{DynamicResource ContextMenuBorderBrush}" />
@@ -44,25 +59,48 @@
                                     <MenuItem Click="CloseDisconnectedTabs" />
                                 </ContextMenu>
                             </Border.ContextMenu>
-                            <DockPanel Margin="6,5,14,0" HorizontalAlignment="Left" LastChildFill="False">
-                                <Button x:Name="tabListButton" DockPanel.Dock="Left"
-                                        Style="{StaticResource WindowButton}" Width="36" VerticalAlignment="Top"
-                                        ToolTip="{DynamicResource TabListLabel}" AutomationProperties.Name="{DynamicResource TabListLabel}"
-                                        IsEnabled="{Binding HasItems, RelativeSource={RelativeSource TemplatedParent}}"
-                                        Click="OpenTabListMenu">
-                                    <TextBlock Style="{StaticResource WindowGlyph}" Text="&#xE70D;" />
-                                </Button>
-                                <Button x:Name="newTabButton" DockPanel.Dock="Right"
-                                        Style="{StaticResource WindowButton}" Width="36" VerticalAlignment="Top"
-                                        ToolTip="{DynamicResource NewTabLabel}" AutomationProperties.Name="{DynamicResource NewTabLabel}"
-                                        Click="OpenNewTabMenu">
-                                    <TextBlock Style="{StaticResource WindowGlyph}" Text="&#xE710;" />
-                                </Button>
-                                <ScrollViewer x:Name="tabStripScroller" DockPanel.Dock="Left" VerticalScrollBarVisibility="Disabled"
-                                              HorizontalScrollBarVisibility="Hidden" Focusable="False" ScrollChanged="OnTabStripScrollChanged"
-                                              shell:WindowChrome.IsHitTestVisibleInChrome="True">
-                                    <TabPanel IsItemsHost="True" KeyboardNavigation.TabIndex="1" />
-                                </ScrollViewer>
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="0,5,6,0"
+                                            VerticalAlignment="Top">
+                                    <Button x:Name="splitGroupsStackButton" Style="{StaticResource GroupSplitButton}"
+                                            ToolTip="{DynamicResource SplitGroupsStackLabel}"
+                                            AutomationProperties.Name="{DynamicResource SplitGroupsStackLabel}"
+                                            Tag="{x:Static Orientation.Vertical}" Click="OnSplitGroup">
+                                        <Path Style="{StaticResource GroupSplitIcon}" Data="M 1.5,2.5 H 14.5 V 13.5 H 1.5 Z M 1.5,8 H 14.5" />
+                                    </Button>
+                                    <Button x:Name="splitGroupsSideButton" Style="{StaticResource GroupSplitButton}"
+                                            ToolTip="{DynamicResource SplitGroupsSideLabel}"
+                                            AutomationProperties.Name="{DynamicResource SplitGroupsSideLabel}"
+                                            Tag="{x:Static Orientation.Horizontal}" Click="OnSplitGroup">
+                                        <Path Style="{StaticResource GroupSplitIcon}" Data="M 1.5,2.5 H 14.5 V 13.5 H 1.5 Z M 8,2.5 V 13.5" />
+                                    </Button>
+                                    <Button x:Name="removeTabGroupButton" Style="{StaticResource GroupSplitButton}"
+                                            ToolTip="{DynamicResource RemoveTabGroupLabel}"
+                                            AutomationProperties.Name="{DynamicResource RemoveTabGroupLabel}"
+                                            Click="OnRemoveGroup">
+                                        <Path Style="{StaticResource GroupSplitIcon}" Data="M 1.5,2.5 H 14.5 V 13.5 H 1.5 Z" />
+                                    </Button>
+                                </StackPanel>
+                                <DockPanel Margin="6,5,14,0" HorizontalAlignment="Left" LastChildFill="False">
+                                    <Button x:Name="tabListButton" DockPanel.Dock="Left"
+                                            Style="{StaticResource WindowButton}" Width="36" VerticalAlignment="Top"
+                                            ToolTip="{DynamicResource TabListLabel}" AutomationProperties.Name="{DynamicResource TabListLabel}"
+                                            IsEnabled="{Binding HasItems, RelativeSource={RelativeSource TemplatedParent}}"
+                                            Click="OpenTabListMenu">
+                                        <TextBlock Style="{StaticResource WindowGlyph}" Text="&#xE70D;" />
+                                    </Button>
+                                    <Button x:Name="newTabButton" DockPanel.Dock="Right"
+                                            Style="{StaticResource WindowButton}" Width="36" VerticalAlignment="Top"
+                                            ToolTip="{DynamicResource NewTabLabel}" AutomationProperties.Name="{DynamicResource NewTabLabel}"
+                                            Click="OpenNewTabMenu">
+                                        <TextBlock Style="{StaticResource WindowGlyph}" Text="&#xE710;" />
+                                    </Button>
+                                    <ScrollViewer x:Name="tabStripScroller" DockPanel.Dock="Left" VerticalScrollBarVisibility="Disabled"
+                                                  HorizontalScrollBarVisibility="Hidden" Focusable="False" ScrollChanged="OnTabStripScrollChanged"
+                                                  shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                                        <TabPanel IsItemsHost="True" KeyboardNavigation.TabIndex="1" />
+                                    </ScrollViewer>
+                                </DockPanel>
                             </DockPanel>
                         </Border>
                         <ContentPresenter x:Name="PART_SelectedContentHost" Grid.Row="1"

@@ -14,6 +14,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
 {
     private readonly Dictionary<string, string> names = new(StringComparer.Ordinal);
     private event Action? ProfileSaved;
+    private (long Sequence, string? Location) lastCreatedProfile;
     private bool stateErrorShown;
     internal static string Filter => $"{Text("Profiles")} (*.ttty)|*.ttty";
 
@@ -170,8 +171,13 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 MaxHeight = 180, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
             var selectedActions = new List<Button>();
             int version = 0;
+            long lastSelectedCreation = 0;
             form.AddNotice("ProfileRegisterTrustNotice");
-            form.AddActionRow(() => form.AddAsyncAction("RegisterProfile", RegisterAsync));
+            form.AddActionRow(() =>
+            {
+                form.AddAction("New", CreateProfile);
+                form.AddAsyncAction("RegisterProfile", RegisterAsync);
+            });
             form.AddColumns(() => form.AddGroup("Profiles", () =>
             {
                 form.AddField("SearchProfiles", search);
@@ -231,7 +237,6 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 try { profile = await LoadForUseAsync(form.OwnerWindow, dialog.FileName, CancellationToken.None); }
                 catch (SshInteractionCancelledException) { return; }
                 await RegisterSavedAsync(dialog.FileName, profile, reset);
-                Reload();
             }
 
             void Recycle()
@@ -280,11 +285,22 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 try
                 {
                     string query = search.Text;
+                    var registrations = ReadRegistrations();
+                    var creation = lastCreatedProfile;
+                    var created = creation.Sequence != lastSelectedCreation
+                        ? registrations.FirstOrDefault(item => item.Path == creation.Location) : null;
+                    if (created is not null && !MatchesSearch(created, query))
+                    {
+                        // TextChanged reloads with the cleared filter and selects the new profile.
+                        search.Clear();
+                        return;
+                    }
+                    lastSelectedCreation = creation.Sequence;
                     Guid? selected = (list.SelectedItem as Registration)?.Id;
-                    var items = ReadRegistrations().Where(item => item.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
-                        item.Path.Contains(query, StringComparison.OrdinalIgnoreCase)).ToArray();
+                    var items = registrations.Where(item => MatchesSearch(item, query)).ToArray();
                     list.ItemsSource = items;
-                    list.SelectedItem = items.FirstOrDefault(item => item.Id == selected);
+                    list.SelectedItem = created ?? items.FirstOrDefault(item => item.Id == selected);
+                    if (created is not null) list.ScrollIntoView(created);
                 }
                 catch (Exception exception) when (IsFileProblem(exception))
                 {
@@ -292,6 +308,10 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                     details.Text = Text("LocalStateInvalid");
                 }
             }
+
+            static bool MatchesSearch(Registration item, string query) =>
+                item.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                item.Path.Contains(query, StringComparison.OrdinalIgnoreCase);
         }
     }
 
@@ -378,15 +398,15 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
             {
                 path = attemptedPath;
                 savedAs?.Invoke(path);
-                await RegisterSavedAsync(path, committed, registrationReset);
+                await RegisterSavedAsync(path, committed, registrationReset, selectNewProfile: creating);
             }
             else
             {
                 if (editorAdvance is { } advance) AdvanceEditorTrust(path, advance.State, advance.Version, committed);
                 names[path] = committed.DisplayName;
+                ProfileSaved?.Invoke();
             }
             editorAdvance = null;
-            ProfileSaved?.Invoke();
             JsonStoreRecovery.ShowRetainedStages(app, form, VerifiedFilePublication.GetRetainedStagePaths(attemptedPath));
         }));
         form.ShowFileOperationStatus();
@@ -406,7 +426,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 profile = draft;
                 path = destination;
                 savedAs?.Invoke(path);
-                await RegisterSavedAsync(path, draft, registrationReset);
+                await RegisterSavedAsync(path, draft, registrationReset, selectNewProfile: creating);
             }
             else
             {
@@ -417,8 +437,8 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 editorAdvance = null;
                 profile = draft;
                 names[path] = draft.DisplayName;
+                ProfileSaved?.Invoke();
             }
-            ProfileSaved?.Invoke();
             JsonStoreRecovery.ShowRetainedStages(app, form, VerifiedFilePublication.GetRetainedStagePaths(path));
             return true;
         });

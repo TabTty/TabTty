@@ -235,7 +235,7 @@
   <data name="PrimarySshMethod" xml:space="preserve"><value>最初の認証方式</value></data>
   <data name="SecondarySshMethod" xml:space="preserve"><value>次の認証方式</value></data>
   <data name="SshInstructions" xml:space="preserve"><value>サーバーからの案内</value></data>
-  <data name="ProfileCatalog" xml:space="preserve"><value>登録済みプロファイル</value></data>
+  <data name="ProfileCatalog" xml:space="preserve"><value>接続プロファイル管理</value></data>
   <data name="SearchProfiles" xml:space="preserve"><value>プロファイルを検索</value></data>
   <data name="ProfileDetails" xml:space="preserve"><value>プロファイルの詳細</value></data>
   <data name="RegisterProfile" xml:space="preserve"><value>ファイルを登録…</value></data>

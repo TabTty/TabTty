@@ -66,15 +66,16 @@ internal sealed partial class ProfileCatalog
             if (used) registration["lastUsed"] = DateTimeOffset.UtcNow;
         });
         names[location] = profile.DisplayName;
-        ProfileSaved?.Invoke();
     }
 
-    private async Task RegisterSavedAsync(string path, ConnectionProfile profile, long reset)
+    private async Task RegisterSavedAsync(string path, ConnectionProfile profile, long reset, bool selectNewProfile = false)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         string location = await NormalizeLocationAsync(path, timeout.Token);
         if (reset != trustReset) throw new IOException(Text("ProfileTrustWriteFailed"));
         CommitRegistration(location, path, profile, used: false, VersionFor(location, profile, null));
+        if (selectNewProfile) lastCreatedProfile = (lastCreatedProfile.Sequence + 1, location);
+        ProfileSaved?.Invoke();
     }
 
     private void AdvanceEditorTrust(string location, TrustState starting, string previous, ConnectionProfile saved)
@@ -126,7 +127,11 @@ internal sealed partial class ProfileCatalog
                 if (ReadTrust(location) != before) continue;
                 if (choice == ProfileAnswer.Remember)
                 {
-                    if (register) CommitRegistration(location, path, profile, used: true, version);
+                    if (register)
+                    {
+                        CommitRegistration(location, path, profile, used: true, version);
+                        ProfileSaved?.Invoke();
+                    }
                     else LocalState.Change(state => StoreVersion(state, location, version));
                 }
             }

@@ -30,7 +30,7 @@ To register the file types again, use the same button in Settings.
 Use the menu button at the right of the tab bar to access File, Edit, View,
 Window, Connection and Tools. Drag the empty area of the tab bar to move the
 window. Its right edge contains the minimize, maximize and close buttons.
-Settings, registered profiles, the credential vault, SSH
+Settings, Connection profile management, the credential vault, SSH
 host keys and highlight sets open as tabs. Close a tab with its × button.
 Use the Tab list button at the left of the tab bar to jump to any tab in that
 tab group. A faded edge indicates tabs beyond that edge. Scroll the mouse
@@ -45,14 +45,17 @@ appearance supplied by Windows.
 ## Connections
 
 Open the + menu next to the tabs and select a registered profile by name to
-connect. The same menu offers New profile and Open profile. Select Telnet, SSH
-or COM in the profile editor and save a `.ttty` file. New, edited, and duplicated
-profiles open in a separate window. Use the category list on the left to move
-between sections in the profile editor and Settings. Save keeps the editor open,
-and closing it asks before discarding any unsaved changes.
-Select that saved file to connect. The profile catalog supports registration,
-favorites, search, editing and duplication. In Windows, associate `.ttty`
-and `.tttykey` with TabTty to use these File Explorer commands.
+connect. Open **Connection profile management** from the + menu or **Tools**
+to create, register, search, edit, duplicate or favorite profiles. Choose
+**New profile…**, select Telnet, SSH or COM and save a `.ttty` file. The
+management list selects the newly saved profile and clears the search if it
+would hide that profile. New, edited, and duplicated profiles open in a
+separate window. Use the category list on the left to move between sections in
+the profile editor and Settings. Save keeps the editor open, and closing it
+asks before discarding any unsaved changes.
+
+Choose **File → Open profile…** to connect from an existing file. In Windows,
+associate `.ttty` and `.tttykey` with TabTty to use these File Explorer commands.
 
 - For `.ttty`, choose **Open**, double-click, or press Enter to register the
   profile and connect. A multi-selection starts one connection tab per file
@@ -167,11 +170,14 @@ boundary. All-window broadcast allows moves between windows during the operation
 
 ## Tab groups and terminal panes
 
-Open **Window → Tab Groups** to split the current group left/right or top/bottom.
+Use the icons at the right end of a tab bar to split its group top/bottom or
+left/right, or to remove the group. An empty group closes immediately.
+Removing a group with tabs moves them directly to the only remaining group
+or asks for a destination if several remain.
+The same commands are available under **Window → Tab Groups**.
 Each group has its own tab bar. Drag an existing tab to a group's tab bar, or
 use **Window → Move Tab** to choose a destination. A group's + menu opens a
-connection from a saved profile. **Remove Group and Move Tabs To** lets you pick
-the destination for the removed group's tabs.
+connection from a saved profile.
 
 Open **Window → Terminal Panes** or a terminal pane's context menu to split the
 selected terminal view. Panes show the same connection. Each has its own scroll

@@ -136,26 +136,79 @@ internal static partial class Program
             var (outside, thirdPeer) = await Connect(other, "Outside", "utf-8");
             using var third = thirdPeer;
 
+            var initial = (TabControl)host.FindName("tabs");
+            host.UpdateLayout();
+            var side = SplitButton(initial, "splitGroupsSideButton", "SplitGroupsSide");
+            var stack = SplitButton(initial, "splitGroupsStackButton", "SplitGroupsStack");
+            var unsplit = SplitButton(initial, "removeTabGroupButton", "RemoveTabGroup");
+            if (unsplit.IsEnabled || stack.TranslatePoint(new Point(), initial).X >= side.TranslatePoint(new Point(), initial).X ||
+                side.TranslatePoint(new Point(), initial).X >= unsplit.TranslatePoint(new Point(), initial).X)
+                throw new InvalidOperationException("The initial tab bar did not show the split controls in order.");
+            ClickButton(side);
+            host.UpdateLayout();
+            var right = FindControls<TabControl>(host).Single(group => group != initial);
+            if (right.TranslatePoint(new Point(), host).X <= initial.TranslatePoint(new Point(), host).X || !unsplit.IsEnabled)
+                throw new InvalidOperationException("The side-by-side button did not create a group to the right.");
+            ClickButton(SplitButton(right, "splitGroupsStackButton", "SplitGroupsStack"));
+            host.UpdateLayout();
+            var bottom = FindControls<TabControl>(host).Single(group => group != initial && group != right);
+            if (bottom.TranslatePoint(new Point(), host).Y <= right.TranslatePoint(new Point(), host).Y)
+                throw new InvalidOperationException("The top-and-bottom button did not split the group that owns it.");
+            var emptyRemove = SplitButton(bottom, "removeTabGroupButton", "RemoveTabGroup");
+            ClickButton(emptyRemove);
+            host.UpdateLayout();
+            if (emptyRemove.ContextMenu is not null || FindControls<TabControl>(host).Count() != 2)
+                throw new InvalidOperationException("The remove button did not close an empty group directly.");
+
+            ClickButton(SplitButton(right, "splitGroupsStackButton", "SplitGroupsStack"));
+            host.UpdateLayout();
+            bottom = FindControls<TabControl>(host).Single(group => group != initial && group != right);
             var groups = FindMenu(host, "WindowMenu", "TabGroups");
             OpenSubmenu(groups);
-            Click(Child(groups, "SplitGroupsSide"));
+            Click(Child(groups, "FocusTabGroup").Items.OfType<MenuItem>().First());
+            var tabToMerge = (TabItem)initial.SelectedItem;
+            var moveToSplitGroup = FindMenu(host, "WindowMenu", "MoveTab");
+            OpenSubmenu(moveToSplitGroup);
+            string bottomName = System.Windows.Automation.AutomationProperties.GetName(bottom);
+            Click(moveToSplitGroup.Items.OfType<MenuItem>().Single(item =>
+                System.Windows.Automation.AutomationProperties.GetName(item) == bottomName));
+            var removeButton = SplitButton(bottom, "removeTabGroupButton", "RemoveTabGroup");
+            ClickButton(removeButton);
+            var destinations = removeButton.ContextMenu;
+            if (destinations is not { IsOpen: true } || destinations.Items.Count != 2)
+                throw new InvalidOperationException("Removing a group with tabs did not offer both destinations.");
+            try { Click(destinations.Items.OfType<MenuItem>().Last()); }
+            finally { destinations.IsOpen = false; }
             host.UpdateLayout();
-            if (FindControls<TabControl>(host).Count() != 2)
-                throw new InvalidOperationException("The window did not create a second tab group.");
-            OpenSubmenu(groups);
-            Click(Child(groups, "SplitGroupsStack"));
+            if (!right.Items.Contains(tabToMerge))
+                throw new InvalidOperationException("Group removal did not move the tab to the chosen destination.");
+            var singleDestination = SplitButton(right, "removeTabGroupButton", "RemoveTabGroup");
+            ClickButton(singleDestination);
             host.UpdateLayout();
-            if (FindControls<TabControl>(host).Count() != 3)
-                throw new InvalidOperationException("The second group could not be split on the other axis.");
+            if (singleDestination.ContextMenu is not null || FindControls<TabControl>(host).Count() != 1 ||
+                !ReferenceEquals(initial.Items[^1], tabToMerge))
+                throw new InvalidOperationException("The remove button did not move the tab directly to the sole remaining group.");
+
+            ClickButton(side);
+            host.UpdateLayout();
+            right = FindControls<TabControl>(host).Single(group => group != initial);
+            ClickButton(SplitButton(right, "splitGroupsStackButton", "SplitGroupsStack"));
+            host.UpdateLayout();
             OpenSubmenu(groups);
             var remove = Child(groups, "RemoveTabGroup");
-            Click(remove.Items.OfType<MenuItem>().Last());
+            if (remove.HasItems)
+                throw new InvalidOperationException("The group menu offered destinations for an empty group.");
+            Click(remove);
             host.UpdateLayout();
+            if (FindControls<TabControl>(host).Count() != 2)
+                throw new InvalidOperationException("The group menu did not close an empty group directly.");
+            OpenSubmenu(groups);
+            Click(Child(groups, "FocusTabGroup").Items.OfType<MenuItem>().Last());
             OpenSubmenu(groups);
             remove = Child(groups, "RemoveTabGroup");
-            Click(remove.Items.OfType<MenuItem>().Single());
+            Click(remove);
             host.UpdateLayout();
-            if (FindControls<TabControl>(host).Count() != 1 || host.TerminalTabs.Count() != 2)
+            if (FindControls<TabControl>(host).Count() != 1 || host.TerminalTabs.Count() != 2 || unsplit.IsEnabled)
                 throw new InvalidOperationException("Group removal changed the window's sessions.");
 
             var panes = FindMenu(host, "WindowMenu", "TerminalPanes");
@@ -479,6 +532,16 @@ internal static partial class Program
         static MenuItem FindMenu(MainWindow window, string top, string child) =>
             Child(Child((Menu)window.FindName("mainMenu"), top), child);
         static void Click(MenuItem menu) => menu.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent, menu));
+        static void ClickButton(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, button));
+        static Button SplitButton(TabControl group, string name, string labelKey)
+        {
+            var button = (Button)group.Template.FindName(name, group);
+            string label = App.Text(labelKey);
+            if (button.Content is not System.Windows.Shapes.Path || !Equals(button.ToolTip, label) ||
+                System.Windows.Automation.AutomationProperties.GetName(button) != label)
+                throw new InvalidOperationException("A tab-group button omitted its icon or localized label.");
+            return button;
+        }
         static void OpenSubmenu(MenuItem menu) => menu.RaiseEvent(new RoutedEventArgs(MenuItem.SubmenuOpenedEvent, menu));
     }
 

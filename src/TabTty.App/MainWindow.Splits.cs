@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using TabTty.Core;
 using static TabTty.App.App;
@@ -36,10 +37,14 @@ internal sealed partial class MainWindow
 
     private void UpdateGroupChrome()
     {
-        bool separateCaption = Groups.Skip(1).Any() || windowRoot.ActualWidth is > 0 and < 520;
+        bool separateCaption = Groups.Skip(1).Any() || windowRoot.ActualWidth is > 0 and < 616;
         groupHost.Margin = new Thickness(0, separateCaption ? 43 : 0, 0,
             broadcastBand.Visibility == Visibility.Visible ? broadcastBand.ActualHeight : 0);
-        foreach (var group in Groups) group.Padding = new Thickness(0, 0, separateCaption ? 0 : 176, 0);
+        foreach (var group in Groups)
+        {
+            group.Padding = new Thickness(0, 0, separateCaption ? 0 : 176, 0);
+            UpdateGroupSplitButtons(group);
+        }
     }
 
     private void ConfigureGroup(TabControl group)
@@ -55,7 +60,12 @@ internal sealed partial class MainWindow
             if (groups is not null) LabelGroups();
         };
         group.PreviewGotKeyboardFocus += (_, _) => ActivateGroup(group);
-        group.Loaded += (_, _) => LabelGroups();
+        group.Loaded += (_, _) =>
+        {
+            LabelGroups();
+            UpdateGroupSplitButtons(group);
+        };
+        group.SizeChanged += (_, _) => UpdateGroupSplitButtons(group);
         group.PreviewMouseDown += (_, e) =>
         {
             ActivateGroup(group);
@@ -87,6 +97,39 @@ internal sealed partial class MainWindow
         int index = Groups.TakeWhile(candidate => candidate != group).Count() + 1;
         string name = (group.SelectedItem as WindowTab)?.Caption ?? Text("EmptyTabGroup");
         return string.Format(Text(group == activeGroup ? "ActiveTabGroupName" : "TabGroupName"), index, name);
+    }
+
+    private void UpdateGroupSplitButtons(TabControl group)
+    {
+        if (group.Template?.FindName("splitGroupsStackButton", group) is Button stack)
+            stack.IsEnabled = SplitLayout.CanSplit(group, Orientation.Vertical, GroupMinimum);
+        if (group.Template?.FindName("splitGroupsSideButton", group) is Button side)
+            side.IsEnabled = SplitLayout.CanSplit(group, Orientation.Horizontal, GroupMinimum);
+        if (group.Template?.FindName("removeTabGroupButton", group) is Button remove)
+            remove.IsEnabled = Groups.Skip(1).Any();
+    }
+
+    private void OnSplitGroup(object sender, RoutedEventArgs args)
+    {
+        if (sender is Button { IsEnabled: true, TemplatedParent: TabControl group, Tag: Orientation orientation })
+            SplitGroup(group, orientation);
+    }
+
+    private void OnRemoveGroup(object sender, RoutedEventArgs args)
+    {
+        if (sender is not Button { IsEnabled: true, TemplatedParent: TabControl group } button) return;
+        var destinations = GroupRemovalDestinations(group);
+        if (destinations.Length == 0) return;
+        if (DirectGroupRemovalDestination(group, destinations) is { } destination)
+        {
+            RemoveGroup(group, destination);
+            return;
+        }
+        var menu = new ContextMenu { PlacementTarget = button, Placement = PlacementMode.Bottom };
+        foreach (var target in destinations) menu.Items.Add(GroupRemovalAction(group, target));
+        menu.Closed += (_, _) => button.ClearValue(ContextMenuProperty);
+        button.ContextMenu = menu;
+        menu.IsOpen = true;
     }
 
     private void SplitGroup(TabControl group, Orientation orientation)
@@ -135,16 +178,35 @@ internal sealed partial class MainWindow
         vertical.IsEnabled = SplitLayout.CanSplit(group, Orientation.Vertical, GroupMinimum);
         menu.Items.Add(horizontal);
         menu.Items.Add(vertical);
-        var remove = new MenuItem { Header = Text("RemoveTabGroup"), IsEnabled = Groups.Skip(1).Any() };
-        foreach (var destination in Groups.Where(candidate => candidate != group))
-            remove.Items.Add(NamedAction(GroupName(destination), () => RemoveGroup(group, destination)));
+        var destinations = GroupRemovalDestinations(group);
+        bool removeDirectly = DirectGroupRemovalDestination(group, destinations) is not null;
+        var remove = removeDirectly
+            ? MenuAction("RemoveTabGroup", RemoveDirectly)
+            : new MenuItem { Header = Text("RemoveTabGroup"), IsEnabled = destinations.Length > 0 };
+        if (!removeDirectly)
+            foreach (var target in destinations) remove.Items.Add(GroupRemovalAction(group, target));
         menu.Items.Add(remove);
         var focus = new MenuItem { Header = Text("FocusTabGroup") };
         foreach (var candidate in Groups)
             focus.Items.Add(NamedAction(GroupName(candidate), () => { ActivateGroup(candidate); FocusGroup(candidate); }));
         menu.Items.Add(focus);
         return menu;
+
+        void RemoveDirectly()
+        {
+            if (DirectGroupRemovalDestination(group, GroupRemovalDestinations(group)) is { } destination)
+                RemoveGroup(group, destination);
+        }
     }
+
+    private TabControl[] GroupRemovalDestinations(TabControl source) =>
+        Groups.Where(destination => destination != source).ToArray();
+
+    private static TabControl? DirectGroupRemovalDestination(TabControl source, TabControl[] destinations) =>
+        !source.HasItems || destinations.Length == 1 ? destinations.FirstOrDefault() : null;
+
+    private MenuItem GroupRemovalAction(TabControl source, TabControl destination) =>
+        NamedAction(GroupName(destination), () => RemoveGroup(source, destination));
 
     internal static MenuItem NamedAction(string label, Action action)
     {
