@@ -404,6 +404,20 @@ The macro and its constants file may use different encodings. A UTF-8 macro
 can read a UTF-16LE constants file with a BOM. Saving that file as UTF-8 keeps
 `Common.TimeoutMs` equal to 5000 and changes the content covered by approval.
 
+## Macro editor follow-up
+
+Macro authors who use VS Code can install an optional extension for `.tttym`
+files. The following decisions apply to the first release of the extension.
+
+| Decision | Accepted behavior |
+| --- | --- |
+| Editor Q1 — Distribution | Offer the `.vsix` as a separate download alongside the TabTty ZIP. Identify the compatible TabTty version and explain how to install an updated VSIX manually. |
+| Editor Q2 — Completion | Suggest built-in function names and show their parameter signatures. Also suggest variables in scope, helper functions from the same macro, and members of explicitly declared shared macro constants files. |
+| Editor Q3 — Execution | Editing and completion work with TabTty closed. Authors save the macro and run it from TabTty or by double-clicking the file when TabTty is its Windows default app. The extension has no Run command. |
+| Editor Q4 — Live diagnostics | Report syntax errors, unknown names and argument type errors at the relevant source location as the author edits. At an unfinished call such as `WaitPrompt(`, keep signature help available. For `WaitPrompt("Ready>")`, explain that the argument must be a `WaitPattern`. |
+| Editor Q5 — Shared constants while editing | For a declared constants file open in the same VS Code window, use its current text, including unsaved edits. Otherwise read the saved file if it is local. For a path that may require network access, use the document text after the author explicitly opens it. These editing rules apply to completion and diagnostics. TabTty reads the saved files at launch. |
+| Editor Q6 — Standalone editing | The VSIX provides editing support on a PC without TabTty installed. It includes the parser built from the same source as TabTty and the corresponding function and type definitions. See [the shared parser decision](../adr/0010-share-macro-parser-with-vs-code.md). |
+
 ## Historical branch inventory
 
 The inventory below records earlier planning, not current blockers or unanswered
