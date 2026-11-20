@@ -685,7 +685,14 @@ internal sealed partial class MainWindow : Window
         var naming = app.RecordingNames;
         var logDate = new CheckBox { IsChecked = naming.IncludeDate };
         var logTime = new CheckBox { IsChecked = naming.IncludeTime, IsEnabled = naming.IncludeDate };
+        var logMicroseconds = new CheckBox { IsChecked = naming.IncludeMicroseconds, IsEnabled = naming.IncludeTime };
         var logSequence = new CheckBox { IsChecked = naming.IncludeSequence };
+        logTime.Checked += (_, _) => logMicroseconds.IsEnabled = true;
+        logTime.Unchecked += (_, _) =>
+        {
+            logMicroseconds.IsChecked = false;
+            logMicroseconds.IsEnabled = false;
+        };
         logDate.Checked += (_, _) => logTime.IsEnabled = true;
         logDate.Unchecked += (_, _) =>
         {
@@ -719,6 +726,7 @@ internal sealed partial class MainWindow : Window
             {
                 form.AddField("LogNameIncludeDate", logDate);
                 form.AddField("LogNameIncludeTime", logTime);
+                form.AddField("LogNameIncludeMicroseconds", logMicroseconds);
                 form.AddField("LogNameIncludeSequence", logSequence, descriptionKey: "LogNameIncludeSequenceDescription");
             }),
             ("SettingsVault", () =>
@@ -752,7 +760,8 @@ internal sealed partial class MainWindow : Window
                 fontFamily.Text, size, rows, autoClose.IsChecked == true, vaultPath.Text, revision,
                 broadcastScope.IsChecked == true, maxPasteBytes,
                 profileDirectory.Text == app.ProfileSaveDirectory ? null : profileDirectory.Text,
-                new RecordingNameOptions(logDate.IsChecked == true, logTime.IsChecked == true, logSequence.IsChecked == true));
+                new RecordingNameOptions(logDate.IsChecked == true, logTime.IsChecked == true,
+                    logSequence.IsChecked == true, logMicroseconds.IsChecked == true));
             revision = app.SettingsRevision;
             vaultPath.Text = app.VaultPath;
             profileDirectory.Text = app.ProfileSaveDirectory;

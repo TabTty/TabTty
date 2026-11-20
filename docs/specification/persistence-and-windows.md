@@ -134,7 +134,8 @@ documentation change implements no file migration.
 Language/theme/bell and saved rule content apply live after successful save.
 The application log-name settings are optional booleans in `settings.json`.
 `logNameIncludeDate` and `logNameIncludeSequence` default to `true`.
-`logNameIncludeTime` defaults to `false` and requires the date. The settings
+`logNameIncludeTime` defaults to `false` and requires the date.
+`logNameIncludeMicroseconds` defaults to `false` and requires the time. The settings
 apply to subsequent connection attempts and are shared by ordinary and macro
 connections. See the [recording naming policy](../drafts/receive-logging-issue.md#confirmed-profile-and-file-organization).
 

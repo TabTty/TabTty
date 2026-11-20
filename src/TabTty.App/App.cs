@@ -52,8 +52,9 @@ public sealed class App : Application
         {
             var defaults = RecordingNameOptions.Default;
             bool date = settings["logNameIncludeDate"]?.GetValue<bool>() ?? defaults.IncludeDate;
-            return new(date, date && (settings["logNameIncludeTime"]?.GetValue<bool>() ?? defaults.IncludeTime),
-                settings["logNameIncludeSequence"]?.GetValue<bool>() ?? defaults.IncludeSequence);
+            bool time = date && (settings["logNameIncludeTime"]?.GetValue<bool>() ?? defaults.IncludeTime);
+            return new(date, time, settings["logNameIncludeSequence"]?.GetValue<bool>() ?? defaults.IncludeSequence,
+                time && (settings["logNameIncludeMicroseconds"]?.GetValue<bool>() ?? defaults.IncludeMicroseconds));
         }
     }
     internal BroadcastInput Broadcast { get; }
@@ -403,6 +404,7 @@ public sealed class App : Application
         {
             candidate["logNameIncludeDate"] = naming.IncludeDate;
             candidate["logNameIncludeTime"] = naming.IncludeDate && naming.IncludeTime;
+            candidate["logNameIncludeMicroseconds"] = naming.IncludeDate && naming.IncludeTime && naming.IncludeMicroseconds;
             candidate["logNameIncludeSequence"] = naming.IncludeSequence;
         }
         byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(candidate, new JsonSerializerOptions { WriteIndented = true });
@@ -481,6 +483,7 @@ public sealed class App : Application
         ["autoCloseDisconnectedTabs"] = DefaultAutoCloseDisconnectedTabs,
         ["logNameIncludeDate"] = RecordingNameOptions.Default.IncludeDate,
         ["logNameIncludeTime"] = RecordingNameOptions.Default.IncludeTime,
+        ["logNameIncludeMicroseconds"] = RecordingNameOptions.Default.IncludeMicroseconds,
         ["logNameIncludeSequence"] = RecordingNameOptions.Default.IncludeSequence,
     };
 
@@ -532,7 +535,7 @@ public sealed class App : Application
             (parsed.ContainsKey("broadcastAcrossWindows") &&
                 (parsed["broadcastAcrossWindows"] is not JsonValue broadcast || !broadcast.TryGetValue<bool>(out _))) ||
             !IsOptionalBoolean("logNameIncludeDate") || !IsOptionalBoolean("logNameIncludeTime") ||
-            !IsOptionalBoolean("logNameIncludeSequence") ||
+            !IsOptionalBoolean("logNameIncludeMicroseconds") || !IsOptionalBoolean("logNameIncludeSequence") ||
             (parsed.ContainsKey("autoCloseDisconnectedTabs") &&
                 (parsed["autoCloseDisconnectedTabs"] is not JsonValue autoClose || !autoClose.TryGetValue<bool>(out _))))
         {

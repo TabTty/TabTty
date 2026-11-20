@@ -300,15 +300,17 @@ does not guarantee immediate OS cancellation or deletion of already-created file
   exist. If creation/opening fails, report the failure before transport startup.
 - Derive the filename stem from the sanitized profile name, or the sanitized
   captured macro basename for a macro-launched connection. Application settings
-  control three optional components, in order: `_yyyy-MM-dd`, `_HH-mm-ss`, and
-  `_<sequence>`. Date and sequence default to On. Time defaults to Off and is
-  available only with Date On. Turning Date Off clears Time. Capture these
+  control the optional components in order: `_yyyy-MM-dd`, `_HH-mm-ss`,
+  `-ffffff`, and `_<sequence>`. Date and sequence default to On. Time and
+  microseconds default to Off. Time requires Date, and microseconds require
+  Time. Turning off a prerequisite clears its dependent options. Capture these
   settings at connection start, including for reconnects, and reuse them for
   pause/resume and retry. Use the local date and time at each part's open. A
   part that remains open across midnight keeps its filename.
 - Allocate the sequence per destination directory and sanitized filename prefix
   (using Windows filename comparison). With Date On, the sequence is scoped to
-  the local date across both timed and untimed files. With Date Off, use one
+  the local date across files with no time, whole seconds, or microseconds.
+  With Date Off, use one
   sequence for the undated filenames across days. Start at `0` if no
   matching files exist. Otherwise use one greater than the highest sequence
   found among matching Text, Raw, or Terminal files, regardless of which

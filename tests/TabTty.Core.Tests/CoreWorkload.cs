@@ -129,7 +129,7 @@ internal static class CoreWorkload
             string[] raw = Directory.GetFiles(Path.Combine(directory, "Logs"), "*.raw.tttylog");
             for (int index = 0; index < wires.Count; index++)
             {
-                string file = raw.Single(path => Path.GetFileName(path).StartsWith($"Stress {index:D2}-", StringComparison.Ordinal));
+                string file = raw.Single(path => Path.GetFileName(path).StartsWith($"Stress {index:D2}_", StringComparison.Ordinal));
                 using var stream = File.OpenRead(file);
                 if (stream.Length != wires[index].Delivered) throw new InvalidOperationException("Raw stress recording lost bytes.");
                 byte[] actual = SHA256.HashData(stream);

@@ -1542,14 +1542,19 @@ internal static partial class Program
                 AutomationProperties.GetLabeledBy(check) is Label { Content: TextBlock label } && label.Text == App.Text(key));
             var logDate = NamingCheck("LogNameIncludeDate");
             var logTime = NamingCheck("LogNameIncludeTime");
+            var logMicroseconds = NamingCheck("LogNameIncludeMicroseconds");
             var logSequence = NamingCheck("LogNameIncludeSequence");
             if (logDate.IsChecked != true || logTime.IsChecked != false || !logTime.IsEnabled || logSequence.IsChecked != true ||
+                logMicroseconds.IsChecked != false || logMicroseconds.IsEnabled ||
                 AutomationProperties.GetHelpText(logSequence) != App.Text("LogNameIncludeSequenceDescription"))
                 throw new InvalidOperationException("The log name defaults or overwrite description were missing.");
             logTime.IsChecked = true;
+            if (!logMicroseconds.IsEnabled)
+                throw new InvalidOperationException("Turning on the time did not enable the microsecond option.");
+            logMicroseconds.IsChecked = true;
             logDate.IsChecked = false;
-            if (logTime.IsEnabled || logTime.IsChecked != false)
-                throw new InvalidOperationException("Turning off the date did not clear and disable the time option.");
+            if (logTime.IsEnabled || logTime.IsChecked != false || logMicroseconds.IsEnabled || logMicroseconds.IsChecked != false)
+                throw new InvalidOperationException("Turning off the date did not clear and disable time and microseconds.");
             logSequence.IsChecked = false;
             navigation.SelectedIndex = 2;
             autoClose.IsChecked = false;
@@ -1558,7 +1563,7 @@ internal static partial class Program
             using (var saved = System.Text.Json.JsonDocument.Parse(File.ReadAllBytes(settingsPath)))
                 if (app.AutoCloseDisconnectedTabs || saved.RootElement.GetProperty("autoCloseDisconnectedTabs").GetBoolean() ||
                     app.RecordingNames != new RecordingNameOptions(false, false, false) ||
-                    new[] { "logNameIncludeDate", "logNameIncludeTime", "logNameIncludeSequence" }
+                    new[] { "logNameIncludeDate", "logNameIncludeTime", "logNameIncludeMicroseconds", "logNameIncludeSequence" }
                         .Any(key => saved.RootElement.GetProperty(key).GetBoolean()) ||
                     saved.RootElement.GetProperty("language").GetString() != "system")
                     throw new InvalidOperationException("Saving settings did not preserve the disabled override and system language choice.");
@@ -1579,6 +1584,9 @@ internal static partial class Program
             TerminalTab active = terminals[^1];
             navigation.SelectedIndex = 2;
             autoClose.IsChecked = true;
+            logDate.IsChecked = true;
+            logTime.IsChecked = true;
+            logMicroseconds.IsChecked = true;
             navigation.SelectedIndex = 0;
             var themeChoice = FindControls<ComboBox>(form).Single(choice => choice.Items.Contains(App.Text("Dark")));
             themeChoice.SelectedItem = App.Text("Dark");
@@ -1586,6 +1594,7 @@ internal static partial class Program
             while (form.IsBusy) await Task.Delay(15, deadline.Token);
             using (var saved = System.Text.Json.JsonDocument.Parse(File.ReadAllBytes(settingsPath)))
                 if (!app.AutoCloseDisconnectedTabs || !saved.RootElement.GetProperty("autoCloseDisconnectedTabs").GetBoolean() ||
+                    !app.RecordingNames.IncludeMicroseconds || !saved.RootElement.GetProperty("logNameIncludeMicroseconds").GetBoolean() ||
                     app.ThemeChoice != "dark" ||
                     tabs.Items.Count != 4 || form.HasUnsavedChanges)
                     throw new InvalidOperationException("Saving auto-close did not persist the preference or removed existing tabs.");

@@ -1300,13 +1300,22 @@ static async Task RecordingNameOptionsFormatAndReplaceFiles()
     await SessionRecording.Open(path, text, timeProvider: clock, nameOptions: timed).FinishAsync();
     clock.UtcNow = clock.UtcNow.AddSeconds(1);
     await SessionRecording.Open(path, text, timeProvider: clock, nameOptions: timed).FinishAsync();
-    await SessionRecording.Open(path, text, "Backup", timeProvider: clock, nameOptions: new(true, true, false)).FinishAsync();
-    RecordingNameOptions undated = new(false, true, true);
+    clock.UtcNow = clock.UtcNow.AddTicks(12_347);
+    RecordingNameOptions precise = timed with { IncludeMicroseconds = true };
+    await SessionRecording.Open(path, text, timeProvider: clock, nameOptions: precise).FinishAsync();
+    await SessionRecording.Open(path, text, "Backup", timeProvider: clock, nameOptions: precise).FinishAsync();
+    await SessionRecording.Open(path, text, timeProvider: clock,
+        nameOptions: precise with { IncludeTime = false }).FinishAsync();
+    await SessionRecording.Open(path, text, "Backup", timeProvider: clock,
+        nameOptions: precise with { IncludeSequence = false }).FinishAsync();
+    RecordingNameOptions undated = precise with { IncludeDate = false };
     await SessionRecording.Open(path, text, timeProvider: clock, nameOptions: undated).FinishAsync();
     clock.UtcNow = clock.UtcNow.AddDays(1);
     await SessionRecording.Open(path, text, timeProvider: clock, nameOptions: undated).FinishAsync();
     string[] expected = ["Server_2026-11-21_0000.log", "Server_2026-11-21_14-30-05_0001.log",
-        "Server_2026-11-21_14-30-06_0002.log", "Backup_2026-11-21_14-30-06.log", "Server_0000.log", "Server_0001.log"];
+        "Server_2026-11-21_14-30-06_0002.log", "Server_2026-11-21_14-30-06-001234_0003.log",
+        "Server_2026-11-21_0004.log", "Backup_2026-11-21_14-30-06-001234_0000.log",
+        "Backup_2026-11-21_14-30-06-001234.log", "Server_0000.log", "Server_0001.log"];
     if (!expected.Order().SequenceEqual(Directory.GetFiles(logs).Select(Path.GetFileName).Order()))
         throw new InvalidOperationException("The recording settings produced unexpected filenames.");
 

@@ -30,6 +30,7 @@
   <data name="SettingsLogNaming" xml:space="preserve"><value>ログのファイル名</value></data>
   <data name="LogNameIncludeDate" xml:space="preserve"><value>ログ名に日付を加える</value></data>
   <data name="LogNameIncludeTime" xml:space="preserve"><value>ログ名に時刻を加える</value></data>
+  <data name="LogNameIncludeMicroseconds" xml:space="preserve"><value>ログ名にマイクロ秒を加える</value></data>
   <data name="LogNameIncludeSequence" xml:space="preserve"><value>ログ名に連番を加える</value></data>
   <data name="LogNameIncludeSequenceDescription" xml:space="preserve"><value>オフにすると、同名のログファイルは上書きされます。</value></data>
   <data name="SettingsVault" xml:space="preserve"><value>保存パス</value></data>

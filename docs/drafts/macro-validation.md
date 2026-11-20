@@ -176,7 +176,7 @@ FileName/BaseName properties unmodified; sanitization affects log names only.
 Use the same application-wide log-name choices as
 [profile-based recording](receive-logging-issue.md#confirmed-profile-and-file-organization).
 The default stem is `<prefix>_yyyy-MM-dd_<sequence>`. The optional time component
-uses `HH-mm-ss` between the date and the sequence. Format markers are `.log`,
+uses `HH-mm-ss`, with `-ffffff` when microseconds are enabled. Format markers are `.log`,
 `.raw.tttylog` and `.term.tttylog` as in the main contract.
 
 With Sequence On, use create-new semantics and skip sequences occupied by

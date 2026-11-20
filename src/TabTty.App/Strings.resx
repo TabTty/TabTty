@@ -30,6 +30,7 @@
   <data name="SettingsLogNaming" xml:space="preserve"><value>Log file names</value></data>
   <data name="LogNameIncludeDate" xml:space="preserve"><value>Add the date to log file names</value></data>
   <data name="LogNameIncludeTime" xml:space="preserve"><value>Add the time to log file names</value></data>
+  <data name="LogNameIncludeMicroseconds" xml:space="preserve"><value>Add microseconds to log file names</value></data>
   <data name="LogNameIncludeSequence" xml:space="preserve"><value>Add a sequence number to log file names</value></data>
   <data name="LogNameIncludeSequenceDescription" xml:space="preserve"><value>If disabled, a new log overwrites an existing file with the same name.</value></data>
   <data name="SettingsVault" xml:space="preserve"><value>Save paths</value></data>

@@ -7,7 +7,8 @@ namespace TabTty.Core;
 
 internal enum RecordingFormat { Raw, Text, Terminal }
 
-internal readonly record struct RecordingNameOptions(bool IncludeDate, bool IncludeTime, bool IncludeSequence)
+internal readonly record struct RecordingNameOptions(bool IncludeDate, bool IncludeTime, bool IncludeSequence,
+    bool IncludeMicroseconds = false)
 {
     internal static RecordingNameOptions Default { get; } = new(true, false, true);
 }
@@ -18,6 +19,9 @@ internal sealed class SessionRecording
     private const int ItemLimit = 4096;
     private const int BatchBytes = 64 * 1024;
     private const int BatchItems = 512;
+    private const string TimeFormat = "HH-mm-ss";
+    private const string MicrosecondTimeFormat = "HH-mm-ss-ffffff";
+    private static readonly string[] TimeFormats = [TimeFormat, MicrosecondTimeFormat];
     private static readonly string[] FileExtensions = Enum.GetValues<RecordingFormat>().Select(FileExtension).ToArray();
     private static readonly EnumerationOptions RecordingFileSearch = new()
     {
@@ -127,7 +131,8 @@ internal sealed class SessionRecording
             string prefix = naming.IncludeDate ? $"{label}_{now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}" : label;
             if (OrdinaryWindowsPath.IsReservedFileName(naming.IncludeSequence ? prefix + "_" : prefix)) prefix = "_" + prefix;
             string stem = naming.IncludeDate && naming.IncludeTime
-                ? $"{prefix}_{now.ToString("HH-mm-ss", CultureInfo.InvariantCulture)}" : prefix;
+                ? $"{prefix}_{now.ToString(naming.IncludeMicroseconds ? MicrosecondTimeFormat : TimeFormat, CultureInfo.InvariantCulture)}"
+                : prefix;
             string fullStem = Path.Combine(path, stem);
             if (!naming.IncludeSequence) return OpenFiles(number, fullStem, overwrite: true);
 
@@ -179,9 +184,10 @@ internal sealed class SessionRecording
                 if (name.Length < prefix.Length + extension.Length ||
                     !name.EndsWith(extension, StringComparison.OrdinalIgnoreCase)) continue;
                 ReadOnlySpan<char> digits = name[prefix.Length..^extension.Length];
-                if (dated && digits.Length >= 13 && digits[8] == '_' &&
-                    TimeOnly.TryParseExact(digits[..8], "HH-mm-ss", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
-                    digits = digits[9..];
+                int separator = digits.IndexOf('_');
+                if (dated && separator >= 0 && TimeOnly.TryParseExact(digits[..separator], TimeFormats,
+                    CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
+                    digits = digits[(separator + 1)..];
                 if (digits.Length >= 4 && (digits.Length == 4 || digits[0] != '0') &&
                     digits.IndexOfAnyExceptInRange('0', '9') < 0 &&
                     BigInteger.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out var sequence))

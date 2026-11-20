@@ -137,7 +137,7 @@ internal static partial class Program
             if (logs.Length != sessions) throw new InvalidDataException("The overload fixture did not create one recording per session.");
             foreach (string log in logs)
                 if (!(await File.ReadAllBytesAsync(log, token)).AsSpan().SequenceEqual(
-                    Path.GetFileName(log).StartsWith(highlightLabel + "-", StringComparison.Ordinal) ? [.. recorded, .. wrapped] : recorded))
+                    Path.GetFileName(log).StartsWith(highlightLabel + "_", StringComparison.Ordinal) ? [.. recorded, .. wrapped] : recorded))
                     throw new InvalidDataException("An accepted recording lost bytes under overload.");
 
             stops.Sort();
