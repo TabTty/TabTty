@@ -553,7 +553,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
     }
 
     public void AddEditor(FormView form, ConnectionProfile profile, string? path, bool creating = false,
-        Action<string>? savedAs = null, bool fromExplorer = false)
+        Action<string, string>? onSaved = null, bool fromExplorer = false)
     {
         var editor = new ProfileEditor(form, profile, app, creating, fromExplorer);
         string? attemptedPath = path;
@@ -635,24 +635,18 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 return true;
             }
             finally { registrationChanges.Release(); }
-        });
+        }, isCreating: creating ? () => path is null : null);
 
         async Task CompleteSaveAsync()
         {
             ConnectionProfile saved = pendingCommit!;
             editor.UseSavedRevision(saved);
-            if (path is null)
-            {
-                path = await RegisterSavedAsync(attemptedPath!, saved, registrationReset, selectNewProfile: true, createdInApp: true);
-                savedAs?.Invoke(path);
-            }
-            else
-            {
-                string previous = path;
-                path = await FinishEditAsync(path, saved, pendingEdit ?? new(null, null, default, null));
-                if (path != previous) savedAs?.Invoke(path);
-                ProfileSaved?.Invoke();
-            }
+            string? previous = path;
+            path = previous is null
+                ? await RegisterSavedAsync(attemptedPath!, saved, registrationReset, selectNewProfile: true, createdInApp: true)
+                : await FinishEditAsync(previous, saved, pendingEdit ?? new(null, null, default, null));
+            onSaved?.Invoke(path, saved.DisplayName);
+            if (previous is not null) ProfileSaved?.Invoke();
             profile = saved;
             pendingEdit = null;
             pendingCommit = null;

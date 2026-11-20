@@ -360,16 +360,17 @@ On failure disconnect and retain the tab. Do not automatically probe Telnet/seri
 Select the logging destination folder in the profile, using an absolute path or
 a path relative to the directory containing that profile file. Default to relative
 `Logs`; create the selected folder if necessary when starting enabled recording,
-after profile validation and before transport startup. The initial file names
-combine the profile, start time with UTC offset, unique session suffix, and part
-number from `p001`, using `<stem>.log` for Text, `<stem>.raw.tttylog` for Raw,
+after profile validation and before transport startup. Profile-based file names
+default to `<sanitized-profile-name>_yyyy-MM-dd_<sequence>` as the shared stem.
+Application settings control the date, time, and sequence suffixes. See
+`receive-logging-issue.md` for the naming and overwrite rules. Use `<stem>.log`
+for Text, `<stem>.raw.tttylog` for Raw,
 and `<stem>.term.tttylog` for Terminal. Q95 is accepted with the user's Terminal
 name and provisional `.tttylog` extension; the follow-up shortens the filename
 marker from `.terminal` to `.term`, not the final extension. Use markers even
 for single-format recordings. Raw and Terminal share the extension but have
 different contents; select serialization by mode, not by extension.
-Create new files without overwriting for each connection. Keep this naming policy
-replaceable for future user/macro/invocation naming without changing recording
+Keep this naming policy replaceable for user/macro/invocation naming without changing recording
 lifecycle; see `receive-logging-issue.md` and `future-macro-design.md`.
 A pause closes the current files; resuming creates a new
 numbered part without backfilling paused output. On pause, disconnect, and orderly

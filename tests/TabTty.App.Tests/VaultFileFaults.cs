@@ -127,8 +127,9 @@ internal static partial class Program
                 warning.Text.Contains(unregistered, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Rename confirmation did not show the requested names and registered scope.");
             Click(confirm, "Cancel");
-            while (!FindControls<Button>(edit).Any(button => button.IsEnabled && Equals(button.Content, App.Text("Save"))))
+            while (!FindControls<Button>(edit).Any(button => button.IsEnabled && Equals(button.Content, App.Text("OK"))))
                 await Task.Delay(15, token);
+            if (!edit.IsVisible) throw new InvalidOperationException("Cancelling the rename closed the edit dialog.");
             edit.Close();
             await WaitIdleAsync();
             if (list.Items.OfType<VaultEntryInfo>().Single().Name != original)
@@ -145,6 +146,7 @@ internal static partial class Program
                 throw new InvalidOperationException("The rename report lost the reasons for skipped profiles.");
             Click(report, "OK");
             await WaitIdleAsync();
+            if (edit.IsVisible) throw new InvalidOperationException("A successful rename did not close the edit dialog.");
 
             var after = await ConnectionProfile.LoadAsync(saved, token);
             if (after.ToEditorJson() != before.ToEditorJson().Replace(original, renamed, StringComparison.Ordinal) ||
@@ -185,11 +187,15 @@ internal static partial class Program
                 var editAction = menu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, App.Text("VaultEditEntry")));
                 _ = host.Dispatcher.BeginInvoke(() => editAction.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent, editAction)));
                 var edit = await FindDialogAsync("EditCredential", form: true);
+                AssertSaveRequiresExplicitActivation((FormView)edit.Content, "OK");
+                if (FindControls<CheckBox>(edit).Single().Content is not TextBlock caption ||
+                    caption.Text != App.Text("ReplacePassword"))
+                    throw new InvalidOperationException("The password replacement checkbox did not display its caption inline.");
                 var name = FindControls<TextBox>(edit).Single();
                 if (name.Text != ((VaultEntryInfo)list.SelectedItem).Name)
                     throw new InvalidOperationException("The vault editor did not show the selected credential name.");
                 name.Text = newName;
-                _ = edit.Dispatcher.BeginInvoke(() => Click(edit, "Save"));
+                _ = edit.Dispatcher.BeginInvoke(() => Click(edit, "OK"));
                 return (edit, await FindDialogAsync("EditCredential", form: false));
             }
         }

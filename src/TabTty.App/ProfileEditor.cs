@@ -1,8 +1,10 @@
 using System.Globalization;
 using System.Text.Json.Nodes;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Data;
 using System.Windows.Threading;
 using TabTty.Core;
 using static TabTty.App.App;
@@ -33,8 +35,19 @@ internal sealed class ProfileEditor
         var terminal = draft["terminal"]!.AsObject();
         var logging = draft["logging"]!.AsObject();
         selectedProtocol = profile.Type;
-        form.AddNavigation(("ProfileConnectionGroup", BuildConnection), ("ProfileTerminalGroup", BuildTerminal),
+        var navigation = form.AddNavigation(("ProfileConnectionGroup", BuildConnection),
+            ("ProfileAuthenticationGroup", BuildAuthentication), ("ProfileTerminalGroup", BuildTerminal),
             ("ProfileLoggingGroup", BuildLogging));
+        var sshOption = (RadioButton)form.FindName("ProtocolSSH");
+        var authenticationMenu = navigation.Items.OfType<ListBoxItem>().Single(item => Equals(item.Tag, "ProfileAuthenticationGroup"));
+        authenticationMenu.SetBinding(UIElement.VisibilityProperty, new Binding(nameof(ToggleButton.IsChecked))
+        {
+            Source = sshOption, Converter = new BooleanToVisibilityConverter(),
+        });
+        sshOption.Unchecked += (_, _) =>
+        {
+            if (authenticationMenu.IsSelected) navigation.SelectedIndex = 0;
+        };
 
         void BuildConnection()
         {
@@ -49,7 +62,7 @@ internal sealed class ProfileEditor
                 else draft["groupName"] = group;
             });
             var choices = new WrapPanel();
-            form.AddChoicePanel("ConnectionType", choices);
+            var telnetDescription = form.AddChoicePanel("ConnectionType", choices, "TelnetPrivacyNotice");
             Number(commonConnection, "waitSeconds", "WaitSeconds");
             string[] protocols = ["telnet", "ssh", "serial"];
             string[] protocolLabels = ["Telnet", "SSH", "COM"];
@@ -64,17 +77,8 @@ internal sealed class ProfileEditor
                 form.RegisterName("Protocol" + protocolLabels[index], radio);
                 choices.Children.Add(radio);
                 var transportActions = new List<Action>();
-                List<Action> sharedActions = apply;
-                apply = transportActions;
-                StackPanel fields = form.AddSection(panel =>
-                {
-                    names = panel;
-                    System.Windows.NameScope.SetNameScope(panel, new System.Windows.NameScope());
-                    form.RegisterName(type + "Fields", panel);
-                    BuildTransport(defaults, transportConnection, transportTerminal, app, creating || type != profile.Type);
-                }, () => type == selectedProtocol);
-                names = form;
-                apply = sharedActions;
+                StackPanel fields = AddTransportSection(type, type + "Fields", transportActions,
+                    () => BuildTransport(defaults, transportConnection, transportTerminal, creating || type != profile.Type));
                 transports.Add(type, new TransportFields(transportConnection, transportTerminal, transportActions, fields));
                 fields.Visibility = type == selectedProtocol ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
                 radio.IsChecked = type == selectedProtocol;
@@ -86,6 +90,24 @@ internal sealed class ProfileEditor
                     fields.Visibility = System.Windows.Visibility.Visible;
                 };
             }
+            var telnetOption = (RadioButton)form.FindName("ProtocolTelnet");
+            telnetDescription.SetBinding(UIElement.VisibilityProperty, new Binding(nameof(ToggleButton.IsChecked))
+            {
+                Source = telnetOption, Converter = new BooleanToVisibilityConverter(),
+            });
+            telnetOption.SetBinding(AutomationProperties.HelpTextProperty,
+                new Binding(nameof(TextBlock.Text)) { Source = telnetDescription });
+        }
+
+        void BuildAuthentication()
+        {
+            TransportFields ssh = transports["ssh"];
+            AddTransportSection("ssh", "sshAuthenticationFields", ssh.Apply, () =>
+            {
+                if (creating || profile.Type != "ssh") ssh.Connection["username"] = "";
+                String(ssh.Connection, "username", "SshUsername");
+                ConfigureSshAuthentication(ssh.Connection["authentication"]!.AsObject(), app);
+            });
         }
 
         void BuildTerminal()
@@ -123,11 +145,13 @@ internal sealed class ProfileEditor
 
         void BuildLogging()
         {
-            Boolean(logging, "raw", "RecordRaw");
-            Boolean(logging, "text", "RecordText");
-            Boolean(logging, "terminal", "RecordTerminal");
-            String(logging, "directory", "LogDirectory");
-            form.AddNotice("NetworkLogDestinationNotice");
+            form.AddCheckBoxGroup("RecordedLogs", () =>
+            {
+                Boolean(logging, "raw", "RecordRaw");
+                Boolean(logging, "text", "RecordText");
+                Boolean(logging, "terminal", "RecordTerminal");
+            });
+            String(logging, "directory", "LogDirectory", "NetworkLogDestinationNotice");
         }
         var validation = new TextBox { IsReadOnly = true, TextWrapping = System.Windows.TextWrapping.Wrap,
             Visibility = System.Windows.Visibility.Collapsed, MaxHeight = 120,
@@ -191,7 +215,29 @@ internal sealed class ProfileEditor
         _ => throw new ArgumentOutOfRangeException(nameof(type)),
     };
 
-    private void BuildTransport(ConnectionProfile profile, JsonObject connection, JsonObject terminal, App app, bool blank)
+    private StackPanel AddTransportSection(string type, string scope, List<Action> actions, Action build)
+    {
+        List<Action> previousActions = apply;
+        FrameworkElement previousNames = names;
+        apply = actions;
+        try
+        {
+            return form.AddSection(panel =>
+            {
+                names = panel;
+                NameScope.SetNameScope(panel, new NameScope());
+                form.RegisterName(scope, panel);
+                build();
+            }, () => type == selectedProtocol);
+        }
+        finally
+        {
+            names = previousNames;
+            apply = previousActions;
+        }
+    }
+
+    private void BuildTransport(ConnectionProfile profile, JsonObject connection, JsonObject terminal, bool blank)
     {
         if (profile.Type == "serial")
         {
@@ -228,14 +274,10 @@ internal sealed class ProfileEditor
             Number(connection, "port", "Port");
             if (profile.Type == "telnet")
             {
-                form.AddNotice("TelnetPrivacyNotice");
                 Boolean(connection, "initiateBinary", "InitiateBinary");
             }
             else
             {
-                if (blank) connection["username"] = "";
-                String(connection, "username", "SshUsername");
-                ConfigureSshAuthentication(connection["authentication"]!.AsObject(), profile, app);
                 var live = connection["liveness"]!.AsObject();
                 var enabled = Boolean(live, "enabled", "SshLiveness");
                 var interval = Number(live, "intervalSeconds", "SshLivenessInterval");
@@ -252,15 +294,15 @@ internal sealed class ProfileEditor
             { "off" => "Off", "on" => "On", _ => "FollowRemote" })).ToArray());
     }
 
-    private void ConfigureSshAuthentication(JsonObject auth, ConnectionProfile profile, App app)
+    private void ConfigureSshAuthentication(JsonObject auth, App app)
     {
         string[] methods = ["password", "publicKey"];
         string[] labels = [Text("VaultPassword"), Text("PublicKey")];
-        var savedMethods = profile.SshMethods;
+        string[] savedMethods = auth["methods"]!.AsArray().Select(method => method!.GetValue<string>()).ToArray();
         var primary = Selection("PrimarySshMethod", methods, labels, savedMethods[0]);
         ComboBox secondary = null!;
         var secondaryRow = form.AddSection(_ => secondary = Selection("SecondarySshMethod", [.. methods, ""],
-            [.. labels, Text("None")], savedMethods.Count == 2 ? savedMethods[1] : ""));
+            [.. labels, Text("None")], savedMethods.Length == 2 ? savedMethods[1] : ""));
         var addMethod = form.AddAction("AddSshMethod", () => secondary.SelectedValue = OtherMethod((string)primary.SelectedValue));
         primary.SelectionChanged += (_, _) =>
         {
@@ -281,7 +323,6 @@ internal sealed class ProfileEditor
                 ? new JsonArray((string)primary.SelectedValue, second) : new JsonArray((string)primary.SelectedValue);
         });
         Credential(auth, "password", "SelectSavedPassword", app);
-        form.AddNotice("SshSavedPasswordDestinationNotice");
         Credential(auth, "privateKey", "SelectPrivateKey", app);
         Update();
 
@@ -350,7 +391,8 @@ internal sealed class ProfileEditor
     {
         var value = new TextBox { IsReadOnly = true, Text = auth[kind]?.GetValue<string>() is { } savedName
             ? PermissionDisplay.Literal(savedName) : Text("AskAtConnect") };
-        Add(kind == "password" ? "SshPasswordSource" : "PublicKey", value);
+        Add(kind == "password" ? "SshPasswordSource" : "PublicKey", value,
+            descriptionKey: kind == "password" ? "SshSavedPasswordDestinationNotice" : null);
         form.TrackValue(() => (Reference: auth[kind], Label: value.Text), saved =>
         {
             auth[kind] = saved.Reference?.DeepClone();
@@ -373,10 +415,10 @@ internal sealed class ProfileEditor
         });
     }
 
-    private TextBox String(JsonObject node, string property, string key)
+    private TextBox String(JsonObject node, string property, string key, string? descriptionKey = null)
     {
         var box = new TextBox { Text = node[property]!.GetValue<string>(), MaxLength = 32760 };
-        Add(key, box);
+        Add(key, box, descriptionKey: descriptionKey);
         apply.Add(() => node[property] = box.Text);
         return box;
     }
@@ -413,10 +455,10 @@ internal sealed class ProfileEditor
         return box;
     }
 
-    private void Add(string key, Control control, bool trackEdit = true)
+    private void Add(string key, Control control, bool trackEdit = true, string? descriptionKey = null)
     {
         names.RegisterName(key, control);
-        form.AddField(key, control, trackEdit);
+        form.AddField(key, control, trackEdit, descriptionKey: descriptionKey);
     }
 
     private sealed record Option(string Value, string Label);

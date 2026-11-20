@@ -297,10 +297,11 @@ baseline and readiness of later scope additions are tracked in
   connection/reconnect, pause/resume, and error retry still apply. Logging paths
   may be absolute or relative to the directory containing the profile file.
 - Default the recording folder to relative `Logs` and create it if needed before
-  connecting. Initially name files using profile name, connection-start local
-  timestamp with UTC offset, unique session suffix, and part number from `p001`.
-  Use a common session/part stem with `.log` for Text, `.raw.tttylog` for Raw,
-  and `.term.tttylog` for Terminal, without overwriting. `.term` is the shortened
+  connecting. The application log-name preferences default to
+  `<sanitized-profile-name>_yyyy-MM-dd_<sequence>` for each part. Time is optional
+  when Date is enabled. Turning Sequence off allows same-name replacement. See
+  `receive-logging-issue.md` for the shared naming policy. Use the common stem
+  with `.log` for Text, `.raw.tttylog` for Raw, and `.term.tttylog` for Terminal. `.term` is the shortened
   filename marker; `.tttylog` remains the provisional final extension.
   Keep naming separate from recording lifecycle so user-specified names, macro
   names, or explicit invocation naming arguments can be added later; those

@@ -142,6 +142,7 @@ internal static partial class Program
                 return 0;
             }
             if (args is ["--native-utf8-baseline" or "--disconnected-tabs" or "--terminal-tab-close" or "--broadcast-splits" or
+                "--profile-editor-heading" or
                 "--macro-launch" or "--macro-network" or "--profile-trust" or "--vault-first-use" or "--vault-rename"] or
                 ["--transfer-window-close" or "--fullscreen-vim" or "--overload-controls" or "--sftp-batch", _])
             {
@@ -151,6 +152,7 @@ internal static partial class Program
                     "--native-utf8-baseline" => TerminalReceivesWhilePresentationIsPaused(verifyNativeResidency: true),
                     "--disconnected-tabs" => DisconnectedTabsRespectSettingsAndBulkClose(application, settingsPath),
                     "--terminal-tab-close" => CheckTerminalClosure(application, settingsDirectory),
+                    "--profile-editor-heading" => CheckProfileEditorHeadingAsync(application, settingsDirectory),
                     "--broadcast-splits" => BroadcastAndSplitViews(application, settingsDirectory),
                     "--macro-launch" => MacroLaunchAndDialog(application, settingsDirectory),
                     "--macro-network" => SharedConstantsNetworkAsync(application, settingsDirectory),
@@ -178,6 +180,8 @@ internal static partial class Program
                 var editorActivationFrame = new DispatcherFrame();
                 Task run = application.Dispatcher.InvokeAsync(async () =>
                 {
+                    await CheckProfileEditorHeadingAsync(application, settingsDirectory);
+                    Console.WriteLine("PASS CheckProfileEditorHeading");
                     await EditorKeepsSavedRevisionAndRestoresDraft(application);
                     Console.WriteLine("PASS EditorKeepsSavedRevisionAndRestoresDraft");
                     await CheckFileEditors(application, settingsDirectory, settingsFixture!, profileFixture!);
@@ -491,26 +495,61 @@ internal static partial class Program
         try
         {
             var editorView = (FormView)editor.Content;
+            AssertSaveRequiresExplicitActivation(editorView, "Create");
+            if (editor.Title != App.Text("NewProfileWindowTitle"))
+                throw new InvalidOperationException("A new profile did not use the creation window title.");
+            if (ProfileEditorHeading(editorView).Text != App.Text("NewProfile"))
+                throw new InvalidOperationException("A new profile did not keep its creation heading.");
             if (((RadioButton)editorView.FindName("ProtocolSSH")).IsChecked != true)
                 throw new InvalidOperationException("A new profile did not start with SSH selected.");
-            var telnetFields = (StackPanel)editorView.FindName("telnetFields");
-            if (!FindControls<TextBlock>(telnetFields).Any(text => text.Text == App.Text("TelnetPrivacyNotice")))
-                throw new InvalidOperationException("The Telnet settings omitted the clear-text notice.");
-
             var savedPassword = new CredentialReference("Shared password", "password");
             var savedKey = new CredentialReference("Shared key", "privateKey");
             var profile = ConnectionProfile.CreateSsh("Shared", "fixture.example", "original", password: savedPassword,
                 methods: ["password", "publicKey"], privateKey: savedKey);
             var profileForm = new FormView();
             var profileEditor = new ProfileEditor(profileForm, profile, app);
+            var telnetOption = (RadioButton)profileForm.FindName("ProtocolTelnet");
+            var protocolChoices = (Panel)LogicalTreeHelper.GetParent(telnetOption);
+            var telnetDescription = AssertDescriptionBefore(protocolChoices, "TelnetPrivacyNotice");
+            if (telnetDescription.Visibility != Visibility.Collapsed)
+                throw new InvalidOperationException("The clear-text notice appeared for SSH.");
+            telnetOption.IsChecked = true;
+            if (telnetDescription.Visibility != Visibility.Visible)
+                throw new InvalidOperationException("Selecting Telnet did not show the clear-text notice.");
+            ((RadioButton)profileForm.FindName("ProtocolSSH")).IsChecked = true;
+
             var sshFields = (StackPanel)profileForm.FindName("sshFields");
-            var username = (TextBox)sshFields.FindName("SshUsername");
+            var authentication = (StackPanel)profileForm.FindName("sshAuthenticationFields");
+            var username = (TextBox)authentication.FindName("SshUsername");
+            if (sshFields.FindName("SshUsername") is not null ||
+                authentication.FindName("PrimarySshMethod") is not ComboBox ||
+                authentication.FindName("SshPasswordSource") is not TextBox passwordSource ||
+                authentication.FindName("PublicKey") is not TextBox ||
+                authentication.FindName("AllowKeyboardInteractive") is not CheckBox keyboardInteractive)
+                throw new InvalidOperationException("The SSH authentication fields were not grouped on their own page.");
+            AssertStandaloneCheckBox(keyboardInteractive, "AllowKeyboardInteractive");
+            AssertStandaloneCheckBox((CheckBox)sshFields.FindName("SshLiveness"), "SshLiveness");
+            AssertDescriptionBefore(passwordSource, "SshSavedPasswordDestinationNotice");
+            AssertDescriptionBefore((TextBox)profileForm.FindName("LogDirectory"), "NetworkLogDestinationNotice");
+            string[] logKeys = ["RecordRaw", "RecordText", "RecordTerminal"];
+            CheckBox[] logs = logKeys.Select(key => (CheckBox)profileForm.FindName(key)).ToArray();
+            var choices = (WrapPanel)LogicalTreeHelper.GetParent(logs[0]);
+            var loggingPage = (Panel)LogicalTreeHelper.GetParent(choices);
+            int choicesIndex = loggingPage.Children.IndexOf(choices);
+            if (choicesIndex < 1 || loggingPage.Children[choicesIndex - 1] is not TextBlock title ||
+                title.Text != App.Text("RecordedLogs") || title.FontWeight != FontWeights.Bold ||
+                !choices.Children.OfType<CheckBox>().SequenceEqual(logs) ||
+                !logs.Select(check => ((TextBlock)check.Content).Text).SequenceEqual(logKeys.Select(App.Text)))
+                throw new InvalidOperationException("The three recording choices did not share a single field title.");
             if (username.IsReadOnly || username.Text != "original")
                 throw new InvalidOperationException("Saved credentials overrode the editable SSH username.");
             username.Text = "Changed";
+            logs[0].IsChecked = logs[2].IsChecked = true;
             var changed = profileEditor.GetDraft();
             if (changed.SshUsername != "Changed" || changed.SshPassword != savedPassword || changed.SshPrivateKey != savedKey)
                 throw new InvalidOperationException("Editing the SSH username changed the selected credentials.");
+            if (!changed.RecordRaw || changed.RecordText || !changed.RecordTerminal)
+                throw new InvalidOperationException("Recording choices were not independently editable.");
 
             var destination = SshDestination.Parse("fixture.example", 2222);
             var challenge = new SshChallenge(destination, "Example", "Sign in", [new("User", true), new("Code", false)]);
@@ -555,6 +594,36 @@ internal static partial class Program
             finally { passwordPicker.Close(); }
         }
         finally { editor.Close(); }
+
+        static TextBlock AssertDescriptionBefore(FrameworkElement control, string key)
+        {
+            var parent = (Panel)LogicalTreeHelper.GetParent(control);
+            int index = parent.Children.IndexOf(control);
+            if (index < 2 || parent.Children[index - 1] is not TextBlock description ||
+                description.Text != App.Text(key) || description.Opacity >= 1 ||
+                (parent.Children[index - 2] is Label label ? label.Content : parent.Children[index - 2])
+                    is not TextBlock title || title.FontWeight != FontWeights.Bold)
+                throw new InvalidOperationException($"The field did not put its description after its bold title: {key}.");
+            return description;
+        }
+    }
+
+    private static void AssertStandaloneCheckBox(CheckBox check, string key)
+    {
+        if (AutomationProperties.GetLabeledBy(check) is not Label { Content: TextBlock title } label ||
+            title.Text != App.Text(key) || title.FontWeight != FontWeights.Bold ||
+            check.Content is not TextBlock content || content.Text != App.Text("Enabled") ||
+            LogicalTreeHelper.GetParent(check) is not Panel parent ||
+            parent.Children.IndexOf(label) + 1 != parent.Children.IndexOf(check))
+            throw new InvalidOperationException($"The enable check box did not have a separate title: {key}.");
+    }
+
+    private static Button AssertSaveRequiresExplicitActivation(FormView form, string key = "Save")
+    {
+        var save = FindControls<Button>(form).Single(button => Equals(button.Content, App.Text(key)));
+        if (save.IsDefault || KeyboardNavigation.GetAcceptsReturn(save))
+            throw new InvalidOperationException("The Save button could be activated by Enter.");
+        return save;
     }
 
     private static void MainMenuOpensAndReusesManagementTabs(App app)
@@ -626,6 +695,16 @@ internal static partial class Program
             catch (DesktopInputUnavailableException exception) { visualUnavailable = exception; }
             bool? completed = null;
             var settingsForm = (FormView)settings.Content;
+            AssertSaveRequiresExplicitActivation(settingsForm);
+            var modal = new FormView(modal: true);
+            bool saved = false;
+            modal.AddButtons(() => saved = true);
+            var modalSave = AssertSaveRequiresExplicitActivation(modal);
+            modalSave.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, modalSave));
+            if (!saved) throw new InvalidOperationException("An explicit click did not save the dialog.");
+            var settingChecks = FindControls<CheckBox>(settingsForm).ToArray();
+            AssertStandaloneCheckBox(settingChecks[0], "AutoCloseDisconnectedTabs");
+            AssertStandaloneCheckBox(settingChecks[1], "BroadcastAcrossWindows");
             settingsForm.Completed += result => completed = result;
             int revision = app.SettingsRevision;
             var dismiss = ((DockPanel)settings.Header).Children.OfType<Button>().Single();
@@ -1084,9 +1163,9 @@ internal static partial class Program
                 var fields = detailsPage
                     ? form.Children.OfType<StackPanel>().Single(panel => DockPanel.GetDock(panel) == Dock.Top)
                     : FormFields(form);
-                if (fields.Children[0] is not TextBlock heading || heading.Text != App.Text(titleKeys[index]) ||
-                    System.Windows.Automation.AutomationProperties.GetHeadingLevel(heading) !=
-                        System.Windows.Automation.AutomationHeadingLevel.Level1)
+                var heading = FindControls<TextBlock>(form).SingleOrDefault(text =>
+                    AutomationProperties.GetHeadingLevel(text) == AutomationHeadingLevel.Level1);
+                if (heading?.Text != App.Text(titleKeys[index]))
                     throw new InvalidOperationException("The management page did not begin with its localized heading.");
                 if (detailsPage)
                 {
@@ -1144,7 +1223,7 @@ internal static partial class Program
                 if (titleKeys[index] == "Settings")
                 {
                     AssertNavigation(form, "SettingsLanguageAndTheme", "SettingsTerminalDefaults", "SettingsTabBehavior",
-                        "SettingsVault", "SettingsMaintenance");
+                        "SettingsLogNaming", "SettingsVault", "SettingsMaintenance");
                 }
                 if (Environment.GetEnvironmentVariable("TABTTY_MANAGEMENT_RENDER_DIR") is { } folder &&
                     titleKeys[index] is "VaultEntries" or "Settings")
@@ -1158,7 +1237,8 @@ internal static partial class Program
             try
             {
                 var form = (FormView)editor.Content;
-                AssertNavigation(form, "ProfileConnectionGroup", "ProfileTerminalGroup", "ProfileLoggingGroup");
+                AssertNavigation(form, "ProfileConnectionGroup", "ProfileAuthenticationGroup",
+                    "ProfileTerminalGroup", "ProfileLoggingGroup");
                 if (Environment.GetEnvironmentVariable("TABTTY_MANAGEMENT_RENDER_DIR") is { } preview)
                 {
                     form.Measure(new Size(940, 660));
@@ -1187,6 +1267,13 @@ internal static partial class Program
     private static void AssertNavigation(FormView form, params string[] titles)
     {
         var navigation = FindControls<ListBox>(form).Single();
+        var layout = (Grid)LogicalTreeHelper.GetParent(navigation);
+        var heading = layout.Children.OfType<TextBlock>().Single();
+        var scroller = layout.Children.OfType<ScrollViewer>().Single();
+        if (Grid.GetRow(heading) != 0 || Grid.GetColumnSpan(heading) != 2 ||
+            Grid.GetRow(navigation) != 1 || Grid.GetColumn(navigation) != 0 ||
+            Grid.GetRow(scroller) != 1 || Grid.GetColumn(scroller) != 1)
+            throw new InvalidOperationException("The page title did not span the navigation and settings columns.");
         var pages = FormFields(form).Children.OfType<StackPanel>().ToArray();
         if (!navigation.Items.OfType<ListBoxItem>().Select(item => ((TextBlock)item.Content).Text)
             .SequenceEqual(titles.Select(App.Text)) || pages.Length != titles.Length)
@@ -1450,12 +1537,29 @@ internal static partial class Program
 
             var navigation = FindControls<ListBox>(form).Single();
             var save = FindControls<Button>(form).Single(button => Equals(button.Content, App.Text("Save")));
+            navigation.SelectedItem = navigation.Items.OfType<ListBoxItem>().Single(item => Equals(item.Tag, "SettingsLogNaming"));
+            CheckBox NamingCheck(string key) => FindControls<CheckBox>(form).Single(check =>
+                AutomationProperties.GetLabeledBy(check) is Label { Content: TextBlock label } && label.Text == App.Text(key));
+            var logDate = NamingCheck("LogNameIncludeDate");
+            var logTime = NamingCheck("LogNameIncludeTime");
+            var logSequence = NamingCheck("LogNameIncludeSequence");
+            if (logDate.IsChecked != true || logTime.IsChecked != false || !logTime.IsEnabled || logSequence.IsChecked != true ||
+                AutomationProperties.GetHelpText(logSequence) != App.Text("LogNameIncludeSequenceDescription"))
+                throw new InvalidOperationException("The log name defaults or overwrite description were missing.");
+            logTime.IsChecked = true;
+            logDate.IsChecked = false;
+            if (logTime.IsEnabled || logTime.IsChecked != false)
+                throw new InvalidOperationException("Turning off the date did not clear and disable the time option.");
+            logSequence.IsChecked = false;
             navigation.SelectedIndex = 2;
             autoClose.IsChecked = false;
             save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, save));
             while (form.IsBusy) await Task.Delay(15, deadline.Token);
             using (var saved = System.Text.Json.JsonDocument.Parse(File.ReadAllBytes(settingsPath)))
                 if (app.AutoCloseDisconnectedTabs || saved.RootElement.GetProperty("autoCloseDisconnectedTabs").GetBoolean() ||
+                    app.RecordingNames != new RecordingNameOptions(false, false, false) ||
+                    new[] { "logNameIncludeDate", "logNameIncludeTime", "logNameIncludeSequence" }
+                        .Any(key => saved.RootElement.GetProperty(key).GetBoolean()) ||
                     saved.RootElement.GetProperty("language").GetString() != "system")
                     throw new InvalidOperationException("Saving settings did not preserve the disabled override and system language choice.");
 
@@ -2112,6 +2216,11 @@ internal static partial class Program
         using var parsed = System.Text.Json.JsonDocument.Parse(original.ToEditorJson());
         var form = new FormView();
         var editor = new ProfileEditor(form, original, app);
+        var navigation = FindControls<ListBox>(form).Single();
+        var authenticationMenu = navigation.Items.OfType<ListBoxItem>()
+            .Single(item => Equals(item.Tag, "ProfileAuthenticationGroup"));
+        if (authenticationMenu.Visibility != Visibility.Collapsed)
+            throw new InvalidOperationException("Telnet showed SSH authentication in its navigation.");
         ConnectionProfile unchanged = editor.GetDraft();
         Equal(unchanged.ToEditorJson(), original.ToEditorJson());
         ((System.Windows.Controls.TextBox)form.FindName("WaitSeconds")).Text = "45";
@@ -2126,17 +2235,22 @@ internal static partial class Program
         ((RadioButton)form.FindName("ProtocolSSH")).IsChecked = true;
         var ssh = (StackPanel)form.FindName("sshFields");
         ((TextBox)ssh.FindName("Host")).Text = "example.test";
-        ((TextBox)ssh.FindName("SshUsername")).Text = "operator";
+        if (authenticationMenu.Visibility != Visibility.Visible)
+            throw new InvalidOperationException("Selecting SSH did not make its authentication page available.");
+        navigation.SelectedItem = authenticationMenu;
+        var authentication = (StackPanel)form.FindName("sshAuthenticationFields");
+        ((TextBox)authentication.FindName("SshUsername")).Text = "operator";
         ConnectionProfile sshDraft = editor.GetDraft();
         if (ssh.Visibility != Visibility.Visible || telnet.Visibility != Visibility.Collapsed ||
-            sshDraft.Type != "ssh" || sshDraft.Port != 22 || sshDraft.Id != original.Id ||
+            sshDraft.Type != "ssh" || sshDraft.SshUsername != "operator" || sshDraft.Port != 22 || sshDraft.Id != original.Id ||
             sshDraft.WaitSeconds != 45 || sshDraft.LogDirectory != "SessionLogs")
             throw new InvalidOperationException("Switching to SSH did not preserve common settings or use SSH defaults.");
         ((RadioButton)form.FindName("ProtocolCOM")).IsChecked = true;
         var serial = (StackPanel)form.FindName("serialFields");
         ((ComboBox)serial.FindName("ComPort")).Text = "COM7";
         ConnectionProfile serialDraft = editor.GetDraft();
-        if (serialDraft.Type != "serial" || serialDraft.Serial.PortName != "COM7" || serialDraft.Serial.BaudRate != 9600)
+        if (serialDraft.Type != "serial" || serialDraft.Serial.PortName != "COM7" || serialDraft.Serial.BaudRate != 9600 ||
+            authenticationMenu.Visibility != Visibility.Collapsed || navigation.SelectedIndex != 0)
             throw new InvalidOperationException("Switching to COM did not use the serial fields.");
         ((RadioButton)form.FindName("ProtocolTelnet")).IsChecked = true;
         if (editor.GetDraft().Enter != "lf")

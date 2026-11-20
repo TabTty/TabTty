@@ -262,7 +262,7 @@ internal static partial class MacroContracts
         await partial.CloseAsync();
     }
 
-    private static async Task RecordingRetryAsync()
+    internal static async Task RecordingRetryAsync()
     {
         using var directory = new TemporaryDirectory();
         using var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -273,7 +273,7 @@ internal static partial class MacroContracts
         string logs = Path.Combine(root, "logs");
         await File.WriteAllTextAsync(logs, "", deadline.Token);
         int port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        var profile = ConnectionProfile.CreateTelnet("profile", "127.0.0.1", port, recordRaw: true);
+        var profile = ConnectionProfile.CreateTelnet("接続:テスト", "127.0.0.1", port, recordRaw: true);
         var profileJson = System.Text.Json.Nodes.JsonNode.Parse(profile.ToEditorJson())!;
         profileJson["logging"]!["directory"] = "logs";
         await profile.Edit(profileJson.ToJsonString()).SaveNewAsync(profilePath, deadline.Token);
@@ -292,8 +292,9 @@ internal static partial class MacroContracts
             await UntilAsync(() => run.Status.Holds.HasFlag(MacroHold.RecordingReady));
             Check(!accepted.IsCompleted, "Retry implicitly resumed the connection.");
             string part = Directory.GetFiles(logs).Single();
-            Check(Path.GetFileName(part).StartsWith("example-", StringComparison.Ordinal) && !part.EndsWith("-p001.raw.tttylog", StringComparison.Ordinal),
-                "The successful retry used the wrong log stem or part.");
+            Check(Path.GetFileName(part).StartsWith("example_", StringComparison.Ordinal) &&
+                part.EndsWith("_0000.raw.tttylog", StringComparison.Ordinal),
+                "The first successful open did not use the first daily sequence.");
             run.Resume();
             using var peer = await accepted;
             byte[] message = new byte[20]; // Initial Telnet negotiation and the five macro bytes.

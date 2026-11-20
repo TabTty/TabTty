@@ -46,6 +46,16 @@ public sealed class App : Application
     internal long MaxPasteTextBytes => settings["maxPasteTextBytes"]?.GetValue<long>() ??
         TabTty.Core.TerminalPaste.DefaultMaxSourceBytes;
     internal bool BroadcastAcrossWindows => settings["broadcastAcrossWindows"]?.GetValue<bool>() ?? false;
+    internal RecordingNameOptions RecordingNames
+    {
+        get
+        {
+            var defaults = RecordingNameOptions.Default;
+            bool date = settings["logNameIncludeDate"]?.GetValue<bool>() ?? defaults.IncludeDate;
+            return new(date, date && (settings["logNameIncludeTime"]?.GetValue<bool>() ?? defaults.IncludeTime),
+                settings["logNameIncludeSequence"]?.GetValue<bool>() ?? defaults.IncludeSequence);
+        }
+    }
     internal BroadcastInput Broadcast { get; }
     internal AiCollaboration Ai { get; }
     internal int SettingsRevision { get; private set; }
@@ -359,7 +369,7 @@ public sealed class App : Application
     internal async Task SaveSettingsAsync(string languageChoice, string themeChoice, string bellChoice,
         string terminalFontFamily, double terminalFontSize, int retainedRows, bool autoCloseDisconnectedTabs,
         string vaultPath, int revision, bool? broadcastAcrossWindows = null, long? maxPasteTextBytes = null,
-        string? profileSaveDirectory = null)
+        string? profileSaveDirectory = null, RecordingNameOptions? recordingNames = null)
     {
         if (revision != SettingsRevision)
             throw new InvalidOperationException(Text("ManagementTabOutdated"));
@@ -389,6 +399,12 @@ public sealed class App : Application
             candidate["credentialVaultPath"] = vaultPath;
         if (profileSaveDirectory is not null)
             candidate["profileSaveDirectory"] = NormalizeProfileSaveDirectory(profileSaveDirectory);
+        if (recordingNames is { } naming)
+        {
+            candidate["logNameIncludeDate"] = naming.IncludeDate;
+            candidate["logNameIncludeTime"] = naming.IncludeDate && naming.IncludeTime;
+            candidate["logNameIncludeSequence"] = naming.IncludeSequence;
+        }
         byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(candidate, new JsonSerializerOptions { WriteIndented = true });
         if (bytes.Length > 65536) throw new InvalidDataException("Settings exceed 64 KiB.");
         var operation = JsonStoreRecovery.BeginSave(settingsPath, bytes, settingsOriginal,
@@ -463,6 +479,9 @@ public sealed class App : Application
         ["defaultTerminalFont"] = new JsonObject { ["family"] = "Consolas", ["sizePoints"] = 12d },
         ["defaultRetainedRows"] = 5000,
         ["autoCloseDisconnectedTabs"] = DefaultAutoCloseDisconnectedTabs,
+        ["logNameIncludeDate"] = RecordingNameOptions.Default.IncludeDate,
+        ["logNameIncludeTime"] = RecordingNameOptions.Default.IncludeTime,
+        ["logNameIncludeSequence"] = RecordingNameOptions.Default.IncludeSequence,
     };
 
     internal static string NormalizeVaultPath(string path)
@@ -512,6 +531,8 @@ public sealed class App : Application
                  maximum <= 0)) ||
             (parsed.ContainsKey("broadcastAcrossWindows") &&
                 (parsed["broadcastAcrossWindows"] is not JsonValue broadcast || !broadcast.TryGetValue<bool>(out _))) ||
+            !IsOptionalBoolean("logNameIncludeDate") || !IsOptionalBoolean("logNameIncludeTime") ||
+            !IsOptionalBoolean("logNameIncludeSequence") ||
             (parsed.ContainsKey("autoCloseDisconnectedTabs") &&
                 (parsed["autoCloseDisconnectedTabs"] is not JsonValue autoClose || !autoClose.TryGetValue<bool>(out _))))
         {
@@ -529,5 +550,8 @@ public sealed class App : Application
             catch (ArgumentException exception) { throw new InvalidDataException(Text("InvalidProfileSaveDirectory"), exception); }
         }
         return parsed;
+
+        bool IsOptionalBoolean(string key) => !parsed.ContainsKey(key) ||
+            parsed[key] is JsonValue value && value.TryGetValue<bool>(out _);
     }
 }

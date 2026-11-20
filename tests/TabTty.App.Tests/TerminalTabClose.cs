@@ -115,7 +115,7 @@ internal static partial class Program
             while (entireWindow && host.IsVisible) await Task.Delay(10, deadline.Token);
             if (questions != 2 || session.RecordingStatus.Disposition != RecordingDisposition.Incomplete)
                 throw new InvalidOperationException("The later explicit loss did not settle the original close.");
-            string log = Directory.GetFiles(Path.Combine(directory, "Logs"), label + "-*.raw.tttylog").Single();
+            string log = Directory.GetFiles(Path.Combine(directory, "Logs"), label + "_*.raw.tttylog").Single();
             if (new FileInfo(log).Length != 0)
                 throw new InvalidOperationException("A cancelled unissued recording write reached the file.");
         }

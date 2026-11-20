@@ -228,11 +228,10 @@ internal sealed class RecordingLifecycle(TerminalOutput terminal, SemaphoreSlim 
 
     internal static async Task<(SessionRecording? Recording, int Part)> PrepareInitialAsync(
         string path, ConnectionProfile profile, MacroRun? macro, CancellationToken token,
-        RecordingDestination? destination = null)
+        RecordingDestination? destination = null, RecordingNameOptions? recordingNames = null)
     {
         int number = 1;
         if (!profile.RecordsOutput) return (null, number);
-        DateTimeOffset? start = macro is null ? null : DateTimeOffset.Now;
         while (true)
         {
             SessionRecording? prepared = null;
@@ -240,7 +239,7 @@ internal sealed class RecordingLifecycle(TerminalOutput terminal, SemaphoreSlim 
             {
                 int next = number;
                 prepared = await PreparePartAsync(() => SessionRecording.Open(path, profile, macro?.BaseName,
-                    next, macro?.RunId, start, destination), token).ConfigureAwait(false);
+                    next, destination, nameOptions: recordingNames), token).ConfigureAwait(false);
                 if (number > 1 && macro is not null)
                 {
                     macro.RecordingRecovered();

@@ -111,13 +111,14 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
 
     internal static Task<TerminalSession> ConnectReviewedAsync(string path, ConnectionProfile profile, MacroRun? macro,
         CancellationToken token, SshInteraction ssh, Action<ConnectionProfile> opened, int defaultRetainedRows,
-        Func<CancellationToken, Task<(int Columns, int Rows)>> viewport, RecordingDestination? destination) =>
-        ConnectCoreAsync(path, token, ssh, opened, defaultRetainedRows, viewport, macro, profile, destination);
+        Func<CancellationToken, Task<(int Columns, int Rows)>> viewport, RecordingDestination? destination,
+        RecordingNameOptions recordingNames) =>
+        ConnectCoreAsync(path, token, ssh, opened, defaultRetainedRows, viewport, macro, profile, destination, recordingNames);
 
     private static async Task<TerminalSession> ConnectCoreAsync(string path, CancellationToken cancellationToken,
         SshInteraction? ssh, Action<ConnectionProfile>? opened, int defaultRetainedRows,
         Func<CancellationToken, Task<(int Columns, int Rows)>>? viewport, MacroRun? macro,
-        ConnectionProfile? reviewed = null, RecordingDestination? destination = null)
+        ConnectionProfile? reviewed = null, RecordingDestination? destination = null, RecordingNameOptions? recordingNames = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(defaultRetainedRows, 100);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(defaultRetainedRows, 100_000);
@@ -133,8 +134,8 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
         opened?.Invoke(profile);
         if (profile.Type == "ssh" && ssh is null)
             throw new InvalidOperationException("SSH requires host verification and authentication interaction.");
-        var (recording, recordingPart) = await RecordingLifecycle.PrepareInitialAsync(path, profile, macro, cancellationToken, destination)
-            .ConfigureAwait(false);
+        var (recording, recordingPart) = await RecordingLifecycle.PrepareInitialAsync(path, profile, macro, cancellationToken,
+            destination, recordingNames).ConfigureAwait(false);
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(profile.WaitSeconds));

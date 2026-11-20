@@ -24,8 +24,8 @@ internal sealed class ProfileEditorWindow : Window
         SetResourceReference(BackgroundProperty, "WindowBackground");
         SetResourceReference(ForegroundProperty, "WindowForeground");
         Content = form;
-        form.SetPageTitle(TitleKey);
-        app.Profiles.AddEditor(form, profile, titleKey == "EditProfile" ? identity : null, creating, SavedAs, fromExplorer);
+        UpdatePageTitle(profile.DisplayName);
+        app.Profiles.AddEditor(form, profile, titleKey == "EditProfile" ? identity : null, creating, OnSaved, fromExplorer);
         UpdateTitle();
         Closed += (_, _) => app.EditorClosed(this);
     }
@@ -47,13 +47,24 @@ internal sealed class ProfileEditorWindow : Window
         e.Cancel = !form.CanClose(form.ConfirmDiscardChanges);
     }
 
-    private void SavedAs(string path)
+    private void OnSaved(string path, string displayName)
     {
         TitleKey = "EditProfile";
         Identity = path;
         UpdateTitle();
-        form.SetPageTitle(TitleKey);
+        UpdatePageTitle(displayName);
     }
 
-    private void UpdateTitle() => Title = Identity is null ? Text(TitleKey) : $"{Text(TitleKey)} — {Path.GetFileName(Identity)}";
+    private void UpdatePageTitle(string displayName)
+    {
+        if (TitleKey == "EditProfile") form.SetPageTitle("EditNamedProfile", PermissionDisplay.Literal(displayName));
+        else form.SetPageTitle(TitleKey);
+    }
+
+    private void UpdateTitle() => Title = TitleKey switch
+    {
+        "NewProfile" => Text("NewProfileWindowTitle"),
+        "EditProfile" => Text("EditProfileWindowTitle"),
+        _ => Identity is null ? Text(TitleKey) : $"{Text(TitleKey)} — {Path.GetFileName(Identity)}",
+    };
 }

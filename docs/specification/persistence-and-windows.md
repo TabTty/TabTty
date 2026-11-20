@@ -69,7 +69,9 @@ named groups as submenus and ungrouped profiles at the root.
 
 The selected vault's rename dialog can update reviewed registered profiles. The update uses the ordinary verified edit path and changes the matching name field. Connection trust is evaluated for the resulting file revision. See [Vault format and operations](vault-format.md).
 
-SSH requires `connection.username`, entered in the profile editor. It must
+When SSH is selected, the profile editor shows an **Authentication** page
+for the username, method order, and saved credential references.
+`connection.username` is required. It must
 contain a non-whitespace character, contain no control characters, and fit
 within 1,024 bytes of strict UTF-8. Preserve it without trimming, case folding,
 or Unicode normalization. Selecting a credential changes only its reference.
@@ -130,6 +132,12 @@ as below. Candidate 6's final Q23 review was accepted on 2026-11-18; this
 documentation change implements no file migration.
 
 Language/theme/bell and saved rule content apply live after successful save.
+The application log-name settings are optional booleans in `settings.json`.
+`logNameIncludeDate` and `logNameIncludeSequence` default to `true`.
+`logNameIncludeTime` defaults to `false` and requires the date. The settings
+apply to subsequent connection attempts and are shared by ordinary and macro
+connections. See the [recording naming policy](../drafts/receive-logging-issue.md#confirmed-profile-and-file-organization).
+
 The auto-close preference applies to subsequent disconnections after saving.
 Broadcast scope is captured at Start under Q181, while Q187's broadened
 ordinary Stop command follows the saved global preference immediately. Q197

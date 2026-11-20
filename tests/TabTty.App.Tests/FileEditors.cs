@@ -1,11 +1,56 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using TabTty.App;
 using TabTty.Core;
 
 internal static partial class Program
 {
+    private static TextBlock ProfileEditorHeading(FormView form) =>
+        FindControls<TextBlock>(form).Single(text => AutomationProperties.GetHeadingLevel(text) == AutomationHeadingLevel.Level1);
+
+    private static async Task CheckProfileEditorHeadingAsync(App app, string directory)
+    {
+        const string originalName = "Saved profile";
+        const string newName = "Renamed profile";
+        string path = Path.Combine(directory, "separate-file-name.ttty");
+        var profile = ConnectionProfile.CreateTelnet(originalName, "localhost");
+        await profile.SaveNewAsync(path);
+        var editor = new ProfileEditorWindow(app, "EditProfile", path, profile, creating: false, fromExplorer: true);
+        var form = (FormView)editor.Content;
+        var heading = ProfileEditorHeading(form);
+        var name = (TextBox)form.FindName("Name");
+        try
+        {
+            CheckHeading(originalName);
+            name.Text = newName;
+            CheckHeading(originalName);
+
+            var save = FindControls<Button>(form).Single(button => Equals(button.Content, App.Text("Save")));
+            save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, save));
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            while (form.IsBusy) await Task.Delay(10, deadline.Token);
+            if (form.HasUnsavedChanges || editor.Identity != path || (await ConnectionProfile.LoadAsync(path)).DisplayName != newName)
+                throw new InvalidOperationException("The profile was not saved in place.");
+            CheckHeading(newName);
+            editor.UpdateLabels();
+            CheckHeading(newName);
+        }
+        finally
+        {
+            if (!form.HasUnsavedChanges && !form.IsBusy && form.UnresolvedPublication is null) editor.Close();
+        }
+
+        void CheckHeading(string expected)
+        {
+            if (editor.Title != App.Text("EditProfileWindowTitle"))
+                throw new InvalidOperationException("The editor window did not use a fixed title.");
+            if (heading.Text != string.Format(App.Text("EditNamedProfile"), expected))
+                throw new InvalidOperationException($"The editor heading did not show the saved profile name: {expected}.");
+        }
+    }
+
     private static async Task CheckFileEditors(App app, string directory, FilePublicationFixture settingsFixture,
         FilePublicationFixture profileFixture)
     {

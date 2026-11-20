@@ -249,6 +249,7 @@ internal sealed partial class TerminalTab : UserControl
             string fontFamily = app.TerminalFontFamily;
             double fontSize = app.TerminalFontSize;
             int retention = app.RetainedRows;
+            RecordingNameOptions recordingNames = app.RecordingNames;
             int sessionRetention = retention;
             void Opened(ConnectionProfile profile) => Dispatcher.BeginInvoke(() =>
                 {
@@ -271,7 +272,7 @@ internal sealed partial class TerminalTab : UserControl
                 string attemptPath = path;
                 var (profile, recordingDestination) = await app.Profiles.AdmitAsync(owner, attemptPath, Macro?.BaseName, startup.Token);
                 session = await TerminalSession.ConnectReviewedAsync(attemptPath, profile, Macro, startup.Token, interaction,
-                    Opened, retention, Viewport, recordingDestination);
+                    Opened, retention, Viewport, recordingDestination, recordingNames);
             }
             session.Bell += () =>
             {

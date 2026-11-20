@@ -298,14 +298,34 @@ does not guarantee immediate OS cancellation or deletion of already-created file
 - Default that folder to relative `Logs` (Q67 accepted). After profile validation,
   create the chosen folder when starting configured recording if it does not
   exist. If creation/opening fails, report the failure before transport startup.
-- Initially generate names from the sanitized profile name, connection-start
-  local timestamp including its UTC offset, unique session suffix, and part
-  number starting at `p001`. Text uses `<stem>.log`; Raw uses
+- Derive the filename stem from the sanitized profile name, or the sanitized
+  captured macro basename for a macro-launched connection. Application settings
+  control three optional components, in order: `_yyyy-MM-dd`, `_HH-mm-ss`, and
+  `_<sequence>`. Date and sequence default to On. Time defaults to Off and is
+  available only with Date On. Turning Date Off clears Time. Capture these
+  settings at connection start, including for reconnects, and reuse them for
+  pause/resume and retry. Use the local date and time at each part's open. A
+  part that remains open across midnight keeps its filename.
+- Allocate the sequence per destination directory and sanitized filename prefix
+  (using Windows filename comparison). With Date On, the sequence is scoped to
+  the local date across both timed and untimed files. With Date Off, use one
+  sequence for the undated filenames across days. Start at `0` if no
+  matching files exist. Otherwise use one greater than the highest sequence
+  found among matching Text, Raw, or Terminal files, regardless of which
+  formats are selected now. Format the sequence in decimal with leading zeros
+  through `9999`, giving `0000` through `9999`, followed by `10000`, `10001`, and
+  so on. Use the same sequence for every format in a recording part. Concurrent
+  allocations must use distinct stems, including when their format selections
+  are disjoint. Use create-new file opens to prevent overwriting.
+- With Sequence Off, overwrite an existing file with the same complete name.
+  Explain this behavior on the setting. Acquire all selected files for writing
+  before truncating any existing content. A concurrent attempt to open a file
+  that an active recording owns reports an open failure.
+- Text uses `<stem>.log`; Raw uses
   `<stem>.raw.tttylog`; Terminal uses `<stem>.term.tttylog`. The final extension
   is provisionally `.tttylog` for both Raw and Terminal, while `.raw`/`.term`
   are filename markers, not different final extensions. Include the markers
-  even when only one format is selected. Create without overwriting recordings.
-  Concurrent sessions and manual reconnect use new files.
+  even when only one format is selected.
 - Text remains UTF-8 without a BOM. Raw is a headerless `.tttylog` stream of
   the original received terminal bytes, without a TabTty-added BOM or records.
   An actual BOM supplied by the peer remains part of those bytes. Accepted Q126
@@ -340,7 +360,7 @@ does not guarantee immediate OS cancellation or deletion of already-created file
   template, the macro name, or an explicitly supplied startup/invocation naming
   argument. Those input mechanisms and their precedence are deferred decisions,
   not initial UI, command-line, or macro-runtime requirements.
-- Keep destination resolution, filename validation, no-overwrite creation,
+- Keep destination resolution, filename validation, creation and replacement,
   collision handling, grouping of selected formats, and resume/retry part
   management in the logging module regardless of how a name is selected. A future naming input
   must not independently open files or bypass profile recording eligibility.
@@ -525,7 +545,7 @@ Terminal; Q95 records the user's name, provisional extension, and filename marke
   Raw keeps `.tttylog` and Text keeps `.log`. This does not merge Raw and Terminal
   contents or change either representation. The selected mode determines file
   contents; the shared extension alone cannot distinguish the formats.
-- Preserve the common session/part stem while adding `.raw` or `.term` before
+- Use the common recording-part stem while adding `.raw` or `.term` before
   the shared final extension. The user's follow-up shortens `.terminal` to
   `.term` as the filename marker; the mode name remains Terminal and the final
   extension remains `.tttylog`. Thus `<stem>.raw.tttylog` and
@@ -822,8 +842,14 @@ screen cases below belong to Text. Q95-Q98 cases reflect the accepted revisions.
 - Selecting all three formats creates `<stem>.log`, `<stem>.raw.tttylog`, and
   `<stem>.term.tttylog` under the initial naming rule, with separate contents.
   The final extension does not identify Raw versus Terminal. Single-format
-  sessions use the same format-specific filename rule. Resume/retry increments
-  the common part number without profile-name parsing in the write lifecycle.
+  sessions use the same format-specific filename rule.
+- The first part for `Server-A` on a date uses `Server-A_2026-11-21_0000` as
+  its stem. Reconnect, resume, and retry each take the next available sequence.
+  Verify the transition from `9999` to `10000`, a new day starting at `0000`,
+  and a part staying open across midnight. A new part started after midnight
+  uses the new date. Concurrent opens with disjoint formats and files left by
+  an earlier application run participate in the same sequence for that prefix,
+  directory, and date.
 - No age/count/size condition automatically deletes recordings. There is no
   open-log-folder action or dedicated log-viewer UI in the initial release.
 - Design review confirms that future name selection can change without editing

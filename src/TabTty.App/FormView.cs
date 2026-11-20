@@ -5,6 +5,7 @@ using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
+using System.Windows.Input;
 using static TabTty.App.App;
 
 namespace TabTty.App;
@@ -14,10 +15,13 @@ internal sealed class FormView : DockPanel
     private readonly StackPanel fields = new() { Margin = new Thickness(14) };
     private readonly ScrollViewer scroller;
     private Panel? section;
+    private bool hasNavigation;
+    private double AdditionalFieldSpacing => hasNavigation ? 8 : 0;
     private readonly bool modal;
     private readonly List<Action> labels = [];
     private TextBlock? pageTitle;
     private string? pageTitleKey;
+    private string? pageTitleArgument;
     private readonly List<EditField> edits = [];
     private Func<bool>? savesSection;
     private bool tracksEdits;
@@ -63,9 +67,10 @@ internal sealed class FormView : DockPanel
         busyStatus = status;
     }
 
-    public void SetPageTitle(string key)
+    public void SetPageTitle(string key, string? argument = null)
     {
         pageTitleKey = key;
+        pageTitleArgument = argument;
         if (pageTitle is null)
         {
             fields.Margin = new Thickness(24, 20, 24, 24);
@@ -74,9 +79,15 @@ internal sealed class FormView : DockPanel
                 TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 18) };
             AutomationProperties.SetHeadingLevel(pageTitle, AutomationHeadingLevel.Level1);
             fields.Children.Insert(0, pageTitle);
-            AddLocalizedUpdate(() => pageTitle.Text = Text(pageTitleKey!));
+            AddLocalizedUpdate(() => pageTitle.Text = FormatPageTitle());
         }
-        else pageTitle.Text = Text(key);
+        else pageTitle.Text = FormatPageTitle();
+
+        string FormatPageTitle()
+        {
+            string text = Text(pageTitleKey!);
+            return pageTitleArgument is null ? text : string.Format(text, pageTitleArgument);
+        }
     }
 
     public void RequestClose(Func<bool> confirmDiscard)
@@ -120,7 +131,7 @@ internal sealed class FormView : DockPanel
 
     public void AddGroup(string key, Action build)
     {
-        var card = new Grid { Margin = new Thickness(0, 0, 0, 12) };
+        var card = new Grid { Margin = new Thickness(0, AdditionalFieldSpacing, 0, 12) };
         var outline = new Border { BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8),
             Opacity = 0.18, IsHitTestVisible = false };
         outline.SetResourceReference(Border.BorderBrushProperty, "WindowForeground");
@@ -162,12 +173,13 @@ internal sealed class FormView : DockPanel
         };
     }
 
-    public void AddNavigation(params (string Title, Action Build)[] sections)
+    public ListBox AddNavigation(params (string Title, Action Build)[] sections)
     {
+        hasNavigation = true;
         var navigation = new ListBox
         {
             Background = System.Windows.Media.Brushes.Transparent,
-            BorderThickness = new Thickness(0), Margin = new Thickness(8, 20, 8, 12),
+            BorderThickness = new Thickness(0), Margin = new Thickness(8, 0, 8, 12),
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
         };
         ScrollViewer.SetHorizontalScrollBarVisibility(navigation, ScrollBarVisibility.Disabled);
@@ -177,7 +189,10 @@ internal sealed class FormView : DockPanel
         {
             var title = new TextBlock { TextWrapping = TextWrapping.Wrap };
             SetText(key, value => title.Text = value);
-            navigation.Items.Add(new ListBoxItem { Content = title, MinHeight = 36, Padding = new Thickness(10, 6, 10, 6) });
+            navigation.Items.Add(new ListBoxItem
+            {
+                Tag = key, Content = title, MinHeight = 36, Padding = new Thickness(10, 6, 10, 6),
+            });
             var page = new StackPanel { Visibility = Visibility.Collapsed, MaxWidth = 620, HorizontalAlignment = HorizontalAlignment.Left };
             page.SetBinding(WidthProperty, new Binding(nameof(ActualWidth)) { Source = fields });
             fields.Children.Add(page);
@@ -201,10 +216,24 @@ internal sealed class FormView : DockPanel
         var layout = new Grid();
         layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(190) });
         layout.ColumnDefinitions.Add(new ColumnDefinition());
+        layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        layout.RowDefinitions.Add(new RowDefinition());
+        if (pageTitle is not null)
+        {
+            fields.Children.Remove(pageTitle);
+            pageTitle.Margin = new Thickness(24, 20, 24, 12);
+            Grid.SetColumnSpan(pageTitle, 2);
+            layout.Children.Add(pageTitle);
+            var margin = fields.Margin;
+            fields.Margin = new Thickness(margin.Left, 0, margin.Right, margin.Bottom);
+        }
         var separator = new Border { Width = 1, Opacity = 0.16, HorizontalAlignment = HorizontalAlignment.Right,
-            Margin = new Thickness(0, 12, 0, 12), IsHitTestVisible = false };
+            Margin = new Thickness(0, 0, 0, 12), IsHitTestVisible = false };
         separator.SetResourceReference(Border.BackgroundProperty, "WindowForeground");
         Children.Remove(scroller);
+        Grid.SetRow(navigation, 1);
+        Grid.SetRow(separator, 1);
+        Grid.SetRow(scroller, 1);
         Grid.SetColumn(scroller, 1);
         layout.Children.Add(navigation);
         layout.Children.Add(separator);
@@ -212,6 +241,7 @@ internal sealed class FormView : DockPanel
         Children.Add(layout);
         layout.SizeChanged += (_, args) =>
             layout.ColumnDefinitions[0].Width = new GridLength(args.NewSize.Width < 650 ? 146 : 190);
+        return navigation;
     }
 
     public void AddActionRow(Action build)
@@ -263,12 +293,37 @@ internal sealed class FormView : DockPanel
         finally { section = previous; }
     }
 
-    public void AddChoicePanel(string key, Panel choices)
+    public TextBlock AddChoicePanel(string key, Panel choices, string descriptionKey)
     {
-        var label = new TextBlock { Margin = new Thickness(0, 8, 0, 4) };
+        AddChoiceLabel(key);
+        var description = AddFieldDescription(descriptionKey);
+        (section ?? fields).Children.Add(choices);
+        return description;
+    }
+
+    public void AddCheckBoxGroup(string key, Action build)
+    {
+        AddChoiceLabel(key);
+        var choices = new WrapPanel();
+        (section ?? fields).Children.Add(choices);
+        BuildIn(choices, build);
+    }
+
+    private void AddChoiceLabel(string key)
+    {
+        var label = new TextBlock { FontWeight = FontWeights.Bold, TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 8 + AdditionalFieldSpacing, 0, 4) };
         SetText(key, value => label.Text = value);
         (section ?? fields).Children.Add(label);
-        (section ?? fields).Children.Add(choices);
+    }
+
+    private TextBlock AddFieldDescription(string key)
+    {
+        var description = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12, Opacity = 0.7,
+            Margin = new Thickness(0, 0, 0, 4) };
+        SetText(key, value => description.Text = value);
+        (section ?? fields).Children.Add(description);
+        return description;
     }
 
     public void AddNotice(string key)
@@ -306,18 +361,22 @@ internal sealed class FormView : DockPanel
     public Button AddAsyncAction(string key, Func<Task> action) => AddAction(key, async () => await RunAsync(action));
 
     public void AddField(string key, Control control, bool trackEdit = true, string? actionKey = null,
-        Func<Task>? action = null)
+        Func<Task>? action = null, string? descriptionKey = null, bool inlineCheckBox = false)
     {
-        if (!modal && section is not null && control is CheckBox { Content: null } check)
+        if (control is CheckBox { Content: null } check && descriptionKey is null &&
+            (inlineCheckBox || !modal && section is not null && (!hasNavigation || section is WrapPanel)))
         {
-            check.Margin = new Thickness(0, 6, 0, 3);
-            SetText(key, value => check.Content = new TextBlock { Text = value, TextWrapping = TextWrapping.Wrap });
-            section.Children.Add(check);
+            if (check.ReadLocalValue(MarginProperty) == DependencyProperty.UnsetValue)
+                check.Margin = hasNavigation ? new Thickness(0, 0, 18, 6) : new Thickness(0, 6, 0, 3);
+            SetCheckBoxContent(check, key);
+            (section ?? fields).Children.Add(check);
         }
         else
         {
-            var label = AddLabel(control, addControl: action is null);
+            var label = AddLabel(control, addControl: action is null, descriptionKey: descriptionKey);
             SetText(key, value => label.Text = value);
+            if (hasNavigation && control is CheckBox { Content: null } standalone)
+                SetCheckBoxContent(standalone, "Enabled");
             if (action is not null)
             {
                 var row = new Grid();
@@ -352,6 +411,13 @@ internal sealed class FormView : DockPanel
         }
     }
 
+    private void SetCheckBoxContent(CheckBox check, string key)
+    {
+        var content = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        SetText(key, value => content.Text = value);
+        check.Content = content;
+    }
+
     public void TrackValue<T>(Func<T> read, Action<T> restore, Func<T, T, bool>? equals = null)
     {
         T saved = default!;
@@ -365,14 +431,22 @@ internal sealed class FormView : DockPanel
 
     public void AddPrompt(string caption, Control control) => AddLabel(control).Text = caption;
 
-    private TextBlock AddLabel(Control control, bool addControl = true)
+    private TextBlock AddLabel(Control control, bool addControl = true, string? descriptionKey = null)
     {
         var text = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        if (hasNavigation) text.FontWeight = FontWeights.Bold;
         var label = new Label { Content = text, Target = control };
-        if (pageTitle is not null && section is not null) label.Margin = new Thickness(0, 5, 0, 0);
+        double topMargin = (pageTitle is not null && section is not null ? 5 : 0) + AdditionalFieldSpacing;
+        if (topMargin > 0) label.Margin = new Thickness(0, topMargin, 0, 0);
         label.SetBinding(VisibilityProperty, new Binding(nameof(Visibility)) { Source = control });
         AutomationProperties.SetLabeledBy(control, label);
         (section ?? fields).Children.Add(label);
+        if (descriptionKey is not null)
+        {
+            var description = AddFieldDescription(descriptionKey);
+            description.SetBinding(VisibilityProperty, new Binding(nameof(Visibility)) { Source = control });
+            control.SetBinding(AutomationProperties.HelpTextProperty, new Binding(nameof(TextBlock.Text)) { Source = description });
+        }
         if (addControl) (section ?? fields).Children.Add(control);
         return text;
     }
@@ -381,7 +455,8 @@ internal sealed class FormView : DockPanel
         AddAsyncButtons(() => { save(); return Task.FromResult(true); }, acceptKey, cancelDefault, cancelKey);
 
     public void AddAsyncButtons(Func<Task<bool>> save, string acceptKey = "Save", bool cancelDefault = false,
-        string cancelKey = "Cancel") => AddButtonRow(save, acceptKey, cancelDefault, cancelKey, () => Cancel());
+        string cancelKey = "Cancel", bool acceptOnEnter = true) =>
+        AddButtonRow(save, acceptKey, cancelDefault, cancelKey, () => Cancel(), acceptOnEnter: acceptOnEnter);
 
     public void AddEditorButtons(Action save) => AddEditorButtons(() =>
     {
@@ -389,7 +464,7 @@ internal sealed class FormView : DockPanel
         return Task.FromResult(true);
     });
 
-    public void AddEditorButtons(Func<Task<bool>> save)
+    public void AddEditorButtons(Func<Task<bool>> save, Func<bool>? isCreating = null)
     {
         foreach (EditField edit in edits) edit.Capture();
         tracksEdits = true;
@@ -398,7 +473,7 @@ internal sealed class FormView : DockPanel
             if (IsBusy || !HasUnsavedChanges) return;
             foreach (EditField edit in edits) edit.Restore();
             updateEditorButtons?.Invoke();
-        });
+        }, isCreating);
         AddHandler(TextBoxBase.TextChangedEvent, new TextChangedEventHandler(OnEditorInputChanged), true);
         AddHandler(Selector.SelectionChangedEvent, new SelectionChangedEventHandler(OnEditorInputChanged), true);
         AddHandler(ToggleButton.CheckedEvent, new RoutedEventHandler(OnEditorInputChanged), true);
@@ -413,7 +488,7 @@ internal sealed class FormView : DockPanel
     }
 
     private void AddButtonRow(Func<Task<bool>> save, string acceptKey, bool cancelDefault, string cancelKey,
-        Action cancelAction)
+        Action cancelAction, Func<bool>? isCreating = null, bool acceptOnEnter = true)
     {
         var buttons = new StackPanel
         {
@@ -421,9 +496,11 @@ internal sealed class FormView : DockPanel
             HorizontalAlignment = HorizontalAlignment.Right,
             Margin = new Thickness(0, 12, 0, 0),
         };
-        var apply = new Button { IsDefault = !cancelDefault, Margin = new Thickness(4) };
+        bool acceptsReturn = acceptOnEnter && acceptKey != "Save";
+        var apply = new Button { IsDefault = acceptsReturn && !cancelDefault, Margin = new Thickness(4) };
+        if (!acceptsReturn) KeyboardNavigation.SetAcceptsReturn(apply, false);
         var cancel = new Button { IsCancel = modal, IsDefault = cancelDefault, Margin = new Thickness(4) };
-        SetText(acceptKey, value => apply.Content = value);
+        if (!tracksEdits) SetText(acceptKey, value => apply.Content = value);
         SetText(cancelKey, value => cancel.Content = value);
         apply.Click += async (_, _) =>
         {
@@ -453,7 +530,11 @@ internal sealed class FormView : DockPanel
                 else Window.GetWindow(this)?.Close();
             };
             buttons.Children.Add(close);
-            updateEditorButtons = () => apply.IsEnabled = cancel.IsEnabled = HasUnsavedChanges;
+            updateEditorButtons = () =>
+            {
+                apply.Content = Text(isCreating?.Invoke() == true ? "Create" : acceptKey);
+                apply.IsEnabled = cancel.IsEnabled = HasUnsavedChanges;
+            };
             updateEditorButtons();
         }
         if (!modal && pageTitle is not null && tracksEdits)

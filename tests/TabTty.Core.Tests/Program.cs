@@ -7,6 +7,18 @@ using TabTty.Core;
 
 try
 {
+    if (args is ["--recording-names"])
+    {
+        await ProfileAndRecordingPathsUseOrdinaryFiles();
+        Console.WriteLine("PASS ProfileAndRecordingPathsUseOrdinaryFiles");
+        await RecordingNamesShareDailySequences();
+        Console.WriteLine("PASS RecordingNamesShareDailySequences");
+        await RecordingNameOptionsFormatAndReplaceFiles();
+        Console.WriteLine("PASS RecordingNameOptionsFormatAndReplaceFiles");
+        await MacroContracts.RecordingRetryAsync();
+        Console.WriteLine("PASS MacroRecordingRetryBeforeTransport");
+        return 0;
+    }
     if (args is ["--native-bundle-probe"])
     {
         var terminal = new TerminalOutput();
@@ -118,6 +130,10 @@ try
     Console.WriteLine("PASS FirstProfileSaveCreatesTheParentFolders");
     await ProfileAndRecordingPathsUseOrdinaryFiles();
     Console.WriteLine("PASS ProfileAndRecordingPathsUseOrdinaryFiles");
+    await RecordingNamesShareDailySequences();
+    Console.WriteLine("PASS RecordingNamesShareDailySequences");
+    await RecordingNameOptionsFormatAndReplaceFiles();
+    Console.WriteLine("PASS RecordingNameOptionsFormatAndReplaceFiles");
     await ProfileEditsPreserveIdentityAndRejectExternalChanges();
     Console.WriteLine("PASS ProfileEditsPreserveIdentityAndRejectExternalChanges");
     await SavedSshProfileKeepsTheCredentialReference();
@@ -1212,8 +1228,113 @@ static async Task ProfileAndRecordingPathsUseOrdinaryFiles()
     await profile.SaveNewAsync(profilePath);
     SessionRecording recording = SessionRecording.Open(profilePath, profile);
     await recording.FinishAsync();
-    if (!Directory.EnumerateFiles(Path.Combine(folder.Path, "Logs"), "_NUL.session-*.log").Any())
+    string logs = Path.Combine(folder.Path, "Logs");
+    if (!Directory.EnumerateFiles(logs, "_NUL.session_*_0000.log").Any())
         throw new InvalidOperationException("The recording name did not preserve the label as an ordinary file.");
+
+    var longName = ConnectionProfile.CreateTelnet(new string('P', 64), "localhost", recordText: true);
+    string macroPrefix = string.Concat(Enumerable.Repeat("🔧", 64));
+    string macroName = macroPrefix + "truncated";
+    SessionRecording macroRecording = SessionRecording.Open(profilePath, longName, macroName);
+    await macroRecording.FinishAsync();
+    if (!Directory.EnumerateFiles(logs, macroPrefix + "_*_0000.log").Any())
+        throw new InvalidOperationException("The recording label did not use only the macro name within the scalar limit.");
+}
+
+static async Task RecordingNamesShareDailySequences()
+{
+    using var folder = new TemporaryDirectory();
+    string path = Path.Combine(folder.Path, "server.ttty");
+    string logs = Path.Combine(folder.Path, "Logs");
+    var clock = new RecordingDateClock(new DateTimeOffset(2026, 11, 21, 14, 59, 59, TimeSpan.Zero));
+    var all = ConnectionProfile.CreateTelnet("Server", "localhost", recordRaw: true, recordText: true,
+        recordTerminal: true);
+    var raw = ConnectionProfile.CreateTelnet("Server", "localhost", recordRaw: true);
+    var text = ConnectionProfile.CreateTelnet("Server", "localhost", recordText: true);
+    var first = SessionRecording.Open(path, all, timeProvider: clock);
+    await first.FinishAsync();
+    foreach (string extension in new[] { ".log", ".raw.tttylog", ".term.tttylog" })
+        if (!File.Exists(Path.Combine(logs, "Server_2026-11-21_0000" + extension)))
+            throw new InvalidOperationException("Recording formats did not share the first stem.");
+
+    var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var concurrent = new[] { OpenAndFinishAsync(raw), OpenAndFinishAsync(text) };
+    ready.SetResult();
+    await Task.WhenAll(concurrent);
+    foreach (string sequence in new[] { "0001", "0002" })
+        if (Directory.GetFiles(logs, $"Server_2026-11-21_{sequence}.*").Length != 1)
+            throw new InvalidOperationException("Concurrent disjoint formats reused or skipped a daily sequence.");
+
+    string oldLog = Path.Combine(logs, "job_2026-11-21_9999.RAW.TTTYLOG");
+    await File.WriteAllTextAsync(oldLog, "previous run");
+    var beforeMidnight = SessionRecording.Open(path, text, "Job", timeProvider: clock);
+    clock.UtcNow = clock.UtcNow.AddSeconds(1);
+    await beforeMidnight.FinishAsync();
+    await beforeMidnight.OpenPart(2).FinishAsync();
+    var otherProfile = ConnectionProfile.CreateTelnet("Other server", "localhost", recordRaw: true);
+    await SessionRecording.Open(path, otherProfile, "Job", timeProvider: clock).FinishAsync();
+    if (!File.Exists(Path.Combine(logs, "Job_2026-11-21_10000.log")) ||
+        !File.Exists(Path.Combine(logs, "Job_2026-11-22_0000.log")) ||
+        !File.Exists(Path.Combine(logs, "Job_2026-11-22_0001.raw.tttylog")) ||
+        await File.ReadAllTextAsync(oldLog) != "previous run" || Directory.GetFiles(logs, "*.reserve").Length != 0)
+        throw new InvalidOperationException("Macro recording did not preserve existing files and rotate its sequence by local date.");
+
+    async Task OpenAndFinishAsync(ConnectionProfile profile)
+    {
+        await ready.Task;
+        await SessionRecording.Open(path, profile, timeProvider: clock).FinishAsync();
+    }
+}
+
+static async Task RecordingNameOptionsFormatAndReplaceFiles()
+{
+    using var folder = new TemporaryDirectory();
+    string path = Path.Combine(folder.Path, "server.ttty");
+    string logs = Path.Combine(folder.Path, "Logs");
+    var clock = new RecordingDateClock(new DateTimeOffset(2026, 11, 21, 5, 30, 5, TimeSpan.Zero));
+    var text = ConnectionProfile.CreateTelnet("Server", "localhost", recordText: true);
+    var raw = ConnectionProfile.CreateTelnet("Server", "localhost", recordRaw: true);
+    var both = ConnectionProfile.CreateTelnet("Server", "localhost", recordText: true, recordRaw: true);
+    RecordingNameOptions timed = new(true, true, true);
+    await SessionRecording.Open(path, text, timeProvider: clock).FinishAsync();
+    await SessionRecording.Open(path, text, timeProvider: clock, nameOptions: timed).FinishAsync();
+    clock.UtcNow = clock.UtcNow.AddSeconds(1);
+    await SessionRecording.Open(path, text, timeProvider: clock, nameOptions: timed).FinishAsync();
+    await SessionRecording.Open(path, text, "Backup", timeProvider: clock, nameOptions: new(true, true, false)).FinishAsync();
+    RecordingNameOptions undated = new(false, true, true);
+    await SessionRecording.Open(path, text, timeProvider: clock, nameOptions: undated).FinishAsync();
+    clock.UtcNow = clock.UtcNow.AddDays(1);
+    await SessionRecording.Open(path, text, timeProvider: clock, nameOptions: undated).FinishAsync();
+    string[] expected = ["Server_2026-11-21_0000.log", "Server_2026-11-21_14-30-05_0001.log",
+        "Server_2026-11-21_14-30-06_0002.log", "Backup_2026-11-21_14-30-06.log", "Server_0000.log", "Server_0001.log"];
+    if (!expected.Order().SequenceEqual(Directory.GetFiles(logs).Select(Path.GetFileName).Order()))
+        throw new InvalidOperationException("The recording settings produced unexpected filenames.");
+
+    RecordingNameOptions bare = new(false, false, false);
+    var original = SessionRecording.Open(path, both, timeProvider: clock, nameOptions: bare);
+    original.Enqueue(RecordingFormat.Raw, "raw content"u8.ToArray());
+    original.Enqueue(RecordingFormat.Text, "old text"u8.ToArray());
+    await original.FinishAsync();
+    var active = SessionRecording.Open(path, text, timeProvider: clock, nameOptions: bare);
+    try
+    {
+        active.Enqueue(RecordingFormat.Text, "new"u8.ToArray());
+        if (OperatingSystem.IsWindows())
+        {
+            try
+            {
+                var conflicting = SessionRecording.Open(path, both, timeProvider: clock, nameOptions: bare);
+                await conflicting.FinishAsync();
+                throw new InvalidOperationException("A second writer opened an active recording.");
+            }
+            catch (IOException) { }
+        }
+    }
+    finally { await active.FinishAsync(); }
+    ExpectBytes(await File.ReadAllBytesAsync(Path.Combine(logs, "Server.log")), "new"u8.ToArray());
+    ExpectBytes(await File.ReadAllBytesAsync(Path.Combine(logs, "Server.raw.tttylog")), "raw content"u8.ToArray());
+    await SessionRecording.Open(path, raw, timeProvider: clock, nameOptions: bare).FinishAsync();
+    ExpectBytes(await File.ReadAllBytesAsync(Path.Combine(logs, "Server.raw.tttylog")), []);
 }
 
 static void FragmentedTelnetCommandsStayOutOfTerminalData()
@@ -1315,8 +1436,8 @@ static async Task RawResumeStartsANewPartWithoutBackfilling()
     await session.PauseRecordingAsync(deadline.Token);
 
     string directory = Path.Combine(folder.Path, "Logs");
-    ExpectBytes(await File.ReadAllBytesAsync(Directory.GetFiles(directory, "*-p001.raw.tttylog").Single()), [65]);
-    ExpectBytes(await File.ReadAllBytesAsync(Directory.GetFiles(directory, "*-p002.raw.tttylog").Single()), [67]);
+    ExpectBytes(await File.ReadAllBytesAsync(Directory.GetFiles(directory, "*_0000.raw.tttylog").Single()), [65]);
+    ExpectBytes(await File.ReadAllBytesAsync(Directory.GetFiles(directory, "*_0001.raw.tttylog").Single()), [67]);
 }
 
 static async Task RecordingFormatsProjectTheSameSessionIndependently()
@@ -1369,10 +1490,10 @@ static async Task RecordingResumeDoesNotBackfillSplitUnits()
     server.Client.Shutdown(SocketShutdown.Send);
     while (await session.ReadOutputAsync(deadline.Token) is not null) { }
     string directory = Path.Combine(folder.Path, "Logs");
-    ExpectBytes(await File.ReadAllBytesAsync(Directory.GetFiles(directory, "*-p002.raw.tttylog").Single()),
+    ExpectBytes(await File.ReadAllBytesAsync(Directory.GetFiles(directory, "*_0001.raw.tttylog").Single()),
         [0x82, 13, 10, 66]);
-    ExpectBytes(await File.ReadAllBytesAsync(Directory.GetFiles(directory, "*-p002.log").Single()), [66]);
-    ExpectBytes(await File.ReadAllBytesAsync(Directory.GetFiles(directory, "*-p002.term.tttylog").Single()), [13, 10, 66]);
+    ExpectBytes(await File.ReadAllBytesAsync(Directory.GetFiles(directory, "*_0001.log").Single()), [66]);
+    ExpectBytes(await File.ReadAllBytesAsync(Directory.GetFiles(directory, "*_0001.term.tttylog").Single()), [13, 10, 66]);
 }
 
 static async Task ResizeKeepsTextRecordingBoundaries()
@@ -1470,9 +1591,9 @@ static async Task FailedRecordingCannotStopTheSessionOrItsReplacementPart()
     string logs = Path.Combine(folder.Path, "Logs");
     foreach (string extension in new[] { "raw.tttylog", "log", "term.tttylog" })
     {
-        ExpectBytes(await File.ReadAllBytesAsync(Directory.GetFiles(logs, "*-p001." + extension).Single()),
+        ExpectBytes(await File.ReadAllBytesAsync(Directory.GetFiles(logs, "*_0000." + extension).Single()),
             "before\r\n"u8.ToArray());
-        ExpectBytes(await File.ReadAllBytesAsync(Directory.GetFiles(logs, "*-p002." + extension).Single()),
+        ExpectBytes(await File.ReadAllBytesAsync(Directory.GetFiles(logs, "*_0001." + extension).Single()),
             "after\r\n"u8.ToArray());
     }
 }
@@ -2013,6 +2134,14 @@ sealed class TemporaryDirectory : IDisposable
         System.IO.Path.Combine(AppContext.BaseDirectory, $"tabtty-tests-{Guid.NewGuid():N}"));
     public string Path => directory.FullName;
     public void Dispose() => directory.Delete(recursive: true);
+}
+
+sealed class RecordingDateClock(DateTimeOffset utcNow) : TimeProvider
+{
+    public DateTimeOffset UtcNow { get; set; } = utcNow;
+    public override DateTimeOffset GetUtcNow() => UtcNow;
+    public override TimeZoneInfo LocalTimeZone { get; } =
+        TimeZoneInfo.CreateCustomTimeZone("Recording test time", TimeSpan.FromHours(9), "Recording test time", null);
 }
 
 sealed class PausedSendWire : ISessionWire

@@ -654,14 +654,14 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         var (unlocked, revision) = CurrentEntry(entry);
         var form = new MainWindow.FormWindow(owner, Text("EditCredential"), WindowIcons.Vault);
         var name = new TextBox { Text = entry.Name, MaxLength = 512 };
-        var replace = new CheckBox();
+        var replace = new CheckBox { Margin = new Thickness(0, 10, 0, 3) };
         var password = new PasswordBox { MaxLength = 16 * 1024, IsEnabled = false };
         replace.Checked += (_, _) => password.IsEnabled = true;
         replace.Unchecked += (_, _) => { password.Clear(); password.IsEnabled = false; };
         form.AddField("CredentialName", name);
         if (entry.Kind == "password")
         {
-            form.AddField("ReplacePassword", replace);
+            form.AddField("ReplacePassword", replace, inlineCheckBox: true);
             form.AddField("VaultPassword", password);
         }
         form.AddAsyncButtons(async () =>
@@ -720,7 +720,7 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
                 }
             }
             return true;
-        });
+        }, acceptKey: "OK", acceptOnEnter: false);
         try { app.Modal(form.ShowDialog); }
         finally { password.Clear(); }
     }

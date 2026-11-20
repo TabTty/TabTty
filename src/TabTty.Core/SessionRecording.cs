@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Numerics;
 using System.Text;
 using System.Threading.Channels;
 
@@ -6,12 +7,22 @@ namespace TabTty.Core;
 
 internal enum RecordingFormat { Raw, Text, Terminal }
 
+internal readonly record struct RecordingNameOptions(bool IncludeDate, bool IncludeTime, bool IncludeSequence)
+{
+    internal static RecordingNameOptions Default { get; } = new(true, false, true);
+}
+
 internal sealed class SessionRecording
 {
     private const int ByteLimit = 8 * 1024 * 1024;
     private const int ItemLimit = 4096;
     private const int BatchBytes = 64 * 1024;
     private const int BatchItems = 512;
+    private static readonly string[] FileExtensions = Enum.GetValues<RecordingFormat>().Select(FileExtension).ToArray();
+    private static readonly EnumerationOptions RecordingFileSearch = new()
+    {
+        MatchCasing = MatchCasing.CaseInsensitive, AttributesToSkip = 0, IgnoreInaccessible = false,
+    };
     private readonly Channel<Work> queue = Channel.CreateUnbounded<Work>(new UnboundedChannelOptions
     {
         SingleReader = true,
@@ -19,7 +30,6 @@ internal sealed class SessionRecording
     });
     private readonly object gate = new();
     private readonly Task writer;
-    private readonly RecordingFormat[] formats;
     private int pendingBytes;
     private int pendingItems;
     private bool stopped, protectClose, receiveFlushQueued, settled;
@@ -29,7 +39,7 @@ internal sealed class SessionRecording
     private readonly CancellationTokenSource abandon = new();
     private readonly TaskCompletionSource incomplete = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TimeProvider clock;
-    private readonly Func<int, RecordingFormat, IRecordingFile> openFile;
+    private readonly Func<int, SessionRecording> openPart;
     private readonly RecordingDestination? destination;
 
     internal SessionRecording(RecordingFormat[] formats, TimeProvider clock, Func<RecordingFormat, IRecordingFile> open)
@@ -39,17 +49,23 @@ internal sealed class SessionRecording
         : this(1, formats, clock, open) { }
 
     private SessionRecording(int part, RecordingFormat[] formats, TimeProvider clock,
-        Func<int, RecordingFormat, IRecordingFile> open, RecordingDestination? destination = null)
+        Func<int, RecordingFormat, IRecordingFile> open)
+        : this(part, formats, clock, format => open(part, format),
+            next => new SessionRecording(next, formats, clock, open)) { }
+
+    private SessionRecording(int part, RecordingFormat[] formats, TimeProvider clock,
+        Func<RecordingFormat, IRecordingFile> open, Func<int, SessionRecording> openPart,
+        RecordingDestination? destination = null, Action? finishPreparation = null)
     {
-        this.formats = formats;
         this.clock = clock;
-        openFile = open;
+        this.openPart = openPart;
         this.destination = destination;
         PartNumber = part;
         var streams = new Dictionary<RecordingFormat, IRecordingFile>();
         try
         {
-            foreach (RecordingFormat format in formats) streams.Add(format, openFile(part, format));
+            foreach (RecordingFormat format in formats) streams.Add(format, open(format));
+            finishPreparation?.Invoke();
         }
         catch
         {
@@ -65,18 +81,12 @@ internal sealed class SessionRecording
         writer = Task.Run(() => WriteAsync(streams));
     }
 
-    private static IRecordingFile OpenFile(string stem, int part, RecordingFormat format)
+    private static string FileExtension(RecordingFormat format) => format switch
     {
-        string extension = format switch
-        {
-            RecordingFormat.Raw => ".raw.tttylog",
-            RecordingFormat.Text => ".log",
-            _ => ".term.tttylog",
-        };
-        string file = $"{stem}-p{part.ToString("D3", CultureInfo.InvariantCulture)}{extension}";
-        return new RecordingFile(new FileStream(file, FileMode.CreateNew, FileAccess.Write, FileShare.Read,
-            bufferSize: 1, FileOptions.Asynchronous | FileOptions.SequentialScan));
-    }
+        RecordingFormat.Raw => ".raw.tttylog",
+        RecordingFormat.Text => ".log",
+        _ => ".term.tttylog",
+    };
 
     public int PartNumber { get; }
     public Task Incomplete => incomplete.Task;
@@ -88,37 +98,127 @@ internal sealed class SessionRecording
     }
 
     public string? Failure => Volatile.Read(ref failure);
-    public static SessionRecording Open(string profilePath, ConnectionProfile profile, string? nameOverride = null,
-        int part = 1, string? runSuffix = null, DateTimeOffset? capturedStart = null,
-        RecordingDestination? destination = null)
+    public static SessionRecording Open(string profilePath, ConnectionProfile profile, string? macroName = null,
+        int part = 1, RecordingDestination? destination = null, TimeProvider? timeProvider = null,
+        RecordingNameOptions? nameOptions = null)
     {
         string path = destination?.Verify() ?? OrdinaryWindowsPath.Resolve(profile.LogDirectory,
             Path.GetDirectoryName(Path.GetFullPath(profilePath))!);
 
         Directory.CreateDirectory(path);
-        char[] invalid = Path.GetInvalidFileNameChars();
-        var name = new StringBuilder();
-        foreach (Rune character in (nameOverride ?? profile.DisplayName).EnumerateRunes().Take(64))
-            name.Append(character.IsAscii && invalid.Contains((char)character.Value) ? "_" : character.ToString());
-        string label = name.ToString().Trim(' ', '.');
-        if (label.Length == 0) label = "TabTty";
-        var now = capturedStart ?? DateTimeOffset.Now;
-        string timestamp = now.ToString("yyyyMMdd-HHmmss.fffzzz", CultureInfo.InvariantCulture).Replace(":", "");
+        string label = SanitizeRecordingLabel(macroName ?? profile.DisplayName);
         var formats = new List<RecordingFormat>(3);
         if (profile.RecordRaw) formats.Add(RecordingFormat.Raw);
         if (profile.RecordText) formats.Add(RecordingFormat.Text);
         if (profile.RecordTerminal) formats.Add(RecordingFormat.Terminal);
-        string stem = $"{label}-{timestamp}-{runSuffix ?? Guid.NewGuid().ToString("N")}";
-        if (OrdinaryWindowsPath.IsReservedFileName(stem)) stem = "_" + stem;
-        string fullStem = Path.Combine(path, stem);
-        return new SessionRecording(part, formats.ToArray(), TimeProvider.System, (number, format) =>
+        RecordingFormat[] selected = formats.ToArray();
+        TimeProvider clock = timeProvider ?? TimeProvider.System;
+        RecordingNameOptions naming = nameOptions ?? RecordingNameOptions.Default;
+        return OpenPartAtDestination(part);
+
+        SessionRecording OpenPartAtDestination(int number)
         {
             destination?.Verify();
-            return OpenFile(fullStem, number, format);
-        }, destination);
+            if (selected.Length == 0)
+                return new SessionRecording(number, selected, clock,
+                    _ => throw new InvalidOperationException("Recording has no selected formats."), OpenPartAtDestination, destination);
+
+            DateTimeOffset now = clock.GetLocalNow();
+            string prefix = naming.IncludeDate ? $"{label}_{now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}" : label;
+            if (OrdinaryWindowsPath.IsReservedFileName(naming.IncludeSequence ? prefix + "_" : prefix)) prefix = "_" + prefix;
+            string stem = naming.IncludeDate && naming.IncludeTime
+                ? $"{prefix}_{now.ToString("HH-mm-ss", CultureInfo.InvariantCulture)}" : prefix;
+            string fullStem = Path.Combine(path, stem);
+            if (!naming.IncludeSequence) return OpenFiles(number, fullStem, overwrite: true);
+
+            string sequencePrefix = prefix + "_";
+            BigInteger sequence = ExistingSequences(path, sequencePrefix, "*", naming.IncludeDate)
+                .DefaultIfEmpty(BigInteger.MinusOne).Max() + 1;
+            for (;; sequence++)
+            {
+                destination?.Verify();
+                string digits = sequence.ToString("D4", CultureInfo.InvariantCulture);
+                using FileStream? reservation = TryReserveStem(Path.Combine(path, sequencePrefix + digits));
+                // A competing opener may have finished after the directory scan.
+                if (reservation is null || ExistingSequences(path, sequencePrefix, $"*{digits}.*", naming.IncludeDate)
+                    .Contains(sequence)) continue;
+                return OpenFiles(number, fullStem + "_" + digits, overwrite: false);
+            }
+        }
+
+        SessionRecording OpenFiles(int number, string stem, bool overwrite)
+        {
+            List<FileStream>? toTruncate = overwrite ? [] : null;
+            return new SessionRecording(number, selected, clock, format =>
+            {
+                destination?.Verify();
+                var stream = new FileStream(stem + FileExtension(format),
+                    overwrite ? FileMode.OpenOrCreate : FileMode.CreateNew, FileAccess.Write, FileShare.Read,
+                    bufferSize: 1, FileOptions.Asynchronous | FileOptions.SequentialScan);
+                toTruncate?.Add(stream);
+                return new RecordingFile(stream);
+            }, OpenPartAtDestination, destination, overwrite ? TruncateFiles : null);
+
+            void TruncateFiles()
+            {
+                // Acquire all selected files before replacing any recorded content.
+                destination?.Verify();
+                foreach (FileStream stream in toTruncate!) stream.SetLength(0);
+            }
+        }
     }
 
-    public SessionRecording OpenPart(int part) => new(part, formats, clock, openFile, destination);
+    private static IEnumerable<BigInteger> ExistingSequences(string directory, string prefix, string pattern, bool dated)
+    {
+        foreach (string path in Directory.EnumerateFiles(directory, prefix + pattern, RecordingFileSearch))
+        {
+            ReadOnlySpan<char> name = Path.GetFileName(path);
+            if (!name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+            foreach (string extension in FileExtensions)
+            {
+                if (name.Length < prefix.Length + extension.Length ||
+                    !name.EndsWith(extension, StringComparison.OrdinalIgnoreCase)) continue;
+                ReadOnlySpan<char> digits = name[prefix.Length..^extension.Length];
+                if (dated && digits.Length >= 13 && digits[8] == '_' &&
+                    TimeOnly.TryParseExact(digits[..8], "HH-mm-ss", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
+                    digits = digits[9..];
+                if (digits.Length >= 4 && (digits.Length == 4 || digits[0] != '0') &&
+                    digits.IndexOfAnyExceptInRange('0', '9') < 0 &&
+                    BigInteger.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out var sequence))
+                    yield return sequence;
+                break;
+            }
+        }
+    }
+
+    private static FileStream? TryReserveStem(string stem)
+    {
+        // Reserve the stem on the destination filesystem, including for disjoint formats
+        // and when different machines or path aliases refer to the same directory.
+        try
+        {
+            return new FileStream(stem + ".reserve", FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                bufferSize: 1, FileOptions.DeleteOnClose);
+        }
+        catch (IOException error) when ((error.HResult & 0xffff) is 32 or 80 or 183 ||
+            !OperatingSystem.IsWindows() && (error.HResult & 0xffff) == 17)
+        {
+            return null;
+        }
+    }
+
+    private static string SanitizeRecordingLabel(string value)
+    {
+        const int labelLimit = 64;
+        char[] invalid = Path.GetInvalidFileNameChars();
+        var name = new StringBuilder();
+        foreach (Rune character in value.EnumerateRunes().Take(labelLimit))
+            name.Append(character.IsAscii && invalid.Contains((char)character.Value) ? "_" : character.ToString());
+        string label = name.ToString().Trim(' ', '.');
+        return label.Length == 0 ? "TabTty" : label;
+    }
+
+    public SessionRecording OpenPart(int part) => openPart(part);
 
     public void Enqueue(RecordingFormat format, byte[] payload)
     {

@@ -586,11 +586,11 @@ ordinary connection/SFTP cleanup. Moving a tab requires no close confirmation
 
 ## Recording and other features
 
-Use existing profile-selected recording formats and destination. Base each name
-on the captured macro basename with the existing timestamp/UTC offset, unique
-session suffix, part and format markers. Use `<stem>.log`, `<stem>.raw.tttylog`
-and `<stem>.term.tttylog` for Text/Raw/Terminal. Apply filename sanitization and
-create-new/no-overwrite behavior; limits and collision handling are in validation.
+Use existing profile-selected recording formats and destination. Begin each name
+with the captured macro basename. Apply the same application log-name choices
+as for ordinary connections. Use `<stem>.log`, `<stem>.raw.tttylog`, and
+`<stem>.term.tttylog` for Text/Raw/Terminal. Apply filename sanitization and
+the shared collision and overwrite policy described in validation.
 Do not use arbitrary invocation arguments or credential data in names. No name
 override, in-session rename or macro recording-control API is added.
 

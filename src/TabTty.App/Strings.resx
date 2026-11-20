@@ -27,16 +27,23 @@
   <data name="SettingsLanguageAndTheme" xml:space="preserve"><value>Language and theme</value></data>
   <data name="SettingsTerminalDefaults" xml:space="preserve"><value>Terminal defaults</value></data>
   <data name="SettingsTabBehavior" xml:space="preserve"><value>Tab behavior</value></data>
+  <data name="SettingsLogNaming" xml:space="preserve"><value>Log file names</value></data>
+  <data name="LogNameIncludeDate" xml:space="preserve"><value>Add the date to log file names</value></data>
+  <data name="LogNameIncludeTime" xml:space="preserve"><value>Add the time to log file names</value></data>
+  <data name="LogNameIncludeSequence" xml:space="preserve"><value>Add a sequence number to log file names</value></data>
+  <data name="LogNameIncludeSequenceDescription" xml:space="preserve"><value>If disabled, a new log overwrites an existing file with the same name.</value></data>
   <data name="SettingsVault" xml:space="preserve"><value>Save paths</value></data>
   <data name="SettingsMaintenance" xml:space="preserve"><value>Maintenance</value></data>
   <data name="Connecting" xml:space="preserve"><value>Connecting…</value></data>
   <data name="Connected" xml:space="preserve"><value>Connected</value></data>
   <data name="Disconnected" xml:space="preserve"><value>Disconnected</value></data>
   <data name="NewProfile" xml:space="preserve"><value>New profile</value></data>
+  <data name="NewProfileWindowTitle" xml:space="preserve"><value>New connection profile</value></data>
   <data name="Name" xml:space="preserve"><value>Profile name</value></data>
-  <data name="Host" xml:space="preserve"><value>Host</value></data>
+  <data name="Host" xml:space="preserve"><value>Host (destination)</value></data>
   <data name="Port" xml:space="preserve"><value>Port</value></data>
   <data name="Save" xml:space="preserve"><value>Save</value></data>
+  <data name="Create" xml:space="preserve"><value>Create</value></data>
   <data name="DiscardChanges" xml:space="preserve"><value>Discard changes</value></data>
   <data name="DiscardChangesAndClose" xml:space="preserve"><value>Discard changes and close this tab?</value></data>
   <data name="DiscardChangesAndCloseWindow" xml:space="preserve"><value>Discard changes and close this window?</value></data>
@@ -63,9 +70,10 @@
   <data name="RestoreSettings" xml:space="preserve"><value>The settings file could not be opened. Start with temporary defaults?</value></data>
   <data name="SettingsChanged" xml:space="preserve"><value>The settings file changed outside TabTty. Reopen the app before saving.</value></data>
   <data name="TimedOut" xml:space="preserve"><value>The connection attempt timed out.</value></data>
-  <data name="RecordRaw" xml:space="preserve"><value>Record received bytes (Raw)</value></data>
-  <data name="RecordText" xml:space="preserve"><value>Record received display (Text)</value></data>
-  <data name="RecordTerminal" xml:space="preserve"><value>Record display operations (Terminal)</value></data>
+  <data name="RecordedLogs" xml:space="preserve"><value>Logs to record</value></data>
+  <data name="RecordRaw" xml:space="preserve"><value>Received bytes (Raw)</value></data>
+  <data name="RecordText" xml:space="preserve"><value>Received display (Text)</value></data>
+  <data name="RecordTerminal" xml:space="preserve"><value>Display operations (Terminal)</value></data>
   <data name="PauseRecording" xml:space="preserve"><value>Pause recording</value></data>
   <data name="ResumeRecording" xml:space="preserve"><value>Resume recording</value></data>
   <data name="RecordingPaused" xml:space="preserve"><value>Recording paused.</value></data>
@@ -246,6 +254,8 @@
   <data name="RegisterProfile" xml:space="preserve"><value>Register file</value></data>
   <data name="RemoveRegistration" xml:space="preserve"><value>Unregister</value></data>
   <data name="EditProfile" xml:space="preserve"><value>Edit…</value></data>
+  <data name="EditProfileWindowTitle" xml:space="preserve"><value>Edit connection profile</value></data>
+  <data name="EditNamedProfile" xml:space="preserve"><value>Edit "{0}"…</value></data>
   <data name="DuplicateProfile" xml:space="preserve"><value>Duplicate…</value></data>
   <data name="ConnectProfile" xml:space="preserve"><value>Connect</value></data>
   <data name="ProfileUnavailable" xml:space="preserve"><value>The profile file is unavailable or invalid.</value></data>
@@ -365,6 +375,7 @@
   <data name="LocalEchoExplanation" xml:space="preserve"><value>Temporary for this session. Submitted input can be displayed and recorded even when the remote application hides passwords.</value></data>
   <data name="ConnectionDetails" xml:space="preserve"><value>Connection details</value></data>
   <data name="ProfileConnectionGroup" xml:space="preserve"><value>Connection</value></data>
+  <data name="ProfileAuthenticationGroup" xml:space="preserve"><value>Authentication</value></data>
   <data name="ProfileTerminalGroup" xml:space="preserve"><value>Terminal and encoding</value></data>
   <data name="ProfileLoggingGroup" xml:space="preserve"><value>Session logs</value></data>
   <data name="FileMenu" xml:space="preserve"><value>_File</value></data>

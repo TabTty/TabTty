@@ -682,6 +682,16 @@ internal sealed partial class MainWindow : Window
         var autoClose = new CheckBox { IsChecked = app.AutoCloseDisconnectedTabs };
         var maxPaste = new TextBox { Text = app.MaxPasteTextBytes.ToString(CultureInfo.InvariantCulture), MaxLength = 19 };
         var broadcastScope = new CheckBox { IsChecked = app.BroadcastAcrossWindows };
+        var naming = app.RecordingNames;
+        var logDate = new CheckBox { IsChecked = naming.IncludeDate };
+        var logTime = new CheckBox { IsChecked = naming.IncludeTime, IsEnabled = naming.IncludeDate };
+        var logSequence = new CheckBox { IsChecked = naming.IncludeSequence };
+        logDate.Checked += (_, _) => logTime.IsEnabled = true;
+        logDate.Unchecked += (_, _) =>
+        {
+            logTime.IsChecked = false;
+            logTime.IsEnabled = false;
+        };
         var vaultPath = new TextBox { Text = app.VaultPath, MaxLength = 32760, TextWrapping = TextWrapping.Wrap,
             MaxHeight = 96, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         var profileDirectory = new TextBox { Text = app.ProfileSaveDirectory, MaxLength = 32760, TextWrapping = TextWrapping.Wrap,
@@ -704,6 +714,12 @@ internal sealed partial class MainWindow : Window
                 form.AddField("AutoCloseDisconnectedTabs", autoClose);
                 form.AddField("BroadcastAcrossWindows", broadcastScope);
                 form.AddField("MaxPasteSourceBytes", maxPaste);
+            }),
+            ("SettingsLogNaming", () =>
+            {
+                form.AddField("LogNameIncludeDate", logDate);
+                form.AddField("LogNameIncludeTime", logTime);
+                form.AddField("LogNameIncludeSequence", logSequence, descriptionKey: "LogNameIncludeSequenceDescription");
             }),
             ("SettingsVault", () =>
             {
@@ -735,7 +751,8 @@ internal sealed partial class MainWindow : Window
             await app.SaveSettingsAsync(languages[language.SelectedIndex], themes[theme.SelectedIndex], bells[bell.SelectedIndex],
                 fontFamily.Text, size, rows, autoClose.IsChecked == true, vaultPath.Text, revision,
                 broadcastScope.IsChecked == true, maxPasteBytes,
-                profileDirectory.Text == app.ProfileSaveDirectory ? null : profileDirectory.Text);
+                profileDirectory.Text == app.ProfileSaveDirectory ? null : profileDirectory.Text,
+                new RecordingNameOptions(logDate.IsChecked == true, logTime.IsChecked == true, logSequence.IsChecked == true));
             revision = app.SettingsRevision;
             vaultPath.Text = app.VaultPath;
             profileDirectory.Text = app.ProfileSaveDirectory;
@@ -1078,7 +1095,8 @@ internal sealed partial class MainWindow : Window
         }
 
         public Button AddAction(string key, Action action) => form.AddAction(key, action);
-        public void AddField(string key, Control control) => form.AddField(key, control);
+        public void AddField(string key, Control control, bool inlineCheckBox = false) =>
+            form.AddField(key, control, inlineCheckBox: inlineCheckBox);
         public void AddPrompt(string caption, Control control) => form.AddPrompt(caption, control);
         public void AddNotice(string key) => form.AddNotice(key);
         public void AddPinnedNotice(string message)
@@ -1089,7 +1107,7 @@ internal sealed partial class MainWindow : Window
         }
         public void AddButtons(Action save, string acceptKey = "Save", bool cancelDefault = false, string cancelKey = "Cancel") =>
             form.AddButtons(save, acceptKey, cancelDefault, cancelKey);
-        public void AddAsyncButtons(Func<Task<bool>> save, string acceptKey = "Save", bool cancelDefault = false) =>
-            form.AddAsyncButtons(save, acceptKey, cancelDefault);
+        public void AddAsyncButtons(Func<Task<bool>> save, string acceptKey = "Save", bool cancelDefault = false,
+            bool acceptOnEnter = true) => form.AddAsyncButtons(save, acceptKey, cancelDefault, acceptOnEnter: acceptOnEnter);
     }
 }

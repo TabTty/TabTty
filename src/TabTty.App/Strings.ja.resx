@@ -27,16 +27,23 @@
   <data name="SettingsLanguageAndTheme" xml:space="preserve"><value>言語・テーマ</value></data>
   <data name="SettingsTerminalDefaults" xml:space="preserve"><value>端末の既定値</value></data>
   <data name="SettingsTabBehavior" xml:space="preserve"><value>タブの動作</value></data>
+  <data name="SettingsLogNaming" xml:space="preserve"><value>ログのファイル名</value></data>
+  <data name="LogNameIncludeDate" xml:space="preserve"><value>ログ名に日付を加える</value></data>
+  <data name="LogNameIncludeTime" xml:space="preserve"><value>ログ名に時刻を加える</value></data>
+  <data name="LogNameIncludeSequence" xml:space="preserve"><value>ログ名に連番を加える</value></data>
+  <data name="LogNameIncludeSequenceDescription" xml:space="preserve"><value>オフにすると、同名のログファイルは上書きされます。</value></data>
   <data name="SettingsVault" xml:space="preserve"><value>保存パス</value></data>
   <data name="SettingsMaintenance" xml:space="preserve"><value>メンテナンス</value></data>
   <data name="Connecting" xml:space="preserve"><value>接続中…</value></data>
   <data name="Connected" xml:space="preserve"><value>接続済み</value></data>
   <data name="Disconnected" xml:space="preserve"><value>切断済み</value></data>
   <data name="NewProfile" xml:space="preserve"><value>新規プロファイル</value></data>
+  <data name="NewProfileWindowTitle" xml:space="preserve"><value>新規接続プロファイル</value></data>
   <data name="Name" xml:space="preserve"><value>プロファイル名</value></data>
-  <data name="Host" xml:space="preserve"><value>ホスト</value></data>
+  <data name="Host" xml:space="preserve"><value>ホスト (接続先)</value></data>
   <data name="Port" xml:space="preserve"><value>ポート</value></data>
   <data name="Save" xml:space="preserve"><value>保存</value></data>
+  <data name="Create" xml:space="preserve"><value>作成</value></data>
   <data name="DiscardChanges" xml:space="preserve"><value>変更を破棄</value></data>
   <data name="DiscardChangesAndClose" xml:space="preserve"><value>変更を破棄してこのタブを閉じますか？</value></data>
   <data name="DiscardChangesAndCloseWindow" xml:space="preserve"><value>変更を破棄してこのウィンドウを閉じますか？</value></data>
@@ -63,9 +70,10 @@
   <data name="RestoreSettings" xml:space="preserve"><value>設定ファイルを開けません。一時的な既定値で起動しますか？</value></data>
   <data name="SettingsChanged" xml:space="preserve"><value>設定ファイルが外部で変更されました。TabTtyを開き直してから保存してください。</value></data>
   <data name="TimedOut" xml:space="preserve"><value>接続の待機時間を超えました。</value></data>
-  <data name="RecordRaw" xml:space="preserve"><value>受信バイトを記録する（Raw）</value></data>
-  <data name="RecordText" xml:space="preserve"><value>受信した表示を記録する（Text）</value></data>
-  <data name="RecordTerminal" xml:space="preserve"><value>端末表示の操作を記録する（Terminal）</value></data>
+  <data name="RecordedLogs" xml:space="preserve"><value>取得対象ログ</value></data>
+  <data name="RecordRaw" xml:space="preserve"><value>受信バイト（Raw）</value></data>
+  <data name="RecordText" xml:space="preserve"><value>受信した表示（Text）</value></data>
+  <data name="RecordTerminal" xml:space="preserve"><value>端末表示の操作（Terminal）</value></data>
   <data name="PauseRecording" xml:space="preserve"><value>ログを一時停止</value></data>
   <data name="ResumeRecording" xml:space="preserve"><value>ログを再開</value></data>
   <data name="RecordingPaused" xml:space="preserve"><value>ログを一時停止しました。</value></data>
@@ -246,6 +254,8 @@
   <data name="RegisterProfile" xml:space="preserve"><value>ファイルを登録</value></data>
   <data name="RemoveRegistration" xml:space="preserve"><value>登録解除</value></data>
   <data name="EditProfile" xml:space="preserve"><value>編集…</value></data>
+  <data name="EditProfileWindowTitle" xml:space="preserve"><value>接続プロファイル編集</value></data>
+  <data name="EditNamedProfile" xml:space="preserve"><value>"{0}" の編集…</value></data>
   <data name="DuplicateProfile" xml:space="preserve"><value>複製…</value></data>
   <data name="ConnectProfile" xml:space="preserve"><value>接続</value></data>
   <data name="ProfileUnavailable" xml:space="preserve"><value>プロファイルファイルを利用できないか、形式が無効です。</value></data>
@@ -365,6 +375,7 @@
   <data name="LocalEchoExplanation" xml:space="preserve"><value>このセッション中のみの変更です。接続先がパスワードを隠す場合でも、送信した入力が表示・記録されることがあります。</value></data>
   <data name="ConnectionDetails" xml:space="preserve"><value>接続の詳細</value></data>
   <data name="ProfileConnectionGroup" xml:space="preserve"><value>接続</value></data>
+  <data name="ProfileAuthenticationGroup" xml:space="preserve"><value>認証</value></data>
   <data name="ProfileTerminalGroup" xml:space="preserve"><value>端末と文字コード</value></data>
   <data name="ProfileLoggingGroup" xml:space="preserve"><value>セッションログ</value></data>
   <data name="FileMenu" xml:space="preserve"><value>ファイル(_F)</value></data>

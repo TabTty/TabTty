@@ -167,22 +167,22 @@ assumptions in later tests. This implements the accepted Q74 contract.
 
 ## Log names and file preparation
 
-Use the captured basename, taking at most its first 64 Unicode scalars; replace
-Windows-invalid filename characters and C0 controls with `_`, trim terminal
-spaces/dots, and use `TabTty` if empty. Reject malformed Unicode at the source
-path boundary rather than inventing partial scalar names. Preserve source
+Use the captured macro basename as the filename prefix. Replace Windows-invalid filename
+characters and C0 controls with `_`, trim leading and trailing spaces and dots,
+and use `TabTty` if empty. Limit the basename to 64 Unicode scalars before trimming.
+Reject malformed Unicode at the source path boundary. Preserve source
 FileName/BaseName properties unmodified; sanitization affects log names only.
 
-Compose a stem from sanitized basename, connection-start local timestamp with
-UTC offset, unique session suffix and part number. Use the existing timestamp
-shape `yyyyMMdd-HHmmss.fffzzz` with colon removed from its offset, a fresh UUID
-suffix, and `p001` with at least three decimal digits. Resume/retry advances
-part numbers without wrapping, reusing the session's naming context. Format
-markers are `.log`, `.raw.tttylog` and `.term.tttylog` as in the main contract.
+Use the same application-wide log-name choices as
+[profile-based recording](receive-logging-issue.md#confirmed-profile-and-file-organization).
+The default stem is `<prefix>_yyyy-MM-dd_<sequence>`. The optional time component
+uses `HH-mm-ss` between the date and the sequence. Format markers are `.log`,
+`.raw.tttylog` and `.term.tttylog` as in the main contract.
 
-Open with create-new semantics; never overwrite. A name collision is a recording
-preparation failure under the same explicit retry policy, not permission to
-truncate or append. Retry chooses a fresh unused next part number. Close successful
+With Sequence On, use create-new semantics and skip sequences occupied by
+existing files or a concurrent allocation. With Sequence Off, the same-name
+replacement rule applies. An open failure follows the explicit retry policy.
+Retry opens files under the same settings snapshot. Close successful
 handles and retain files created by a partial group open operation, even when
 empty, consistent with the recording
 contract. Invalid/too-long combined paths are visible preparation errors; do not

@@ -113,13 +113,13 @@ and [remembered macro trust](macro-specification.md#remembered-macro-trust).
   are future macro API decisions, not an initial hidden auto-login engine.
 - Keep log-name composition separate from received-content processing and the
   file-write/pause/retry lifecycle within the logging module. The initial
-  profile/time/session/part naming rule is a default policy, not a permanent
+  profile/date/sequence naming rule is a default policy, not a permanent
   requirement that every recording name originate from a profile name.
 - Preserve a path for later user-specified naming, macro-name-based naming, or
   an explicitly supplied startup/invocation naming argument. A future macro
   caller supplies naming data to the logging module rather than creating log
-  files itself. Keep destination resolution, filename validation, no-overwrite
-  creation, collisions, grouping of selected Raw/Text/Terminal files, and part
+  files itself. Keep destination resolution, filename validation, file creation
+  and replacement, collisions, grouping of selected Raw/Text/Terminal files, and part
   management in that module. Shared extensions do not identify a recording mode;
   naming uses the selected format and its current filename-marker policy.
 - Limit naming context to explicit non-secret naming data; do not use the entire
