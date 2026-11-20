@@ -368,7 +368,7 @@ internal static partial class ArchitectureOwnershipContracts
         const string oldPassword = "original-master-fixture";
         const string newPassword = "replacement-master-fixture";
         using var vault = await CredentialVault.CreateAsync(path, oldPassword.AsMemory(), token);
-        string entry = await vault.AddPasswordAsync("fixture", "operator", "verified secret payload"u8.ToArray(), token);
+        string entry = await vault.AddPasswordAsync("fixture", "verified secret payload"u8.ToArray(), token);
         byte[] original = await File.ReadAllBytesAsync(path, token);
         long revision = vault.Revision;
         var before = await vault.ReadMetadataAsync(token);

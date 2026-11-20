@@ -15,6 +15,7 @@ public sealed record CredentialReference(string Name, string Kind);
 public sealed class ConnectionProfile
 {
     private const int MaximumBytes = 1024 * 1024;
+    internal const int MaximumGroupNameLength = 256;
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     private static readonly JsonSerializerOptions SaveOptions = new() { WriteIndented = true };
     private readonly JsonElement document;
@@ -24,9 +25,15 @@ public sealed class ConnectionProfile
     private JsonElement Terminal => document.GetProperty("terminal");
     private JsonElement Logging => document.GetProperty("logging");
 
-    private ConnectionProfile(JsonElement document) => this.document = document;
+    private ConnectionProfile(JsonElement document, string? groupName)
+    {
+        this.document = document;
+        GroupName = groupName;
+    }
 
     public string DisplayName => document.GetProperty("displayName").GetString()!;
+    internal string? RetainedSaveBackup { get; private set; }
+    public string? GroupName { get; }
     public Guid Id => document.GetProperty("profileId").GetGuid();
     public string Type => Connection.GetProperty("type").GetString()!;
     public string Host => Connection.GetProperty("host").GetString()!;
@@ -251,6 +258,23 @@ public sealed class ConnectionProfile
         return BeginSave(sourcePath, sourceBytes, CancellationToken.None, issue, validateStage);
     }
 
+    internal bool IsSavedAt(string path) => sourcePath == path;
+
+    internal void MoveSavedRevision(string destination)
+    {
+        if (sourcePath is null || sourceBytes is null)
+            throw new InvalidOperationException("Load a saved profile before moving it.");
+        string target = OpeningPath(destination);
+        using var reservation = VerifiedFilePublication.ReserveNamespace(
+            string.Equals(sourcePath, target, StringComparison.OrdinalIgnoreCase) ? [sourcePath] : [sourcePath, target], 0);
+        FileObjectIdentity identity;
+        using (var source = File.OpenRead(sourcePath))
+            identity = FileObjectIdentity.Read(source.SafeFileHandle);
+        if (!FileObjectIdentity.MoveIfSame(sourcePath, identity, target, replace: false, expectedBytes: sourceBytes))
+            throw new IOException("The saved profile changed before it could be renamed.");
+        sourcePath = target;
+    }
+
     private async Task SaveWithCompatibilityAsync(string destination, byte[]? original, CancellationToken cancellationToken) =>
         await BeginSave(destination, original, cancellationToken).ObserveAsync().ConfigureAwait(false);
 
@@ -267,7 +291,7 @@ public sealed class ConnectionProfile
             {
                 _ = ParseProfile(destination, ReadBytesAsync(prepared, cancellationToken).GetAwaiter().GetResult());
                 validateStage?.Invoke(prepared);
-            }, CreateDirectory: original is null, Issue: issue);
+            }, CreateDirectory: original is null, Issue: issue, RemovePreservationOnVerified: original is not null);
         var admitted = VerifiedFilePublication.Begin(request, cancellationToken);
         return new(admitted, AdoptSaveAsync(admitted, destination, serialized));
     }
@@ -281,6 +305,7 @@ public sealed class ConnectionProfile
                 : "The profile save or original backup could not be verified.", operation);
         sourcePath = destination;
         sourceBytes = serialized;
+        RetainedSaveBackup = operation.CleanupError is null ? null : operation.PreservationPath;
     }
 
     internal sealed class ProfileSaveOperation(FilePublicationOperation admitted, Task adopted)
@@ -298,6 +323,8 @@ public sealed class ConnectionProfile
         }, operationId);
         if (outcome is { Status: not FilePublicationStatus.Verified })
             throw new FilePublicationException("The profile save or original backup could not be verified.", outcome);
+        if (committed is not null && outcome?.CleanupError is not null)
+            committed.RetainedSaveBackup = outcome.PreservationPath;
         return committed;
     });
 
@@ -312,6 +339,8 @@ public sealed class ConnectionProfile
 
         Uuid(Text(root, "profileId", 36));
         Text(root, "displayName", 256);
+        string? groupName = root.TryGetProperty("groupName", out var group) && group.ValueKind != JsonValueKind.Null
+            ? NormalizeGroupName(Field(root, "groupName", JsonValueKind.String).GetString()) : null;
         var connection = Field(root, "connection", JsonValueKind.Object);
         Integer(connection, "waitSeconds", 1, 300);
         string type = Choice(connection, "type", "telnet", "ssh", "serial");
@@ -411,7 +440,16 @@ public sealed class ConnectionProfile
         Boolean(logging, "text");
         Boolean(logging, "terminal");
         Text(logging, "directory", 32760);
-        return new ConnectionProfile(root);
+        return new ConnectionProfile(root, groupName);
+    }
+
+    internal static string? NormalizeGroupName(string? value)
+    {
+        string? name = value?.Trim();
+        if (string.IsNullOrEmpty(name)) return null;
+        if (name.EnumerateRunes().Count() > MaximumGroupNameLength || name.Any(char.IsControl))
+            throw new InvalidDataException("Invalid profile field: groupName.");
+        return name;
     }
 
     private static CredentialReference? ReadCredential(JsonElement authentication, string key)

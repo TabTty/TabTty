@@ -41,6 +41,10 @@ internal static partial class Program
         if (terminal.TerminalTabs.Any() || app.Windows.OfType<ProfileEditorWindow>().Count() != 2 ||
             !app.Windows.OfType<ProfileEditorWindow>().Contains(firstEditor))
             throw new InvalidOperationException("Edit opened a connection or duplicated the existing editor.");
+        var secondEditor = app.Windows.OfType<ProfileEditorWindow>().Single(window => window != firstEditor);
+        FindControls<Button>(secondEditor).Single(button => Equals(button.Content, App.Text("CloseDialog")))
+            .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        if (secondEditor.IsVisible) throw new InvalidOperationException("Close did not dismiss an unchanged editor.");
         Console.WriteLine("PASS ProfileEditorActivation");
         await CheckProfilePublicationCloseAsync();
         Console.WriteLine("PASS ProfileEditorPreservesUnverifiedPublicationOnClose");
@@ -113,7 +117,8 @@ internal static partial class Program
         await ManageWithoutPromptAsync();
         await SelectVault(selectedPath);
         await ManageWithoutPromptAsync();
-        if (!a.IsLoaded || !FindControls<TextBox>(a).Any(box => box.Text == ProfileLocation.Normalize(selectedPath)) ||
+        string selectedPathLabel = string.Format(App.Text("VaultPathDisplay"), ProfileLocation.Normalize(selectedPath));
+        if (!a.IsLoaded || !FindControls<TextBlock>(a).Any(label => label.Text == selectedPathLabel) ||
             app.VaultPath != selectedPath)
             throw new InvalidOperationException("Switching the selected vault moved or closed another editor.");
 
@@ -216,11 +221,12 @@ internal static partial class Program
             await RespondAsync("Error", "OK");
             await UntilAsync(() => !form.IsBusy);
 
-            _ = app.Dispatcher.BeginInvoke(firstEditor.Close);
-            await RespondAsync(firstEditor.Title, "No");
+            var close = FindControls<Button>(form).Single(button => Equals(button.Content, App.Text("CloseDialog")));
+            _ = app.Dispatcher.BeginInvoke(() => close.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)));
+            await RespondAsync(firstEditor.Title, "Cancel");
             if (!firstEditor.IsVisible) throw new InvalidOperationException("Declining closure dismissed the editor.");
-            _ = app.Dispatcher.BeginInvoke(firstEditor.Close);
-            await RespondAsync(firstEditor.Title, "Yes");
+            _ = app.Dispatcher.BeginInvoke(() => close.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)));
+            await RespondAsync(firstEditor.Title, "OK");
             await UntilAsync(() => !firstEditor.IsVisible);
             if (!VerifiedFilePublication.IsUnresolved(first) || !candidate.AsSpan().SequenceEqual(File.ReadAllBytes(first)))
                 throw new InvalidOperationException("Closing the profile editor changed its physical outcome or write restriction.");
@@ -263,7 +269,7 @@ internal static partial class Program
             var expected = "host-transfer-test-data"u8.ToArray();
             CredentialReference reference;
             using (var created = await CredentialVault.CreateAsync(transferPath, master.AsMemory()))
-                reference = new(await created.AddPasswordAsync("fixture", "operator", expected), "password");
+                reference = new(await created.AddPasswordAsync("fixture", expected), "password");
             await SelectVault(transferPath);
 
             var firstHost = new Window { Width = 320, Height = 240 };

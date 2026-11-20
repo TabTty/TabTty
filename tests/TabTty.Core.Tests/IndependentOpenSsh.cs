@@ -13,7 +13,7 @@ internal static class IndependentOpenSsh
             methods: ["publicKey"], recordRaw: true).SaveNewAsync(profile, token);
         using var vault = await CredentialVault.CreateAsync(Path.Combine(local.Path, "test.tttykey"),
             "Independent OpenSSH fixture vault".AsMemory(), cancellationToken: token);
-        string entry = await vault.ImportPrivateKeyAsync("Generated SSH test key", username, userKey, token);
+        string entry = await vault.ImportPrivateKeyAsync("Generated SSH test key", userKey, token);
         int verifiedKeys = 0;
         var interaction = new SshInteraction((key, _) =>
         {

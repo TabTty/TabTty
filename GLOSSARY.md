@@ -8,6 +8,9 @@ TabTty provides tabbed terminal sessions over SSH, Telnet, and serial connection
 A file-backed configuration for a destination, including its connection method,
 authentication choices, terminal settings, and session-logging settings.
 
+**Profile group**:
+A set of connection profiles that share a group name.
+
 **Profile registration**:
 A local entry for a profile file in TabTty's profile list. An externally moved
 file is registered as a new profile rather than continuing its old registration.
@@ -209,9 +212,8 @@ The saved password selected by a connection profile, independently of whether
 a connection attempt uses it or successfully authenticates with it.
 
 **Vault entry**:
-A saved credential that pairs one required SSH username with a password or an
-imported private key. Its name is unique within the vault and identifies it in
-credential references.
+A named password or imported private key. Its name is unique within the vault
+and identifies it in credential references.
 
 **Credential vault**:
 An encrypted file containing saved authentication material that can be moved

@@ -17,7 +17,8 @@ internal sealed class FilePublicationException(string message, FilePublicationRe
 
 internal sealed record FilePublicationRequest(string Target, byte[] Candidate, byte[]? OriginalDigest,
     string? Preservation, int MaximumBytes, Func<string, FileStream>? Create = null, Action<string>? Validate = null,
-    bool Recovery = false, bool CreateDirectory = false, Action<string, string, string?>? Issue = null);
+    bool Recovery = false, bool CreateDirectory = false, Action<string, string, string?>? Issue = null,
+    bool RemovePreservationOnVerified = false);
 
 internal enum FilePublicationPhase { Preparing, MutationIssued, Retired }
 
@@ -63,7 +64,8 @@ internal static class VerifiedFilePublication
         byte[] CandidateDigest, byte[]? OriginalDigest, int Maximum, Exception? Error, HashSet<string> Namespace,
         string[] TargetAliases, FileObjectIdentity CandidateIdentity, FileObjectIdentity? OriginalIdentity = null,
         bool RequireInstalledIdentity = false, string[]? BeforeIssueTarget = null, Exception? CleanupError = null,
-        Evidence? Previous = null, ResourceReservation? Artifacts = null, long CandidateLength = 0)
+        Evidence? Previous = null, ResourceReservation? Artifacts = null, long CandidateLength = 0,
+        FileObjectIdentity? RemovablePreservationIdentity = null)
     {
         internal IEnumerable<Evidence> Records()
         {
@@ -299,6 +301,11 @@ internal static class VerifiedFilePublication
         }
         if (result.Status != FilePublicationStatus.Verified) return result;
         adopt(evidence.Target);
+        if (evidence.RemovablePreservationIdentity is not null)
+        {
+            originalImage?.Dispose();
+            result = RemoveVerifiedPreservation(evidence, result);
+        }
         Retire(path);
         return result with { EvidenceRetired = true };
     }
@@ -456,8 +463,8 @@ internal static class VerifiedFilePublication
 
     private static FilePublicationResult PublishAdmitted(Admission admitted, CancellationToken token)
     {
-        var (target, image, originalDigest, preservation, maxBytes, create, validate, recovery, createDirectory, issue) =
-            admitted.Request;
+        var (target, image, originalDigest, preservation, maxBytes, create, validate, recovery, createDirectory, issue,
+            removePreservationOnVerified) = admitted.Request;
         string staged = admitted.Stage;
         var lease = admitted.Namespace;
         Guid operationId = admitted.Observation.Id;
@@ -484,7 +491,7 @@ internal static class VerifiedFilePublication
             using var prepared = TryOpenImage(staged, maxBytes);
             if (prepared?.Identity != created || !(prepared?.Digest.AsSpan().SequenceEqual(expected) ?? false))
                 throw new IOException("The prepared file changed before publication.");
-            var before = Inspect(target, expected, originalDigest, maxBytes, preferOriginal: true);
+            var before = Inspect(target, expected, originalDigest, maxBytes, out var originalIdentity);
             if (before != (originalDigest is null ? FileImageStatus.Missing : FileImageStatus.Original) ||
                 !targetNames.AsSpan().SequenceEqual(FileObjectIdentity.NamespaceKeys(target)))
                 return new(FilePublicationStatus.Conflict, before, FileImageStatus.Unavailable,
@@ -508,8 +515,18 @@ internal static class VerifiedFilePublication
 
             var evidence = new Evidence(operationId, target, preservation, staged, expected, originalDigest?.ToArray(),
                 maxBytes, error, lease.Names, [.. targetNames, FileKey(created!.Value)], created.Value,
-                CandidateLength: image.LongLength);
-            FilePublicationResult result = Observe(evidence);
+                CandidateLength: image.LongLength,
+                RemovablePreservationIdentity: removePreservationOnVerified ? originalIdentity : null);
+            FilePublicationResult result;
+            if (evidence.RemovablePreservationIdentity is not null)
+            {
+                var (installed, status) = AcquireObservation(evidence.Target, evidence);
+                using var installedImage = installed;
+                result = Observe(evidence, target: status);
+                if (result.Status == FilePublicationStatus.Verified)
+                    result = RemoveVerifiedPreservation(evidence, result);
+            }
+            else result = Observe(evidence);
             if (result.Status == FilePublicationStatus.Unchanged && result.Candidate == FileImageStatus.Candidate)
             {
                 try
@@ -554,6 +571,23 @@ internal static class VerifiedFilePublication
     }
 
     private static string FileKey(FileObjectIdentity identity) => $"F:{identity.Volume:X8}:{identity.Index:X16}";
+
+    private static FilePublicationResult RemoveVerifiedPreservation(Evidence evidence, FilePublicationResult result)
+    {
+        if (evidence.RemovablePreservationIdentity is not { } identity || evidence.Preservation is not { } path ||
+            result.Preservation != FileImageStatus.Original) return result;
+        try
+        {
+            // A matching digest can verify a supplied recovery copy. Only the original file belongs to this cleanup.
+            if (FileObjectIdentity.DeleteIfSame(path, identity, expectedDigest: evidence.OriginalDigest, maximumBytes: evidence.Maximum))
+                return result with { Preservation = FileImageStatus.Missing };
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return result with { CleanupError = error };
+        }
+        return result;
+    }
 
     private static FilePublicationResult Observe(Evidence evidence, FileImageStatus? target = null, FileImageStatus? backup = null)
     {
@@ -652,12 +686,14 @@ internal static class VerifiedFilePublication
     }
 
     private static FileImageStatus Inspect(string path, byte[] candidate, byte[]? original, int maxBytes,
-        bool preferOriginal = false)
+        out FileObjectIdentity? identity)
     {
+        identity = null;
         try
         {
             using var observed = TryOpenImage(path, maxBytes);
-            return Describe(observed, candidate, original, preferOriginal);
+            identity = observed?.Identity;
+            return Describe(observed, candidate, original, preferOriginal: true);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
         {

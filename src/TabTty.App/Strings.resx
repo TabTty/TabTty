@@ -27,7 +27,7 @@
   <data name="SettingsLanguageAndTheme" xml:space="preserve"><value>Language and theme</value></data>
   <data name="SettingsTerminalDefaults" xml:space="preserve"><value>Terminal defaults</value></data>
   <data name="SettingsTabBehavior" xml:space="preserve"><value>Tab behavior</value></data>
-  <data name="SettingsVault" xml:space="preserve"><value>Vault settings</value></data>
+  <data name="SettingsVault" xml:space="preserve"><value>Save paths</value></data>
   <data name="SettingsMaintenance" xml:space="preserve"><value>Maintenance</value></data>
   <data name="Connecting" xml:space="preserve"><value>Connecting…</value></data>
   <data name="Connected" xml:space="preserve"><value>Connected</value></data>
@@ -134,10 +134,10 @@
   <data name="UnlockVault" xml:space="preserve"><value>Unlock vault</value></data>
   <data name="ManageVault" xml:space="preserve"><value>Manage vault</value></data>
   <data name="InitializeVault" xml:space="preserve"><value>Set vault master password</value></data>
-  <data name="CreateMissingVaultDescription" xml:space="preserve"><value>Create a new encrypted vault at the selected path.</value></data>
   <data name="InitializeEmptyVaultDescription" xml:space="preserve"><value>Initialize the selected empty file as a new encrypted vault.</value></data>
   <data name="VaultPath" xml:space="preserve"><value>Credential vault path</value></data>
-  <data name="BrowseVaultPath" xml:space="preserve"><value>Browse for vault path…</value></data>
+  <data name="VaultPathDisplay" xml:space="preserve"><value>Credential vault path: {0}</value></data>
+  <data name="BrowsePath" xml:space="preserve"><value>Browse</value></data>
   <data name="InvalidVaultPath" xml:space="preserve"><value>Enter an absolute path to a .tttykey file.</value></data>
   <data name="VaultBusy" xml:space="preserve"><value>Wait for the current vault operation to finish.</value></data>
   <data name="VaultUnlocked" xml:space="preserve"><value>The credential vault is unlocked.</value></data>
@@ -147,13 +147,15 @@
   <data name="AddVaultPassword" xml:space="preserve"><value>Add password</value></data>
   <data name="VaultEntries" xml:space="preserve"><value>Vault entries</value></data>
   <data name="VaultEntryList" xml:space="preserve"><value>Saved credentials</value></data>
+  <data name="VaultEntryType" xml:space="preserve"><value>Type</value></data>
+  <data name="VaultEntryFingerprint" xml:space="preserve"><value>Fingerprint</value></data>
+  <data name="VaultEditEntry" xml:space="preserve"><value>Edit…</value></data>
+  <data name="VaultDeleteEntry" xml:space="preserve"><value>Delete…</value></data>
   <data name="VaultFileOperations" xml:space="preserve"><value>Vault file</value></data>
   <data name="VaultEntriesLocked" xml:space="preserve"><value>The vault is locked.</value></data>
   <data name="VaultEntriesEmpty" xml:space="preserve"><value>The vault has no saved credentials.</value></data>
-  <data name="SelectVaultEntry" xml:space="preserve"><value>Select a credential to view its details.</value></data>
   <data name="BackupVault" xml:space="preserve"><value>Make encrypted backup</value></data>
   <data name="ChangeMaster" xml:space="preserve"><value>Change master password</value></data>
-  <data name="VaultUsername" xml:space="preserve"><value>Username (optional)</value></data>
   <data name="VaultPassword" xml:space="preserve"><value>Password</value></data>
   <data name="MasterPassword" xml:space="preserve"><value>Master password</value></data>
   <data name="MasterPasswordWithLength" xml:space="preserve"><value>Master password ({0}–{1} characters)</value></data>
@@ -236,18 +238,19 @@
   <data name="SecondarySshMethod" xml:space="preserve"><value>Second authentication method</value></data>
   <data name="SshInstructions" xml:space="preserve"><value>Server instructions</value></data>
   <data name="ProfileCatalog" xml:space="preserve"><value>Connection profile management</value></data>
-  <data name="SearchProfiles" xml:space="preserve"><value>Search profiles</value></data>
-  <data name="ProfileDetails" xml:space="preserve"><value>Profile details</value></data>
-  <data name="RegisterProfile" xml:space="preserve"><value>Register file…</value></data>
-  <data name="ToggleFavorite" xml:space="preserve"><value>Toggle favorite</value></data>
-  <data name="RemoveRegistration" xml:space="preserve"><value>Remove from list</value></data>
-  <data name="EditProfile" xml:space="preserve"><value>Edit profile…</value></data>
-  <data name="DuplicateProfile" xml:space="preserve"><value>Duplicate profile…</value></data>
-  <data name="SelectProfile" xml:space="preserve"><value>Select a profile.</value></data>
+  <data name="ProfileGroupName" xml:space="preserve"><value>Group name</value></data>
+  <data name="ProfileGroups" xml:space="preserve"><value>Profile groups</value></data>
+  <data name="AllProfiles" xml:space="preserve"><value>All</value></data>
+  <data name="UngroupedProfiles" xml:space="preserve"><value>Ungrouped</value></data>
+  <data name="SearchProfiles" xml:space="preserve"><value>Search</value></data>
+  <data name="RegisterProfile" xml:space="preserve"><value>Register file</value></data>
+  <data name="RemoveRegistration" xml:space="preserve"><value>Unregister</value></data>
+  <data name="EditProfile" xml:space="preserve"><value>Edit…</value></data>
+  <data name="DuplicateProfile" xml:space="preserve"><value>Duplicate…</value></data>
   <data name="ConnectProfile" xml:space="preserve"><value>Connect</value></data>
   <data name="ProfileUnavailable" xml:space="preserve"><value>The profile file is unavailable or invalid.</value></data>
   <data name="ProfileSettingsJson" xml:space="preserve"><value>Profile settings (JSON)</value></data>
-  <data name="ProfileSaveLocation" xml:space="preserve"><value>The suggested profile folder is unavailable. Choose a save location.</value></data>
+  <data name="ProfileSaveLocation" xml:space="preserve"><value>The profile save folder is unavailable. Check Save paths in Settings.</value></data>
   <data name="LocalStateInvalid" xml:space="preserve"><value>TabTty could not read or save the local state.</value></data>
   <data name="LocalStateChanged" xml:space="preserve"><value>Local state changed outside TabTty.</value></data>
   <data name="Reconnect" xml:space="preserve"><value>Reconnect</value></data>
@@ -278,18 +281,14 @@
   <data name="CleanupPendingExplanation" xml:space="preserve"><value>Recording cleanup is still pending. Continue waiting, or close while accepting possible loss of pending log data.</value></data>
   <data name="ContinueWaiting" xml:space="preserve"><value>Continue waiting</value></data>
   <data name="CloseWithLoss" xml:space="preserve"><value>Close with data loss</value></data>
-  <data name="CredentialDetails" xml:space="preserve"><value>Credential details</value></data>
   <data name="EditCredential" xml:space="preserve"><value>Edit credential</value></data>
   <data name="DeleteCredential" xml:space="preserve"><value>Delete credential</value></data>
   <data name="ReplacePassword" xml:space="preserve"><value>Replace password</value></data>
   <data name="DeleteCredentialWarning" xml:space="preserve"><value>Delete this credential? Referring profiles will require another credential before their next authentication.</value></data>
-  <data name="UpdateCredentialWarning" xml:space="preserve"><value>Update this shared credential for future authentication? If the username changes, select the credential again in profiles that use it.</value></data>
-  <data name="InvalidVaultUsername" xml:space="preserve"><value>Enter a valid SSH username for this credential.</value></data>
+  <data name="UpdateCredentialWarning" xml:space="preserve"><value>Update this shared credential for future authentication?</value></data>
   <data name="AddSshMethod" xml:space="preserve"><value>Add authentication method</value></data>
   <data name="SshAdvancedAuthentication" xml:space="preserve"><value>Advanced authentication</value></data>
   <data name="AllowKeyboardInteractive" xml:space="preserve"><value>Allow keyboard-interactive authentication</value></data>
-  <data name="ReselectSshCredential" xml:space="preserve"><value>The saved credential belongs to a different SSH account. Select the intended credential again in the profile editor.</value></data>
-  <data name="SshCredentialsDifferentAccounts" xml:space="preserve"><value>Enabled saved credentials must use the same SSH username.</value></data>
   <data name="VaultUnavailableMissing" xml:space="preserve"><value>The configured vault is missing. {0}</value></data>
   <data name="VaultUnavailableEmpty" xml:space="preserve"><value>The configured vault is a zero-byte file. {0}</value></data>
   <data name="SelectOrRestoreVault" xml:space="preserve"><value>Select the original vault or restore its backup to use this credential.</value></data>
@@ -297,7 +296,7 @@
   <data name="OpenVaultManagementToCreate" xml:space="preserve"><value>Choose Manage vault in the vault menu to create it, or restore a backup.</value></data>
   <data name="SavedPrivateKeyMissing" xml:space="preserve"><value>The private key selected in the profile is missing from the vault.</value></data>
   <data name="SshCredentialMissing" xml:space="preserve"><value>The saved credential is missing. Select the intended credential again in the profile editor.</value></data>
-  <data name="NoEligiblePrivateKey" xml:space="preserve"><value>The vault has no private key for this SSH username.</value></data>
+  <data name="NoEligiblePrivateKey" xml:space="preserve"><value>The vault has no private keys.</value></data>
   <data name="TryAnotherSshMethod" xml:space="preserve"><value>Try another authentication method</value></data>
   <data name="CancelSshConnection" xml:space="preserve"><value>Cancel connection</value></data>
   <data name="KnownCredentialReferences" xml:space="preserve"><value>Referring registered profiles</value></data>
@@ -310,7 +309,7 @@
   <data name="RenameCredentialOnly" xml:space="preserve"><value>Rename only</value></data>
   <data name="NoKnownCredentialReferences" xml:space="preserve"><value>None found.</value></data>
   <data name="CredentialRenameUpdatedProfiles" xml:space="preserve"><value>The credential was renamed. Registered profiles updated: {0}.</value></data>
-  <data name="CredentialRenameProfileProblems" xml:space="preserve"><value>These profiles could not be updated:</value></data>
+  <data name="CredentialRenameProfileProblems" xml:space="preserve"><value>Problems encountered while updating profiles</value></data>
   <data name="CredentialRenameUnregistered" xml:space="preserve"><value>The profile is no longer registered.</value></data>
   <data name="CredentialRenameProfileChanged" xml:space="preserve"><value>The profile file changed after the review.</value></data>
   <data name="CredentialRenamePendingProfileEdits" xml:space="preserve"><value>The profile editor has unsaved changes or a pending save.</value></data>
@@ -335,7 +334,7 @@
   <data name="NetworkLogDestinationNotice" xml:space="preserve"><value>With recording enabled, TabTty opens the log folder before connecting. If the folder is on a network share, Windows may authenticate to that share and the share can receive the session logs. Relative paths start in the profile’s folder.</value></data>
   <data name="ClearPrivateKey" xml:space="preserve"><value>Clear selected private key</value></data>
   <data name="MissingHighlightSet" xml:space="preserve"><value>Unavailable highlight set</value></data>
-  <data name="RecycleProfile" xml:space="preserve"><value>Delete profile file…</value></data>
+  <data name="RecycleProfile" xml:space="preserve"><value>Delete file</value></data>
   <data name="RecycleProfileConfirm" xml:space="preserve"><value>Move this profile file to the Windows Recycle Bin? Its vault credentials and connected sessions will be retained.</value></data>
   <data name="RecycleProfileFailed" xml:space="preserve"><value>The profile could not be recycled. Check its location and availability.</value></data>
   <data name="RecoverStores" xml:space="preserve"><value>Recover application files…</value></data>
@@ -626,7 +625,6 @@ The host can send keys and multiple lines of commands without asking again, with
   <data name="ProfileLogNetworkShare" xml:space="preserve"><value>The recording destination is a network share.</value></data>
   <data name="ProfileReadSource" xml:space="preserve"><value>Read profile file</value></data>
   <data name="ProfileReadSourceNotice" xml:space="preserve"><value>Reading this file may access a network or redirected location. Allow reading the file for this request?</value></data>
-  <data name="ProfileRegisterTrustNotice" xml:space="preserve"><value>Registering a new profile also trusts the file version being registered.</value></data>
   <data name="ProfileTrustReset" xml:space="preserve"><value>Reset all connection profile trust</value></data>
   <data name="ProfileTrustResetConfirm" xml:space="preserve"><value>Clear all remembered versions for registered and unregistered connection profiles on this PC?</value></data>
   <data name="ProfileTrustWriteFailed" xml:space="preserve"><value>The profile trust change could not be verified. Retry the operation.</value></data>
@@ -634,4 +632,23 @@ The host can send keys and multiple lines of commands without asking again, with
   <data name="MacroTrustResetConfirm" xml:space="preserve"><value>Clear every remembered macro allow and block decision on this PC?</value></data>
   <data name="MacroTrustResetFailed" xml:space="preserve"><value>The macro trust reset could not be verified. Retry the operation.</value></data>
   <data name="RecordingDestinationChanged" xml:space="preserve"><value>The reviewed recording destination changed.</value></data>
+  <data name="AddProfile" xml:space="preserve"><value>Create new profile</value></data>
+  <data name="ProfileSaveDirectory" xml:space="preserve"><value>Connection profile folder</value></data>
+  <data name="InvalidProfileSaveDirectory" xml:space="preserve"><value>Enter an absolute folder path for connection profiles.</value></data>
+  <data name="ProfileListName" xml:space="preserve"><value>Name</value></data>
+  <data name="ProfileListFavorite" xml:space="preserve"><value>Favorite</value></data>
+  <data name="ProfileFavoriteAdd" xml:space="preserve"><value>Add to favorites</value></data>
+  <data name="ProfileFavoriteRemove" xml:space="preserve"><value>Remove from favorites</value></data>
+  <data name="ProfileSortAscending" xml:space="preserve"><value>Ascending</value></data>
+  <data name="ProfileSortDescending" xml:space="preserve"><value>Descending</value></data>
+  <data name="ProfileListProtocol" xml:space="preserve"><value>Protocol</value></data>
+  <data name="ProfileListDestination" xml:space="preserve"><value>Destination</value></data>
+  <data name="ProfileListFilePath" xml:space="preserve"><value>File path</value></data>
+  <data name="ProfileNameInUse" xml:space="preserve"><value>This profile name is already registered. Enter a different name.</value></data>
+  <data name="ProfileFileInUse" xml:space="preserve"><value>A file or registration already uses this path. Enter a different profile name.</value></data>
+  <data name="InvalidProfileFileName" xml:space="preserve"><value>The profile name cannot be used as a Windows file name. Enter a different name.</value></data>
+  <data name="ProfileRenameStateChanged" xml:space="preserve"><value>The registration changed before the file rename could complete.</value></data>
+  <data name="ProfileRenameRecovery" xml:space="preserve"><value>The rename needs recovery. Check the file at this location.&#10;&#10;{0}</value></data>
+  <data name="ProfileSaveNeedsCompletion" xml:space="preserve"><value>The file was saved. Recheck the save result to complete registration or renaming.</value></data>
+  <data name="ProfileBackupCleanupFailed" xml:space="preserve"><value>The profile was saved, but TabTty could not delete this backup file.&#10;&#10;{0}</value></data>
 </root>

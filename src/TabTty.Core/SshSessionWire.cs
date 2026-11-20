@@ -11,7 +11,7 @@ public sealed record SshPrivateKeyRequest(SshDestination Destination, string Use
     bool CanTryAnotherMethod = false);
 public sealed record SshPrompt(string Text, bool Echo);
 public sealed record SshChallenge(SshDestination Destination, string Name, string Instruction, SshPrompt[] Prompts);
-public sealed record SshSavedCredentialRequest(string Username, CredentialReference? Password, CredentialReference? PrivateKey);
+public sealed record SshSavedCredentialRequest(CredentialReference? Password, CredentialReference? PrivateKey);
 public sealed record SshCredentialAvailability(IReadOnlyDictionary<string, string> Unavailable);
 
 public sealed record SshInteraction(
@@ -25,7 +25,6 @@ public sealed record SshInteraction(
     Action<string>? CredentialNotice = null);
 
 public sealed class SshInteractionCancelledException() : OperationCanceledException("SSH interaction was cancelled.");
-internal sealed class SshCredentialAccountException() : IOException("The saved credential belongs to a different SSH account.");
 internal sealed class SshCredentialFailureException(string message, Exception? source = null) : IOException(message, source);
 internal sealed class SshMethodUnavailableException(string? reason, bool forAttempt = false) : Exception(reason)
 {
@@ -150,7 +149,7 @@ internal sealed partial class SshSessionWire : ISessionWire
         if (profile.SshAllowsKeyboardInteractive) preferred = [.. preferred, "keyboardInteractive"];
         var unavailable = new HashSet<string>(StringComparer.Ordinal);
         string? unavailableReason = null;
-        var saved = new SshSavedCredentialRequest(username,
+        var saved = new SshSavedCredentialRequest(
             preferred.Contains("password") ? profile.SshPassword : null,
             preferred.Contains("publicKey") ? profile.SshPrivateKey : null);
         if ((saved.Password is not null || saved.PrivateKey is not null) && interaction.CheckSavedCredentials is { } check)

@@ -30,7 +30,7 @@ try
     {
         await VaultEditsUseNamesAndRestoreAnOlderPasswordGeneration();
         await VaultImportsAnIndependentEd25519Key();
-        Console.WriteLine("PASS VaultUsernameBinding");
+        Console.WriteLine("PASS VaultEditsAndKeyImport");
         if (args.Length == 2)
         {
             int authPort = int.Parse(args[1]);
@@ -462,7 +462,7 @@ static async Task VaultEditsUseNamesAndRestoreAnOlderPasswordGeneration()
     {
         schemaVersion = 1, vaultId, entries = Enumerable.Repeat(new
         {
-            kind = "password", name = renamed, username = "operator", passwordUtf8 = "b25l",
+            kind = "password", name = renamed, passwordUtf8 = "b25l",
         }, 2),
     });
     try
@@ -471,33 +471,46 @@ static async Task VaultEditsUseNamesAndRestoreAnOlderPasswordGeneration()
         throw new InvalidOperationException("An authenticated payload could contain multiple entries with the same name.");
     }
     catch (InvalidDataException) { }
+    byte[] legacyPayload = JsonSerializer.SerializeToUtf8Bytes(new
+    {
+        schemaVersion = 1, vaultId, entries = new[]
+        {
+            new { kind = "password", name = renamed, username = "operator", passwordUtf8 = "b25l" },
+        },
+    });
+    try
+    {
+        _ = VaultPayload.Read(legacyPayload, vaultId, null, out _, out _);
+        throw new InvalidOperationException("A legacy vault username field was accepted.");
+    }
+    catch (InvalidDataException) { }
     using (var vault = await CredentialVault.CreateAsync(path, oldMaster.AsMemory()))
     {
         try
         {
-            await vault.AddPasswordAsync("Invalid", " ", "unused"u8.ToArray());
-            throw new InvalidOperationException("A blank vault username was accepted.");
+            await vault.AddPasswordAsync("", "unused"u8.ToArray());
+            throw new InvalidOperationException("An empty credential name was accepted.");
         }
         catch (ArgumentException) { }
-        string first = await vault.AddPasswordAsync("First", "operator", "one"u8.ToArray());
-        string second = await vault.AddPasswordAsync("Second", "operator", "two"u8.ToArray());
-        await vault.AddPasswordAsync(third, "operator", "three"u8.ToArray());
+        string first = await vault.AddPasswordAsync("First", "one"u8.ToArray());
+        string second = await vault.AddPasswordAsync("Second", "two"u8.ToArray());
+        await vault.AddPasswordAsync(third, "three"u8.ToArray());
         try
         {
-            await vault.UpdateEntryAsync(first, third, "operator");
+            await vault.UpdateEntryAsync(first, third);
             throw new InvalidOperationException("A rename accepted a duplicate name.");
         }
         catch (DuplicateCredentialNameException) { }
         await vault.DeleteEntryAsync(second);
         long preRenameRevision = vault.Revision;
-        await vault.UpdateEntryAsync(first, renamed, "operator", "new-one"u8.ToArray());
+        await vault.UpdateEntryAsync(first, renamed, "new-one"u8.ToArray());
         try
         {
             using var missing = await vault.GetPasswordAsync(first);
             throw new InvalidOperationException("The old name still resolved after rename.");
         }
         catch (CredentialLookupException error) when (error.Code == MacroErrorCode.CredentialUnavailable) { }
-        await vault.AddPasswordAsync(first, "operator", "new item at old name"u8.ToArray());
+        await vault.AddPasswordAsync(first, "new item at old name"u8.ToArray());
         using (VaultSecret replacement = await vault.GetPasswordAsync(first))
             ExpectBytes(replacement.Bytes.ToArray(), "new item at old name"u8.ToArray());
         try
@@ -507,7 +520,7 @@ static async Task VaultEditsUseNamesAndRestoreAnOlderPasswordGeneration()
         }
         catch (InvalidOperationException error) when (error.Message.Contains("revision", StringComparison.Ordinal)) { }
         await vault.DeleteEntryAsync(first);
-        await vault.AddPasswordAsync("renamed", "operator", "lowercase"u8.ToArray());
+        await vault.AddPasswordAsync("renamed", "lowercase"u8.ToArray());
         using (VaultSecret lower = await vault.GetPasswordAsync("renamed"))
             ExpectBytes(lower.Bytes.ToArray(), "lowercase"u8.ToArray());
         await vault.DeleteEntryAsync("renamed");
@@ -516,15 +529,6 @@ static async Task VaultEditsUseNamesAndRestoreAnOlderPasswordGeneration()
             throw new InvalidOperationException("Vault edits did not preserve the expected names and entry order.");
         using (VaultSecret secret = await vault.GetPasswordAsync(renamed))
             ExpectBytes(secret.Bytes.ToArray(), "new-one"u8.ToArray());
-        var reference = new CredentialReference(renamed, "password");
-        using (VaultSecret secret = await vault.GetSshSecretAsync(reference, "operator", CancellationToken.None))
-            ExpectBytes(secret.Bytes.ToArray(), "new-one"u8.ToArray());
-        try
-        {
-            using var secret = await vault.GetSshSecretAsync(reference, "Operator", CancellationToken.None);
-            throw new InvalidOperationException("A credential was handed off for a different account.");
-        }
-        catch (SshCredentialAccountException) { }
         await vault.BackupAsync(backup);
         await vault.ChangeMasterPasswordAsync(newMaster.AsMemory());
     }
@@ -583,8 +587,8 @@ static async Task SshVaultFallbackUsesAllowedMethodsAsync(int port)
     {
         CheckSavedCredentials = (request, _) =>
         {
-            if (request.PrivateKey != reference || request.Username != account)
-                throw new InvalidOperationException("SSH did not preflight the profile's exact key and account.");
+            if (request.PrivateKey != reference)
+                throw new InvalidOperationException("SSH did not preflight the profile's exact key reference.");
             return Task.FromResult(new SshCredentialAvailability(new Dictionary<string, string> { ["publicKey"] = "Vault missing" }));
         }
     };
@@ -592,15 +596,31 @@ static async Task SshVaultFallbackUsesAllowedMethodsAsync(int port)
     if (passwords != 2 || pickers != 1 || notices != 2)
         throw new InvalidOperationException("A saved key with an unavailable vault was still requested.");
 
-    try
+    using var vault = await CredentialVault.CreateAsync(Path.Combine(folder.Path, "shared.tttykey"),
+        "Shared test vault master password".AsMemory(), token);
+    string name = await vault.AddPasswordAsync("shared password", "local-test-password"u8.ToArray(), token);
+    var savedPassword = new CredentialReference(name, "password");
+    foreach (string username in new[] { account, "tabtty-interop" })
     {
-        await using var session = await TerminalSession.ConnectAsync(savedPath, token, missing with
-        { CheckSavedCredentials = (_, _) => throw new SshCredentialAccountException() });
-        throw new InvalidOperationException("An SSH account mismatch was accepted.");
+        string profilePath = Path.Combine(folder.Path, username + ".ttty");
+        await ConnectionProfile.CreateSsh(username, "127.0.0.1", username, port, password: savedPassword)
+            .SaveNewAsync(profilePath, token);
+        var shared = new SshInteraction((_, _) => Task.FromResult(true), (request, ct) =>
+        {
+            if (request.Username != username || request.SavedPassword != savedPassword)
+                throw new InvalidOperationException("The saved password changed the profile's SSH username.");
+            return ReadPasswordAsync(ct);
+        }, CheckSavedCredentials: (request, _) =>
+        {
+            if (request.Password != savedPassword || request.PrivateKey is not null)
+                throw new InvalidOperationException("SSH did not preflight the profile's exact password reference.");
+            return Task.FromResult(new SshCredentialAvailability(new Dictionary<string, string>()));
+        });
+        await using var session = await TerminalSession.ConnectAsync(profilePath, token, shared);
+        session.Disconnect();
     }
-    catch (SshCredentialAccountException) { }
-    if (passwords != 2 || pickers != 1)
-        throw new InvalidOperationException("An SSH account mismatch allowed a different method to try.");
+
+    async Task<VaultSecret?> ReadPasswordAsync(CancellationToken ct) => await vault.GetPasswordAsync(name, ct);
 }
 
 static async Task VaultRecoveryVerifiesBackupBeforeReplacingDamage()
@@ -614,7 +634,7 @@ static async Task VaultRecoveryVerifiesBackupBeforeReplacingDamage()
     using (var original = await CredentialVault.CreateAsync(path, master.AsMemory()))
     {
         id = original.Id;
-        entry = await original.AddPasswordAsync("Test", "operator", "value"u8.ToArray());
+        entry = await original.AddPasswordAsync("Test", "value"u8.ToArray());
         await original.BackupAsync(backup);
     }
     byte[] newer = await File.ReadAllBytesAsync(path);
@@ -665,7 +685,7 @@ static async Task VaultInitializesAnEmptyFileAndArchivesItsEncryptedContents()
     using (var initialized = await CredentialVault.InitializeEmptyAsync(path, master.AsMemory(), originalEmpty))
     {
         vaultId = initialized.Id;
-        entryName = await initialized.AddPasswordAsync("Test", "operator", "test-secret"u8.ToArray());
+        entryName = await initialized.AddPasswordAsync("Test", "test-secret"u8.ToArray());
     }
     byte[] encrypted = await File.ReadAllBytesAsync(path);
     try
@@ -697,11 +717,11 @@ static async Task VaultImportsAnEncryptedOpenSshKey(string fixture)
     using var vault = await CredentialVault.CreateAsync(path, "OpenSSH key test master password".AsMemory());
     try
     {
-        await vault.ImportPrivateKeyAsync("OpenSSH fixture", "operator", fixture);
+        await vault.ImportPrivateKeyAsync("OpenSSH fixture", fixture);
         throw new InvalidOperationException("Encrypted OpenSSH import did not request its passphrase.");
     }
     catch (PrivateKeyPassphraseRequiredException) { }
-    string entryName = await vault.ImportPrivateKeyAsync("OpenSSH fixture", "operator", fixture, passphrase: "import-test-passphrase"u8.ToArray());
+    string entryName = await vault.ImportPrivateKeyAsync("OpenSSH fixture", fixture, passphrase: "import-test-passphrase"u8.ToArray());
     var entry = (await vault.ListEntriesAsync()).Single();
     string[] publicFile = (await File.ReadAllTextAsync(fixture + ".pub")).Split(' ', StringSplitOptions.RemoveEmptyEntries);
     string expected = "SHA256:" + Convert.ToBase64String(SHA256.HashData(Convert.FromBase64String(publicFile[1]))).TrimEnd('=');
@@ -721,23 +741,23 @@ static async Task VaultImportsAnEncryptedIndependentPrivateKey(string fixture)
     using var vault = await CredentialVault.CreateAsync(path, "Encrypted key test master password".AsMemory());
     try
     {
-        await vault.ImportPrivateKeyAsync("Fixture", "operator", source);
+        await vault.ImportPrivateKeyAsync("Fixture", source);
         throw new InvalidOperationException("Encrypted-key import did not request its passphrase.");
     }
     catch (PrivateKeyPassphraseRequiredException) { }
     try
     {
-        await vault.ImportPrivateKeyAsync("Fixture", "operator", source, passphrase: "wrong-passphrase"u8.ToArray());
+        await vault.ImportPrivateKeyAsync("Fixture", source, passphrase: "wrong-passphrase"u8.ToArray());
         throw new InvalidOperationException("Encrypted-key import accepted a wrong passphrase.");
     }
     catch (CryptographicException) { }
     if ((await vault.ListEntriesAsync()).Count != 0)
         throw new InvalidOperationException("A failed import changed the vault.");
-    string entry = await vault.ImportPrivateKeyAsync("Fixture", "operator", source, passphrase: "import-test-passphrase"u8.ToArray());
+    string entry = await vault.ImportPrivateKeyAsync("Fixture", source, passphrase: "import-test-passphrase"u8.ToArray());
     File.Delete(source);
     try
     {
-        await vault.AddPasswordAsync(entry, "operator", "duplicate name"u8.ToArray());
+        await vault.AddPasswordAsync(entry, "duplicate name"u8.ToArray());
         throw new InvalidOperationException("A password reused a private-key name.");
     }
     catch (DuplicateCredentialNameException) { }
@@ -765,14 +785,14 @@ static async Task VaultImportsAnIndependentEd25519Key()
         using var acquired = CredentialVault.ReadPrivateKeySource(source);
         long reviewedRevision = vault.Revision;
         await File.WriteAllBytesAsync(source, "incompatible external replacement"u8.ToArray());
-        string other = await vault.AddPasswordAsync("Other entry", "operator", "test password"u8.ToArray());
+        string other = await vault.AddPasswordAsync("Other entry", "test password"u8.ToArray());
         try
         {
-            await vault.ImportPrivateKeySourceAsync("Stale key", "operator", acquired, expectedRevision: reviewedRevision);
+            await vault.ImportPrivateKeySourceAsync("Stale key", acquired, expectedRevision: reviewedRevision);
             throw new InvalidOperationException("Import accepted an obsolete vault revision.");
         }
         catch (InvalidOperationException error) when (error.Message == "The reviewed vault revision changed before the operation.") { }
-        entry = await vault.ImportPrivateKeySourceAsync("Fixture key", "operator", acquired, expectedRevision: vault.Revision);
+        entry = await vault.ImportPrivateKeySourceAsync("Fixture key", acquired, expectedRevision: vault.Revision);
         if (!(await File.ReadAllBytesAsync(source)).AsSpan().SequenceEqual("incompatible external replacement"u8))
             throw new InvalidOperationException("Import mutated the external source file.");
         await vault.DeleteEntryAsync(other);
@@ -821,7 +841,7 @@ static async Task VaultCopyUnlocksAndRejectsTampering()
     string entry;
     using (var vault = await CredentialVault.CreateAsync(path, master.AsMemory()))
     {
-        entry = await vault.AddPasswordAsync("Test credential", "test-user", "sécret"u8.ToArray());
+        entry = await vault.AddPasswordAsync("Test credential", "sécret"u8.ToArray());
         await vault.BackupAsync(copy);
     }
     File.Delete(path);
@@ -1107,8 +1127,8 @@ static async Task ProfileEditsPreserveIdentityAndRejectExternalChanges()
     ConnectionProfile saved = await ConnectionProfile.LoadAsync(path);
     if (saved.Id != loaded.Id || saved.DisplayName != "Edited" ||
         JsonNode.Parse(saved.ToEditorJson())!["futureProperty"]!["data"]!.GetValue<int>() != 17 ||
-        (await ConnectionProfile.LoadAsync(path + ".bak")).DisplayName != "Original")
-        throw new InvalidOperationException("Profile editing lost identity, unknown fields, or its previous valid version.");
+        File.Exists(path + ".bak"))
+        throw new InvalidOperationException("Profile editing lost identity or unknown fields, or left a backup after verification.");
     if (saved.Duplicate().Id == saved.Id) throw new InvalidOperationException("A duplicate reused the source ID.");
     draft["displayName"] = "External";
     string external = draft.ToJsonString();
@@ -1144,10 +1164,16 @@ static async Task SavedTelnetProfileKeepsItsSettings()
     var saved = await ConnectionProfile.LoadAsync(path);
     if (saved.DisplayName != "Lab console" || saved.Host != "localhost" ||
         saved.Port != 2323 || saved.ReceiveEncoding != "utf-8" ||
-        saved.Enter != "crlf" || saved.RecordRaw || saved.RecordText || saved.RecordTerminal)
+        saved.Enter != "crlf" || saved.RecordRaw || saved.RecordText || saved.RecordTerminal || saved.GroupName is not null)
     {
         throw new InvalidOperationException("The saved profile did not preserve the destination and defaults.");
     }
+    var document = JsonNode.Parse(saved.ToEditorJson())!.AsObject();
+    document["groupName"] = "  Lab_東京  ";
+    await saved.Edit(document.ToJsonString()).SaveEditAsync();
+    var grouped = await ConnectionProfile.LoadAsync(path);
+    if (grouped.GroupName != "Lab_東京" || grouped.Duplicate().GroupName != grouped.GroupName || grouped.Id != saved.Id)
+        throw new InvalidOperationException("The group name did not survive saving and duplicating the profile.");
 }
 
 static async Task FirstProfileSaveCreatesTheParentFolders()

@@ -19,7 +19,7 @@ internal static partial class Program
         CredentialReference reference = Task.Run(async () =>
         {
             using var created = await CredentialVault.CreateAsync(path, oldMaster.AsMemory(), token);
-            return new CredentialReference(await created.AddPasswordAsync("close test", "operator", expectedSecret, token),
+            return new CredentialReference(await created.AddPasswordAsync("close test", expectedSecret, token),
                 "password");
         }, token).GetAwaiter().GetResult();
         byte[] original = File.ReadAllBytes(path);

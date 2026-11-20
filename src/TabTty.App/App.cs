@@ -51,6 +51,17 @@ public sealed class App : Application
     internal int SettingsRevision { get; private set; }
     internal static string DefaultVaultPath => Path.Combine(LocalState.DirectoryPath, "credentials.tttykey");
     internal string VaultPath => VaultPathFor(settings);
+    internal string ProfileSaveDirectory => settings["profileSaveDirectory"]?.GetValue<string>() ?? DefaultProfileSaveDirectory;
+
+    private static string DefaultProfileSaveDirectory
+    {
+        get
+        {
+            string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments,
+                Environment.SpecialFolderOption.DoNotVerify);
+            return documents.Length == 0 ? "" : Path.Combine(documents, "TabTty", "Profiles");
+        }
+    }
     internal (int Character, int Line, bool Remember) PasteDefaults { get; set; }
     internal VaultController Vault { get; }
     internal SshHostTrust HostTrust { get; }
@@ -65,6 +76,10 @@ public sealed class App : Application
         VaultFileHooks? vaultFiles = null, Action<string, string, string?>? issueOtherStores = null,
         Action<string>? validateProfileStage = null)
     {
+        Resources.MergedDictionaries.Add(new ResourceDictionary
+        {
+            Source = new Uri("/TabTty;component/DetailsTabs.xaml", UriKind.Relative),
+        });
         Broadcast = new BroadcastInput(this);
         Ai = new AiCollaboration(this);
         this.settingsPath = settingsPath;
@@ -343,7 +358,8 @@ public sealed class App : Application
 
     internal async Task SaveSettingsAsync(string languageChoice, string themeChoice, string bellChoice,
         string terminalFontFamily, double terminalFontSize, int retainedRows, bool autoCloseDisconnectedTabs,
-        string vaultPath, int revision, bool? broadcastAcrossWindows = null, long? maxPasteTextBytes = null)
+        string vaultPath, int revision, bool? broadcastAcrossWindows = null, long? maxPasteTextBytes = null,
+        string? profileSaveDirectory = null)
     {
         if (revision != SettingsRevision)
             throw new InvalidOperationException(Text("ManagementTabOutdated"));
@@ -371,6 +387,8 @@ public sealed class App : Application
         candidate["autoCloseDisconnectedTabs"] = autoCloseDisconnectedTabs;
         if (vaultChanged || settings["credentialVaultPath"] is not null)
             candidate["credentialVaultPath"] = vaultPath;
+        if (profileSaveDirectory is not null)
+            candidate["profileSaveDirectory"] = NormalizeProfileSaveDirectory(profileSaveDirectory);
         byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(candidate, new JsonSerializerOptions { WriteIndented = true });
         if (bytes.Length > 65536) throw new InvalidDataException("Settings exceed 64 KiB.");
         var operation = JsonStoreRecovery.BeginSave(settingsPath, bytes, settingsOriginal,
@@ -459,6 +477,17 @@ public sealed class App : Application
         return full;
     }
 
+    private static string? NormalizeProfileSaveDirectory(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return null;
+        if (!OrdinaryWindowsPath.IsValid(path) || !Path.IsPathFullyQualified(path))
+            throw new ArgumentException(Text("InvalidProfileSaveDirectory"));
+        string full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        if (!OrdinaryWindowsPath.IsValid(full))
+            throw new ArgumentException(Text("InvalidProfileSaveDirectory"));
+        return full;
+    }
+
     private static JsonObject ReadSettings(string path, out byte[] bytes)
     {
         using var stream = File.OpenRead(path);
@@ -493,6 +522,11 @@ public sealed class App : Application
         {
             try { parsed["credentialVaultPath"] = NormalizeVaultPath(vaultPath.GetValue<string>()); }
             catch (ArgumentException exception) { throw new InvalidDataException(Text("InvalidVaultPath"), exception); }
+        }
+        if (parsed["profileSaveDirectory"] is { } profileDirectory)
+        {
+            try { parsed["profileSaveDirectory"] = NormalizeProfileSaveDirectory(profileDirectory.GetValue<string>()); }
+            catch (ArgumentException exception) { throw new InvalidDataException(Text("InvalidProfileSaveDirectory"), exception); }
         }
         return parsed;
     }

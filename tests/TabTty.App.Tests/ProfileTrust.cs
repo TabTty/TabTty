@@ -62,12 +62,32 @@ internal static partial class Program
             await app.Profiles.AdmitAsync(owner, path, null, token);
 
             app.Profiles.Show(owner);
-            ListBox? list;
-            while ((list = FindControls<ListBox>(owner).FirstOrDefault(control => control.Items.Count == 1)) is null)
+            ListView? list;
+            while ((list = FindControls<ListView>(owner).FirstOrDefault(control => control.Items.Count == 1)) is null)
                 await Task.Delay(10, token);
+            var groupTabs = FindControls<TabControl>(owner).Single(tabs =>
+                System.Windows.Automation.AutomationProperties.GetName(tabs) == App.Text("ProfileGroups"));
+            groupTabs.SelectedItem = groupTabs.Items.OfType<TabItem>().Single(tab => Equals(tab.Tag, ""));
             list.SelectedIndex = 0;
-            Click(owner, "EditProfile");
-            await EditProfileNameAsync("First version", "Main editor version");
+            await ClickProfileActionAsync(list, "EditProfile");
+            const string groupName = "Lab_東京";
+            await EditProfileNameAsync("First version", "Main editor version", $" {groupName} ");
+            if (groupTabs.SelectedItem is not TabItem { Tag: string selectedGroup } || selectedGroup != groupName ||
+                list.SelectedItem is not ProfileCatalog.Registration { GroupName: groupName } ||
+                new ProfileCatalog(app).ReadRegistrations().Single().GroupName != groupName)
+                throw new InvalidOperationException("The saved group did not update the management tab and the registration.");
+            var tabs = (TabControl)owner.FindName("tabs");
+            var newTab = (Button)tabs.Template.FindName("newTabButton", tabs);
+            newTab.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, newTab));
+            var profileMenu = newTab.ContextMenu;
+            try
+            {
+                var submenu = profileMenu.Items.OfType<MenuItem>().Single(item =>
+                    System.Windows.Automation.AutomationProperties.GetName(item) == groupName);
+                if (!profileMenu.IsOpen || submenu.Items.OfType<MenuItem>().Single().ToolTip is not string)
+                    throw new InvalidOperationException("The new-tab menu did not put the profile in its group.");
+            }
+            finally { profileMenu.IsOpen = false; }
             await app.Profiles.AdmitAsync(owner, path, null, token);
             await app.Profiles.EditFromExplorerAsync(path);
             await EditProfileNameAsync("Main editor version", "Standalone editor version");
@@ -110,7 +130,7 @@ internal static partial class Program
             await AnswerAsync("ProfileTrustAndConnect", "ProfileTrustAndConnect");
             await admission;
             list.SelectedIndex = 0;
-            Click(owner, "RemoveRegistration");
+            await ClickProfileActionAsync(list, "RemoveRegistration");
             CheckMacroLaunch(app.Profiles.ReadRegistrations().Count == 0, "The registration was not removed.");
             admission = app.Profiles.AdmitAsync(owner, path, "Fixture macro", token);
             await AnswerAsync("ProfileTrustAndConnect", "Cancel");
@@ -150,18 +170,41 @@ internal static partial class Program
             Click(review, action);
         }
 
-        async Task EditProfileNameAsync(string before, string after)
+        async Task EditProfileNameAsync(string before, string after, string? group = null)
         {
             ProfileEditorWindow? editor;
             while ((editor = app.Windows.OfType<ProfileEditorWindow>().SingleOrDefault(window => window.IsLoaded)) is null)
                 await Task.Delay(10, token);
             FindControls<TextBox>(editor).Single(box => box.Text == before).Text = after;
+            if (group is not null)
+                ((TextBox)((FormView)editor.Content).FindName("ProfileGroupName")).Text = group;
             Click(editor, "Save");
             var form = (FormView)editor.Content;
             while (form.IsBusy) await Task.Delay(10, token);
             CheckMacroLaunch((await ConnectionProfile.LoadAsync(path, token)).DisplayName == after,
                 "The profile editor did not save its changes.");
             editor.Close();
+        }
+
+        async Task ClickProfileActionAsync(ListView list, string action)
+        {
+            ContextMenu menu = list.ContextMenu;
+            var opened = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            RoutedEventHandler onOpened = (_, _) => opened.TrySetResult();
+            menu.Opened += onOpened;
+            menu.PlacementTarget = list;
+            try
+            {
+                menu.IsOpen = true;
+                await opened.Task.WaitAsync(token);
+                var item = menu.Items.OfType<MenuItem>().Single(entry => Equals(entry.Header, App.Text(action)));
+                item.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent, item));
+            }
+            finally
+            {
+                menu.Opened -= onOpened;
+                menu.IsOpen = false;
+            }
         }
 
         static void Click(Window window, string action) =>

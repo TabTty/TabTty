@@ -42,8 +42,7 @@ manually still presents the registration choice.
   registered. This includes **Register** in the profile list, **Register and
   connect**, and a verified new-profile or duplicate save that creates a
   registration. The standalone **Register** operation completes without
-  starting a connection. Identify the file and explain the trust effect in
-  the registering action itself. There is no second trust confirmation.
+  starting a connection. There is no second trust confirmation.
   Receiving a file activation or reserving its tab does not register it.
 - The main window's editor may advance trust on a verified save of a profile
   whose exact starting version was trusted. For an existing unreviewed or
@@ -81,11 +80,9 @@ also identify the macro. Reading an externally supplied network file can itself
 contact a share. Obtain permission to read that source before making such a
 request. That permission covers reading the file only.
 
-For an SSH profile with a saved credential, use the expected account from the
-captured profile in this review. After host key verification and before the
-first SSH user authentication request, compare it with the account of each
-available saved credential. Any allowed continuation without an unavailable
-credential keeps the approved account from the captured profile.
+Display the SSH username from the captured profile during review and use that
+same value throughout authentication, including when an unavailable saved
+credential causes a method fallback.
 [Saved SSH credentials](transports-and-authentication.md#authentication-and-user-facing-messages)
 
 Use the approved snapshot for recording, macro profile-password selection and

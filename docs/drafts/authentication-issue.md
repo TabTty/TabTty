@@ -2,7 +2,7 @@
 
 > The [profile trust specification](../specification/profile-trust.md) supersedes the historical rules below for admitting a profile before its credentials can be used.
 
-> The [SSH authentication specification](../specification/transports-and-authentication.md#authentication-and-user-facing-messages) defines the username bound to each saved credential and its verification during connection.
+> The [SSH authentication specification](../specification/transports-and-authentication.md#authentication-and-user-facing-messages) uses the username from the connection profile throughout authentication.
 
 > Consolidated on 2026-11-10: [implementation readiness and completed contracts](../specification/implementation-readiness.md). Accepted product decisions below remain binding; historical lists of unfinished technical design are superseded by those contracts. Implementation and runtime verification have not begun.
 

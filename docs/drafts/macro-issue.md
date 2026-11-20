@@ -718,8 +718,7 @@ Related documents: [future macro constraints](future-macro-design.md),
   wrong/missing/type-mismatched references fail without fallback. Macro behavior
   during an application vault-path change remains a separate unresolved branch.
   The proposal exposes the saved password through the password accessor. The
-  account required by the [vault format](../specification/vault-format.md#encrypted-payload-schema-and-limits)
-  stays outside that accessor's return value.
+  SSH username belongs to the connection profile.
 
 ## Round 6 evidence and constraints, checked 2026-11-14
 

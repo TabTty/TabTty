@@ -10,7 +10,7 @@ internal static partial class ArchitectureOwnershipContracts
         string path = Path.Combine(directory.Path, "capacity.tttykey");
         var token = deadline.Token;
         using var vault = await CredentialVault.CreateAsync(path, master.AsMemory(), token);
-        await vault.AddPasswordAsync("original", "operator", "original secret"u8.ToArray(), token);
+        await vault.AddPasswordAsync("original", "original secret"u8.ToArray(), token);
         var original = vault.ReadCommittedMetadata();
         byte[] saved = File.ReadAllBytes(path);
         int issued = 0;
@@ -30,7 +30,7 @@ internal static partial class ArchitectureOwnershipContracts
         {
             try
             {
-                await vault.AddPasswordAsync("refused", "operator", "unused secret"u8.ToArray(), token);
+                await vault.AddPasswordAsync("refused", "unused secret"u8.ToArray(), token);
                 throw new InvalidOperationException("An entry save bypassed metadata admission.");
             }
             catch (ResourceLimitException) { }
@@ -38,7 +38,7 @@ internal static partial class ArchitectureOwnershipContracts
         if (issued != 0 || !ReferenceEquals(vault.ReadCommittedMetadata(), original) ||
             !saved.AsSpan().SequenceEqual(File.ReadAllBytes(path)))
             throw new InvalidOperationException("Capacity refusal changed the vault generation.");
-        string name = await vault.AddPasswordAsync("after release", "operator", "accepted secret"u8.ToArray(), token);
+        string name = await vault.AddPasswordAsync("after release", "accepted secret"u8.ToArray(), token);
         var published = vault.ReadCommittedMetadata();
         if (published.Revision != original.Revision + 1 || !published.Entries.Any(entry => entry.Name == name) ||
             original.Entries.Count != 1)
@@ -61,9 +61,9 @@ internal static partial class ArchitectureOwnershipContracts
         using (var created = await CredentialVault.CreateAsync(target, originalMaster.AsMemory(), token))
         {
             vaultId = created.Id;
-            entry = await created.AddPasswordAsync("original entry", "operator", "initial secret"u8.ToArray(), token);
+            entry = await created.AddPasswordAsync("original entry", "initial secret"u8.ToArray(), token);
             await created.BackupAsync(backup, token);
-            await created.UpdateEntryAsync(entry, "later entry", "operator", "later secret"u8.ToArray(), token);
+            await created.UpdateEntryAsync(entry, "later entry", "later secret"u8.ToArray(), token);
             await created.ChangeMasterPasswordAsync(nextMaster.AsMemory(), token);
         }
         byte[] original = File.ReadAllBytes(target), candidate = File.ReadAllBytes(backup);
@@ -127,7 +127,7 @@ internal static partial class ArchitectureOwnershipContracts
         var token = deadline.Token;
         string path = Path.Combine(directory.Path, "master-root.tttykey");
         using var vault = await CredentialVault.CreateAsync(path, "original master fixture".AsMemory(), token);
-        string entry = await vault.AddPasswordAsync("entry", "operator", "entry secret fixture"u8.ToArray(), token);
+        string entry = await vault.AddPasswordAsync("entry", "entry secret fixture"u8.ToArray(), token);
         byte[] saved = File.ReadAllBytes(path), preserved = File.ReadAllBytes(path + ".bak");
         var revision = vault.ReadCommittedMetadata();
         long slots = VaultPublicationCapacity.Results.Used;
@@ -220,7 +220,7 @@ internal static partial class ArchitectureOwnershipContracts
         const string master = "original publication test password";
         string path = Path.Combine(directory.Path, "preissue.tttykey");
         using var vault = await CredentialVault.CreateAsync(path, master.AsMemory(), token);
-        string entry = await vault.AddPasswordAsync("original", "operator", "original secret"u8.ToArray(), token);
+        string entry = await vault.AddPasswordAsync("original", "original secret"u8.ToArray(), token);
         byte[] prior = File.ReadAllBytes(path), backup = File.ReadAllBytes(path + ".bak");
         var revision = vault.ReadCommittedMetadata();
         long capacity = VaultPublicationCapacity.Results.Used;
@@ -423,7 +423,7 @@ internal static partial class ArchitectureOwnershipContracts
         string moved = Path.Combine(directory.Path, "reviewed.tttykey");
         string rescue = Path.Combine(directory.Path, "rescue.tttykey");
         using var owner = await CredentialVault.CreateAsync(target, master.AsMemory(), token);
-        string entry = await owner.AddPasswordAsync("rescue entry", "operator", "authentic source"u8.ToArray(), token);
+        string entry = await owner.AddPasswordAsync("rescue entry", "authentic source"u8.ToArray(), token);
         await owner.BackupAsync(backup, token);
         using (await CredentialVault.CreateAsync(different, master.AsMemory(), token)) { }
         byte[] authentic = File.ReadAllBytes(target);

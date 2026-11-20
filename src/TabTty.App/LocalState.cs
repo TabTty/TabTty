@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using TabTty.Core;
@@ -91,6 +92,7 @@ internal static class LocalState
             (state["selectedVaultPath"] is not null && state["selectedVaultPath"]?.GetValue<string>() is not { Length: <= 32760 }))
             throw new InvalidDataException(App.Text("LocalStateInvalid"));
         var ids = new HashSet<Guid>();
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (state["selectedVaultPath"]?.GetValue<string>() is { Length: > 0 } legacyPath)
             try { _ = App.NormalizeVaultPath(legacyPath); }
             catch (ArgumentException error) { throw new InvalidDataException(App.Text("LocalStateInvalid"), error); }
@@ -104,6 +106,12 @@ internal static class LocalState
                 item["displayPath"]?.GetValue<string>() is not { Length: > 0 and <= 32760 } ||
                 item["favorite"]?.GetValue<bool>() is not { } || !item.ContainsKey("lastUsed") ||
                 (item["lastUsed"] is not null && item["lastUsed"]?.GetValue<DateTimeOffset>() is not { Offset.Ticks: 0 }))
+                throw new InvalidDataException(App.Text("LocalStateInvalid"));
+            if (item["groupName"]?.GetValue<string>() is { } groupName &&
+                groupName != ConnectionProfile.NormalizeGroupName(groupName))
+                throw new InvalidDataException(App.Text("LocalStateInvalid"));
+            if (item["name"]?.GetValue<string>() is { } name && (string.IsNullOrWhiteSpace(name) || name.Contains('\0') ||
+                name.EnumerateRunes().Count() > 256 || !names.Add(name)))
                 throw new InvalidDataException(App.Text("LocalStateInvalid"));
         }
         if (state.ContainsKey("profileTrust"))

@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using Microsoft.Win32.SafeHandles;
 
 namespace TabTty.Core;
@@ -31,10 +32,13 @@ internal readonly record struct FileObjectIdentity(uint Volume, ulong Index)
         return [.. keys];
     }
 
-    internal static bool DeleteIfSame(string path, FileObjectIdentity expected, long? expectedLength = null)
+    internal static bool DeleteIfSame(string path, FileObjectIdentity expected, long? expectedLength = null,
+        byte[]? expectedDigest = null, int maximumBytes = int.MaxValue)
     {
         const uint deleteAccess = 0x10000;
-        using var handle = OpenAttributes(InteropPath(path), deleteAccess, 1, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero);
+        const uint readAccess = 0x80000000;
+        using var handle = OpenAttributes(InteropPath(path), deleteAccess | (expectedDigest is null ? 0 : readAccess),
+            1, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero);
         if (handle.IsInvalid)
         {
             if (Marshal.GetLastWin32Error() is 2 or 3) return true;
@@ -48,20 +52,37 @@ internal readonly record struct FileObjectIdentity(uint Volume, ulong Index)
         }
         if (expectedLength is { } length && (((ulong)info.SizeHigh << 32) | info.SizeLow) != (ulong)length)
             throw new IOException("The parked original changed before cleanup.");
+        if (expectedDigest is not null && (info.Attributes & (uint)(FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
+            return false;
+        using var contents = expectedDigest is null ? null : new FileStream(handle, FileAccess.Read);
+        if (contents is not null &&
+            (contents.Length > maximumBytes || !SHA256.HashData(contents).AsSpan().SequenceEqual(expectedDigest)))
+            return false;
         byte delete = 1;
         if (!SetFileInformationByHandle(handle, 4, ref delete, 1))
             throw NativeError("The publication candidate could not be removed.");
         return true;
     }
 
-    internal static bool MoveIfSame(string path, FileObjectIdentity expected, string target, bool replace)
+    internal static bool MoveIfSame(string path, FileObjectIdentity expected, string target, bool replace,
+        byte[]? expectedBytes = null)
     {
         const uint deleteAccess = 0x10000;
-        using var handle = OpenAttributes(InteropPath(path), deleteAccess, 1, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero);
+        const uint readAccess = 0x80000000;
+        using var handle = OpenAttributes(InteropPath(path), deleteAccess | (expectedBytes is null ? 0 : readAccess),
+            1, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero);
         if (handle.IsInvalid) throw NativeError("The staged file could not be opened for publication.");
         var info = ReadInformation(handle);
         if (Identity(info) != expected || (info.Attributes & (uint)(FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
             return false;
+        using var contents = expectedBytes is null ? null : new FileStream(handle, FileAccess.Read);
+        if (expectedBytes is not null)
+        {
+            if (contents!.Length != expectedBytes.Length) return false;
+            var bytes = new byte[expectedBytes.Length];
+            contents.ReadExactly(bytes);
+            if (!bytes.AsSpan().SequenceEqual(expectedBytes)) return false;
+        }
 
         // FILE_RENAME_INFO contains a flags field, an aligned directory handle (NULL for an absolute path),
         // a DWORD byte count and the UTF-16 destination.

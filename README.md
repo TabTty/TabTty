@@ -36,9 +36,11 @@ Use the Tab list button at the left of the tab bar to jump to any tab in that
 tab group. A faded edge indicates tabs beyond that edge. Scroll the mouse
 wheel over the tab strip to select the next tab (down) or previous tab (up).
 Selection wraps at either end of the list.
-Closing an editor tab asks before discarding unsaved changes. Save applies the
-changes and keeps the tab open. Discard changes restores the last saved values,
-or the initial values for a new profile, and keeps the tab open.
+Settings, profile editing, and highlight-set editing enable **Save** and
+**Discard changes** when the draft differs from its saved or initial values.
+Save applies the changes. Discard changes restores those values. Both keep the
+editor open. The **Close** button in the same row asks for confirmation with
+**OK** and **Cancel** if there are unsaved changes.
 TabTty dialogs use the application theme. Windows file pickers use the
 appearance supplied by Windows.
 
@@ -47,12 +49,21 @@ appearance supplied by Windows.
 Open the + menu next to the tabs and select a registered profile by name to
 connect. Open **Connection profile management** from the + menu or **Tools**
 to create, register, search, edit, duplicate or favorite profiles. Choose
-**New profile…**, select Telnet, SSH or COM and save a `.ttty` file. The
-management list selects the newly saved profile and clears the search if it
+**Create new profile**, select Telnet, SSH or COM and save. TabTty uses the profile name
+as the `.ttty` file name and saves it in the folder under **Settings > Save paths**.
+The management list selects the newly saved profile and clears the search if it
 would hide that profile. New, edited, and duplicated profiles open in a
 separate window. Use the category list on the left to move between sections in
 the profile editor and Settings. Save keeps the editor open, and closing it
 asks before discarding any unsaved changes.
+
+To organize connection profiles, enter a **Group name** in the profile editor
+and save. The management page has an **All** tab and tabs for each group,
+with a search field above the details list in each tab. Double-click a row to
+edit it or right-click it for other actions. Click a column heading to sort
+and click the star at the start of a row to change its favorite status.
+Profiles with a blank group name appear under **Ungrouped** and directly in
+the + menu. Named groups appear as submenus in the + menu.
 
 Choose **File → Open profile…** to connect from an existing file. In Windows,
 associate `.ttty` and `.tttykey` with TabTty to use these File Explorer commands.
@@ -61,7 +72,8 @@ associate `.ttty` and `.tttykey` with TabTty to use these File Explorer commands
   profile and connect. A multi-selection starts one connection tab per file
   in the most recently active terminal window.
 - Choose **Edit** for `.ttty` to open one editor window per selected file.
-  Save writes to the opened file. Look under **Show more options** for Edit.
+  Save writes to the opened profile. Renaming a registered profile in the
+  configured save folder also renames its file. Look under **Show more options** for Edit.
 - For `.tttykey`, choose **Open** or **Edit**, or double-click a single file
   to open its vault editor. The selected vault uses the same unlock state in
   the standalone window, the TabTty management tab, and connections.
@@ -135,7 +147,7 @@ healthy connection available for manual input. After a recording failure,
 retry recording and then explicitly resume the macro. If receive history was
 lost, the tab offers a choice to continue or stop. To send a saved password,
 pass its exact vault entry name to `WritePassword` or `WritePasswordLine`.
-Select a password entry and use **Copy macro reference** in vault management
+Right-click a password entry and choose **Copy macro reference** in vault management
 to copy the quoted name. See the
 [macro language reference](docs/drafts/macro-language.md).
 
@@ -197,8 +209,8 @@ inner splits.
 
 ## Credentials and host keys
 
-The shared `.tttykey` vault pairs each SSH username with a password or an
-imported private key. Set its path in Settings, then choose Credential vault →
+The shared `.tttykey` vault stores named passwords and imported private keys.
+Set its path in Settings, then choose Credential vault →
 Unlock vault or Manage vault from the Tools menu. If the file is missing or
 zero bytes, these commands open master password setup and show the management
 tab after creation. Set a password of 14–1024 Unicode scalars and choose Save
@@ -209,13 +221,15 @@ with profile files when moving to another PC. Profiles refer to vault entries
 by their exact, case-sensitive names.
 Use encrypted backups before changing credentials. A backup retains the master
 password used when that backup was made. Open **Manage vault** to add or import
-credentials, select an entry to edit or delete it, and
-use the Vault file section for backups, restore, and master-password changes.
+credentials. Search the list or click a column heading to sort. Double-click
+an entry to edit it or right-click
+for its actions. Use the Vault file section for backups, restore, and
+master-password changes.
 When renaming an entry, you can also update the registered profiles that use it.
 
 The profile's saved-credential picker also opens **Manage vault**. Reopen the
-picker after adding an entry. A selected vault credential provides the SSH
-username and makes the username field read-only while that method is enabled.
+picker after adding an entry. Set the SSH username in each connection profile.
+Multiple profiles can use the same vault entry with their own usernames.
 During a connection, TabTty reports a missing or zero-byte vault or a missing
 key and continues only if a permitted authentication method is still available.
 

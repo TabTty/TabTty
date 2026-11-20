@@ -46,7 +46,8 @@ internal sealed partial class ProfileCatalog
             version + "\0" + destination.EffectivePath + "\0" + destination.DriveTarget)));
     }
 
-    private void CommitRegistration(string location, string path, ConnectionProfile profile, bool used, string version)
+    private void CommitRegistration(string location, string path, ConnectionProfile profile, bool used, string version,
+        bool allowNameSuffix)
     {
         LocalState.Change(state =>
         {
@@ -55,34 +56,32 @@ internal sealed partial class ProfileCatalog
             {
                 var registrations = state["registrations"]!.AsArray();
                 if (registrations.Count >= 10_000) throw new IOException(Text("LocalStateInvalid"));
+                string name = GetRegistrationName(state, location, profile.DisplayName, allowNameSuffix);
                 registration = new JsonObject
                 {
                     ["registrationId"] = Guid.NewGuid(), ["path"] = location, ["displayPath"] = path,
-                    ["favorite"] = false, ["lastUsed"] = null,
+                    ["name"] = name, ["favorite"] = false, ["lastUsed"] = null,
                 };
                 registrations.Add(registration);
                 StoreVersion(state, location, version);
             }
+            StoreRegistrationGroup(registration, profile.GroupName);
             if (used) registration["lastUsed"] = DateTimeOffset.UtcNow;
         });
-        names[location] = profile.DisplayName;
+        RememberMetadata(location, profile);
     }
 
-    private async Task RegisterSavedAsync(string path, ConnectionProfile profile, long reset, bool selectNewProfile = false)
+    private async Task<string> RegisterSavedAsync(string path, ConnectionProfile profile, long reset, bool selectNewProfile = false,
+        bool createdInApp = false)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         string location = await NormalizeLocationAsync(path, timeout.Token);
+        bool allowNameSuffix = !createdInApp && !await IsInProfileDirectoryAsync(location, timeout.Token);
         if (reset != trustReset) throw new IOException(Text("ProfileTrustWriteFailed"));
-        CommitRegistration(location, path, profile, used: false, VersionFor(location, profile, null));
+        CommitRegistration(location, path, profile, used: false, VersionFor(location, profile, null), allowNameSuffix);
         if (selectNewProfile) lastCreatedProfile = (lastCreatedProfile.Sequence + 1, location);
         ProfileSaved?.Invoke();
-    }
-
-    private void AdvanceEditorTrust(string location, TrustState starting, string previous, ConnectionProfile saved)
-    {
-        if (starting.Version != previous || ReadTrust(location) != starting) return;
-        string version = VersionFor(location, saved, null);
-        LocalState.Change(state => StoreVersion(state, location, version));
+        return location;
     }
 
     internal void ResetTrust(Window owner)
@@ -129,8 +128,16 @@ internal sealed partial class ProfileCatalog
                 {
                     if (register)
                     {
-                        CommitRegistration(location, path, profile, used: true, version);
-                        ProfileSaved?.Invoke();
+                        await registrationChanges.WaitAsync(token);
+                        try
+                        {
+                            await ReadLegacyNamesAsync(token);
+                            bool allowSuffix = !await IsInProfileDirectoryAsync(location, token);
+                            if (ReadTrust(location) != before) continue;
+                            CommitRegistration(location, path, profile, used: true, version, allowSuffix);
+                            ProfileSaved?.Invoke();
+                        }
+                        finally { registrationChanges.Release(); }
                     }
                     else LocalState.Change(state => StoreVersion(state, location, version));
                 }

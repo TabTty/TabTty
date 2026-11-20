@@ -35,15 +35,17 @@ internal static partial class Program
 
             Task accepted = host.Dispatcher.InvokeAsync(UseVault).Task.Unwrap();
             prompt = await FindDialogAsync("InitializeVault");
-            string explanation = App.Text(empty ? "InitializeEmptyVaultDescription" : "CreateMissingVaultDescription");
+            string caption = string.Format(App.Text("MasterPasswordWithLength"),
+                VaultContainer.MinimumMasterLength, VaultContainer.MaximumMasterLength);
+            string expectedPrompt = empty ? $"{App.Text("InitializeEmptyVaultDescription")}\n\n{caption}" : caption;
             var fields = FindControls<PasswordBox>(prompt).ToArray();
             bool showsPath = FindControls<TextBox>(prompt).Any(field => field.Text == ProfileLocation.Normalize(path));
-            bool showsExplanation = FindControls<TextBlock>(prompt).Any(label => label.Text.Contains(explanation, StringComparison.Ordinal));
-            if (fields.Length != 2 || !showsPath || !showsExplanation)
+            bool showsExpectedPrompt = FindControls<TextBlock>(prompt).Any(label => label.Text == expectedPrompt);
+            if (fields.Length != 2 || showsPath != empty || !showsExpectedPrompt)
             {
                 prompt.Close();
                 throw new InvalidOperationException(
-                    $"Vault setup fields: {fields.Length} passwords, target path shown: {showsPath}, explanation shown: {showsExplanation}.");
+                    $"Vault setup fields: {fields.Length} passwords, target path shown: {showsPath}, expected prompt shown: {showsExpectedPrompt}.");
             }
             foreach (var field in fields) field.Password = "fixture password for vault first use";
             var save = FindControls<Button>(prompt).Single(button => Equals(button.Content, App.Text("Save")));
@@ -67,7 +69,7 @@ internal static partial class Program
             Task UseVault() => empty ? ChooseSavedPassword() : app.Vault.UnlockFromMenuAsync(host);
         }
 
-        Task ChooseSavedPassword() => app.Vault.ChoosePasswordAsync(host, (_, _) =>
+        Task ChooseSavedPassword() => app.Vault.ChoosePasswordAsync(host, _ =>
             throw new InvalidOperationException("A new vault had a saved password."));
 
         async Task<Window> FindDialogAsync(string title)
@@ -91,7 +93,7 @@ internal static partial class Program
         const string renamed = "Renamed team password";
         string vaultPath = Path.Combine(directory, "rename.tttykey");
         using (var vault = await CredentialVault.CreateAsync(vaultPath, master.AsMemory(), token))
-            await vault.AddPasswordAsync(original, "operator", "fixture secret"u8.ToArray(), token);
+            await vault.AddPasswordAsync(original, "fixture secret"u8.ToArray(), token);
         await app.SaveSettingsAsync(app.LanguageChoice, app.ThemeChoice, app.BellChoice, app.TerminalFontFamily,
             app.TerminalFontSize, app.RetainedRows, app.AutoCloseDisconnectedTabs, vaultPath, app.SettingsRevision);
         string saved = await MakeProfileAsync("Saved", register: true);
@@ -114,8 +116,8 @@ internal static partial class Program
             FindControls<PasswordBox>(unlock).Single().Password = master;
             Click(unlock, "UnlockVault");
             await management.WaitAsync(token);
-            ListBox? list;
-            while ((list = FindControls<ListBox>(host).FirstOrDefault(control => control.Items.OfType<VaultEntryInfo>().Any())) is null)
+            ListView? list;
+            while ((list = FindControls<ListView>(host).FirstOrDefault(control => control.Items.OfType<VaultEntryInfo>().Any())) is null)
                 await Task.Delay(15, token);
 
             var (edit, confirm) = await OpenRenameAsync(renamed);
@@ -165,9 +167,28 @@ internal static partial class Program
             async Task<(Window Edit, Window Confirm)> OpenRenameAsync(string newName)
             {
                 list.SelectedIndex = 0;
-                _ = host.Dispatcher.BeginInvoke(() => Click(host, "EditCredential"));
+                ContextMenu menu = list.ContextMenu;
+                var opened = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                RoutedEventHandler onOpened = (_, _) => opened.TrySetResult();
+                menu.Opened += onOpened;
+                menu.PlacementTarget = list;
+                try
+                {
+                    menu.IsOpen = true;
+                    await opened.Task.WaitAsync(token);
+                }
+                finally
+                {
+                    menu.Opened -= onOpened;
+                    menu.IsOpen = false;
+                }
+                var editAction = menu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, App.Text("VaultEditEntry")));
+                _ = host.Dispatcher.BeginInvoke(() => editAction.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent, editAction)));
                 var edit = await FindDialogAsync("EditCredential", form: true);
-                FindControls<TextBox>(edit).Single(field => field.Text == ((VaultEntryInfo)list.SelectedItem).Name).Text = newName;
+                var name = FindControls<TextBox>(edit).Single();
+                if (name.Text != ((VaultEntryInfo)list.SelectedItem).Name)
+                    throw new InvalidOperationException("The vault editor did not show the selected credential name.");
+                name.Text = newName;
                 _ = edit.Dispatcher.BeginInvoke(() => Click(edit, "Save"));
                 return (edit, await FindDialogAsync("EditCredential", form: false));
             }
@@ -263,10 +284,10 @@ internal static partial class Program
         CredentialReference reference;
         using (var owned = await CredentialVault.CreateAsync(first, master.AsMemory(), token))
         {
-            string entry = await owned.AddPasswordAsync("prior metadata", "operator", "prior fixture secret"u8.ToArray(), token);
+            string entry = await owned.AddPasswordAsync("prior metadata", "prior fixture secret"u8.ToArray(), token);
             reference = new(entry, "password");
             await owned.BackupAsync(backup, token);
-            await owned.UpdateEntryAsync(entry, "later metadata", "operator", "later fixture secret"u8.ToArray(), token);
+            await owned.UpdateEntryAsync(entry, "later metadata", "later fixture secret"u8.ToArray(), token);
         }
         fixture.RestoreSource = backup;
         var host = app.CreateWindow(restorePlacement: false);

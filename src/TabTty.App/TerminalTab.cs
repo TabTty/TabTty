@@ -162,6 +162,10 @@ internal sealed partial class TerminalTab : UserControl
     public bool ShowDisconnectedIndicator => statusKey == "Disconnected" || IsDisconnected;
     public string TabCaption => connectedName ?? Path.GetFileNameWithoutExtension(path);
     public string ProfilePath => path;
+    internal void UpdateProfilePath(string previous, string destination)
+    {
+        if (path == previous) path = destination;
+    }
     private Task connectionCompletion = Task.CompletedTask;
     public Task Completion => Macro is null ? connectionCompletion : Task.WhenAll(connectionCompletion, Macro.Completion);
     public bool CanTransfer => !ClosePending && IsRunning && !stop.IsCancellationRequested && session?.CanTransfer == true;
@@ -264,8 +268,9 @@ internal sealed partial class TerminalTab : UserControl
             using (var startup = CancellationTokenSource.CreateLinkedTokenSource(stop.Token, attempt))
             {
                 Window? owner = MacroWindow ?? Window.GetWindow(this);
-                var (profile, recordingDestination) = await app.Profiles.AdmitAsync(owner, path, Macro?.BaseName, startup.Token);
-                session = await TerminalSession.ConnectReviewedAsync(path, profile, Macro, startup.Token, interaction,
+                string attemptPath = path;
+                var (profile, recordingDestination) = await app.Profiles.AdmitAsync(owner, attemptPath, Macro?.BaseName, startup.Token);
+                session = await TerminalSession.ConnectReviewedAsync(attemptPath, profile, Macro, startup.Token, interaction,
                     Opened, retention, Viewport, recordingDestination);
             }
             session.Bell += () =>
@@ -321,7 +326,6 @@ internal sealed partial class TerminalTab : UserControl
                 string? credentialError = exception switch
                 {
                     SshCredentialFailureException => exception.Message,
-                    SshCredentialAccountException => Text("ReselectSshCredential"),
                     CredentialLookupException { Code: MacroErrorCode.CredentialKindMismatch } => Text("VaultCredentialKindMismatch"),
                     CredentialLookupException { Code: MacroErrorCode.CredentialUnavailable } => Text("SshCredentialMissing"),
                     _ => null,
@@ -472,7 +476,7 @@ internal sealed partial class TerminalTab : UserControl
     private Task<VaultSecret?> RequestSshPasswordAsync(SshPasswordRequest request, CancellationToken token)
     {
         if (request.Attempt == 1 && request.SavedPassword is { } reference)
-            return OnSshPromptAsync((app, owner) => app.Vault.ReadSavedPasswordAsync(owner, reference, token, request.Username),
+            return OnSshPromptAsync((app, owner) => app.Vault.ReadSavedPasswordAsync(owner, reference, token),
                 token, serialize: false);
         return OnSshPromptAsync<VaultSecret?>((app, owner) =>
         {

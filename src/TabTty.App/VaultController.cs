@@ -1,7 +1,9 @@
 using System.IO;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Data;
 using TabTty.Core;
 using static TabTty.App.App;
 
@@ -149,16 +151,11 @@ internal sealed class VaultController(App app) : IDisposable
     public Task RestoreFromMenuAsync(MainWindow owner) => Selected.RestoreFromMenuAsync(owner);
     public Task ArchiveAsync(MainWindow owner) => Selected.ArchiveAsync(owner);
 
-    public Task ChoosePasswordAsync(Window owner, Action<string, string> choose) =>
+    public Task ChoosePasswordAsync(Window owner, Action<string> choose) =>
         Selected.ChooseCredentialAsync(owner, "password", choose);
 
-    public Task ChoosePrivateKeyAsync(Window owner, Action<string, string> choose) =>
+    public Task ChoosePrivateKeyAsync(Window owner, Action<string> choose) =>
         Selected.ChooseCredentialAsync(owner, "privateKey", choose);
-
-    internal string? KnownUsername(string name, string kind) =>
-        Selected.Unlocked is { IsStale: false, HasUnverifiedPublication: false } opened
-            ? opened.ReadCommittedMetadata().Entries.FirstOrDefault(entry => entry.Name == name && entry.Kind == kind)?.Username
-            : null;
 
     internal async Task ShowManagementFromPickerAsync(Window source)
     {
@@ -175,8 +172,8 @@ internal sealed class VaultController(App app) : IDisposable
     public Task<SshCredentialAvailability> CheckSshCredentialsAsync(Window owner, SshSavedCredentialRequest request,
         CancellationToken token) => Selected.CheckSshCredentialsAsync(owner, request, token);
 
-    public Task<VaultSecret?> ReadSavedPasswordAsync(Window owner, CredentialReference reference, CancellationToken token,
-        string? username = null) => Selected.ReadSavedPasswordAsync(owner, reference, token, username);
+    public Task<VaultSecret?> ReadSavedPasswordAsync(Window owner, CredentialReference reference, CancellationToken token) =>
+        Selected.ReadSavedPasswordAsync(owner, reference, token);
 
     public Task<VaultSecret?> ReadPrivateKeyAsync(Window owner, SshPrivateKeyRequest request, CancellationToken token) =>
         Selected.ReadPrivateKeyAsync(owner, request, token);
@@ -197,41 +194,61 @@ internal sealed class VaultController(App app) : IDisposable
     {
         form.CanDismissBusyView = () => target().CanDismissMasterChange(form.OwnerWindow);
         form.ShowFileOperationStatus();
-        var list = new ListBox { DisplayMemberPath = nameof(VaultEntryInfo.Name), Height = 250 };
-        var metadata = new TextBox { IsReadOnly = true, TextWrapping = TextWrapping.Wrap, MinHeight = 100,
-            MaxHeight = 180, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-        var vaultPath = new TextBox { IsReadOnly = true, TextWrapping = TextWrapping.Wrap, MaxHeight = 85,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-        var selectedActions = new List<Button>();
+        var list = new ListView();
+        var columns = new DetailsColumns(list);
+        columns.Add("ProfileListName", nameof(VaultEntryInfo.Name), 220);
+        var kindColumn = columns.Add("VaultEntryType", nameof(VaultEntryInfo.PublicType), 160);
+        columns.Add("VaultEntryFingerprint", nameof(VaultEntryInfo.Fingerprint), 410);
+        var search = new TextBox();
+        var searchLabel = new Label { Target = search, VerticalAlignment = VerticalAlignment.Center };
+        AutomationProperties.SetLabeledBy(search, searchLabel);
+        var searchRow = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
+        DockPanel.SetDock(searchLabel, Dock.Left);
+        searchRow.Children.Add(searchLabel);
+        searchRow.Children.Add(search);
+        var status = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(4, 0, 4, 8) };
+        AutomationProperties.SetLiveSetting(status, AutomationLiveSetting.Polite);
+        var contents = new DockPanel();
+        DockPanel.SetDock(searchRow, Dock.Top);
+        DockPanel.SetDock(status, Dock.Top);
+        contents.Children.Add(searchRow);
+        contents.Children.Add(status);
+        contents.Children.Add(list);
+        var frame = new Border
+        {
+            Margin = new Thickness(24, 0, 24, 0), BorderThickness = new Thickness(1),
+            Padding = new Thickness(8), UseLayoutRounding = true, Child = contents,
+        };
+        frame.SetResourceReference(Border.BorderBrushProperty, "SurfaceStrokeColorDefaultBrush");
+
+        var vaultPath = new TextBlock { TextWrapping = TextWrapping.Wrap };
         var requiresVault = new List<Button>();
-        Button? copyMacroReference = null;
-        int detailRevision = 0;
+        VaultFileController? listedFile = null;
+        IReadOnlyList<VaultEntryInfo>? listedEntries = null;
+        bool listedUnlocked = false;
+        int statusRevision = 0;
+
+        var menu = new ContextMenu();
+        list.ContextMenu = menu;
+        (VaultFileController File, VaultEntryInfo Entry)? menuTarget = null;
+        AddEntryAction("VaultEditEntry", static (file, window, entry) => file.EditEntryAsync(window, entry));
+        MenuItem copyMacroReference = AddEntryAction("CopyMacroReference", static (file, _, entry) =>
+        {
+            if (entry.Kind == "password")
+                Clipboard.SetText(JsonSerializer.Serialize(file.CurrentCredentialName(entry)));
+            return Task.CompletedTask;
+        });
+        menu.Items.Add(new Separator());
+        AddEntryAction("VaultDeleteEntry", static (file, window, entry) => file.DeleteEntryAsync(window, entry));
+
         form.AddActionRow(() =>
         {
             requiresVault.Add(Add("AddVaultPassword", static (file, window) => file.AddPasswordAsync(window)));
             requiresVault.Add(Add("ImportPrivateKey", static (file, window) => file.ImportPrivateKeyAsync(window)));
         });
-        form.AddColumns(() => form.AddGroup("VaultEntryList", () => form.AddDisplay("VaultEntries", list)),
-            () => form.AddGroup("CredentialDetails", () =>
-            {
-                form.AddDisplay("CredentialDetails", metadata);
-                form.AddActionRow(() =>
-                {
-                    selectedActions.Add(Add("EditCredential", (file, window) => list.SelectedItem is VaultEntryInfo entry ?
-                        file.EditEntryAsync(window, entry) : Task.CompletedTask));
-                    selectedActions.Add(Add("DeleteCredential", (file, window) => list.SelectedItem is VaultEntryInfo entry ?
-                        file.DeleteEntryAsync(window, entry) : Task.CompletedTask));
-                    copyMacroReference = Add("CopyMacroReference", (file, _) =>
-                    {
-                        if (list.SelectedItem is VaultEntryInfo { Kind: "password" } entry)
-                            Clipboard.SetText(JsonSerializer.Serialize(file.CurrentCredentialName(entry)));
-                        return Task.CompletedTask;
-                    });
-                });
-            }));
-        form.AddGroup("VaultFileOperations", () =>
+        form.AddFillingDisplay("VaultEntryList", frame, () => form.AddGroup("VaultFileOperations", () =>
         {
-            form.AddField("VaultPath", vaultPath);
+            form.AddDisplay("VaultPath", vaultPath);
             form.AddActionRow(() =>
             {
                 requiresVault.Add(Add("BackupVault", static (file, window) => file.BackupAsync(window)));
@@ -247,12 +264,47 @@ internal sealed class VaultController(App app) : IDisposable
                     if (archived && window is VaultEditorWindow editor) editor.CloseAfterArchive();
                 });
             });
+        }));
+
+        form.AddLocalizedUpdate(() =>
+        {
+            columns.UpdateHeaders();
+            kindColumn.DisplayMemberBinding = new Binding(nameof(VaultEntryInfo.PublicType))
+            {
+                TargetNullValue = Text("VaultPassword"),
+            };
+            searchLabel.Content = Text("SearchProfiles");
+            AutomationProperties.SetName(list, Text("VaultEntries"));
+            UpdateEntriesAndStatus(refreshLabels: true);
         });
-        list.SelectionChanged += (_, _) => UpdateDetails();
-        form.AddLocalizedUpdate(UpdateDetails);
+        search.TextChanged += (_, _) => RefreshList((list.SelectedItem as VaultEntryInfo)?.Name);
+        list.ContextMenuOpening += (_, args) =>
+        {
+            VaultEntryInfo? entry = args.CursorLeft == -1 ? list.SelectedItem as VaultEntryInfo
+                : columns.RowAt(args.OriginalSource)?.Content as VaultEntryInfo;
+            if (entry is null || listedFile?.Unlocked is null)
+            {
+                args.Handled = true;
+                return;
+            }
+            list.SelectedItem = entry;
+            (list.ItemContainerGenerator.ContainerFromItem(entry) as ListViewItem)?.Focus();
+        };
+        menu.Opened += (_, _) =>
+        {
+            menuTarget = listedFile is { Unlocked: not null } file && list.SelectedItem is VaultEntryInfo entry
+                ? (file, entry) : null;
+            copyMacroReference.Visibility = menuTarget?.Entry.Kind == "password" ? Visibility.Visible : Visibility.Collapsed;
+        };
+        list.PreviewMouseLeftButtonDown += async (_, args) =>
+        {
+            if (args.ClickCount != 2 || columns.RowAt(args.OriginalSource)?.Content is not VaultEntryInfo entry ||
+                listedFile is not { Unlocked: not null } file) return;
+            args.Handled = true;
+            await RunEntryAction(file, entry, static (current, window, item) => current.EditEntryAsync(window, item));
+        };
         form.Loaded += (_, _) => { ManagementChanged += UpdateEntries; UpdateEntries(); };
         form.Unloaded += (_, _) => ManagementChanged -= UpdateEntries;
-        UpdateEntries();
 
         Button Add(string key, Func<VaultFileController, Window, Task> action) => form.AddAsyncAction(key, () =>
         {
@@ -261,45 +313,78 @@ internal sealed class VaultController(App app) : IDisposable
             return file.RunAsync(window, () => action(file, window));
         });
 
-        void UpdateEntries()
+        MenuItem AddEntryAction(string key, Func<VaultFileController, Window, VaultEntryInfo, Task> action)
         {
-            string? selected = (list.SelectedItem as VaultEntryInfo)?.Name;
-            VaultFileController file = target();
-            vaultPath.Text = file.FilePath;
-            if (!ReferenceEquals(list.ItemsSource, file.ManagementEntries))
+            var item = new MenuItem();
+            form.AddLocalizedUpdate(() => item.Header = Text(key));
+            item.Click += async (_, _) =>
             {
-                list.ItemsSource = file.ManagementEntries;
-                list.SelectedItem = file.ManagementEntries.FirstOrDefault(entry => entry.Name == selected);
-            }
-            UpdateDetails();
+                if (menuTarget is { } selected) await RunEntryAction(selected.File, selected.Entry, action);
+            };
+            menu.Items.Add(item);
+            return item;
         }
 
-        void UpdateDetails()
+        Task RunEntryAction(VaultFileController file, VaultEntryInfo entry,
+            Func<VaultFileController, Window, VaultEntryInfo, Task> action) => form.RunAsync(() =>
+        {
+            if (!ReferenceEquals(file, target()) || file.Unlocked is null) return Task.CompletedTask;
+            Window window = form.OwnerWindow;
+            return file.RunAsync(window, () => action(file, window, entry));
+        });
+
+        void UpdateEntries() => UpdateEntriesAndStatus(refreshLabels: false);
+
+        void UpdateEntriesAndStatus(bool refreshLabels)
         {
             VaultFileController file = target();
-            int revision = ++detailRevision;
-            var entry = list.SelectedItem as VaultEntryInfo;
-            foreach (Button action in selectedActions) action.IsEnabled = entry is not null && file.Unlocked is not null;
-            if (copyMacroReference is not null)
-                copyMacroReference.IsEnabled = entry?.Kind == "password" && file.Unlocked is not null;
-            foreach (Button action in requiresVault) action.IsEnabled = true;
-            if (entry is null)
+            vaultPath.Text = string.Format(Text("VaultPathDisplay"), file.FilePath);
+            AutomationProperties.SetName(vaultPath, vaultPath.Text);
+            bool sameFile = ReferenceEquals(listedFile, file);
+            bool unlocked = file.Unlocked is not null;
+            if (!sameFile || !ReferenceEquals(listedEntries, file.ManagementEntries) || listedUnlocked != unlocked || refreshLabels)
             {
-                metadata.Text = Text(file.Unlocked is null ? "VaultEntriesLocked" : file.ManagementEntries.Count == 0
-                    ? "VaultEntriesEmpty" : "SelectVaultEntry");
-                if (form.IsLoaded && file.Unlocked is null) _ = DescribeMissingAsync(file, revision);
-                return;
+                listedFile = file;
+                listedEntries = file.ManagementEntries;
+                listedUnlocked = unlocked;
+                RefreshList(sameFile ? (list.SelectedItem as VaultEntryInfo)?.Name : null);
             }
-            metadata.Text = string.Join('\n', new[] { entry.Name,
-                entry.Kind == "password" ? Text("VaultPassword") : entry.PublicType ?? Text("PublicKey"),
-                entry.Username, entry.Fingerprint }.Where(value => !string.IsNullOrEmpty(value)));
+            int revision = ++statusRevision;
+            foreach (Button action in requiresVault) action.IsEnabled = true;
+            if (file.Unlocked is null)
+            {
+                SetStatus(Text("VaultEntriesLocked"));
+                if (form.IsLoaded) _ = DescribeMissingAsync(file, revision);
+            }
+        }
+
+        void RefreshList(string? selection)
+        {
+            if (listedEntries is null) return;
+            string query = search.Text;
+            string password = Text("VaultPassword");
+            var visible = listedEntries.Where(entry =>
+                entry.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                (entry.PublicType ?? password).Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                entry.Fingerprint?.Contains(query, StringComparison.OrdinalIgnoreCase) == true).ToArray();
+            list.ItemsSource = visible;
+            columns.ApplySort();
+            list.SelectedItem = visible.FirstOrDefault(entry => entry.Name == selection);
+            if (listedFile?.Unlocked is not null)
+                SetStatus(visible.Length != 0 ? "" : Text(listedEntries.Count == 0 ? "VaultEntriesEmpty" : "NoSearchMatch"));
+        }
+
+        void SetStatus(string message)
+        {
+            status.Text = message;
+            status.Visibility = message.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         }
 
         async Task DescribeMissingAsync(VaultFileController file, int revision)
         {
             string? missing = await file.DescribeMissingTargetAsync(form.OwnerWindow);
-            if (missing is null || detailRevision != revision || !form.IsLoaded || !ReferenceEquals(file, target())) return;
-            metadata.Text = missing;
+            if (missing is null || statusRevision != revision || !form.IsLoaded || !ReferenceEquals(file, target())) return;
+            SetStatus(missing);
             foreach (Button action in requiresVault) action.IsEnabled = false;
         }
     }

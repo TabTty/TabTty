@@ -112,8 +112,7 @@ supersedes the historical lookup rules below. Credential references resolve
 unique entry names in the selected vault.
 
 The [vault editing contract](../specification/vault-format.md#complete-vault-management-operations)
-extends shared-entry impact review to account changes and requires reselection
-when the account in a profile and the vault differ.
+requires shared-entry impact review for secret changes and destructive operations.
 
 Use stable `(vault ID, entry ID)` references with an expected credential
 kind. Entry names are human-readable labels and may be duplicated. Do not resolve

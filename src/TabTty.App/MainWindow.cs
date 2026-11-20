@@ -63,7 +63,7 @@ internal sealed partial class MainWindow : Window
         if (closing) return;
         var terminal = new TerminalTab(path);
         AddTerminalTab(terminal);
-        terminal.Start(profile => _ = app.Profiles.RememberAsync(path, profile, used: true));
+        terminal.Start(profile => _ = app.Profiles.RememberAsync(terminal.ProfilePath, profile, used: true));
     }
 
     internal void AddTerminalTab(TerminalTab terminal)
@@ -584,10 +584,25 @@ internal sealed partial class MainWindow : Window
         IReadOnlyList<ProfileCatalog.Registration> profiles;
         try { profiles = app.Profiles.ReadRegistrations(); }
         catch (Exception exception) when (ProfileCatalog.IsFileProblem(exception)) { profiles = []; }
-        var entries = profiles.Select(profile => (profile.Path,
-            Item: CreateProfileMenuItem(profile.Name, profile.Path, OpenProfile))).ToArray();
-        foreach (var entry in entries) menu.Items.Add(entry.Item);
-        if (entries.Length > 0) menu.Items.Add(new Separator());
+        var entries = new List<(string Path, MenuItem Item)>();
+        foreach (var profileGroup in profiles.GroupBy(profile => profile.GroupName, StringComparer.OrdinalIgnoreCase))
+        {
+            ItemsControl parent = menu;
+            if (profileGroup.Key is { } groupName)
+            {
+                var submenu = new MenuItem();
+                SetMenuItemName(submenu, PermissionDisplay.Literal(groupName));
+                menu.Items.Add(submenu);
+                parent = submenu;
+            }
+            foreach (var profile in profileGroup)
+            {
+                var item = CreateProfileMenuItem(profile.Name, profile.Path, OpenProfile);
+                entries.Add((profile.Path, item));
+                parent.Items.Add(item);
+            }
+        }
+        if (entries.Count > 0) menu.Items.Add(new Separator());
         menu.Items.Add(MenuAction("ProfileCatalog", () => app.Profiles.Show(this)));
         menu.Closed += (_, _) => button.ClearValue(ContextMenuProperty);
         using var lifetime = new CancellationTokenSource();
@@ -597,17 +612,14 @@ internal sealed partial class MainWindow : Window
         {
             button.ContextMenu = menu;
             menu.IsOpen = true;
-            foreach (var batch in entries.Chunk(4))
-            {
-                if (lifetime.IsCancellationRequested) break;
-                await Task.WhenAll(batch.Select(async entry =>
-                {
-                    if (await app.Profiles.ReadDisplayNameAsync(entry.Path, lifetime.Token) is { } name &&
-                        !lifetime.IsCancellationRequested)
-                        SetMenuItemName(entry.Item, name);
-                }));
-            }
+            await app.Profiles.ReadRegistrationDetailsAsync(profiles, lifetime.Token, legacyOnly: true);
+            if (lifetime.IsCancellationRequested) return;
+            var names = app.Profiles.ReadRegistrations().ToDictionary(profile => profile.Path, profile => profile.Name,
+                StringComparer.Ordinal);
+            foreach (var (path, item) in entries)
+                if (names.TryGetValue(path, out string? name)) SetMenuItemName(item, name);
         }
+        catch (Exception exception) when (ProfileCatalog.IsFileProblem(exception)) { }
         finally { menu.Closed -= closed; }
     }
 
@@ -672,6 +684,8 @@ internal sealed partial class MainWindow : Window
         var broadcastScope = new CheckBox { IsChecked = app.BroadcastAcrossWindows };
         var vaultPath = new TextBox { Text = app.VaultPath, MaxLength = 32760, TextWrapping = TextWrapping.Wrap,
             MaxHeight = 96, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        var profileDirectory = new TextBox { Text = app.ProfileSaveDirectory, MaxLength = 32760, TextWrapping = TextWrapping.Wrap,
+            MaxHeight = 96, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         form.AddNavigation(
             ("SettingsLanguageAndTheme", () =>
             {
@@ -693,8 +707,8 @@ internal sealed partial class MainWindow : Window
             }),
             ("SettingsVault", () =>
             {
-                form.AddField("VaultPath", vaultPath);
-                form.AddActionRow(() => form.AddAsyncAction("BrowseVaultPath", BrowseVaultPathAsync));
+                form.AddField("VaultPath", vaultPath, actionKey: "BrowsePath", action: BrowseVaultPathAsync);
+                form.AddField("ProfileSaveDirectory", profileDirectory, actionKey: "BrowsePath", action: BrowseProfileDirectoryAsync);
             }),
             ("SettingsMaintenance", () => form.AddActionRow(() =>
             {
@@ -719,9 +733,12 @@ internal sealed partial class MainWindow : Window
                 maxPasteBytes <= 0)
                 throw new ArgumentException(Text("InvalidPasteSourceMaximum"));
             await app.SaveSettingsAsync(languages[language.SelectedIndex], themes[theme.SelectedIndex], bells[bell.SelectedIndex],
-                fontFamily.Text, size, rows, autoClose.IsChecked == true, vaultPath.Text, revision, broadcastScope.IsChecked == true, maxPasteBytes);
+                fontFamily.Text, size, rows, autoClose.IsChecked == true, vaultPath.Text, revision,
+                broadcastScope.IsChecked == true, maxPasteBytes,
+                profileDirectory.Text == app.ProfileSaveDirectory ? null : profileDirectory.Text);
             revision = app.SettingsRevision;
             vaultPath.Text = app.VaultPath;
+            profileDirectory.Text = app.ProfileSaveDirectory;
             return true;
         });
 
@@ -734,6 +751,13 @@ internal sealed partial class MainWindow : Window
                 InitialDirectory = Path.GetDirectoryName(vaultPath.Text) ?? "",
             };
             if (app.Modal(() => picker.ShowDialog(form.OwnerWindow)) == true) vaultPath.Text = picker.FileName;
+            return Task.CompletedTask;
+        }
+
+        Task BrowseProfileDirectoryAsync()
+        {
+            var picker = new OpenFolderDialog { Title = Text("ProfileSaveDirectory"), InitialDirectory = profileDirectory.Text };
+            if (app.Modal(() => picker.ShowDialog(form.OwnerWindow)) == true) profileDirectory.Text = picker.FolderName;
             return Task.CompletedTask;
         }
 
@@ -770,8 +794,7 @@ internal sealed partial class MainWindow : Window
         if (item.Content is FormView form)
         {
             if (closing || item.IsClosing || GroupOf(item) is null) return;
-            form.RequestClose(() => app.Modal(() => ThemedMessageBox.Show(this, form.ClosePrompt("DiscardChangesAndClose"),
-                Text("CloseTab"), MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No)) == MessageBoxResult.Yes);
+            form.RequestClose(form.ConfirmDiscardChanges);
             return;
         }
         await terminalClosure.CloseTabAsync(item);

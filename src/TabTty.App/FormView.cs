@@ -21,6 +21,7 @@ internal sealed class FormView : DockPanel
     private readonly List<EditField> edits = [];
     private Func<bool>? savesSection;
     private bool tracksEdits;
+    private Action? updateEditorButtons;
     private TextBlock? busyStatus;
 
     public FormView(bool modal = false)
@@ -85,6 +86,16 @@ internal sealed class FormView : DockPanel
 
     public bool CanClose(Func<bool> confirmDiscard) =>
         !BlocksClose && (!HasUnsavedChanges && UnresolvedPublication is null || confirmDiscard());
+
+    internal bool ConfirmDiscardChanges()
+    {
+        Window owner = OwnerWindow;
+        bool isTab = TabOwner is not null;
+        string key = isTab ? "DiscardChangesAndClose" : "DiscardChangesAndCloseWindow";
+        string title = isTab ? Text("CloseTab") : owner.Title;
+        return ((App)Application.Current).Modal(() => ThemedMessageBox.Show(owner, ClosePrompt(key), title,
+            MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel)) == MessageBoxResult.OK;
+    }
 
     internal string ClosePrompt(string key) =>
         UnresolvedPublication is { } details ? $"{Text(key)}\n\n{details}" : Text(key);
@@ -216,6 +227,34 @@ internal sealed class FormView : DockPanel
         (section ?? fields).Children.Add(element);
     }
 
+    internal void AddFillingDisplay(string key, FrameworkElement element, Action? buildFooter = null)
+    {
+        SetText(key, value => AutomationProperties.SetName(element, value));
+        Children.Remove(scroller);
+        scroller.Content = null;
+        double previousMaxWidth = fields.MaxWidth;
+        fields.MaxWidth = double.PositiveInfinity;
+        Thickness margin = fields.Margin;
+        fields.Margin = new Thickness(margin.Left, margin.Top, margin.Right, 8);
+        SetDock(fields, Dock.Top);
+        Children.Add(fields);
+        if (buildFooter is not null)
+        {
+            var footer = new StackPanel { MaxWidth = previousMaxWidth, Margin = new Thickness(margin.Left, 8, margin.Right, 0) };
+            var footerScroll = new ScrollViewer
+            {
+                Content = footer, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch, Focusable = false,
+            };
+            footerScroll.SetResourceReference(StyleProperty, typeof(ScrollViewer));
+            SizeChanged += (_, args) => footerScroll.MaxHeight = args.NewSize.Height * 0.45;
+            SetDock(footerScroll, Dock.Bottom);
+            Children.Add(footerScroll);
+            BuildIn(footer, buildFooter);
+        }
+        Children.Add(element);
+    }
+
     private void BuildIn(Panel panel, Action build)
     {
         Panel? previous = section;
@@ -242,6 +281,7 @@ internal sealed class FormView : DockPanel
     public void UpdateLabels()
     {
         foreach (Action label in labels) label();
+        updateEditorButtons?.Invoke();
     }
 
     public void AddLocalizedUpdate(Action update)
@@ -254,14 +294,19 @@ internal sealed class FormView : DockPanel
     {
         var button = new Button { Margin = section is WrapPanel ? new Thickness(0, 0, 8, 6) : new Thickness(0, 4, 0, 0) };
         SetText(key, value => button.Content = value);
-        button.Click += (_, _) => action();
+        button.Click += (_, _) =>
+        {
+            action();
+            updateEditorButtons?.Invoke();
+        };
         (section ?? fields).Children.Add(button);
         return button;
     }
 
     public Button AddAsyncAction(string key, Func<Task> action) => AddAction(key, async () => await RunAsync(action));
 
-    public void AddField(string key, Control control, bool trackEdit = true)
+    public void AddField(string key, Control control, bool trackEdit = true, string? actionKey = null,
+        Func<Task>? action = null)
     {
         if (!modal && section is not null && control is CheckBox { Content: null } check)
         {
@@ -271,8 +316,23 @@ internal sealed class FormView : DockPanel
         }
         else
         {
-            var label = AddLabel(control);
+            var label = AddLabel(control, addControl: action is null);
             SetText(key, value => label.Text = value);
+            if (action is not null)
+            {
+                var row = new Grid();
+                row.ColumnDefinitions.Add(new ColumnDefinition());
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                row.Children.Add(control);
+                (section ?? fields).Children.Add(row);
+                BuildIn(row, () =>
+                {
+                    var button = AddAsyncAction(actionKey!, action);
+                    button.Margin = new Thickness(8, 0, 0, 0);
+                    button.VerticalAlignment = VerticalAlignment.Center;
+                    Grid.SetColumn(button, 1);
+                });
+            }
         }
         if (modal || !trackEdit) return;
         switch (control)
@@ -305,7 +365,7 @@ internal sealed class FormView : DockPanel
 
     public void AddPrompt(string caption, Control control) => AddLabel(control).Text = caption;
 
-    private TextBlock AddLabel(Control control)
+    private TextBlock AddLabel(Control control, bool addControl = true)
     {
         var text = new TextBlock { TextWrapping = TextWrapping.Wrap };
         var label = new Label { Content = text, Target = control };
@@ -313,7 +373,7 @@ internal sealed class FormView : DockPanel
         label.SetBinding(VisibilityProperty, new Binding(nameof(Visibility)) { Source = control });
         AutomationProperties.SetLabeledBy(control, label);
         (section ?? fields).Children.Add(label);
-        (section ?? fields).Children.Add(control);
+        if (addControl) (section ?? fields).Children.Add(control);
         return text;
     }
 
@@ -335,9 +395,21 @@ internal sealed class FormView : DockPanel
         tracksEdits = true;
         AddButtonRow(save, "Save", false, "DiscardChanges", () =>
         {
-            if (IsBusy) return;
+            if (IsBusy || !HasUnsavedChanges) return;
             foreach (EditField edit in edits) edit.Restore();
+            updateEditorButtons?.Invoke();
         });
+        AddHandler(TextBoxBase.TextChangedEvent, new TextChangedEventHandler(OnEditorInputChanged), true);
+        AddHandler(Selector.SelectionChangedEvent, new SelectionChangedEventHandler(OnEditorInputChanged), true);
+        AddHandler(ToggleButton.CheckedEvent, new RoutedEventHandler(OnEditorInputChanged), true);
+        AddHandler(ToggleButton.UncheckedEvent, new RoutedEventHandler(OnEditorInputChanged), true);
+        AddHandler(ToggleButton.IndeterminateEvent, new RoutedEventHandler(OnEditorInputChanged), true);
+    }
+
+    private void OnEditorInputChanged(object sender, RoutedEventArgs args)
+    {
+        if (args.OriginalSource is TextBox { IsReadOnly: false } or ComboBox or ToggleButton)
+            updateEditorButtons?.Invoke();
     }
 
     private void AddButtonRow(Func<Task<bool>> save, string acceptKey, bool cancelDefault, string cancelKey,
@@ -355,6 +427,7 @@ internal sealed class FormView : DockPanel
         SetText(cancelKey, value => cancel.Content = value);
         apply.Click += async (_, _) =>
         {
+            if (tracksEdits && !HasUnsavedChanges) return;
             bool committed = false;
             await RunAsync(async () => committed = await save());
             if (!committed) return;
@@ -362,6 +435,7 @@ internal sealed class FormView : DockPanel
             {
                 foreach (EditField edit in edits)
                     if (edit.IsSaved?.Invoke() != false) edit.Capture();
+                updateEditorButtons?.Invoke();
             }
             else Completed?.Invoke(true);
         };
@@ -369,6 +443,19 @@ internal sealed class FormView : DockPanel
         if (cancelDefault) Loaded += (_, _) => cancel.Focus();
         buttons.Children.Add(apply);
         buttons.Children.Add(cancel);
+        if (tracksEdits)
+        {
+            var close = new Button { Margin = new Thickness(4) };
+            SetText("CloseDialog", value => close.Content = value);
+            close.Click += (_, _) =>
+            {
+                if (TabOwner is not null) RequestClose(ConfirmDiscardChanges);
+                else Window.GetWindow(this)?.Close();
+            };
+            buttons.Children.Add(close);
+            updateEditorButtons = () => apply.IsEnabled = cancel.IsEnabled = HasUnsavedChanges;
+            updateEditorButtons();
+        }
         if (!modal && pageTitle is not null && tracksEdits)
         {
             var footer = new Grid { MaxWidth = 1000, Margin = new Thickness(24, 0, 24, 8) };
@@ -384,7 +471,7 @@ internal sealed class FormView : DockPanel
         else fields.Children.Add(buttons);
     }
 
-    private async Task RunAsync(Func<Task> action)
+    internal async Task RunAsync(Func<Task> action)
     {
         if (IsBusy) return;
         IsBusy = true;
@@ -404,6 +491,7 @@ internal sealed class FormView : DockPanel
             IsBusy = false;
             IsEnabled = true;
             SetBusyStatus(Visibility.Collapsed);
+            updateEditorButtons?.Invoke();
         }
     }
 

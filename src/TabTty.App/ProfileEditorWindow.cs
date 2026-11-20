@@ -8,13 +8,11 @@ namespace TabTty.App;
 
 internal sealed class ProfileEditorWindow : Window
 {
-    private readonly App app;
     private readonly FormView form = new();
 
     public ProfileEditorWindow(App app, string titleKey, string? identity, ConnectionProfile profile, bool creating,
         bool fromExplorer = false)
     {
-        this.app = app;
         TitleKey = titleKey;
         Identity = identity;
         Icon = WindowIcons.App;
@@ -46,8 +44,7 @@ internal sealed class ProfileEditorWindow : Window
     {
         base.OnClosing(e);
         if (e.Cancel) return;
-        e.Cancel = !form.CanClose(() => app.Modal(() => ThemedMessageBox.Show(this, form.ClosePrompt("DiscardChangesAndCloseWindow"),
-            Title, MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No)) == MessageBoxResult.Yes);
+        e.Cancel = !form.CanClose(form.ConfirmDiscardChanges);
     }
 
     private void SavedAs(string path)

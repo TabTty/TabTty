@@ -1,8 +1,13 @@
+using System.ComponentModel;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Data;
+using System.Windows.Input;
 using Microsoft.Win32;
 using TabTty.Core;
 using static TabTty.App.App;
@@ -12,7 +17,8 @@ namespace TabTty.App;
 internal sealed partial class ProfileCatalog(App app, Action<string, string, string?>? issueProfiles = null,
     Action<string>? validateProfileStage = null)
 {
-    private readonly Dictionary<string, string> names = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, ProfileDetails> metadata = new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim registrationChanges = new(1);
     private event Action? ProfileSaved;
     private (long Sequence, string? Location) lastCreatedProfile;
     private bool stateErrorShown;
@@ -77,8 +83,10 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
 
                 var draft = JsonNode.Parse(profile.ToEditorJson())!.AsObject();
                 draft["connection"]!["authentication"]![kind] = newName;
-                await profile.Edit(draft.ToJsonString()).BeginSaveEdit(issueProfiles, validateProfileStage).ObserveAsync();
+                ConnectionProfile edited = profile.Edit(draft.ToJsonString());
+                await edited.BeginSaveEdit(issueProfiles, validateProfileStage).ObserveAsync();
                 updated++;
+                if (BackupCleanupWarning(edited) is { } warning) problems.Add(warning);
             }
             catch (FilePublicationException exception)
             {
@@ -110,13 +118,12 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
             }
             catch (OperationCanceledException) { }
             if (app.Dispatcher.HasShutdownStarted) return location;
-            names[location] = profile.DisplayName;
+            RememberMetadata(location, profile);
             LocalState.Change(state =>
             {
-                JsonArray registrations = state["registrations"]!.AsArray();
-                var registration = registrations.OfType<JsonObject>()
-                    .FirstOrDefault(item => item["path"]?.GetValue<string>() == location);
-                if (used && registration is not null) registration["lastUsed"] = DateTimeOffset.UtcNow;
+                if (FindRegistration(state, location) is not { } registration) return;
+                StoreRegistrationGroup(registration, profile.GroupName);
+                if (used) registration["lastUsed"] = DateTimeOffset.UtcNow;
             });
             stateErrorShown = false;
         }
@@ -131,31 +138,70 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
         return location;
     }
 
-    public IReadOnlyList<Registration> ReadRegistrations() => LocalState.Read()["registrations"]!.AsArray()
-        .OfType<JsonObject>().Select(node =>
+    public IReadOnlyList<Registration> ReadRegistrations() => ReadRegistrations(LocalState.Read());
+
+    private IReadOnlyList<Registration> ReadRegistrations(JsonObject state)
+    {
+        var entries = state["registrations"]!.AsArray().OfType<JsonObject>().ToArray();
+        var names = entries.Select(node => node["name"]?.GetValue<string>()).OfType<string>()
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return entries.Select(node =>
         {
             string path = node["path"]!.GetValue<string>();
+            metadata.TryGetValue(path, out var details);
+            string name = node["name"]?.GetValue<string>() ??
+                AllocateName(details?.Name ?? Path.GetFileNameWithoutExtension(path), names);
             return new Registration(node["registrationId"]!.GetValue<Guid>(), path,
-                names.GetValueOrDefault(path, Path.GetFileNameWithoutExtension(path)),
-                node["favorite"]!.GetValue<bool>(), node["lastUsed"]?.GetValue<DateTimeOffset>());
+                name, details is null or { Unavailable: true } ? node["groupName"]?.GetValue<string>() : details.GroupName,
+                node["favorite"]!.GetValue<bool>(), node["lastUsed"]?.GetValue<DateTimeOffset>(),
+                details?.Protocol, details?.Destination, details?.Unavailable ?? false);
         }).OrderByDescending(item => item.Favorite).ThenByDescending(item => item.LastUsed)
         .ThenBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
+    }
 
-    public async Task<string?> ReadDisplayNameAsync(string path, CancellationToken cancellationToken)
+    internal async Task ReadRegistrationDetailsAsync(IReadOnlyList<Registration> registrations, CancellationToken token,
+        bool legacyOnly = false)
     {
+        foreach (var batch in registrations.Where(item => !legacyOnly || !metadata.ContainsKey(item.Path)).Chunk(4))
+        {
+            if (token.IsCancellationRequested) return;
+            await Task.WhenAll(batch.Select(item => ReadDetailsAsync(item.Path, token, legacyOnly)));
+        }
+    }
+
+    private async Task ReadDetailsAsync(string path, CancellationToken cancellationToken, bool localOnly)
+    {
+        metadata.TryGetValue(path, out var before);
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(TimeSpan.FromSeconds(1));
-            ConnectionProfile profile = await ConnectionProfile.LoadAsync(path, timeout.Token);
+            ConnectionProfile? profile = localOnly ? await ConnectionProfile.TryLoadLocalAsync(path, timeout.Token)
+                : await ConnectionProfile.LoadAsync(path, timeout.Token);
             cancellationToken.ThrowIfCancellationRequested();
-            names[path] = profile.DisplayName;
-            return profile.DisplayName;
+            if (profile is not null && ReferenceEquals(metadata.GetValueOrDefault(path), before))
+                RememberMetadata(path, profile);
         }
         catch (Exception exception) when (IsFileProblem(exception) || exception is OperationCanceledException)
         {
-            return null;
+            if (!cancellationToken.IsCancellationRequested && !localOnly &&
+                ReferenceEquals(metadata.GetValueOrDefault(path), before))
+                metadata[path] = new(before?.Name ?? Path.GetFileNameWithoutExtension(path), before?.GroupName,
+                    null, null, Unavailable: true);
         }
+    }
+
+    private void RememberMetadata(string location, ConnectionProfile profile) =>
+        metadata[location] = new(profile.DisplayName, profile.GroupName,
+            profile.Type == "serial" ? "COM" : profile.Type.ToUpperInvariant(),
+            profile.Type == "serial" ? profile.Serial.PortName : $"{profile.Host}:{profile.Port}", Unavailable: false);
+
+    private sealed record ProfileDetails(string Name, string? GroupName, string? Protocol, string? Destination, bool Unavailable);
+
+    private static void StoreRegistrationGroup(JsonObject registration, string? groupName)
+    {
+        if (groupName is null) registration.Remove("groupName");
+        else registration["groupName"] = groupName;
     }
 
     public void Show(MainWindow owner)
@@ -166,67 +212,145 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
         void Build(FormView form)
         {
             var search = new TextBox();
-            var list = new ListBox { Height = 250, DisplayMemberPath = nameof(Registration.Label) };
-            var details = new TextBox { IsReadOnly = true, TextWrapping = TextWrapping.Wrap, MinHeight = 100,
-                MaxHeight = 180, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-            var selectedActions = new List<Button>();
-            int version = 0;
+            var groupTabs = new TabControl { Margin = new Thickness(24, 0, 24, 12) };
+            groupTabs.SetResourceReference(FrameworkElement.StyleProperty, "DetailsTabs");
+            var allGroups = CreateGroupTab(null);
+            var ungrouped = CreateGroupTab("");
+            var list = new ListView();
+            var columns = new DetailsColumns(list);
+            var favoriteCell = new FrameworkElementFactory(typeof(Button));
+            favoriteCell.SetValue(Control.PaddingProperty, new Thickness(0));
+            favoriteCell.SetValue(Control.BorderThicknessProperty, new Thickness(0));
+            favoriteCell.SetValue(Control.BackgroundProperty, System.Windows.Media.Brushes.Transparent);
+            favoriteCell.SetValue(Control.FontSizeProperty, 16d);
+            favoriteCell.SetValue(FrameworkElement.MinWidthProperty, 28d);
+            favoriteCell.SetValue(FrameworkElement.MinHeightProperty, 24d);
+            favoriteCell.SetBinding(ContentControl.ContentProperty, new Binding(nameof(Registration.FavoriteIcon)));
+            favoriteCell.SetBinding(FrameworkElement.ToolTipProperty, new Binding(nameof(Registration.FavoriteAction)));
+            favoriteCell.SetBinding(AutomationProperties.NameProperty, new Binding(nameof(Registration.FavoriteAction)));
+            columns.Add("ProfileListFavorite", nameof(Registration.Favorite), 48,
+                new DataTemplate { VisualTree = favoriteCell }, showHeader: false, initialDirection: ListSortDirection.Descending);
+            columns.Add("ProfileListName", nameof(Registration.Name), 175);
+            columns.Add("ProfileListProtocol", nameof(Registration.Protocol), 80);
+            columns.Add("ProfileListDestination", nameof(Registration.Destination), 160);
+            columns.Add("ProfileListFilePath", nameof(Registration.Path), 320);
+            var searchLabel = new Label { Target = search, VerticalAlignment = VerticalAlignment.Center };
+            var searchRow = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
+            DockPanel.SetDock(searchLabel, Dock.Left);
+            searchRow.Children.Add(searchLabel);
+            searchRow.Children.Add(search);
+            AutomationProperties.SetLabeledBy(search, searchLabel);
+            var contents = new DockPanel();
+            DockPanel.SetDock(searchRow, Dock.Top);
+            contents.Children.Add(searchRow);
+            contents.Children.Add(list);
+            TabItem? contentTab = null;
+            IReadOnlyList<Registration> registrations = [];
+            bool reloading = false;
             long lastSelectedCreation = 0;
-            form.AddNotice("ProfileRegisterTrustNotice");
+            CancellationTokenSource? detailsLoad = null;
+            var menu = new ContextMenu();
+            list.ContextMenu = menu;
+            Guid? menuRegistration = null;
+            AddMenuAction("ConnectProfile", item =>
+            {
+                form.TabOwner?.OpenProfile(item.Path);
+                return Task.CompletedTask;
+            });
+            AddMenuAction("EditProfile", item => EditItemAsync(item, duplicate: false));
+            AddMenuAction("DuplicateProfile", item => EditItemAsync(item, duplicate: true));
+            var favoriteMenuItem = AddMenuAction("ProfileListFavorite", item => ChangeSelectedAsync(remove: false, item));
+            menu.Items.Add(new Separator());
+            AddMenuAction("RemoveRegistration", item => ChangeSelectedAsync(remove: true, item));
+            AddMenuAction("RecycleProfile", RecycleAsync);
             form.AddActionRow(() =>
             {
-                form.AddAction("New", CreateProfile);
+                form.AddAction("AddProfile", CreateProfile);
                 form.AddAsyncAction("RegisterProfile", RegisterAsync);
             });
-            form.AddColumns(() => form.AddGroup("Profiles", () =>
+            form.AddFillingDisplay("ProfileGroups", groupTabs);
+            form.AddLocalizedUpdate(() =>
             {
-                form.AddField("SearchProfiles", search);
-                list.Margin = new Thickness(0, 10, 0, 0);
-                form.AddDisplay("Profiles", list);
-            }), () => form.AddGroup("ProfileDetails", () =>
+                allGroups.Header = Text("AllProfiles");
+                ungrouped.Header = Text("UngroupedProfiles");
+                searchLabel.Content = Text("SearchProfiles");
+                AutomationProperties.SetName(list, Text("ProfileCatalog"));
+                columns.UpdateHeaders();
+                if (list.ItemsSource is not null) RefreshList((list.SelectedItem as Registration)?.Id);
+            });
+            list.ContextMenuOpening += (_, args) =>
             {
-                form.AddDisplay("ProfileDetails", details);
-                form.AddActionRow(() =>
+                var item = args.CursorLeft == -1 ? list.SelectedItem as Registration
+                    : columns.RowAt(args.OriginalSource)?.Content as Registration;
+                if (item is null)
                 {
-                    selectedActions.Add(form.AddAction("ConnectProfile", () =>
-                    {
-                        if (list.SelectedItem is Registration item) form.TabOwner?.OpenProfile(item.Path);
-                    }));
-                    selectedActions.Add(form.AddAsyncAction("EditProfile", () => EditSelectedAsync(duplicate: false)));
-                    selectedActions.Add(form.AddAsyncAction("DuplicateProfile", () => EditSelectedAsync(duplicate: true)));
-                });
-                form.AddActionRow(() =>
-                {
-                    selectedActions.Add(form.AddAction("ToggleFavorite", () => ChangeSelected(remove: false)));
-                    selectedActions.Add(form.AddAction("RemoveRegistration", () => ChangeSelected(remove: true)));
-                    selectedActions.Add(form.AddAction("RecycleProfile", Recycle));
-                });
+                    args.Handled = true;
+                    return;
+                }
+                list.SelectedItem = item;
+                (list.ItemContainerGenerator.ContainerFromItem(item) as ListViewItem)?.Focus();
+            };
+            menu.Opened += (_, _) =>
+            {
+                var item = list.SelectedItem as Registration;
+                menuRegistration = item?.Id;
+                favoriteMenuItem.Header = item?.FavoriteAction ?? Text("ProfileListFavorite");
+            };
+            list.PreviewMouseLeftButtonDown += async (_, args) =>
+            {
+                if (args.ClickCount != 2 || columns.RowAt(args.OriginalSource)?.Content is not Registration item ||
+                    MainWindow.Ancestor<Button>(args.OriginalSource as DependencyObject) is not null) return;
+                args.Handled = true;
+                await form.RunAsync(() => EditItemAsync(item, duplicate: false));
+            };
+            list.AddHandler(ButtonBase.ClickEvent, new RoutedEventHandler(async (_, args) =>
+            {
+                if (args.OriginalSource is not Button { DataContext: Registration item }) return;
+                args.Handled = true;
+                list.SelectedItem = item;
+                await form.RunAsync(() => ChangeSelectedAsync(remove: false, item));
             }));
-            foreach (Button button in selectedActions) button.IsEnabled = false;
-            form.AddLocalizedUpdate(() => { if (list.SelectedItem is null) details.Text = Text("SelectProfile"); });
-            search.TextChanged += (_, _) => Reload();
-            list.SelectionChanged += async (_, _) =>
+            search.TextChanged += (_, _) =>
             {
-                int selection = ++version;
-                foreach (Button button in selectedActions) button.IsEnabled = list.SelectedItem is not null;
-                details.Text = list.SelectedItem is null ? Text("SelectProfile") : "";
-                if (list.SelectedItem is not Registration item) return;
+                if (!reloading) RefreshList((list.SelectedItem as Registration)?.Id);
+            };
+            groupTabs.SelectionChanged += (_, args) =>
+            {
+                if (args.Source == groupTabs && !reloading) RefreshList((list.SelectedItem as Registration)?.Id);
+            };
+            form.Loaded += (_, _) => { ProfileSaved += Reload; Reload(); _ = LoadDetailsAsync(); };
+            form.Unloaded += (_, _) => { ProfileSaved -= Reload; detailsLoad?.Cancel(); };
+
+            static TabItem CreateGroupTab(string? name) => new()
+            {
+                Tag = name, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                VerticalContentAlignment = VerticalAlignment.Stretch,
+            };
+
+            MenuItem AddMenuAction(string key, Func<Registration, Task> action)
+            {
+                var entry = new MenuItem();
+                form.AddLocalizedUpdate(() => entry.Header = Text(key));
+                entry.Click += async (_, _) =>
+                {
+                    if (registrations.FirstOrDefault(item => item.Id == menuRegistration) is { } item)
+                        await form.RunAsync(() => action(item));
+                };
+                menu.Items.Add(entry);
+                return entry;
+            }
+
+            async Task LoadDetailsAsync()
+            {
+                using var load = new CancellationTokenSource();
+                detailsLoad = load;
                 try
                 {
-                    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-                    ConnectionProfile profile = await ConnectionProfile.LoadAsync(item.Path, timeout.Token);
-                    if (selection != version) return;
-                    string destination = profile.Type == "serial" ? profile.Serial.PortName : $"{profile.Host}:{profile.Port}";
-                    string protocol = profile.Type == "serial" ? "COM" : profile.Type.ToUpperInvariant();
-                    details.Text = $"{profile.DisplayName}\n{protocol} · {destination}\n\n{item.Path}";
+                    await ReadRegistrationDetailsAsync(registrations, load.Token);
+                    if (!load.IsCancellationRequested) Reload();
                 }
-                catch (Exception exception) when (IsFileProblem(exception) || exception is OperationCanceledException)
-                {
-                    if (selection == version) details.Text = $"{Text("ProfileUnavailable")}\n{item.Path}";
-                }
-            };
-            form.Loaded += (_, _) => { ProfileSaved += Reload; Reload(); };
-            form.Unloaded += (_, _) => ProfileSaved -= Reload;
+                finally { if (ReferenceEquals(detailsLoad, load)) detailsLoad = null; }
+            }
 
             async Task RegisterAsync()
             {
@@ -236,32 +360,46 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 ConnectionProfile profile;
                 try { profile = await LoadForUseAsync(form.OwnerWindow, dialog.FileName, CancellationToken.None); }
                 catch (SshInteractionCancelledException) { return; }
-                await RegisterSavedAsync(dialog.FileName, profile, reset);
+                await registrationChanges.WaitAsync();
+                try
+                {
+                    await ReadLegacyNamesAsync(CancellationToken.None);
+                    await RegisterSavedAsync(dialog.FileName, profile, reset, selectNewProfile: true);
+                }
+                finally { registrationChanges.Release(); }
             }
 
-            void Recycle()
+            async Task RecycleAsync(Registration item)
             {
-                if (list.SelectedItem is not Registration item) return;
                 if (app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow, $"{Text("RecycleProfileConfirm")}\n\n{item.Path}",
                     Text("RecycleProfile"), MessageBoxButton.YesNo, MessageBoxImage.Warning,
                     MessageBoxResult.No)) != MessageBoxResult.Yes) return;
+                await registrationChanges.WaitAsync();
                 try
                 {
+                    if (ReadTrust(item.Path).Registration != item.Id) return;
                     ProfileRecycling.Recycle(form.OwnerWindow, item.Path);
                     ChangeSelected(remove: true, item);
                 }
                 catch (Exception exception) when (IsFileProblem(exception)) { MainWindow.ShowError(form.OwnerWindow, exception); }
+                finally { registrationChanges.Release(); }
             }
 
-            Task EditSelectedAsync(bool duplicate) => list.SelectedItem is Registration item && form.TabOwner is { } host
+            Task EditItemAsync(Registration item, bool duplicate) => form.TabOwner is { } host
                 ? EditAsync(host, item.Path, duplicate) : Task.CompletedTask;
 
-            void ChangeSelected(bool remove, Registration? selected = null)
+            async Task ChangeSelectedAsync(bool remove, Registration selected)
             {
-                selected ??= list.SelectedItem as Registration;
-                if (selected is null) return;
+                await registrationChanges.WaitAsync();
+                try { ChangeSelected(remove, selected); }
+                finally { registrationChanges.Release(); }
+            }
+
+            void ChangeSelected(bool remove, Registration selected)
+            {
                 try
                 {
+                    if (ReadTrust(selected.Path).Registration != selected.Id) return;
                     LocalState.Change(state =>
                     {
                         JsonArray registrations = state["registrations"]!.AsArray();
@@ -272,10 +410,12 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                             registrations.Remove(target);
                             (state[TrustKey] as JsonObject)?.Remove(selected.Path);
                         }
-                        else target["favorite"] = !selected.Favorite;
+                        else target["favorite"] = !target["favorite"]!.GetValue<bool>();
                     });
                     if (remove) removals[selected.Path] = removals.GetValueOrDefault(selected.Path) + 1;
-                    Reload();
+                    ProfileSaved?.Invoke();
+                    if (!remove && list.SelectedItem is Registration item && item.Id == selected.Id)
+                        list.ScrollIntoView(item);
                 }
                 catch (Exception exception) when (IsFileProblem(exception)) { MainWindow.ShowError(form.OwnerWindow, exception); }
             }
@@ -284,34 +424,82 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
             {
                 try
                 {
-                    string query = search.Text;
-                    var registrations = ReadRegistrations();
+                    registrations = ReadRegistrations();
                     var creation = lastCreatedProfile;
                     var created = creation.Sequence != lastSelectedCreation
                         ? registrations.FirstOrDefault(item => item.Path == creation.Location) : null;
-                    if (created is not null && !MatchesSearch(created, query))
-                    {
-                        // TextChanged reloads with the cleared filter and selects the new profile.
-                        search.Clear();
-                        return;
-                    }
                     lastSelectedCreation = creation.Sequence;
-                    Guid? selected = (list.SelectedItem as Registration)?.Id;
-                    var items = registrations.Where(item => MatchesSearch(item, query)).ToArray();
-                    list.ItemsSource = items;
-                    list.SelectedItem = created ?? items.FirstOrDefault(item => item.Id == selected);
-                    if (created is not null) list.ScrollIntoView(created);
+                    Guid? selectedId = (list.SelectedItem as Registration)?.Id;
+                    Registration? selected = created ?? registrations.FirstOrDefault(item => item.Id == selectedId);
+                    string? group = (groupTabs.SelectedItem as TabItem)?.Tag as string;
+                    if (group is not null && selected is not null) group = selected.GroupName ?? "";
+                    reloading = true;
+                    if (created is not null && !MatchesSearch(created, search.Text)) search.Clear();
+                    RefreshGroupTabs(group);
+                    RefreshList(selected?.Id);
+                    if (created is not null && list.SelectedItem is { } item) list.ScrollIntoView(item);
                 }
                 catch (Exception exception) when (IsFileProblem(exception))
                 {
+                    registrations = [];
                     list.ItemsSource = null;
-                    details.Text = Text("LocalStateInvalid");
+                    ReportStateFailure(form.OwnerWindow);
                 }
+                finally { reloading = false; }
+            }
+
+            void RefreshGroupTabs(string? selected)
+            {
+                var names = registrations.Select(item => item.GroupName ?? "")
+                    .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.CurrentCultureIgnoreCase);
+                string?[] keys = [null, .. names];
+                if (!keys.SequenceEqual(groupTabs.Items.OfType<TabItem>().Select(item => item.Tag as string)))
+                {
+                    groupTabs.Items.Clear();
+                    groupTabs.Items.Add(allGroups);
+                    foreach (string name in keys.Skip(1).OfType<string>())
+                    {
+                        if (name.Length == 0) groupTabs.Items.Add(ungrouped);
+                        else
+                        {
+                            string label = PermissionDisplay.Literal(name);
+                            TabItem tab = CreateGroupTab(name);
+                            tab.Header = new TextBlock
+                            {
+                                Text = label, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 200,
+                            };
+                            tab.ToolTip = label;
+                            groupTabs.Items.Add(tab);
+                        }
+                    }
+                }
+                groupTabs.SelectedItem = groupTabs.Items.OfType<TabItem>().FirstOrDefault(item =>
+                    StringComparer.OrdinalIgnoreCase.Equals(item.Tag as string, selected)) ?? allGroups;
+            }
+
+            void RefreshList(Guid? selected)
+            {
+                var tab = groupTabs.SelectedItem as TabItem;
+                if (tab != contentTab)
+                {
+                    if (contentTab is not null) contentTab.Content = null;
+                    if (tab is not null) tab.Content = contents;
+                    contentTab = tab;
+                }
+                string? group = (groupTabs.SelectedItem as TabItem)?.Tag as string;
+                string query = search.Text;
+                var items = registrations.Where(item =>
+                    (group is null || StringComparer.OrdinalIgnoreCase.Equals(item.GroupName ?? "", group)) &&
+                    MatchesSearch(item, query)).ToArray();
+                list.ItemsSource = items;
+                columns.ApplySort();
+                list.SelectedItem = items.FirstOrDefault(item => item.Id == selected);
             }
 
             static bool MatchesSearch(Registration item, string query) =>
                 item.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
-                item.Path.Contains(query, StringComparison.OrdinalIgnoreCase);
+                item.Path.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                item.GroupName?.Contains(query, StringComparison.OrdinalIgnoreCase) == true;
         }
     }
 
@@ -321,7 +509,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
         using var loadTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         string identity = await NormalizeLocationAsync(path, loadTimeout.Token);
         if (ActivateEditor(title, identity)) return;
-        ConnectionProfile profile = await ConnectionProfile.LoadAsync(path, loadTimeout.Token);
+        ConnectionProfile profile = await ConnectionProfile.LoadAsync(identity, loadTimeout.Token);
         if (owner is not null && (!owner.IsLoaded || owner.IsClosing) || ActivateEditor(title, identity)) return;
         if (duplicate) profile = profile.Duplicate();
         new ProfileEditorWindow(app, title, identity, profile, creating: false, fromExplorer: owner is null).Show();
@@ -370,78 +558,108 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
         var editor = new ProfileEditor(form, profile, app, creating, fromExplorer);
         string? attemptedPath = path;
         FilePublicationResult? pendingPublication = null;
+        ConnectionProfile? pendingCommit = null;
         long registrationReset = trustReset;
-        (TrustState State, string Version)? editorAdvance = null;
-        form.DescribeUnresolvedPublication = () =>
-            pendingPublication is { } publication ? JsonStoreRecovery.DescribeFailure(publication) : null;
+        ProfileEdit? pendingEdit = null;
+        form.DescribeUnresolvedPublication = () => pendingPublication is { } publication
+            ? JsonStoreRecovery.DescribeFailure(publication)
+            : pendingCommit is null ? null : Text("ProfileSaveNeedsCompletion");
         form.AddActionRow(() => form.AddAsyncAction("RecheckFilePublication", async () =>
         {
             if (attemptedPath is null) return;
-            ConnectionProfile? committed;
-            try { committed = await ConnectionProfile.ReconcileSaveAsync(attemptedPath, pendingPublication?.OperationId); }
-            catch (FilePublicationException error)
+            await registrationChanges.WaitAsync();
+            try
             {
-                pendingPublication = error.Result.EvidenceRetired ? null : error.Result;
-                throw;
+                if (pendingCommit is null)
+                {
+                    ConnectionProfile? committed;
+                    try { committed = await ConnectionProfile.ReconcileSaveAsync(attemptedPath, pendingPublication?.OperationId); }
+                    catch (FilePublicationException error)
+                    {
+                        pendingPublication = error.Result.EvidenceRetired ? null : error.Result;
+                        throw;
+                    }
+                    if (committed is null)
+                    {
+                        var stages = await Task.Run(() => VerifiedFilePublication.ReinspectRetainedStages(attemptedPath));
+                        if (!JsonStoreRecovery.ShowRetainedStages(app, form, stages))
+                            app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow, Text("NoFilePublicationToRecheck"), Text("Profiles")));
+                        return;
+                    }
+                    pendingPublication = null;
+                    pendingCommit = committed;
+                }
+                await CompleteSaveAsync();
+                JsonStoreRecovery.ShowRetainedStages(app, form, VerifiedFilePublication.GetRetainedStagePaths(attemptedPath));
             }
-            if (committed is null)
-            {
-                var stages = await Task.Run(() => VerifiedFilePublication.ReinspectRetainedStages(attemptedPath));
-                if (!JsonStoreRecovery.ShowRetainedStages(app, form, stages))
-                    app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow, Text("NoFilePublicationToRecheck"), Text("Profiles")));
-                return;
-            }
-            pendingPublication = null;
-            editor.UseSavedRevision(committed);
-            profile = committed;
-            if (path is null)
-            {
-                path = attemptedPath;
-                savedAs?.Invoke(path);
-                await RegisterSavedAsync(path, committed, registrationReset, selectNewProfile: creating);
-            }
-            else
-            {
-                if (editorAdvance is { } advance) AdvanceEditorTrust(path, advance.State, advance.Version, committed);
-                names[path] = committed.DisplayName;
-                ProfileSaved?.Invoke();
-            }
-            editorAdvance = null;
-            JsonStoreRecovery.ShowRetainedStages(app, form, VerifiedFilePublication.GetRetainedStagePaths(attemptedPath));
+            finally { registrationChanges.Release(); }
         }));
         form.ShowFileOperationStatus();
         form.AddEditorButtons(async () =>
         {
-            ConnectionProfile draft = editor.GetDraft();
+            await registrationChanges.WaitAsync();
+            try
+            {
+                if (pendingCommit is { } verified)
+                {
+                    await CompleteSaveAsync();
+                    if (verified.ToEditorJson() == editor.GetDraft().ToEditorJson()) return true;
+                }
+                ConnectionProfile draft = editor.GetDraft();
+                await ReadLegacyNamesAsync(CancellationToken.None);
+                if (path is null)
+                {
+                    registrationReset = trustReset;
+                    string destination = ProfilePathFor(app.ProfileSaveDirectory, draft.DisplayName);
+                    _ = GetRegistrationName(LocalState.ReadForProfileTrust(), null, draft.DisplayName, allowSuffix: false);
+                    using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+                    {
+                        string location = await NormalizeLocationAsync(destination, timeout.Token);
+                        if (ReadTrust(location).Registration is not null)
+                            throw new IOException(Text("ProfileFileInUse"));
+                    }
+                    if (!string.Equals(attemptedPath, destination, StringComparison.OrdinalIgnoreCase))
+                        pendingPublication = null;
+                    attemptedPath = destination;
+                    await ObserveSaveAsync(draft.BeginSaveNew(destination, issueProfiles, validateProfileStage));
+                }
+                else
+                {
+                    attemptedPath = path;
+                    pendingEdit = await PrepareEditAsync(path, profile, draft, fromExplorer);
+                    await ObserveSaveAsync(draft.BeginSaveEdit(issueProfiles, validateProfileStage));
+                }
+                pendingCommit = draft;
+                await CompleteSaveAsync();
+                JsonStoreRecovery.ShowRetainedStages(app, form, VerifiedFilePublication.GetRetainedStagePaths(attemptedPath!));
+                return true;
+            }
+            finally { registrationChanges.Release(); }
+        });
+
+        async Task CompleteSaveAsync()
+        {
+            ConnectionProfile saved = pendingCommit!;
+            editor.UseSavedRevision(saved);
             if (path is null)
             {
-                string? destination = ChooseNewPath(form.OwnerWindow);
-                if (destination is null) return false;
-                if (!string.Equals(attemptedPath, destination, StringComparison.OrdinalIgnoreCase))
-                    pendingPublication = null;
-                attemptedPath = destination;
-                registrationReset = trustReset;
-                await ObserveSaveAsync(draft.BeginSaveNew(destination, issueProfiles, validateProfileStage));
-                editor.UseSavedRevision(draft);
-                profile = draft;
-                path = destination;
+                path = await RegisterSavedAsync(attemptedPath!, saved, registrationReset, selectNewProfile: true, createdInApp: true);
                 savedAs?.Invoke(path);
-                await RegisterSavedAsync(path, draft, registrationReset, selectNewProfile: creating);
             }
             else
             {
-                editorAdvance = fromExplorer ? null : (ReadTrust(path), VersionFor(path, profile, null));
-                await ObserveSaveAsync(draft.BeginSaveEdit(issueProfiles, validateProfileStage));
-                editor.UseSavedRevision(draft);
-                if (editorAdvance is { } advance) AdvanceEditorTrust(path, advance.State, advance.Version, draft);
-                editorAdvance = null;
-                profile = draft;
-                names[path] = draft.DisplayName;
+                string previous = path;
+                path = await FinishEditAsync(path, saved, pendingEdit ?? new(null, null, default, null));
+                if (path != previous) savedAs?.Invoke(path);
                 ProfileSaved?.Invoke();
             }
-            JsonStoreRecovery.ShowRetainedStages(app, form, VerifiedFilePublication.GetRetainedStagePaths(path));
-            return true;
-        });
+            profile = saved;
+            pendingEdit = null;
+            pendingCommit = null;
+            if (BackupCleanupWarning(saved) is { } warning)
+                app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow, warning, Text("EditProfile"),
+                    icon: MessageBoxImage.Warning));
+        }
 
         async Task ObserveSaveAsync(ConnectionProfile.ProfileSaveOperation operation)
         {
@@ -459,30 +677,17 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
         }
     }
 
-    public string? ChooseNewPath(Window owner)
-    {
-        var dialog = new SaveFileDialog { Filter = Filter, AddExtension = true, DefaultExt = ".ttty", OverwritePrompt = false };
-        try
-        {
-            string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments,
-                Environment.SpecialFolderOption.DoNotVerify);
-            if (string.IsNullOrEmpty(documents)) throw new IOException(Text("ProfileSaveLocation"));
-            string suggested = Path.Combine(documents, "TabTty", "Profiles");
-            Directory.CreateDirectory(suggested);
-            dialog.InitialDirectory = suggested;
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            app.Modal(() => ThemedMessageBox.Show(owner, Text("ProfileSaveLocation"), Text("Profiles")));
-        }
-        return app.Modal(() => dialog.ShowDialog(owner)) == true ? dialog.FileName : null;
-    }
+    private static string? BackupCleanupWarning(ConnectionProfile profile) => profile.RetainedSaveBackup is { } path
+        ? string.Format(Text("ProfileBackupCleanupFailed"), PermissionDisplay.Literal(path)) : null;
 
     internal static bool IsFileProblem(Exception exception) => exception is IOException or InvalidDataException
         or JsonException or ArgumentException or FormatException or OverflowException or InvalidOperationException or UnauthorizedAccessException;
 
-    internal sealed record Registration(Guid Id, string Path, string Name, bool Favorite, DateTimeOffset? LastUsed)
+    internal sealed record Registration(Guid Id, string Path, string Name, string? GroupName, bool Favorite,
+        DateTimeOffset? LastUsed, string? Protocol, string? Target, bool Unavailable)
     {
-        public string Label => Favorite ? $"★ {Name}" : Name;
+        public string FavoriteIcon => Favorite ? "★" : "☆";
+        public string FavoriteAction => Text(Favorite ? "ProfileFavoriteRemove" : "ProfileFavoriteAdd");
+        public string? Destination => Unavailable ? Text("ProfileUnavailable") : Target;
     }
 }

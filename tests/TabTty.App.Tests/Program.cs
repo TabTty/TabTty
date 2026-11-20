@@ -176,8 +176,12 @@ internal static partial class Program
             if (args.SequenceEqual(["--file-editors"]))
             {
                 var editorActivationFrame = new DispatcherFrame();
-                Task run = application.Dispatcher.InvokeAsync(() =>
-                    CheckFileEditors(application, settingsDirectory, settingsFixture!, profileFixture!)).Task.Unwrap();
+                Task run = application.Dispatcher.InvokeAsync(async () =>
+                {
+                    await EditorKeepsSavedRevisionAndRestoresDraft(application);
+                    Console.WriteLine("PASS EditorKeepsSavedRevisionAndRestoresDraft");
+                    await CheckFileEditors(application, settingsDirectory, settingsFixture!, profileFixture!);
+                }).Task.Unwrap();
                 _ = run.ContinueWith(_ => editorActivationFrame.Continue = false, TaskScheduler.Default);
                 Dispatcher.PushFrame(editorActivationFrame);
                 run.GetAwaiter().GetResult();
@@ -493,6 +497,21 @@ internal static partial class Program
             if (!FindControls<TextBlock>(telnetFields).Any(text => text.Text == App.Text("TelnetPrivacyNotice")))
                 throw new InvalidOperationException("The Telnet settings omitted the clear-text notice.");
 
+            var savedPassword = new CredentialReference("Shared password", "password");
+            var savedKey = new CredentialReference("Shared key", "privateKey");
+            var profile = ConnectionProfile.CreateSsh("Shared", "fixture.example", "original", password: savedPassword,
+                methods: ["password", "publicKey"], privateKey: savedKey);
+            var profileForm = new FormView();
+            var profileEditor = new ProfileEditor(profileForm, profile, app);
+            var sshFields = (StackPanel)profileForm.FindName("sshFields");
+            var username = (TextBox)sshFields.FindName("SshUsername");
+            if (username.IsReadOnly || username.Text != "original")
+                throw new InvalidOperationException("Saved credentials overrode the editable SSH username.");
+            username.Text = "Changed";
+            var changed = profileEditor.GetDraft();
+            if (changed.SshUsername != "Changed" || changed.SshPassword != savedPassword || changed.SshPrivateKey != savedKey)
+                throw new InvalidOperationException("Editing the SSH username changed the selected credentials.");
+
             var destination = SshDestination.Parse("fixture.example", 2222);
             var challenge = new SshChallenge(destination, "Example", "Sign in", [new("User", true), new("Code", false)]);
             var (dialog, inputs) = TerminalTab.CreateSshChallengeForm(editor, challenge);
@@ -507,18 +526,19 @@ internal static partial class Program
             }
             finally { dialog.Close(); }
 
-            var key = new VaultEntryInfo("Team key", "operator\u200B", "privateKey", "ssh-ed25519", "SHA256:fixture");
-            var password = new VaultEntryInfo("Team\u2028password", "operator\tA");
+            var key = new VaultEntryInfo("Team key", "privateKey", "ssh-ed25519", "SHA256:fixture");
+            var password = new VaultEntryInfo("Team\u2028password");
             VaultEntryInfo[] entries = [key, password, password with { Name = "Another password" },
-                key with { Name = "Another key", Username = "other" }];
+                key with { Name = "Another key" }];
             var request = new SshPrivateKeyRequest(destination, "operator\u200B", null);
             var (keyPicker, keys) = VaultFileController.CreateCredentialPicker(editor, entries, "privateKey", request);
             try
             {
                 string[] fields = FindControls<TextBox>(keyPicker).Where(box => box.IsReadOnly).Select(box => box.Text).ToArray();
                 if (!fields.Contains(destination.ToString()) || !fields.Contains("operator<U+200B>") ||
-                    keys.SelectedIndex != -1 || keys.Items.Count != 1 ||
+                    keys.SelectedIndex != -1 || keys.Items.Count != 2 ||
                     !keys.Items[0].ToString()!.Split('\n').Contains(key.Fingerprint) ||
+                    !keys.Items[1].ToString()!.Split('\n').Contains("Another key") ||
                     !FindControls<Button>(keyPicker).Any(button => button.IsDefault && button.IsCancel &&
                         Equals(button.Content, App.Text("CancelSshConnection"))))
                     throw new InvalidOperationException("Private-key selection must identify the SSH recipient and key before authentication.");
@@ -529,9 +549,8 @@ internal static partial class Program
             try
             {
                 string[][] rows = passwords.Items.Cast<object>().Select(item => item.ToString()!.Split('\n')).ToArray();
-                if (rows.Length != 2 || rows.Any(row => !row.Contains("operator<U+0009>A")) ||
-                    !rows[0].Contains("Team<U+2028>password") || !rows[1].Contains("Another password"))
-                    throw new InvalidOperationException("The credential picker must identify same-account passwords by their distinct names.");
+                if (rows.Length != 2 || rows[0] is not ["Team<U+2028>password"] || rows[1] is not ["Another password"])
+                    throw new InvalidOperationException("The credential picker must identify passwords by their distinct names.");
             }
             finally { passwordPicker.Close(); }
         }
@@ -650,10 +669,15 @@ internal static partial class Program
             var buttons = FormFields(form).Children.OfType<StackPanel>().Last();
             var save = buttons.Children.OfType<Button>().Single(button => Equals(button.Content, App.Text("Save")));
             var discard = buttons.Children.OfType<Button>().Single(button => Equals(button.Content, App.Text("DiscardChanges")));
+            var close = buttons.Children.OfType<Button>().Single(button => Equals(button.Content, App.Text("CloseDialog")));
+            if (!close.IsEnabled || buttons.Children.IndexOf(close) != buttons.Children.IndexOf(discard) + 1)
+                throw new InvalidOperationException("The Close button was not available beside Discard changes.");
             bool? completed = null;
             form.Completed += result => completed = result;
             if (form.HasUnsavedChanges) throw new InvalidOperationException("A pristine editor has unsaved changes.");
+            CheckActions(changed: false);
             name.Text = "Modified";
+            CheckActions(changed: true);
             var navigation = FindControls<ListBox>(form).Single();
             navigation.SelectedIndex = 2;
             navigation.SelectedIndex = 0;
@@ -665,14 +689,17 @@ internal static partial class Program
                 throw new InvalidOperationException("Rejecting the close confirmation did not retain the draft.");
             name.Text = "Initial";
             if (form.HasUnsavedChanges) throw new InvalidOperationException("Reverting a field left the editor dirty.");
+            CheckActions(changed: false);
 
             timeout.Text = "invalid";
             await ClickSave();
             if (!form.HasUnsavedChanges || completed is not null)
                 throw new InvalidOperationException("A failed save cleared the draft or closed the editor.");
+            CheckActions(changed: true);
             discard.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, discard));
             if (form.HasUnsavedChanges || completed is not null || timeout.Text == "invalid")
                 throw new InvalidOperationException("Discard did not restore the initial values and keep the tab open.");
+            CheckActions(changed: false);
 
             foreach (string revision in new[] { "First save", "Second save" })
             {
@@ -681,6 +708,7 @@ internal static partial class Program
                 if (form.HasUnsavedChanges || completed is not null ||
                     (await ConnectionProfile.LoadAsync(path)).DisplayName != revision)
                     throw new InvalidOperationException("Saving did not advance the saved revision while keeping the tab open.");
+                CheckActions(changed: false);
             }
             name.Text = "Unsaved";
             discard.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, discard));
@@ -690,6 +718,12 @@ internal static partial class Program
             form.RequestClose(() => { confirmations++; return true; });
             if (confirmations != 2 || completed != false || (await ConnectionProfile.LoadAsync(path)).DisplayName != "Second save")
                 throw new InvalidOperationException("Accepting the close confirmation did not discard the unsaved draft.");
+
+            void CheckActions(bool changed)
+            {
+                if (save.IsEnabled != changed || discard.IsEnabled != changed || !close.IsEnabled)
+                    throw new InvalidOperationException("The editor buttons did not reflect its unsaved changes.");
+            }
 
             async Task ClickSave()
             {
@@ -1046,12 +1080,33 @@ internal static partial class Program
             {
                 tabs.SelectedIndex = index;
                 var form = (FormView)tabs.SelectedContent;
-                var fields = FormFields(form);
+                bool detailsPage = titleKeys[index] is "ProfileCatalog" or "VaultEntries";
+                var fields = detailsPage
+                    ? form.Children.OfType<StackPanel>().Single(panel => DockPanel.GetDock(panel) == Dock.Top)
+                    : FormFields(form);
                 if (fields.Children[0] is not TextBlock heading || heading.Text != App.Text(titleKeys[index]) ||
                     System.Windows.Automation.AutomationProperties.GetHeadingLevel(heading) !=
                         System.Windows.Automation.AutomationHeadingLevel.Level1)
                     throw new InvalidOperationException("The management page did not begin with its localized heading.");
-                if (titleKeys[index] != "Settings")
+                if (detailsPage)
+                {
+                    Layout(new Size(1000, 660));
+                    Border? frame;
+                    if (titleKeys[index] == "ProfileCatalog")
+                    {
+                        var groups = form.Children.OfType<TabControl>().Single();
+                        var presenter = groups.Template.FindName("PART_SelectedContentHost", groups) as ContentPresenter;
+                        frame = presenter is null ? null : VisualTreeHelper.GetParent(presenter) as Border;
+                    }
+                    else frame = form.Children.OfType<Border>().Single();
+                    if (frame is null || frame.BorderThickness != new Thickness(1))
+                        throw new InvalidOperationException("The details page does not have a shared rectangular content frame.");
+                    double tallHeight = frame.ActualHeight;
+                    Layout(new Size(520, 460));
+                    if (frame.ActualHeight <= 0 || tallHeight - frame.ActualHeight < 150)
+                        throw new InvalidOperationException("The details frame did not follow the available height.");
+                }
+                else if (titleKeys[index] != "Settings")
                 {
                     var columns = fields.Children.OfType<Grid>().Single(grid => grid.ColumnDefinitions.Count == 2);
                     var details = (StackPanel)columns.Children[1];
@@ -1070,12 +1125,20 @@ internal static partial class Program
 
                 if (titleKeys[index] == "VaultEntries")
                 {
-                    var entries = FindControls<ListBox>(form).Single();
-                    var actions = FindControls<Button>(form).Select(button => button.Content).OfType<string>().ToArray();
-                    string[] expected = ["AddVaultPassword", "ImportPrivateKey", "EditCredential", "DeleteCredential",
-                        "BackupVault", "RestoreVault", "ChangeMaster", "ArchiveVault"];
+                    var entries = FindControls<ListView>(form).Single();
+                    string path = ProfileLocation.Normalize(app.VaultPath);
+                    string expectedPath = string.Format(App.Text("VaultPathDisplay"), path);
+                    if (FindControls<TabControl>(form).Any() ||
+                        !FindControls<TextBlock>(form).Any(label => label.Text == expectedPath) ||
+                        FindControls<TextBox>(form).Any(field => field.Text == path))
+                        throw new InvalidOperationException("Vault management did not show the path as plain text under a single list.");
+                    var actions = FindControls<Button>(form).Select(button => button.Content).OfType<string>();
+                    var rowActions = entries.ContextMenu.Items.OfType<MenuItem>().Select(item => item.Header);
+                    string[] expected = ["AddVaultPassword", "ImportPrivateKey", "BackupVault", "RestoreVault",
+                        "ChangeMaster", "RecheckFilePublication", "ArchiveVault"];
                     if (System.Windows.Automation.AutomationProperties.GetName(entries) != App.Text("VaultEntries") ||
-                        !expected.Select(App.Text).All(actions.Contains) || actions.Contains(App.Text("VaultEntries")))
+                        !expected.Select(App.Text).All(actions.Contains) ||
+                        !new[] { "VaultEditEntry", "VaultDeleteEntry", "CopyMacroReference" }.Select(App.Text).All(rowActions.Contains))
                         throw new InvalidOperationException("Vault entries and their operations were not on the landing page.");
                 }
                 if (titleKeys[index] == "Settings")

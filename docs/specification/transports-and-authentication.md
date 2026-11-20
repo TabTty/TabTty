@@ -125,24 +125,15 @@ Explain this in the SSH profile editor and password picker. Explorer's Edit
 action opens the profile for inspection. The connection-time trust decision
 is specified for a future implementation. [Profile trust](profile-trust.md)
 
-Each saved SSH credential pairs its required username with one password or
-imported private key. All vault entries referenced by enabled authentication
-methods must have exactly the same username. An explicit selection supplies the
-profile's expected SSH account, which is read-only while an enabled method uses
-a vault reference. With no such reference the user enters the username in the
-profile. References for disabled methods do not determine the account. Compare
-usernames exactly, without trimming, case folding, or Unicode normalization.
+The captured connection profile supplies the SSH username for every user
+authentication request, including `none`, partial success, and method fallback.
+Selecting a vault entry changes only the credential reference.
 [Profile fields](persistence-and-windows.md#profile-v1-fields)
 
-After host key verification, check all enabled saved references before the
-first SSH user authentication request, including `none`. For each available
-credential, validate the exact name in the selected vault, the expected kind,
-and the account in the captured profile. A mismatched kind or username ends
-the attempt with an explanation and guidance to correct the
-selection. Keep the captured account fixed throughout the attempt, including
-when a credential is unavailable and during partial success and interactive
-authentication. At handoff, recheck the account and credential against the
-same vault revision as the secret under the existing handoff rules.
+After host key verification and before the first SSH user authentication request,
+resolve enabled saved references by exact name and expected kind in the selected
+vault. A kind mismatch ends the attempt. At secret handoff, enforce the same
+reference and revision checks under the existing vault rules.
 [RFC 4252 §5](https://www.rfc-editor.org/rfc/rfc4252.html#section-5)
 
 If the selected vault is needed and its file is confirmed missing or zero
@@ -163,18 +154,16 @@ handling for mismatch, cancellation, and other vault failures applies.
 
 When the profile has no saved key reference and the user chooses a key during
 SSH authentication, show the verified host, port, and fixed SSH username. Offer
-only vault keys with that username, and recheck the match before offering the
-public key to the server. If the vault is valid and no matching key is available,
-report that no eligible private key is saved for the account. Treat public-key
-authentication as unavailable for that stage and continue with the next method
-allowed by the profile and currently offered by the server. End the attempt if
-there is no such method. When keys are available, offer **Try another
-authentication method** in the picker only when another eligible method can
-continue the current stage. That action skips public-key authentication for the
-stage. **Cancel connection** ends the attempt. Identify vault choices by unique
-name and username. For keys also show the public-key type and SHA-256
-fingerprint. Render control and formatting characters visibly in names and
-usernames so that the user can distinguish entries with similar labels.
+every private key in the selected vault. If the vault is valid and has no private
+keys, report that state. Treat public-key authentication as unavailable for that
+stage and continue with the next method allowed by the profile and currently
+offered by the server. End the attempt if there is no such method. When keys are
+available, offer **Try another authentication method** in the picker only when
+another eligible method can continue the current stage. That action skips
+public-key authentication for the stage. **Cancel connection** ends the attempt.
+Identify vault choices by unique name, and show the public-key type and SHA-256
+fingerprint for keys. Render control and formatting characters visibly in entry
+names and in the SSH username shown above the choices.
 [RFC 4252 §5.1](https://www.rfc-editor.org/rfc/rfc4252.html#section-5.1),
 [RFC 4252 §7](https://www.rfc-editor.org/rfc/rfc4252.html#section-7)
 
@@ -590,21 +579,19 @@ interleaving/EOF, low-window behavior, Telnet option-loop/CR/IAC fragment cases,
 and serial busy/unplug/handshake/overrun. Independent SSH/security review is a
 release gate. No such testing or review is claimed by this document.
 
-Verify that selecting a vault entry sets the read-only account. Matching
-password and key entries must use that account in every SSH authentication
-request. Exercise a mixed-account profile, a shared entry whose account was
-edited, and an externally edited profile whose account differs from the vault.
-In each case the mismatch must stop the attempt before the first user
-authentication request. Verify manual account entry without enabled vault
-references and matching-account filtering in the connection-time key picker.
+Verify that the SSH username stays editable with saved references configured
+and keeps its value when those references change. Connect with two profiles
+that share one vault password and use different usernames, and verify that
+each request uses its own profile's username. Verify that the connection-time
+key picker lists all private keys and displays the captured SSH username.
 Exercise missing and zero-byte targets for both a saved reference and
 connection-time key selection, and an absent saved key entry in the intended
 vault. Check the visible reason, continuation with an allowed server-offered
 method using the same account, and failure when none remains. Verify that a
-saved password in the same missing vault cannot be used and that a kind or
-username mismatch stops authentication even when another method is
-available. Exercise a valid vault with no eligible key, with and without an
-alternative method offered by the server. Verify that
+saved password in the same missing vault cannot be used and that a kind mismatch
+stops authentication even when another method is available. Exercise a valid
+vault with no private keys, with and without an alternative method offered by
+the server. Verify that
 **Try another authentication method** advances the current attempt, **Cancel
 connection** ends it, and SSH leaves vault initialization to user management.
 Verify that a new profile starts with only the password row and can add the key

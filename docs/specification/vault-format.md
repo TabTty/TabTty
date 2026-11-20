@@ -107,8 +107,8 @@ UTF-8 JSON without a BOM, one object, no duplicate properties or comments:
 No unknown properties in this private v1 schema; future fields require a new
 supported schema/container rule. Array order is the user's entry order.
 
-Each entry has `kind` (`password` or `privateKey`), `name`, a required
-`username` string, and exactly its applicable secret field: `passwordUtf8`
+Each entry has `kind` (`password` or `privateKey`), `name`, and exactly
+its applicable secret field: `passwordUtf8`
 (canonical padded Base64 of unnormalized strict UTF-8), or `privateKeyPkcs8`
 (canonical padded Base64 of validated unencrypted PKCS#8 DER). Key entries also
 store the public type and SHA-256 fingerprint, recomputed/checked when loaded.
@@ -118,22 +118,20 @@ entries and remains part of the container's authentication and recovery rules.
 
 Initial defensive limits, not measured capacity claims: N <= 16 MiB, whole file
 <= 16 MiB + 200 bytes, at most 1,024 entries, JSON depth <= 8, names <= 256
-Unicode scalars, usernames <= 1,024 UTF-8 bytes, password material <= 16 KiB,
-and canonical private-key DER <= 64 KiB. Enforce encoded and decoded lengths
-before Base64 allocation, then validate content. Names are unique across all
+Unicode scalars, password material <= 16 KiB, and canonical private-key DER
+<= 64 KiB. Enforce encoded and decoded lengths before Base64 allocation, then
+validate content. Names are unique across all
 entries in a vault. Compare names ordinally and case-sensitively with no trimming
 or Unicode normalization. Reject duplicate names on load, add, import, and
 rename. A reference resolves the exact name in the selected vault and checks
 the expected kind. Later operations resolve the current contents under that
 name, including after deletion and reuse or after changing the selected vault.
 
-The username is the SSH account for both entry kinds. Require strict UTF-8,
-at least one non-whitespace character, and no control characters. Validate it
-on load, add, edit, and key import. A missing, null, or invalid username is a
-schema error. The initial release assumes existing entries have usernames and
-requires no compatibility mode or migration.
-[SSH authentication](transports-and-authentication.md#authentication-and-user-facing-messages),
-[OWASP input validation](https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html#implementing-input-validation)
+The SSH username belongs to the connection profile. Vault entry creation,
+editing, and key import have no username field. A legacy entry with a
+`username` property fails payload validation. The pre-release format has no
+migration path for these files.
+[SSH authentication](transports-and-authentication.md#authentication-and-user-facing-messages)
 
 ## Imported keys
 
@@ -335,7 +333,7 @@ and truthful on-disk generation facts defined above.
 | Unlock existing file | Authenticate and validate one bounded acquired image, then publish the shared unlocked state and metadata for that attempt. Do not publish a file, initialize implicitly or cache all plaintext entries. |
 | Create at a missing path | Publish a new validated encrypted vault with a new identity/root without overwriting, then adopt only after target and applicable preservation proof. A newly appearing target is a collision. |
 | Initialize an empty file | Revalidate the confirmed same regular file, preserve its exact empty original through guarded initialization and adopt only after target and required preservation proof. Parking the original is a physical effect even if installation fails. |
-| Add/edit/delete entry | Enforce the exact name, expected kind, and revision. Apply known-profile impact confirmation to username changes, secret changes, and destructive operations. A kind change creates a new entry. Publish the complete result before adopting its revision and metadata. An existing reference resolves while its exact name is present. Renaming requires the confirmation described below. Established sessions retain their authenticated connection. An account mismatch requires the intended credential to be selected again in the profile before a later connection can authenticate. |
+| Add/edit/delete entry | Enforce the exact name, expected kind, and revision. Apply known-profile impact confirmation to secret changes and destructive operations. A kind change creates a new entry. Publish the complete result before adopting its revision and metadata. An existing reference resolves while its exact name is present. Renaming requires the confirmation described below. Established sessions retain their authenticated connection. |
 | Import private key | Use one bounded acquired source image and its matching passphrase interaction; enforce the accepted envelope allowlist and actual key validation. Publish only canonical validated PKCS#8, keep native buffers through actual completion, and leave the source intact without retaining its path/passphrase as an authentication dependency. |
 | Change master password | Apply the existing input rules and fresh root/wrapper/payload encryption. Complete proof precedes root/snapshot/metadata adoption. Retain needed old/candidate roots only within their established lifetime and report an observed on-disk candidate truthfully; old copies retain their old password. |
 | Encrypted backup | Copy the exact authenticated encrypted generation to a separately selected non-overwriting destination and verify it. Do not change the source revision or re-encrypt to an implied new password. |
@@ -569,8 +567,9 @@ initialization/archive/restore guards, partial publication, notification failure
 reconciliation/reopen restrictions and all capacity thresholds. Q12-Q16 establish
 design readiness, not authorization to implement or a claim that these tests ran.
 
-Verify that both password and private-key entries require a valid username and
-that adding, editing, importing, and opening a vault enforce the same rule.
+Verify that password and private-key entries can be created, edited, and reopened
+without a username. Verify that an authenticated payload with the legacy
+`username` property is rejected.
 Verify duplicate-name rejection across kinds when adding, importing, renaming,
 and opening an authenticated vault. Verify that renaming leaves the old name
 unresolved, that a later same-name replacement resolves by name, and that an

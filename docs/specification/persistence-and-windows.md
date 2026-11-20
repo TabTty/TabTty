@@ -37,7 +37,7 @@ otherwise. Defaults describe newly created profiles, not missing-field repair.
 
 | Object | Fields and interpretation |
 | --- | --- |
-| Root | `schemaVersion`, `requiredFeatures`, `profileId`, `displayName`, `connection`, `terminal`, `logging` |
+| Root | `schemaVersion`, `requiredFeatures`, `profileId`, `displayName`, optional `groupName`, `connection`, `terminal`, `logging` |
 | connection | `type`: `ssh`, `telnet`, or `serial`; `waitSeconds`: 30, allowed 1-300; exactly the applicable transport fields below |
 | SSH | `host`, `port`: 22, `username`, `authentication`, `liveness` |
 | authentication | `methods`: one or two distinct values in priority order from `publicKey` and `password`, initially `[password]`; `allowKeyboardInteractive`: boolean, initially true; `privateKey` and `password`: null or credential reference; request unsaved input during authentication when needed |
@@ -51,12 +51,28 @@ otherwise. Defaults describe newly created profiles, not missing-field repair.
 | retainedRows | `mode`: `inherit` or `override`; `value`: null when inherited, otherwise integer 100-100000 |
 | logging | `raw`: false, `text`: false, `terminal`: false, `directory`: `Logs` |
 
+A profile belongs to one group when `groupName` is set. Trim surrounding
+whitespace and compare group names ordinally without case. Accept at most 256
+Unicode scalar values and reject embedded control characters. An omitted,
+null, or blank value means ungrouped. The editor omits the field when cleared.
+Registration caches the group name for navigation on startup. It is refreshed
+on registration, verified profile edits, or a connection using the profile.
+The group tabs meet the top edge of one rectangular frame containing the
+search field and the details list.
+The list shows the registered name, connection protocol, destination and file
+path and fills the available space below the search field. Double-click a row
+to edit its profile. The row context menu provides Connect, Edit, Duplicate,
+favorite, Unregister and Delete file actions. The star in the first column
+toggles favorite status. Clicking a column header sorts the displayed rows
+and clicking the same header again reverses the order. The new-tab menu shows
+named groups as submenus and ungrouped profiles at the root.
+
 The selected vault's rename dialog can update reviewed registered profiles. The update uses the ordinary verified edit path and changes the matching name field. Connection trust is evaluated for the resulting file revision. See [Vault format and operations](vault-format.md).
 
-SSH requires `connection.username`. With an enabled vault reference it holds
-the expected account copied from the selected credential for connection
-review. Otherwise it holds the name entered in the profile. The resolved vault
-account must match the expected account during authentication.
+SSH requires `connection.username`, entered in the profile editor. It must
+contain a non-whitespace character, contain no control characters, and fit
+within 1,024 bytes of strict UTF-8. Preserve it without trimming, case folding,
+or Unicode normalization. Selecting a credential changes only its reference.
 [Saved SSH credentials](transports-and-authentication.md#authentication-and-user-facing-messages)
 
 Show one row per configured SSH method. **Add authentication method** offers
@@ -86,7 +102,7 @@ Profile IDs are content identifiers, distinct from local registration identity.
 | highlighting.json | `sets`: ordered array, initially empty; each has `setId`, `name`, `enabled`, `rules`; each rule has `ruleId`, `name`, `enabled`, `pattern`, `ignoreCase`, `style` |
 | style | Nullable `foreground`/`background` as `#RRGGBB`; nullable booleans `bold` and `underline`; null inherits terminal attributes, never a lower-priority rule |
 | state.json | `registrations`, `lastWindow`, legacy `selectedVaultPath` for settings that predate the vault path field. Contains application state only. |
-| registration | Independent `registrationId`, canonical opening path plus display spelling, `favorite`, nullable UTC `lastUsed`; missing status is observed locally, not a profile rewrite |
+| registration | Independent `registrationId`, canonical opening path plus display spelling, optional `name`, `favorite`, nullable UTC `lastUsed`; missing status is observed locally |
 | lastWindow | Normal bounds in DIPs, monitor identity/work-area/DPI observations, maximized flag; never restore minimized |
 | host-keys.json | Versioned host records defined in the transport contract, independent of vault and portable settings |
 
@@ -154,9 +170,15 @@ internal bounded-loading limits, not promises of usable performance at all maxim
 
 ## Opening locations and registration
 
-Resolve local app data through Windows; unpackaged stores live under its
-`TabTty` directory. Suggest Documents known-folder `TabTty\Profiles` for new
-profiles, but open external profiles in place. Resolve log directory relative
+Resolve local app data through Windows. Unpackaged stores live under its
+`TabTty` directory. Settings > Save paths includes the vault path and the
+connection profile folder. The optional `profileSaveDirectory` setting in
+`settings.json` accepts an absolute folder path or null for the default
+`TabTty\Profiles` under the Windows Documents known folder. Creating or
+duplicating a profile saves it as `<profile name>.ttty` in that folder. The editor
+requires a name usable as a Windows file name and refuses to overwrite an
+existing file. Changing the folder affects subsequent saves of new profiles.
+Open external profiles in place. Resolve log directory relative
 to the profile's opening directory. Accept ordinary absolute DOS/UNC paths and
 ordinary relative log paths, normalizing separators and dot components. Reject
 drive-relative `C:Logs`, root-relative `\Logs`, device namespaces, alternate
@@ -178,11 +200,19 @@ the filesystem supplies them without merging distinct link paths. If location
 equivalence cannot be established, keep separate registrations rather than
 silently join histories. Relative logs continue to use the opened location.
 
+Registered names are unique across groups using ordinal case-insensitive
+comparison. On registering a profile outside the configured folder, append
+` (1)`, ` (2)`, and so on to the local registration name when necessary.
+Registration leaves the external file and its contents in place. Editing the
+name of a registered profile in the configured folder also renames its file,
+preserving the registration ID, favorites and usage history. Editing a profile
+outside that folder leaves its file path in place.
+
 External copies/new locations get new registration IDs with no inherited
 favorites/history. Do not infer a move from a duplicate profileId. An explicit
-known move is old-registration removal and new registration; no relocation
-continuity. Without move tracking, an old inaccessible path can remain visibly
-missing until removed; it does not transfer identity to another path. A file
+external move is old-registration removal and new registration. Without move
+tracking, an old inaccessible path can remain visibly missing until removed.
+A file
 handle ID/digest is useful for edit-conflict detection, not registration merging.
 
 Successful new registration automatically trusts the registered revision. Manual
@@ -196,8 +226,12 @@ for that opened location. See the [profile trust specification](profile-trust.md
 Keep an editor draft and original file identity/digest. Save validates, compares
 the original snapshot, writes and flushes a same-directory candidate, replaces or
 non-overwriting-creates, inspects actual outcome, then publishes the effective
-revision. Preserve one previous validated `.bak` generation. Detected external
-changes require reload/review, never merge/overwrite automatically. A failure
+revision. Profile edits use a `.bak` for verification and remove the owned
+backup after the replacement is verified, including after successful reinspection.
+Keep backups needed for unresolved saves and report cleanup failures without
+undoing a verified save. Application stores preserve their previous validated
+generation. Detected external changes require reload/review, never
+merge/overwrite automatically. A failure
 keeps the draft and last effective settings, reports actual outcome, and must
 not falsely label Saved. File replacement is not a multi-file transaction.
 
@@ -426,12 +460,8 @@ uses the same profile form, layout, validation, and explicit save workflow as
 TabTty's existing-file editor. An Explorer edit saves in place and leaves
 profile registration and connection startup to Open. Selecting a saved
 credential explicitly may unlock the selected vault and select a reference.
-Show the expected account in the read-only SSH username field while an enabled
-method uses a vault reference, including while the vault is locked. Reject an
-explicit selection that conflicts with another enabled credential. If enabling
-a retained reference reveals an account mismatch, ask the user to select the
-intended credential again. Check any account the editor could not verify at
-connection time. Opening or saving the profile does not unlock a vault. When
+Keep the SSH username editable with or without selected vault entries.
+Opening or saving the profile does not unlock a vault. When
 the user opens the password or private-key picker and the selected vault path
 is missing or zero bytes, show master password setup first. After verified
 initialization, open the ordinary picker with its empty list. Cancellation
@@ -460,6 +490,12 @@ with connections. A different file uses its own unlock and operations, leaving
 the selected vault setting intact. Report missing, empty, malformed, and
 unsupported files without initializing them on Explorer launch. Valid encrypted
 manual backups with the `.tttykey` extension open as ordinary files.
+
+The credential list and search field share one frame. Show sortable columns for name, type (including
+the public-key algorithm), and fingerprint. Double-click a row to edit it. The
+row context menu offers edit, delete, and the password entry's macro-reference
+copy action. The Vault file section displays the absolute path as plain text
+and contains file-level operations.
 
 When the user chooses **Manage vault** and the selected file is missing or zero
 bytes, prompt for a master password before opening the tab. Show the tab after

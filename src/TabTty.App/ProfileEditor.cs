@@ -40,6 +40,14 @@ internal sealed class ProfileEditor
         {
             if (creating) draft["displayName"] = "";
             String(draft, "displayName", "Name");
+            var groupName = new TextBox { Text = profile.GroupName ?? "", MaxLength = ConnectionProfile.MaximumGroupNameLength * 2 };
+            Add("ProfileGroupName", groupName);
+            apply.Add(() =>
+            {
+                string? group = ConnectionProfile.NormalizeGroupName(groupName.Text);
+                if (group is null) draft.Remove("groupName");
+                else draft["groupName"] = group;
+            });
             var choices = new WrapPanel();
             form.AddChoicePanel("ConnectionType", choices);
             Number(commonConnection, "waitSeconds", "WaitSeconds");
@@ -226,8 +234,8 @@ internal sealed class ProfileEditor
             else
             {
                 if (blank) connection["username"] = "";
-                var username = String(connection, "username", "SshUsername");
-                ConfigureSshAuthentication(connection["authentication"]!.AsObject(), profile, username, app);
+                String(connection, "username", "SshUsername");
+                ConfigureSshAuthentication(connection["authentication"]!.AsObject(), profile, app);
                 var live = connection["liveness"]!.AsObject();
                 var enabled = Boolean(live, "enabled", "SshLiveness");
                 var interval = Number(live, "intervalSeconds", "SshLivenessInterval");
@@ -244,7 +252,7 @@ internal sealed class ProfileEditor
             { "off" => "Off", "on" => "On", _ => "FollowRemote" })).ToArray());
     }
 
-    private void ConfigureSshAuthentication(JsonObject auth, ConnectionProfile profile, TextBox username, App app)
+    private void ConfigureSshAuthentication(JsonObject auth, ConnectionProfile profile, App app)
     {
         string[] methods = ["password", "publicKey"];
         string[] labels = [Text("VaultPassword"), Text("PublicKey")];
@@ -254,7 +262,6 @@ internal sealed class ProfileEditor
         var secondaryRow = form.AddSection(_ => secondary = Selection("SecondarySshMethod", [.. methods, ""],
             [.. labels, Text("None")], savedMethods.Count == 2 ? savedMethods[1] : ""));
         var addMethod = form.AddAction("AddSshMethod", () => secondary.SelectedValue = OtherMethod((string)primary.SelectedValue));
-        var accountWarning = form.AddSection(_ => form.AddNotice("ReselectSshCredential"));
         primary.SelectionChanged += (_, _) =>
         {
             if (secondary.SelectedValue is string { Length: > 0 } second && Equals(primary.SelectedValue, second))
@@ -270,49 +277,21 @@ internal sealed class ProfileEditor
         form.AddGroup("SshAdvancedAuthentication", () => Boolean(auth, "allowKeyboardInteractive", "AllowKeyboardInteractive"));
         apply.Add(() =>
         {
-            if (AccountMismatch("password") || AccountMismatch("privateKey"))
-                throw new ArgumentException(Text("ReselectSshCredential"));
             auth["methods"] = secondary.SelectedValue is string { Length: > 0 } second
                 ? new JsonArray((string)primary.SelectedValue, second) : new JsonArray((string)primary.SelectedValue);
         });
-        Credential(auth, "password", "SelectSavedPassword", app, OnChosen, Update);
+        Credential(auth, "password", "SelectSavedPassword", app);
         form.AddNotice("SshSavedPasswordDestinationNotice");
-        Credential(auth, "privateKey", "SelectPrivateKey", app, OnChosen, Update);
+        Credential(auth, "privateKey", "SelectPrivateKey", app);
         Update();
 
         static string OtherMethod(string value) => value == "password" ? "publicKey" : "password";
-
-        bool Enabled(string kind)
-        {
-            string method = kind == "password" ? "password" : "publicKey";
-            return Equals(primary.SelectedValue, method) || Equals(secondary.SelectedValue, method);
-        }
-
-        string? KnownUsername(string kind) => auth[kind]?.GetValue<string>() is { } name
-            ? app.Vault.KnownUsername(name, kind) : null;
-
-        bool AccountMismatch(string kind) => Enabled(kind) && KnownUsername(kind) is { } account &&
-            !string.Equals(account, username.Text, StringComparison.Ordinal);
-
-        void OnChosen(string kind, string account)
-        {
-            if (!Enabled(kind)) return;
-            string other = kind == "password" ? "privateKey" : "password";
-            if (Enabled(other) && KnownUsername(other) is { } otherAccount &&
-                !string.Equals(account, otherAccount, StringComparison.Ordinal))
-                throw new ArgumentException(Text("SshCredentialsDifferentAccounts"));
-            username.Text = account;
-        }
 
         void Update()
         {
             bool hasSecondary = secondary.SelectedValue is string { Length: > 0 };
             secondaryRow.Visibility = hasSecondary ? Visibility.Visible : Visibility.Collapsed;
             addMethod.Visibility = hasSecondary ? Visibility.Collapsed : Visibility.Visible;
-            username.IsReadOnly = (Enabled("password") && auth["password"] is not null) ||
-                (Enabled("privateKey") && auth["privateKey"] is not null);
-            accountWarning.Visibility = AccountMismatch("password") || AccountMismatch("privateKey")
-                ? Visibility.Visible : Visibility.Collapsed;
         }
     }
 
@@ -367,8 +346,7 @@ internal sealed class ProfileEditor
         });
     }
 
-    private void Credential(JsonObject auth, string kind, string key, App app, Action<string, string> onChosen,
-        Action changed)
+    private void Credential(JsonObject auth, string kind, string key, App app)
     {
         var value = new TextBox { IsReadOnly = true, Text = auth[kind]?.GetValue<string>() is { } savedName
             ? PermissionDisplay.Literal(savedName) : Text("AskAtConnect") };
@@ -377,16 +355,13 @@ internal sealed class ProfileEditor
         {
             auth[kind] = saved.Reference?.DeepClone();
             value.Text = saved.Label;
-            changed();
         }, (saved, current) => JsonNode.DeepEquals(saved.Reference, current.Reference));
         form.AddAsyncAction(key, async () =>
         {
-            void Chosen(string name, string username)
+            void Chosen(string name)
             {
-                onChosen(kind, username);
                 auth[kind] = name;
                 value.Text = PermissionDisplay.Literal(name);
-                changed();
             }
             if (kind == "password") await app.Vault.ChoosePasswordAsync(form.OwnerWindow, Chosen);
             else await app.Vault.ChoosePrivateKeyAsync(form.OwnerWindow, Chosen);
@@ -395,7 +370,6 @@ internal sealed class ProfileEditor
         {
             auth[kind] = null;
             value.Text = Text("AskAtConnect");
-            changed();
         });
     }
 

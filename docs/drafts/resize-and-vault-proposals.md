@@ -142,7 +142,7 @@ impossible or insecure, but adds requirements without a current interchange need
 3. Retain that DEK as a root and derive a fresh payload key for each encryption
    attempt using HKDF-SHA-256, as fixed in `../specification/vault-format.md`.
    Encrypt/authenticate the complete payload with AES-256-GCM under that key.
-   Keep entry names, usernames, passwords, private-key data,
+   Keep entry names, passwords, private-key data,
    and the entry inventory inside that encrypted payload.
 4. Store only format/algorithm/KDF information, required identifiers, salt,
    nonces, the encrypted DEK, ciphertext, and authentication tags outside it.

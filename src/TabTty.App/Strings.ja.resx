@@ -27,7 +27,7 @@
   <data name="SettingsLanguageAndTheme" xml:space="preserve"><value>言語・テーマ</value></data>
   <data name="SettingsTerminalDefaults" xml:space="preserve"><value>端末の既定値</value></data>
   <data name="SettingsTabBehavior" xml:space="preserve"><value>タブの動作</value></data>
-  <data name="SettingsVault" xml:space="preserve"><value>vault の設定</value></data>
+  <data name="SettingsVault" xml:space="preserve"><value>保存パス</value></data>
   <data name="SettingsMaintenance" xml:space="preserve"><value>メンテナンス</value></data>
   <data name="Connecting" xml:space="preserve"><value>接続中…</value></data>
   <data name="Connected" xml:space="preserve"><value>接続済み</value></data>
@@ -134,10 +134,10 @@
   <data name="UnlockVault" xml:space="preserve"><value>vault のロックを解除</value></data>
   <data name="ManageVault" xml:space="preserve"><value>vault の管理</value></data>
   <data name="InitializeVault" xml:space="preserve"><value>vault のマスターパスワードを設定</value></data>
-  <data name="CreateMissingVaultDescription" xml:space="preserve"><value>選択した場所に新しい暗号化 vault を作成します。</value></data>
   <data name="InitializeEmptyVaultDescription" xml:space="preserve"><value>選択した空ファイルを新しい暗号化 vault として初期化します。</value></data>
   <data name="VaultPath" xml:space="preserve"><value>認証情報 vault のパス</value></data>
-  <data name="BrowseVaultPath" xml:space="preserve"><value>vault のパスを参照…</value></data>
+  <data name="VaultPathDisplay" xml:space="preserve"><value>認証情報 vault のパス: {0}</value></data>
+  <data name="BrowsePath" xml:space="preserve"><value>参照</value></data>
   <data name="InvalidVaultPath" xml:space="preserve"><value>.tttykey ファイルの絶対パスを指定してください。</value></data>
   <data name="VaultBusy" xml:space="preserve"><value>実行中の vault 操作が終わるまでお待ちください。</value></data>
   <data name="VaultUnlocked" xml:space="preserve"><value>認証情報 vault のロックを解除しました。</value></data>
@@ -147,13 +147,15 @@
   <data name="AddVaultPassword" xml:space="preserve"><value>パスワードを追加</value></data>
   <data name="VaultEntries" xml:space="preserve"><value>vault の項目</value></data>
   <data name="VaultEntryList" xml:space="preserve"><value>保存済みの認証情報</value></data>
+  <data name="VaultEntryType" xml:space="preserve"><value>種類</value></data>
+  <data name="VaultEntryFingerprint" xml:space="preserve"><value>フィンガープリント</value></data>
+  <data name="VaultEditEntry" xml:space="preserve"><value>編集…</value></data>
+  <data name="VaultDeleteEntry" xml:space="preserve"><value>削除…</value></data>
   <data name="VaultFileOperations" xml:space="preserve"><value>vault ファイル</value></data>
   <data name="VaultEntriesLocked" xml:space="preserve"><value>vault はロックされています。</value></data>
   <data name="VaultEntriesEmpty" xml:space="preserve"><value>保存済みの認証情報はありません。</value></data>
-  <data name="SelectVaultEntry" xml:space="preserve"><value>認証情報を選ぶと詳細が表示されます。</value></data>
   <data name="BackupVault" xml:space="preserve"><value>暗号化バックアップを作成</value></data>
   <data name="ChangeMaster" xml:space="preserve"><value>マスターパスワードを変更</value></data>
-  <data name="VaultUsername" xml:space="preserve"><value>ユーザー名（任意）</value></data>
   <data name="VaultPassword" xml:space="preserve"><value>パスワード</value></data>
   <data name="MasterPassword" xml:space="preserve"><value>マスターパスワード</value></data>
   <data name="MasterPasswordWithLength" xml:space="preserve"><value>マスターパスワード（{0}～{1} 文字）</value></data>
@@ -236,18 +238,19 @@
   <data name="SecondarySshMethod" xml:space="preserve"><value>次の認証方式</value></data>
   <data name="SshInstructions" xml:space="preserve"><value>サーバーからの案内</value></data>
   <data name="ProfileCatalog" xml:space="preserve"><value>接続プロファイル管理</value></data>
-  <data name="SearchProfiles" xml:space="preserve"><value>プロファイルを検索</value></data>
-  <data name="ProfileDetails" xml:space="preserve"><value>プロファイルの詳細</value></data>
-  <data name="RegisterProfile" xml:space="preserve"><value>ファイルを登録…</value></data>
-  <data name="ToggleFavorite" xml:space="preserve"><value>お気に入りを切り替え</value></data>
-  <data name="RemoveRegistration" xml:space="preserve"><value>一覧から外す</value></data>
-  <data name="EditProfile" xml:space="preserve"><value>プロファイルを編集…</value></data>
-  <data name="DuplicateProfile" xml:space="preserve"><value>プロファイルを複製…</value></data>
-  <data name="SelectProfile" xml:space="preserve"><value>プロファイルを選択してください。</value></data>
+  <data name="ProfileGroupName" xml:space="preserve"><value>グループ名</value></data>
+  <data name="ProfileGroups" xml:space="preserve"><value>プロファイルのグループ</value></data>
+  <data name="AllProfiles" xml:space="preserve"><value>すべて</value></data>
+  <data name="UngroupedProfiles" xml:space="preserve"><value>グループなし</value></data>
+  <data name="SearchProfiles" xml:space="preserve"><value>検索</value></data>
+  <data name="RegisterProfile" xml:space="preserve"><value>ファイルを登録</value></data>
+  <data name="RemoveRegistration" xml:space="preserve"><value>登録解除</value></data>
+  <data name="EditProfile" xml:space="preserve"><value>編集…</value></data>
+  <data name="DuplicateProfile" xml:space="preserve"><value>複製…</value></data>
   <data name="ConnectProfile" xml:space="preserve"><value>接続</value></data>
   <data name="ProfileUnavailable" xml:space="preserve"><value>プロファイルファイルを利用できないか、形式が無効です。</value></data>
   <data name="ProfileSettingsJson" xml:space="preserve"><value>プロファイル設定（JSON）</value></data>
-  <data name="ProfileSaveLocation" xml:space="preserve"><value>既定の保存先を利用できません。保存先を選択してください。</value></data>
+  <data name="ProfileSaveLocation" xml:space="preserve"><value>プロファイルの保存先を利用できません。設定の「保存パス」を確認してください。</value></data>
   <data name="LocalStateInvalid" xml:space="preserve"><value>TabTty のローカル状態を読み込みまたは保存できませんでした。</value></data>
   <data name="LocalStateChanged" xml:space="preserve"><value>ローカル状態が外部で変更されました。</value></data>
   <data name="Reconnect" xml:space="preserve"><value>再接続</value></data>
@@ -278,18 +281,14 @@
   <data name="CleanupPendingExplanation" xml:space="preserve"><value>ログの終了処理が続いています。待機を続けるか、未保存ログが失われる可能性を了承して閉じます。</value></data>
   <data name="ContinueWaiting" xml:space="preserve"><value>待機を続ける</value></data>
   <data name="CloseWithLoss" xml:space="preserve"><value>未保存分を破棄して閉じる</value></data>
-  <data name="CredentialDetails" xml:space="preserve"><value>認証情報の詳細</value></data>
   <data name="EditCredential" xml:space="preserve"><value>認証情報を編集</value></data>
   <data name="DeleteCredential" xml:space="preserve"><value>認証情報を削除</value></data>
   <data name="ReplacePassword" xml:space="preserve"><value>パスワードを置き換える</value></data>
   <data name="DeleteCredentialWarning" xml:space="preserve"><value>この認証情報を削除しますか。参照するプロファイルは、次回認証時に別の認証情報が必要になります。</value></data>
-  <data name="UpdateCredentialWarning" xml:space="preserve"><value>今後の接続に使う共有認証情報を更新しますか。ユーザー名を変更した場合は、この認証情報を使うプロファイルで選び直してください。</value></data>
-  <data name="InvalidVaultUsername" xml:space="preserve"><value>この認証情報に有効な SSH ユーザー名を入力してください。</value></data>
+  <data name="UpdateCredentialWarning" xml:space="preserve"><value>今後の接続に使う共有認証情報を更新しますか。</value></data>
   <data name="AddSshMethod" xml:space="preserve"><value>認証方式を追加</value></data>
   <data name="SshAdvancedAuthentication" xml:space="preserve"><value>認証の詳細設定</value></data>
   <data name="AllowKeyboardInteractive" xml:space="preserve"><value>キーボード対話認証を許可</value></data>
-  <data name="ReselectSshCredential" xml:space="preserve"><value>保存済み認証情報の SSH ユーザー名が一致しません。プロファイルの編集画面で意図した認証情報を選び直してください。</value></data>
-  <data name="SshCredentialsDifferentAccounts" xml:space="preserve"><value>有効な方式の保存済み認証情報には、同じ SSH ユーザー名を指定してください。</value></data>
   <data name="VaultUnavailableMissing" xml:space="preserve"><value>設定先に vault ファイルがありません。{0}</value></data>
   <data name="VaultUnavailableEmpty" xml:space="preserve"><value>設定先の vault ファイルが 0 バイトです。{0}</value></data>
   <data name="SelectOrRestoreVault" xml:space="preserve"><value>この認証情報を使うには、元の vault を選択するか、バックアップを復元してください。</value></data>
@@ -297,7 +296,7 @@
   <data name="OpenVaultManagementToCreate" xml:space="preserve"><value>vault メニューの［vault の管理］から作成するか、バックアップを復元してください。</value></data>
   <data name="SavedPrivateKeyMissing" xml:space="preserve"><value>プロファイルで指定した秘密鍵が vault にありません。</value></data>
   <data name="SshCredentialMissing" xml:space="preserve"><value>保存済み認証情報が見つかりません。プロファイルの編集画面で選び直してください。</value></data>
-  <data name="NoEligiblePrivateKey" xml:space="preserve"><value>この SSH ユーザー名で選べる秘密鍵が vault にありません。</value></data>
+  <data name="NoEligiblePrivateKey" xml:space="preserve"><value>vault に秘密鍵がありません。</value></data>
   <data name="TryAnotherSshMethod" xml:space="preserve"><value>別の認証方式を試す</value></data>
   <data name="CancelSshConnection" xml:space="preserve"><value>接続をキャンセル</value></data>
   <data name="KnownCredentialReferences" xml:space="preserve"><value>参照している登録済みプロファイル</value></data>
@@ -310,7 +309,7 @@
   <data name="RenameCredentialOnly" xml:space="preserve"><value>改名のみ</value></data>
   <data name="NoKnownCredentialReferences" xml:space="preserve"><value>該当なし。</value></data>
   <data name="CredentialRenameUpdatedProfiles" xml:space="preserve"><value>認証情報を改名しました。登録済みプロファイルを {0} 件更新しました。</value></data>
-  <data name="CredentialRenameProfileProblems" xml:space="preserve"><value>以下のプロファイルを更新できませんでした。</value></data>
+  <data name="CredentialRenameProfileProblems" xml:space="preserve"><value>プロファイルの更新中に発生した問題</value></data>
   <data name="CredentialRenameUnregistered" xml:space="preserve"><value>プロファイルの登録が解除されています。</value></data>
   <data name="CredentialRenameProfileChanged" xml:space="preserve"><value>確認後にプロファイルファイルが変更されました。</value></data>
   <data name="CredentialRenamePendingProfileEdits" xml:space="preserve"><value>プロファイルの編集画面に未保存の変更があるか、保存処理中です。</value></data>
@@ -335,7 +334,7 @@
   <data name="NetworkLogDestinationNotice" xml:space="preserve"><value>記録が有効な場合、端末への接続前にログ保存先を開きます。保存先がネットワーク共有の場合、Windows がその共有先で認証を行うことがあり、セッションのログもそこに保存されます。相対パスの基準はプロファイルのあるフォルダーです。</value></data>
   <data name="ClearPrivateKey" xml:space="preserve"><value>選択した秘密鍵を解除</value></data>
   <data name="MissingHighlightSet" xml:space="preserve"><value>強調セットが見つかりません</value></data>
-  <data name="RecycleProfile" xml:space="preserve"><value>プロファイルファイルを削除…</value></data>
+  <data name="RecycleProfile" xml:space="preserve"><value>完全削除</value></data>
   <data name="RecycleProfileConfirm" xml:space="preserve"><value>このプロファイルファイルをごみ箱へ移動しますか。vault 内の認証情報と接続中のセッションは保持されます。</value></data>
   <data name="RecycleProfileFailed" xml:space="preserve"><value>プロファイルをごみ箱へ移動できませんでした。保存場所と利用可能な状態を確認してください。</value></data>
   <data name="RecoverStores" xml:space="preserve"><value>アプリの保存ファイルを復旧…</value></data>
@@ -626,7 +625,6 @@ AI アプリは個別の確認なしでキーや複数行のコマンドを入�
   <data name="ProfileLogNetworkShare" xml:space="preserve"><value>ログの保存先はネットワーク共有です。</value></data>
   <data name="ProfileReadSource" xml:space="preserve"><value>プロファイルファイルを読み取る</value></data>
   <data name="ProfileReadSourceNotice" xml:space="preserve"><value>このファイルを読み取ると、ネットワークやリダイレクト先にアクセスする可能性があります。この操作でファイルを読み取りますか？</value></data>
-  <data name="ProfileRegisterTrustNotice" xml:space="preserve"><value>新規登録すると、登録するファイルのその版を信頼します。</value></data>
   <data name="ProfileTrustReset" xml:space="preserve"><value>接続プロファイルの信頼を一括リセット</value></data>
   <data name="ProfileTrustResetConfirm" xml:space="preserve"><value>この PC で記憶した、登録済みと未登録のすべての接続プロファイルの信頼を消去しますか？</value></data>
   <data name="ProfileTrustWriteFailed" xml:space="preserve"><value>プロファイルの信頼の変更を確認できませんでした。操作をやり直してください。</value></data>
@@ -634,4 +632,23 @@ AI アプリは個別の確認なしでキーや複数行のコマンドを入�
   <data name="MacroTrustResetConfirm" xml:space="preserve"><value>この PC で記憶したマクロの許可と拒否をすべて消去しますか？</value></data>
   <data name="MacroTrustResetFailed" xml:space="preserve"><value>マクロの信頼のリセットを確認できませんでした。操作をやり直してください。</value></data>
   <data name="RecordingDestinationChanged" xml:space="preserve"><value>確認したログ保存先が変わりました。</value></data>
+  <data name="AddProfile" xml:space="preserve"><value>プロファイルを新規作成</value></data>
+  <data name="ProfileSaveDirectory" xml:space="preserve"><value>接続プロファイルの保存先</value></data>
+  <data name="InvalidProfileSaveDirectory" xml:space="preserve"><value>接続プロファイルの保存先には絶対フォルダーパスを指定してください。</value></data>
+  <data name="ProfileListName" xml:space="preserve"><value>名前</value></data>
+  <data name="ProfileListFavorite" xml:space="preserve"><value>お気に入り</value></data>
+  <data name="ProfileFavoriteAdd" xml:space="preserve"><value>お気に入りに追加</value></data>
+  <data name="ProfileFavoriteRemove" xml:space="preserve"><value>お気に入りから外す</value></data>
+  <data name="ProfileSortAscending" xml:space="preserve"><value>昇順</value></data>
+  <data name="ProfileSortDescending" xml:space="preserve"><value>降順</value></data>
+  <data name="ProfileListProtocol" xml:space="preserve"><value>接続方式</value></data>
+  <data name="ProfileListDestination" xml:space="preserve"><value>接続先</value></data>
+  <data name="ProfileListFilePath" xml:space="preserve"><value>ファイルパス</value></data>
+  <data name="ProfileNameInUse" xml:space="preserve"><value>このプロファイル名はすでに登録されています。別の名前を指定してください。</value></data>
+  <data name="ProfileFileInUse" xml:space="preserve"><value>保存先に同名のファイルまたは登録があります。別の名前を指定してください。</value></data>
+  <data name="InvalidProfileFileName" xml:space="preserve"><value>プロファイル名を Windows のファイル名として使用できません。別の名前を指定してください。</value></data>
+  <data name="ProfileRenameStateChanged" xml:space="preserve"><value>登録情報が変更されたため、ファイル名を変更できませんでした。</value></data>
+  <data name="ProfileRenameRecovery" xml:space="preserve"><value>ファイル名の変更に復旧が必要です。ファイルの場所を確認してください。&#10;&#10;{0}</value></data>
+  <data name="ProfileSaveNeedsCompletion" xml:space="preserve"><value>ファイルの保存は完了しました。登録またはファイル名変更を完了するには、保存結果の再確認を実行してください。</value></data>
+  <data name="ProfileBackupCleanupFailed" xml:space="preserve"><value>プロファイルは保存されました。次のバックアップファイルは削除できませんでした。&#10;&#10;{0}</value></data>
 </root>
