@@ -133,6 +133,7 @@ internal sealed class SessionRecording
                 destination?.Verify();
                 string digits = expanded.Digits(sequence);
                 string stem = Path.Combine(path, expanded.FileBase(sequence));
+                activation.ThrowIfCancellationRequested();
                 using FileStream? reservation = TryReserveStem(stem);
                 // A competing opener may have finished after the directory scan.
                 if (reservation is null || ExistingSequences(path, expanded, digits, activation, enumerate, exact: true).Contains(sequence)) continue;
@@ -155,6 +156,7 @@ internal sealed class SessionRecording
             {
                 activation.ThrowIfCancellationRequested();
                 destination?.Verify();
+                activation.ThrowIfCancellationRequested();
                 var stream = new FileStream(stem + FileExtension(format), mode, FileAccess.Write, FileShare.Read,
                     bufferSize: 1, FileOptions.Asynchronous | FileOptions.SequentialScan);
                 toTruncate?.Add(stream);
