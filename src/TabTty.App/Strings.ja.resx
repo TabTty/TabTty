@@ -685,4 +685,6 @@ AI アプリは個別の確認なしでキーや複数行のコマンドを入�
   <data name="ProfileRenameRecovery" xml:space="preserve"><value>ファイル名の変更に復旧が必要です。ファイルの場所を確認してください。&#10;&#10;{0}</value></data>
   <data name="ProfileSaveNeedsCompletion" xml:space="preserve"><value>ファイルの保存は完了しました。登録またはファイル名変更を完了するには、保存結果の再確認を実行してください。</value></data>
   <data name="ProfileBackupCleanupFailed" xml:space="preserve"><value>プロファイルは保存されました。次のバックアップファイルは削除できませんでした。&#10;&#10;{0}</value></data>
+  <data name="TransferAllUnresolved" xml:space="preserve"><value>未解決の結果をすべて表示</value></data>
+  <data name="ProfileListLastUsed" xml:space="preserve"><value>最終使用日時</value></data>
 </root>

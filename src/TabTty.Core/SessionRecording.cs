@@ -96,7 +96,8 @@ internal sealed class SessionRecording
     internal bool StartFailure => Volatile.Read(ref startFailure);
     public static SessionRecording Open(string profilePath, ConnectionProfile profile, string? macroName = null,
         int part = 1, RecordingDestination? destination = null, TimeProvider? timeProvider = null,
-        RecordingSettings? settings = null, CancellationToken token = default)
+        RecordingSettings? settings = null, CancellationToken token = default,
+        Func<string, string, IEnumerable<string>>? enumerate = null)
     {
         var recording = settings ?? RecordingSettings.Resolve(profilePath, profile, macroName, reviewed: destination);
         destination = recording.Destination;
@@ -125,7 +126,7 @@ internal sealed class SessionRecording
                 return OpenFiles(number, Path.Combine(path, expanded.FileBase(0)), recording.Collision, activation);
 
             BigInteger sequence = BigInteger.Max(expanded.Start,
-                ExistingSequences(path, expanded, "*").DefaultIfEmpty(expanded.Start - 1).Max() + 1);
+                ExistingSequences(path, expanded, "*", activation, enumerate).DefaultIfEmpty(expanded.Start - 1).Max() + 1);
             for (;; sequence++)
             {
                 activation.ThrowIfCancellationRequested();
@@ -134,7 +135,8 @@ internal sealed class SessionRecording
                 string stem = Path.Combine(path, expanded.FileBase(sequence));
                 using FileStream? reservation = TryReserveStem(stem);
                 // A competing opener may have finished after the directory scan.
-                if (reservation is null || ExistingSequences(path, expanded, digits, exact: true).Contains(sequence)) continue;
+                if (reservation is null || ExistingSequences(path, expanded, digits, activation, enumerate, exact: true).Contains(sequence)) continue;
+                activation.ThrowIfCancellationRequested();
                 return OpenFiles(number, stem, LogCollisionPolicy.Error, activation);
             }
         }
@@ -173,13 +175,22 @@ internal sealed class SessionRecording
     }
 
     private static IEnumerable<BigInteger> ExistingSequences(string directory, ExpandedRecordingName expanded,
-        string digitsPattern, bool exact = false)
+        string digitsPattern, CancellationToken activation, Func<string, string, IEnumerable<string>>? enumerate,
+        bool exact = false)
     {
         string prefix = expanded.Prefix;
         string suffix = expanded.Suffix;
-        foreach (string path in Directory.EnumerateFiles(directory, prefix + digitsPattern + suffix + ".*", RecordingFileSearch))
+        activation.ThrowIfCancellationRequested();
+        string pattern = prefix + digitsPattern + suffix + ".*";
+        using var entries = (enumerate?.Invoke(directory, pattern) ??
+            Directory.EnumerateFiles(directory, pattern, RecordingFileSearch)).GetEnumerator();
+        while (true)
         {
-            ReadOnlySpan<char> name = Path.GetFileName(path);
+            activation.ThrowIfCancellationRequested();
+            bool found = entries.MoveNext();
+            activation.ThrowIfCancellationRequested();
+            if (!found) yield break;
+            ReadOnlySpan<char> name = Path.GetFileName(entries.Current);
             if (!name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
             foreach (string extension in FileExtensions)
             {
@@ -187,10 +198,11 @@ internal sealed class SessionRecording
                 if (name.Length < prefix.Length + ending || !name.EndsWith(extension, StringComparison.OrdinalIgnoreCase) ||
                     !name[^ending..^extension.Length].Equals(suffix, StringComparison.OrdinalIgnoreCase)) continue;
                 ReadOnlySpan<char> digits = name[prefix.Length..^ending];
-                if (digits.Length >= expanded.Width && (digits.Length == expanded.Width || digits[0] != '0') &&
+                if (digits.Length >= expanded.Width &&
                     (!exact || digits.SequenceEqual(digitsPattern)) &&
                     digits.IndexOfAnyExceptInRange('0', '9') < 0 &&
-                    BigInteger.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out var sequence))
+                    BigInteger.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out var sequence) &&
+                    digits.SequenceEqual(expanded.Digits(sequence)))
                     yield return sequence;
                 break;
             }

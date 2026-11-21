@@ -4,7 +4,7 @@ namespace TabTty.Core;
 
 internal enum TransferChoice { Overwrite, Skip, Cancel }
 
-internal sealed class TransferBatch(IFileOperationIo files)
+internal sealed class TransferBatch(IFileOperationIo files, Func<string, string, IDisposable>? reserveUnresolved = null)
 {
     private const int MaxDepth = 128;
     private readonly List<Plan> failed = [];
@@ -154,6 +154,7 @@ internal sealed class TransferBatch(IFileOperationIo files)
         TransferAttributes? approval = await files.StatAsync(item.Target, token);
         if (approval is not null && !await ApproveAsync(approval)) { result(label, "TransferSkipped"); return; }
         TransferPath temporary = files.Child(files.Parent(item.Target), $".tabtty-{Guid.NewGuid():N}.part");
+        using var detail = reserveUnresolved?.Invoke(files.Display(temporary), label);
         bool created = false;
         try
         {
@@ -185,12 +186,14 @@ internal sealed class TransferBatch(IFileOperationIo files)
                     }
                 }
                 created = false;
+                detail?.Dispose();
                 result(label, warning ? "TransferMetadataWarning" : "TransferDone");
                 return;
             }
         }
         catch (SftpException error) when (error.Failure == SftpFailure.UnknownOutcome)
         {
+            detail?.Dispose();
             if (created) result(files.Display(temporary), "TransferTemporaryRemains");
             created = false;
             throw;
@@ -199,6 +202,7 @@ internal sealed class TransferBatch(IFileOperationIo files)
         {
             if (created)
             {
+                detail?.Dispose();
                 try
                 {
                     if (await files.StatAsync(temporary, CancellationToken.None) is { } remaining)

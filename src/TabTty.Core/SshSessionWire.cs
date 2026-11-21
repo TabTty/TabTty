@@ -803,7 +803,8 @@ internal sealed partial class SshSessionWire : ISessionWire
                                 lock (creditGate) channelWindow.CommitSend(count);
                             }, progress, count).ConfigureAwait(false);
                         }
-                        catch (OperationCanceledException) when (progress.State.Uncertain is null && !stop.IsCancellationRequested)
+                        catch (Exception error) when (error is TransportAdmissionRejectedException ||
+                            error is OperationCanceledException && progress.State.Uncertain is null && !stop.IsCancellationRequested)
                         {
                             lock (creditGate)
                             {
@@ -825,7 +826,8 @@ internal sealed partial class SshSessionWire : ISessionWire
                         }
                     }
                 }
-                catch (OperationCanceledException) when (admission.IsCancellationRequested && !stop.IsCancellationRequested &&
+                catch (Exception error) when (error is TransportAdmissionRejectedException ||
+                    error is OperationCanceledException && admission.IsCancellationRequested && !stop.IsCancellationRequested &&
                     progress.State.Uncertain is null)
                 {
                     throw;

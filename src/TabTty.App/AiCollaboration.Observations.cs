@@ -31,8 +31,8 @@ internal sealed partial class AiCollaboration
         int first = 0, firstCell = 0;
         if (args.Has("cursor"))
         {
-            args.Only("session", "cursor");
-            var cursor = Resolve<ScreenCursor>(peer, share, args.String("cursor", 256));
+            args.Only(1);
+            var cursor = Resolve<ScreenCursor>(peer, share, args.String("cursor"));
             captureKey = cursor.Capture;
             capture = Resolve<ScreenCapture>(peer, share, captureKey);
             first = cursor.Line;
@@ -40,16 +40,16 @@ internal sealed partial class AiCollaboration
         }
         else
         {
-            args.Only("session", "region", "include_highlights");
+            args.Only();
             Region? region = null;
             if (args.Has("region"))
             {
                 var input = args.Object("region");
-                input.Only("row", "column", "rows", "columns");
-                region = new Region(input.Integer("row", 1, 512), input.Integer("column", 1, 1024),
-                    input.Integer("rows", 1, 512), input.Integer("columns", 1, 1024));
+                input.Only();
+                region = new Region(input.Integer("row"), input.Integer("column"),
+                    input.Integer("rows"), input.Integer("columns"));
             }
-            bool highlights = args.Boolean("include_highlights", true);
+            bool highlights = args.Boolean("include_highlights");
             if (peer.CapturesInProgress + peer.Handles.Values.Count(handle => handle.Value is ScreenCapture) >= 2)
                 throw new ToolException("resource_limit");
             var memory = screenMemory.Reserve(0);
@@ -210,18 +210,18 @@ internal sealed partial class AiCollaboration
         int rowLimit, byteLimit;
         if (args.Has("cursor"))
         {
-            args.Only("session", "cursor");
-            var cursor = Resolve<HistoryCursor>(share.Peer, share, sourceId = args.String("cursor", 256));
+            args.Only(1);
+            var cursor = Resolve<HistoryCursor>(share.Peer, share, sourceId = args.String("cursor"));
             requested = cursor.Range;
             position = cursor.Position;
             (rowLimit, byteLimit) = (requested.Rows, requested.Bytes);
         }
         else
         {
-            args.Only("session", "range", "max_rows", "max_text_bytes");
-            if (args.Has("range")) requested = Resolve<Span>(share.Peer, share, sourceId = args.String("range", 256));
-            rowLimit = args.Integer("max_rows", 1, 1000, requested?.Rows ?? 200);
-            byteLimit = args.Integer("max_text_bytes", 1, 256 * KiB, requested?.Bytes ?? 64 * KiB);
+            args.Only();
+            if (args.Has("range")) requested = Resolve<Span>(share.Peer, share, sourceId = args.String("range"));
+            rowLimit = args.Integer("max_rows", requested?.Rows);
+            byteLimit = args.Integer("max_text_bytes", requested?.Bytes);
         }
         var work = observationWork.Reserve(4 * MiB);
         try
@@ -263,19 +263,19 @@ internal sealed partial class AiCollaboration
         int limit, context;
         if (args.Has("cursor"))
         {
-            args.Only("session", "cursor");
-            cursor = Resolve<SearchCursor>(share.Peer, share, sourceId = args.String("cursor", 256));
+            args.Only(1);
+            cursor = Resolve<SearchCursor>(share.Peer, share, sourceId = args.String("cursor"));
             (query, caseSensitive, limit, context) = (cursor.Query, cursor.CaseSensitive, cursor.Limit, cursor.Context);
         }
         else
         {
-            args.Only("session", "query", "case_sensitive", "limit", "context_lines");
-            query = args.String("query", 1024);
-            if (query.Length > 1024 || query.Contains('\n') || query.Contains('\r'))
+            args.Only();
+            query = args.String("query");
+            if (!McpArguments.IsQuery(query))
                 throw new ToolException("invalid_request");
-            caseSensitive = args.Boolean("case_sensitive", false);
-            limit = args.Integer("limit", 1, 200, 50);
-            context = args.Integer("context_lines", 0, 10, 2);
+            caseSensitive = args.Boolean("case_sensitive");
+            limit = args.Integer("limit");
+            context = args.Integer("context_lines");
         }
         var work = observationWork.Reserve(8 * MiB);
         try

@@ -57,6 +57,8 @@ try
     }
     NativeTerminalContracts.Run();
     Console.WriteLine("PASS NativeTerminalContracts");
+    await TerminalSearchRevealsNearbyMatchesAndPrioritizesVisibleRows();
+    Console.WriteLine("PASS TerminalSearchRevealsNearbyMatchesAndPrioritizesVisibleRows");
     await ArchitectureOwnershipContracts.RunAsync();
     Console.WriteLine("PASS ArchitectureOwnershipContracts");
     await MacroContracts.RunAsync();
@@ -1273,6 +1275,70 @@ static async Task RecordingNamesShareDailySequences()
         if (Directory.GetFiles(logs, $"Server_2026-11-21_{sequence}.*").Length != 1)
             throw new InvalidOperationException("Concurrent disjoint formats reused or skipped a daily sequence.");
 
+    string runDirectory = Directory.CreateDirectory(Path.Combine(folder.Path, "serial")).FullName;
+    string runPath = Path.Combine(runDirectory, "server.ttty");
+    string runLogs = Directory.CreateDirectory(Path.Combine(runDirectory, "Logs")).FullName;
+    var settings = RecordingSettings.Resolve(runPath, text, null,
+        new RecordingDefaults("", "Run_<serial:0,4>", ""));
+    await File.WriteAllTextAsync(Path.Combine(runLogs, "run_0007.raw.tttylog"), "earlier");
+    await File.WriteAllTextAsync(Path.Combine(runLogs, "Run_00042.log"), "different formatting");
+    await SessionRecording.Open(runPath, text, settings: settings).FinishAsync();
+    await File.WriteAllTextAsync(Path.Combine(runLogs, "Run_9999.term.tttylog"), "four digits");
+    await SessionRecording.Open(runPath, text, settings: settings).FinishAsync();
+    if (!File.Exists(Path.Combine(runLogs, "Run_0008.log")) ||
+        !File.Exists(Path.Combine(runLogs, "Run_10000.log")) ||
+        await File.ReadAllTextAsync(Path.Combine(runLogs, "Run_00042.log")) != "different formatting")
+        throw new InvalidOperationException("Recording serial discovery counted a noncanonical name.");
+
+    foreach (bool cancelRecheck in new[] { false, true })
+    {
+        using var cancel = new CancellationTokenSource();
+        using var resumeScan = new ManualResetEventSlim();
+        var read = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var disposed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int otherEntries = 0;
+        int slots = ApplicationResources.FilePreparations.CurrentCount;
+        string[] before = Directory.GetFiles(runLogs).Order().ToArray();
+        var preparing = RecordingLifecycle.PreparePartAsync(token => SessionRecording.Open(runPath, text,
+            settings: settings, token: token, enumerate: Enumerate), cancel.Token);
+        try
+        {
+            await read.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            cancel.Cancel();
+            try
+            {
+                await preparing.WaitAsync(TimeSpan.FromSeconds(5));
+                throw new InvalidOperationException("Cancelled recording preparation succeeded.");
+            }
+            catch (OperationCanceledException) when (cancel.IsCancellationRequested) { }
+            if (ApplicationResources.FilePreparations.CurrentCount >= slots)
+                throw new InvalidOperationException("A cancelled directory read prematurely released its slot.");
+        }
+        finally { resumeScan.Set(); }
+        await disposed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        using var settle = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (ApplicationResources.FilePreparations.CurrentCount < slots) await Task.Delay(10, settle.Token);
+        if (otherEntries != 0 || !before.SequenceEqual(Directory.GetFiles(runLogs).Order()))
+            throw new InvalidOperationException("A cancelled serial scan read another entry or left a log or reservation.");
+
+        IEnumerable<string> Enumerate(string directory, string pattern)
+        {
+            if (pattern.StartsWith("Run_*", StringComparison.Ordinal) == cancelRecheck)
+            {
+                foreach (string entry in Directory.EnumerateFiles(directory, pattern)) yield return entry;
+                yield break;
+            }
+            try
+            {
+                read.SetResult();
+                if (!resumeScan.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException();
+                yield return Path.Combine(directory, "Run_1111.log");
+                otherEntries++;
+            }
+            finally { disposed.SetResult(); }
+        }
+    }
+
     string oldLog = Path.Combine(logs, "job-server_2026-11-21_9999.RAW.TTTYLOG");
     await File.WriteAllTextAsync(oldLog, "previous run");
     var beforeMidnight = SessionRecording.Open(path, text, "Job", timeProvider: clock);
@@ -1718,6 +1784,42 @@ static async Task PasteUsesNegotiatedBracketsWithoutAppendingEnter()
     ExpectBytes(next, "界"u8.ToArray());
 }
 
+static async Task TerminalSearchRevealsNearbyMatchesAndPrioritizesVisibleRows()
+{
+    using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    var token = deadline.Token;
+    TerminalSnapshot Snapshot(int rows) => new(Enumerable.Range(0, rows).Select(index =>
+        new TerminalSnapshot.Row(index, index, 0, "match", false, default, null, null, 0)).ToArray(),
+        false, 0, 0, 6, 1, 0, false, TerminalCursorShape.Block, false, default);
+    var snapshot = Snapshot(10_005);
+    foreach (var (backwards, anchorRow, expectedRow) in new[]
+    {
+        (false, 4096, 4097), (true, 4096, 4095), (false, 10_004, 0), (true, 0, 10_004),
+    })
+    {
+        var found = new TaskCompletionSource<TerminalMatch?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var search = TerminalSearch.ScanAsync(snapshot, "match", true, new TerminalMatch(anchorRow, 0, anchorRow, 5),
+            backwards, [(0, 2), (10_003, 10_005)], match =>
+            {
+                found.SetResult(match);
+                return resume.Task.WaitAsync(token);
+            }, token);
+        try
+        {
+            if ((await found.Task.WaitAsync(token))?.StartRow != expectedRow || search.IsCompleted)
+                throw new InvalidOperationException("Search did not announce the nearest match before returning the count.");
+        }
+        finally { resume.TrySetResult(); }
+        var result = await search;
+        if (result.Count != 10_001 || result.Matches.Length != 10_000 ||
+            !new[] { 0, 1, 10_003, 10_004 }.All(row => result.Matches.Any(match => match.StartRow == row)))
+            throw new InvalidOperationException("The search cache did not retain both visible sets.");
+    }
+    var exact = await TerminalSearch.ScanAsync(Snapshot(10_000), "match", true, null, false, [], null, token);
+    if (exact.Count != 10_000) throw new InvalidOperationException("Search marked exactly 10,000 results as partial.");
+}
+
 static async Task FailedUtf8InputDoesNotEchoOrReplay()
 {
     using var folder = new TemporaryDirectory();
@@ -1727,10 +1829,13 @@ static async Task FailedUtf8InputDoesNotEchoOrReplay()
     var wire = new InterruptedInputWire();
     var recording = SessionRecording.Open(path, profile);
     await using var session = new TerminalSession(wire, profile, recording, 100);
-    await session.SendTextAsync("済");
+    long exports = NativeTerminalCoreDiagnostics.SnapshotExports;
+    await session.DeliverInputAsync(new(TerminalInputKind.Text, "済"), CancellationToken.None);
+    if (NativeTerminalCoreDiagnostics.SnapshotExports != exports)
+        throw new InvalidOperationException("Committed text exported a terminal snapshot during delivery.");
     try
     {
-        await session.SendTextAsync("未送信");
+        await session.DeliverInputAsync(new(TerminalInputKind.Text, "未送信"), CancellationToken.None);
         throw new InvalidOperationException("The fixture write was expected to fail.");
     }
     catch (IOException exception) when (exception.Message == InterruptedInputWire.Failure) { }

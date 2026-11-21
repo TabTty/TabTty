@@ -155,6 +155,21 @@ internal static partial class Program
         await retired.Task.WaitAsync(TimeSpan.FromSeconds(5));
         if (await reopened.Create(source, "later")! != "TransferFinished")
             throw new InvalidOperationException("Provider completion did not reopen admission.");
+
+        var faults = new ControlledFiles { FailManyCleanups = true };
+        var reported = new FileOperations(faults, new FileOperationOwnership(), CancellationToken.None);
+        var batch = Enumerable.Range(0, 35).Select(index =>
+        {
+            string name = index == 34 ? "unknown" : index >= 22 ? $"cleanup{index}" : $"ordinary{index}";
+            return new TransferItem(new TransferPath(name), name, name, ControlledFiles.File);
+        }).ToArray();
+        if (await reported.Copy(batch, source, _ => ValueTask.FromResult(TransferChoice.Overwrite))! != "SftpUnknownOutcome")
+            throw new InvalidOperationException("The uncertain rename did not stop the transfer.");
+        var unresolved = reported.UnresolvedForClose();
+        if (unresolved.Length != 13 || unresolved.Count(entry => entry.Reason == "TransferTemporaryRemains") != 12 ||
+            unresolved.Count(entry => entry.Reason == "SftpUnknownOutcome" && entry.Path == "out/unknown") != 1 ||
+            !reported.Results.Any(entry => entry.Reason == "TransferResultsLimit"))
+            throw new InvalidOperationException("The latest result budget omitted an unresolved path.");
         Console.WriteLine("PASS CheckFileOperations");
     }
 
@@ -166,10 +181,16 @@ internal static partial class Program
         public List<string> Removed { get; } = [];
         public bool LoseCommit;
         public bool FailRecheck;
+        public bool FailManyCleanups;
         public Queue<TransferAttributes> CopyTargetVersions = new();
         public int RecycleCalls;
         public bool IsOpen => true;
-        public string Display(TransferPath path) => path.Local ?? System.Text.Encoding.UTF8.GetString(path.Remote!);
+        public string Display(TransferPath path)
+        {
+            string value = path.Local ?? System.Text.Encoding.UTF8.GetString(path.Remote!);
+            return FailManyCleanups && value.StartsWith("out/ordinary", StringComparison.Ordinal)
+                ? value + new string('x', 100_000) : value;
+        }
         public TransferPath Child(TransferPath path, string name) => new(Display(path) + "/" + name) { ParentPath = path };
         public TransferPath Parent(TransferPath path) => path.ParentPath!;
         public Task<TransferItem[]> ListAsync(TransferPath path, CancellationToken token) => Task.FromResult(Children);
@@ -181,10 +202,12 @@ internal static partial class Program
         public Task CreateAsync(TransferPath path, CancellationToken token) => Task.CompletedTask;
         public Task RenameAsync(TransferPath source, TransferPath target, bool replace, CancellationToken token) => throw new NotSupportedException();
         public Task<bool> TryCommitLocalAsync(TransferPath source, TransferPath target, TransferAttributes? approved, CancellationToken token) =>
-            LoseCommit ? throw new SftpException(SftpFailure.UnknownOutcome) : Task.FromResult(true);
+            LoseCommit || FailManyCleanups && target.Local == "out/unknown"
+                ? throw new SftpException(SftpFailure.UnknownOutcome) : Task.FromResult(true);
         public Task DeleteAsync(TransferPath path, TransferKind kind, CancellationToken token)
         {
-            if (path.Local == "tree/fail") throw new SftpException(SftpFailure.Permission);
+            if (path.Local == "tree/fail" || FailManyCleanups && path.Local?.EndsWith(".part") == true)
+                throw new SftpException(SftpFailure.Permission);
             Removed.Add(Display(path));
             return Task.CompletedTask;
         }
@@ -195,7 +218,10 @@ internal static partial class Program
         }
         public Task<bool> StageAsync(TransferPath source, TransferPath temporary, TransferAttributes snapshot, Action<long> progress, Action created, CancellationToken token)
         {
+            if (FailManyCleanups && source.Local == "unknown") return Task.FromResult(false);
             created();
+            if (FailManyCleanups && source.Local?.StartsWith("cleanup", StringComparison.Ordinal) == true)
+                throw new IOException("Synthetic interruption after creating a temporary path.");
             return Task.FromResult(false);
         }
         public Task RecheckAsync(TransferPath source, TransferAttributes expected, long? length, CancellationToken token) =>

@@ -441,7 +441,10 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
     private byte[] EncodeInput(byte[] bytes) => transport.EncodeInput(bytes);
 
     public Task<IReadOnlyList<string>> SendTextAsync(string text, CancellationToken cancellationToken = default,
-        bool altPrefix = false)
+        bool altPrefix = false) => SendTextCoreAsync(text, cancellationToken, altPrefix, captureRows: true);
+
+    private Task<IReadOnlyList<string>> SendTextCoreAsync(string text, CancellationToken cancellationToken,
+        bool altPrefix, bool captureRows)
     {
         if (text.Length > 1024 * 1024 || text.Any(char.IsControl))
             throw new ArgumentException("Terminal text contains a control character or exceeds its size limit.", nameof(text));
@@ -454,7 +457,7 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
                 byte[] echo = NativeTerminalCore.PrepareUtf8Input(text, size);
                 byte[] payload = altPrefix ? [0x1B, .. echo] : echo;
                 return SendAsync(() => payload, echo, cancellationToken, memory,
-                    payloadAlreadyCharged: true, text: text, altPrefix: altPrefix);
+                    payloadAlreadyCharged: true, text: text, altPrefix: altPrefix, captureRows: captureRows);
             }
             catch { memory.Dispose(); throw; }
         }
@@ -463,7 +466,7 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
         {
             byte[] encoded = EncodeText(text);
             return altPrefix ? [0x1B, .. encoded] : encoded;
-        }, StrictUtf8.GetBytes(text), cancellationToken, echoMemory, text: text, altPrefix: altPrefix); }
+        }, StrictUtf8.GetBytes(text), cancellationToken, echoMemory, text: text, altPrefix: altPrefix, captureRows: captureRows); }
         catch { echoMemory.Dispose(); throw; }
     }
 
@@ -486,6 +489,11 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
         if (letter is < 'A' or > 'Z') throw new ArgumentOutOfRangeException(nameof(letter));
         return SendAsync([(byte)(letter - 'A' + 1)], [], cancellationToken);
     }
+
+    internal Task DeliverInputAsync(TerminalInput input, CancellationToken token) =>
+        input.Kind == TerminalInputKind.Text
+            ? SendTextCoreAsync(input.Text, token, input.Alt, captureRows: false)
+            : SendAsync(() => EncodeOperation(input), token, captureRows: false);
 
     public async Task ValidatePasteAsync(TerminalPaste paste, CancellationToken cancellationToken = default)
     {
@@ -817,17 +825,24 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
     private Task<IReadOnlyList<string>> SendAsync(byte[] bytes, byte[] echo, CancellationToken cancellationToken) =>
         SendAsync(() => bytes, echo, cancellationToken);
 
-    private async Task<IReadOnlyList<string>> SendAsync(Func<byte[]> encode, byte[] echo, CancellationToken cancellationToken,
-        ResourceReservation? echoMemory = null, bool payloadAlreadyCharged = false, string? text = null, bool altPrefix = false)
+    private Task<IReadOnlyList<string>> SendAsync(Func<byte[]> encode, byte[] echo, CancellationToken cancellationToken,
+        ResourceReservation? echoMemory = null, bool payloadAlreadyCharged = false, string? text = null,
+        bool altPrefix = false, bool captureRows = true) =>
+        SendAsync(() => (encode(), echo), cancellationToken, captureRows, echoMemory ?? inputBytes.Reserve(echo.LongLength),
+            payloadAlreadyCharged, text, altPrefix);
+
+    private async Task<IReadOnlyList<string>> SendAsync(Func<(byte[] Payload, byte[] Echo)> encode,
+        CancellationToken cancellationToken, bool captureRows, ResourceReservation? queued = null,
+        bool payloadAlreadyCharged = false, string? text = null, bool altPrefix = false)
     {
-        using var queuedMemory = echoMemory ?? inputBytes.Reserve(echo.LongLength);
+        using var queuedMemory = queued ?? inputBytes.Reserve(0);
         using var unit = inputUnits.Reserve(1);
         using var transmitMemory = inputBytes.Reserve(0);
         await manualInputOrder.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ValueTask<TransportSendResult> submission;
-            byte[] payload = [];
+            byte[] payload = [], echo = [];
             bool localEcho;
             await state.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
@@ -835,26 +850,34 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
                 EnsureConnected();
                 EnsureManualInput();
                 if (pasteActive) throw new InvalidOperationException("A paste is in progress.");
-                await ProcessBatchAsync(() => payload = encode(), cancellationToken).ConfigureAwait(false);
+                await ProcessBatchAsync(() => (payload, echo) = encode(), cancellationToken).ConfigureAwait(false);
+                if (queued is null) queuedMemory.Resize(echo.LongLength);
                 transmitMemory.Resize(payload.LongLength * (IsTelnet ? 3 : payloadAlreadyCharged ? 0 : 1));
                 localEcho = LocalEcho;
-                submission = transport.SubmitPreparedAsync(EncodeInput(payload), cancellationToken);
+                submission = SubmitInputAsync(payload, cancellationToken);
             }
             finally { state.Release(); }
             var result = await submission.ConfigureAwait(false);
             await state.WaitAsync().ConfigureAwait(false);
             try
             {
-                if (localEcho && !terminalReleased)
-                    await ProcessBatchAsync(() => Echo(echo.AsSpan(0, ConfirmedInputEchoLength(
-                        result, payload, echo, text, altPrefix))), CancellationToken.None).ConfigureAwait(false);
+                if (localEcho)
+                    await EchoSubmittedInputAsync(echo, ConfirmedInputEchoLength(result, payload, echo, text, altPrefix))
+                        .ConfigureAwait(false);
                 if (result.Error is { } error) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(error);
-                return await CaptureSnapshotAsync(cancellationToken).ConfigureAwait(false);
+                return captureRows ? await CaptureSnapshotAsync(cancellationToken).ConfigureAwait(false) : [];
             }
             finally { state.Release(); }
         }
         finally { manualInputOrder.Release(); }
     }
+
+    private ValueTask EchoSubmittedInputAsync(byte[] echo, int length) =>
+        terminalReleased || length == 0 ? ValueTask.CompletedTask :
+            new ValueTask(ProcessBatchAsync(() => Echo(echo.AsSpan(0, length)), CancellationToken.None));
+
+    private ValueTask<TransportSendResult> SubmitInputAsync(byte[] payload, CancellationToken token,
+        Action? admit = null) => transport.SubmitPreparedAsync(EncodeInput(payload), token, onFirstSubmission: admit);
 
     private int ConfirmedInputEchoLength(TransportSendResult result, byte[] payload, byte[] echo, string? text, bool altPrefix)
     {

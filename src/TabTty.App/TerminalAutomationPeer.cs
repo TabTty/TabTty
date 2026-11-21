@@ -180,6 +180,13 @@ internal sealed class TerminalAutomationPeer : FrameworkElementAutomationPeer, I
             return new TerminalMatch(first.Row, first.Offset, last.Row, last.Offset);
         }
 
+        public char CharacterAt(int position)
+        {
+            var (row, offset) = Point(position);
+            string text = View![row];
+            return offset < text.Length ? text[offset] : '\n';
+        }
+
         public string Read(int start, int count) => string.Create(count, (Document: this, Start: start),
             static (destination, state) =>
             {
@@ -224,8 +231,7 @@ internal sealed class TerminalAutomationPeer : FrameworkElementAutomationPeer, I
             Position(endpoint).CompareTo(Other(targetRange).Position(targetEndpoint)));
         public void ExpandToEnclosingUnit(TextUnit unit) => peer.OnUi(() =>
         {
-            string text = peer.ReadText(0, peer.document.Length, -1);
-            (Start, End) = Enclosing(text, Start, unit);
+            (Start, End) = Enclosing(Start, unit);
         });
         public ITextRangeProvider? FindAttribute(int attributeId, object value, bool backward) =>
             Equals(GetAttributeValue(attributeId), value) ? Clone() : null;
@@ -233,10 +239,20 @@ internal sealed class TerminalAutomationPeer : FrameworkElementAutomationPeer, I
         {
             ArgumentNullException.ThrowIfNull(text);
             if (text.Length == 0) return null;
-            string value = peer.ReadText(Start, End, -1);
+            if (text.Length > End - Start) return null;
             var comparison = ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-            int index = backward ? value.LastIndexOf(text, comparison) : value.IndexOf(text, comparison);
-            return index < 0 ? null : (ITextRangeProvider)peer.Range(Start + index, Start + index + text.Length);
+            int lastStart = End - text.Length;
+            const int batchSize = 4096;
+            for (int position = backward ? lastStart : Start; position >= Start && position <= lastStart;)
+            {
+                int first = backward ? Math.Max(Start, position - (batchSize - 1)) : position;
+                int last = backward ? position : (int)Math.Min(lastStart, position + (long)batchSize - 1);
+                string batch = peer.ReadText(first, last + text.Length, -1);
+                int index = backward ? batch.LastIndexOf(text, comparison) : batch.IndexOf(text, comparison);
+                if (index >= 0) return (ITextRangeProvider)peer.Range(first + index, first + index + text.Length);
+                position = backward ? first - 1 : last + 1;
+            }
+            return null;
         });
         public object GetAttributeValue(int attributeId) => peer.OnUi(() =>
             attributeId == TextPatternIdentifiers.IsReadOnlyAttribute.Id ? (object)true :
@@ -249,19 +265,17 @@ internal sealed class TerminalAutomationPeer : FrameworkElementAutomationPeer, I
         public string GetText(int maxLength) => peer.OnUi(() => peer.ReadText(Start, End, maxLength));
         public int Move(TextUnit unit, int count) => peer.OnUi(() =>
         {
-            string text = peer.ReadText(0, peer.document.Length, -1);
             bool empty = Start == End;
-            (int first, _) = Enclosing(text, Start, unit);
-            int actual = MovePoint(text, ref first, unit, count);
+            (int first, _) = Enclosing(Start, unit);
+            int actual = MovePoint(ref first, unit, count);
             Start = first;
-            End = empty ? first : Enclosing(text, first, unit).End;
+            End = empty ? first : Enclosing(first, unit).End;
             return actual;
         });
         public int MoveEndpointByUnit(TextPatternRangeEndpoint endpoint, TextUnit unit, int count) => peer.OnUi(() =>
         {
-            string text = peer.ReadText(0, peer.document.Length, -1);
             int point = Position(endpoint);
-            int actual = MovePoint(text, ref point, unit, count);
+            int actual = MovePoint(ref point, unit, count);
             Set(endpoint, point);
             return actual;
         });
@@ -299,29 +313,36 @@ internal sealed class TerminalAutomationPeer : FrameworkElementAutomationPeer, I
             }
         }
 
-        private (int Start, int End) Enclosing(string text, int point, TextUnit unit)
+        private (int Start, int End) Enclosing(int point, TextUnit unit)
         {
-            if (text.Length == 0) return (0, 0);
-            point = Math.Min(point, text.Length - 1);
-            if (unit is TextUnit.Document or TextUnit.Format) return (0, text.Length);
+            if (peer.document.Length == 0) return (0, 0);
+            point = Math.Min(point, peer.document.Length - 1);
+            if (unit is TextUnit.Document or TextUnit.Format) return (0, peer.document.Length);
             if (unit == TextUnit.Page)
             {
                 var (first, end) = peer.surface.VisibleRows();
                 return (peer.document.Offset(first, 0), end < (peer.document.View?.Count ?? 0)
-                    ? peer.document.Offset(end, 0) : text.Length);
+                    ? peer.document.Offset(end, 0) : peer.document.Length);
             }
-            if (unit is TextUnit.Line or TextUnit.Paragraph)
+            if (unit == TextUnit.Line)
             {
-                int first = point == 0 ? 0 : text.LastIndexOf('\n', point - 1) + 1;
-                int last = text.IndexOf('\n', point);
-                return (first, last < 0 ? text.Length : last + 1);
+                int displayRow = peer.document.Point(point).Row;
+                return (peer.document.Offset(displayRow, 0), displayRow + 1 < peer.document.View!.Count
+                    ? peer.document.Offset(displayRow + 1, 0) : peer.document.Length);
+            }
+            if (unit == TextUnit.Paragraph)
+            {
+                int first = point, last = point;
+                while (first > 0 && peer.document.CharacterAt(first - 1) != '\n') first--;
+                while (last < peer.document.Length && peer.document.CharacterAt(last++) != '\n') { }
+                return (first, last);
             }
             if (unit == TextUnit.Word)
             {
-                bool white = char.IsWhiteSpace(text[point]);
+                bool white = char.IsWhiteSpace(peer.document.CharacterAt(point));
                 int first = point, last = point + 1;
-                while (first > 0 && char.IsWhiteSpace(text[first - 1]) == white) first--;
-                while (last < text.Length && char.IsWhiteSpace(text[last]) == white) last++;
+                while (first > 0 && char.IsWhiteSpace(peer.document.CharacterAt(first - 1)) == white) first--;
+                while (last < peer.document.Length && char.IsWhiteSpace(peer.document.CharacterAt(last)) == white) last++;
                 return (first, last);
             }
             var (row, offset) = peer.document.Point(point);
@@ -330,7 +351,7 @@ internal sealed class TerminalAutomationPeer : FrameworkElementAutomationPeer, I
             return spanEnd == start ? (absolute, absolute + 1) : (absolute, peer.document.Offset(row, spanEnd));
         }
 
-        private int MovePoint(string text, ref int point, TextUnit unit, int count)
+        private int MovePoint(ref int point, TextUnit unit, int count)
         {
             int actual = 0;
             int direction = Math.Sign(count);
@@ -339,13 +360,13 @@ internal sealed class TerminalAutomationPeer : FrameworkElementAutomationPeer, I
                 int previous = point;
                 if (direction > 0)
                 {
-                    if (point >= text.Length) break;
-                    point = Enclosing(text, point, unit).End;
+                    if (point >= peer.document.Length) break;
+                    point = Enclosing(point, unit).End;
                 }
                 else
                 {
                     if (point <= 0) break;
-                    point = Enclosing(text, point - 1, unit).Start;
+                    point = Enclosing(point - 1, unit).Start;
                 }
                 if (point == previous) break;
                 actual += direction;

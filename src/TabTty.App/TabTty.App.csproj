@@ -22,5 +22,6 @@
     <Compile Include="../TabTty.McpBridge/AiPrivateChannel.cs" Link="AiPrivateChannel.cs" />
     <Compile Include="../TabTty.McpBridge/AiPayloadBudget.cs" Link="AiPayloadBudget.cs" />
     <Compile Include="../TabTty.McpBridge/AiRateLimit.cs" Link="AiRateLimit.cs" />
+    <Compile Include="../TabTty.McpBridge/McpArguments.cs" Link="McpArguments.cs" />
   </ItemGroup>
 </Project>

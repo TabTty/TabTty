@@ -271,6 +271,16 @@ public sealed class ConnectionProfile
 
     internal bool IsSavedAt(string path) => sourcePath == path;
 
+    internal async Task<FileObjectIdentity?> CheckSavedRevisionAsync(string location, CancellationToken token)
+    {
+        if (sourceBytes is null) return null;
+        await using var stream = new FileStream(location, FileMode.Open, FileAccess.Read, FileShare.Read,
+            bufferSize: 4096, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        var identity = FileObjectIdentity.Read(stream.SafeFileHandle);
+        byte[] bytes = await ReadBytesAsync(stream, token).ConfigureAwait(false);
+        return bytes.AsSpan().SequenceEqual(sourceBytes) ? identity : null;
+    }
+
     internal void MoveSavedRevision(string destination)
     {
         if (sourcePath is null || sourceBytes is null)

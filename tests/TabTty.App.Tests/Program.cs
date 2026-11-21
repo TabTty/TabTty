@@ -201,6 +201,8 @@ internal static partial class Program
             CheckFileOperations(settingsDirectory).GetAwaiter().GetResult();
             TextProviderKeepsLogicalTextAndSurvivingRanges();
             Console.WriteLine("PASS TextProviderKeepsLogicalTextAndSurvivingRanges");
+            SplitReservationsFollowLiveBranches();
+            Console.WriteLine("PASS SplitReservationsFollowLiveBranches");
             TextProviderMovesByPinnedUnicodeCharacters();
             Console.WriteLine("PASS TextProviderMovesByPinnedUnicodeCharacters");
             bool visualChecksPassed = true;
@@ -2287,6 +2289,48 @@ internal static partial class Program
             throw new InvalidOperationException("Switching back to Telnet lost the unsaved Telnet fields.");
     }
 
+    private static void SplitReservationsFollowLiveBranches()
+    {
+        long before = ApplicationResources.LayoutCache.Used;
+        foreach (bool closeFirst in new[] { false, true })
+        {
+            var original = new Border();
+            var added = new Border();
+            var tree = new SplitLayout(original);
+            tree.Split(original, added, Orientation.Horizontal);
+            using (var held = ApplicationResources.LayoutCache.Reserve(128L * 1024 * 1024 - ApplicationResources.LayoutCache.Used))
+            {
+                try
+                {
+                    tree.Split(original, new Border(), Orientation.Vertical);
+                    throw new InvalidOperationException("A split exceeded the layout budget.");
+                }
+                catch (ResourceLimitException) { }
+                var survivor = closeFirst ? added : original;
+                if (!tree.Remove(closeFirst ? original : added))
+                    throw new InvalidOperationException("A refused split made the original layout unusable.");
+                tree.Split(survivor, new Border(), Orientation.Vertical);
+                tree.ReleaseReservations();
+            }
+            if (ApplicationResources.LayoutCache.Used != before)
+                throw new InvalidOperationException("A collapsed split retained its reservation.");
+        }
+
+        var single = new Border();
+        var first = new Border();
+        var second = new Border();
+        var nested = new SplitLayout(single);
+        nested.Split(single, first, Orientation.Vertical);
+        long one = ApplicationResources.LayoutCache.Used;
+        nested.Split(first, second, Orientation.Horizontal);
+        nested.Remove(single);
+        if (ApplicationResources.LayoutCache.Used != one || nested.Views.Count() != 2)
+            throw new InvalidOperationException("Collapsing a parent split released a surviving branch.");
+        nested.ReleaseReservations();
+        if (ApplicationResources.LayoutCache.Used != before)
+            throw new InvalidOperationException("Closing the layout retained a split reservation.");
+    }
+
     private static void TextProviderKeepsLogicalTextAndSurvivingRanges()
     {
         var terminal = new TerminalOutput(columns: 6, retainedRowLimit: 100, screenRows: 3);
@@ -2304,12 +2348,39 @@ internal static partial class Program
         var resized = terminal.GetRows();
         surface.SetSnapshot(resized);
         Equal(match.GetText(-1), "GHI");
+        all = provider.DocumentRange;
+        Equal(all.FindText("cDeF", backward: true, ignoreCase: true)!.GetText(-1), "CDEF");
+        Equal(all.FindText("L\nZ", backward: false, ignoreCase: false)!.GetText(-1), "L\nZ");
+        var displayed = all.Clone();
+        displayed.ExpandToEnclosingUnit(TextUnit.Line);
+        Equal(displayed.GetText(-1), "ABC");
+        if (displayed.Move(TextUnit.Line, 1) != 1)
+            throw new InvalidOperationException("UI Automation could not move across a soft-wrap boundary.");
+        Equal(displayed.GetText(-1), "DEF");
         terminal.Receive(TerminalReceiveSource.Data, Encoding.UTF8.GetBytes(string.Concat(Enumerable.Repeat("\r\nnext", 150))));
         var retired = terminal.GetRows();
         surface.SetSnapshot(retired);
         Equal(match.GetText(-1), "");
         if (!provider.DocumentRange.GetText(-1).EndsWith("next", StringComparison.Ordinal))
             throw new InvalidOperationException("The UIA provider did not expose the complete retained range.");
+
+        string line = "needle" + new string('x', 1018);
+        var largeRows = Enumerable.Range(0, 33_000).Select(index =>
+            new TerminalSnapshot.Row(index, index, 0, line, false, default, null, null, 0)).ToArray();
+        surface.SetSnapshot(new TerminalSnapshot(largeRows, false, 0, 0, 1024, 1, 0,
+            false, TerminalCursorShape.Block, false, default));
+        all = provider.DocumentRange;
+        Equal(all.FindText("Needle", backward: true, ignoreCase: true)!.GetText(-1), "needle");
+        all.ExpandToEnclosingUnit(TextUnit.Character);
+        if (all.Move(TextUnit.Character, 1) != 1)
+            throw new InvalidOperationException("A large UIA document blocked character navigation.");
+        Equal(all.GetText(-1), "e");
+        try
+        {
+            _ = provider.DocumentRange.GetText(-1);
+            throw new InvalidOperationException("The full UIA document exceeded its budget without failing.");
+        }
+        catch (InvalidOperationException error) when (error.Message.Contains("snapshot budget", StringComparison.Ordinal)) { }
     }
 
     private static void TextProviderMovesByPinnedUnicodeCharacters()
@@ -2366,6 +2437,12 @@ internal static partial class Program
 
     private static void TerminalSurfaceRendersItsCellSnapshot()
     {
+        foreach (var (background, expected) in new (uint, uint)[]
+        {
+            (0xFFFFFF, 0), (0xFFD54F, 0), (0x0050A0, 0xFFFFFF), (0xFF0000, 0),
+        })
+            if (TerminalSurface.ContrastCursor(background) != expected)
+                throw new InvalidOperationException("The cursor chose the lower-contrast fill.");
         var output = new TerminalOutput(columns: 80);
         output.Receive(TerminalReceiveSource.Data,
             "TabTty terminal\r\n\u001b[31mRed\u001b[0m White\r\n日本語 あいうえお 👩‍💻\r\n"u8);

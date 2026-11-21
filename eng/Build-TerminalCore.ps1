@@ -82,8 +82,9 @@ try {
     # Cargo and license copies preserve old source timestamps. Mark the completed
     # bundle as this target's output so MSBuild can skip an unchanged native build.
     $completedUtc = [DateTime]::UtcNow
-    foreach ($file in @('tabtty_terminal.dll', 'terminal-build.json', 'Unicode-Data-LICENSE.txt',
-            'Rust-LICENSE-MIT.txt', 'Rust-LICENSE-APACHE.txt', 'Rust-COPYRIGHT.txt')) {
+    . (Join-Path $PSScriptRoot 'TerminalBundle.ps1')
+    Confirm-TerminalBundle $OutputDirectory $Configuration
+    foreach ($file in (Get-TerminalBundleFiles)) {
         (Get-Item -LiteralPath (Join-Path $OutputDirectory $file)).LastWriteTimeUtc = $completedUtc
     }
     Write-Output (Join-Path $OutputDirectory 'tabtty_terminal.dll')

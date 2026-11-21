@@ -17,13 +17,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Self-contained publishing failed.' }
 & dotnet publish (Join-Path $repository 'src/TabTty.McpBridge/TabTty.McpBridge.csproj') -c Release -r win-x64 `
     --self-contained true -m:1 -p:UseSharedCompilation=false -o $OutputDirectory
 if ($LASTEXITCODE -ne 0) { throw 'Self-contained MCP bridge publishing failed.' }
-foreach ($required in @('tabtty_terminal.dll', 'terminal-build.json', 'Rust-LICENSE-MIT.txt', 'Rust-LICENSE-APACHE.txt', 'Rust-COPYRIGHT.txt', 'Unicode-Data-LICENSE.txt')) {
-    if (-not (Test-Path -LiteralPath (Join-Path $OutputDirectory $required))) { throw "Missing terminal runtime distribution file: $required" }
-}
-$terminalBuild = Get-Content -LiteralPath (Join-Path $OutputDirectory 'terminal-build.json') -Raw | ConvertFrom-Json
-if ((Get-FileHash -LiteralPath (Join-Path $OutputDirectory 'tabtty_terminal.dll')).Hash -ne $terminalBuild.librarySha256) {
-    throw 'The terminal runtime does not match its build metadata.'
-}
+. (Join-Path $PSScriptRoot 'TerminalBundle.ps1')
+Confirm-TerminalBundle $OutputDirectory Release
 Copy-Item -LiteralPath (Join-Path $openssl 'native-build.json') -Destination $OutputDirectory
 $nativeBuild = Get-Content -LiteralPath (Join-Path $OutputDirectory 'native-build.json') -Raw | ConvertFrom-Json
 if ($nativeBuild.opensslVersion -cne $pinnedSource.OpenSslSourceVersion -or
@@ -64,6 +59,7 @@ $runtimePacks | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $OutputDire
 foreach ($file in @('README.md', 'README-ja-jp.md', 'eng/Uninstall-TabTty.ps1')) {
     Copy-Item -LiteralPath (Join-Path $repository $file) -Destination $OutputDirectory
 }
+Confirm-TerminalBundle $OutputDirectory Release
 $archive = $OutputDirectory + '.zip'
 Compress-Archive -LiteralPath $OutputDirectory -DestinationPath $archive -CompressionLevel Optimal
 Get-FileHash -LiteralPath $archive -Algorithm SHA256

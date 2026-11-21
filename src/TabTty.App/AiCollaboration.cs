@@ -31,7 +31,7 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
         internal string LauncherPath { get; } = launcherPath;
         internal uint LauncherId { get; } = launcherId;
         internal string? Name { get; set; }
-        internal string Label => Name is { Length: > 0 } name ? $"{Code} · {name} ({Text("AiUnverified")})" : Code;
+        internal string Label => Name is { Length: > 0 } name ? $"{Code} ﾂｷ {name} ({Text("AiUnverified")})" : Code;
         internal OrderedDictionary<string, Handle> Handles { get; } = [];
         internal int CapturesInProgress { get; set; }
         internal CancellationTokenSource Lifetime { get; } = new();
@@ -280,9 +280,10 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
                 if (!peers.ContainsKey(peer.Id)) return new Reply(Error("not_shared"), null);
             }
             Prune(peer);
-            var args = new Arguments(arguments);
+            var args = new Arguments(arguments, McpArguments.Schemas.GetValueOrDefault(name,
+                McpArguments.Schemas["tabtty_return_control"]));
             if (name == "tabtty_list_shared_sessions") return new Reply(List(peer, args), null, peer.SharingRevision);
-            string id = args.String("session", 256);
+            string id = args.String("session");
             if (!shares.TryGetValue(id, out var candidate) || candidate.Peer != peer) throw new ToolException("not_shared");
             share = candidate;
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, share.Lifetime.Token, peer.Lifetime.Token);
@@ -385,14 +386,14 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
         Listing listing;
         if (args.Has("cursor"))
         {
-            args.Only("cursor");
-            listing = Resolve<Listing>(peer, null, args.String("cursor", 256));
+            args.Only(1);
+            listing = Resolve<Listing>(peer, null, args.String("cursor"));
         }
         else
         {
-            args.Only("limit");
+            args.Only();
             listing = new Listing(shares.Values.Where(share => share.Peer == peer).Select(share => share.Id).ToArray(),
-                0, args.Integer("limit", 1, 200, 50));
+                0, args.Integer("limit"));
         }
         var sessions = listing.Ids.Skip(listing.Offset).Take(listing.Limit)
             .Select(id => shares.GetValueOrDefault(id)).OfType<Sharing>().Select(share => new
@@ -419,9 +420,9 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
 
     private object Return(Sharing share, Arguments args)
     {
-        args.Only("session", "control", "reason");
-        string id = args.String("control", 256);
-        string? reason = args.Has("reason") ? PermissionDisplay.SingleLine(args.String("reason", 256, allowEmpty: true)) : null;
+        args.Only();
+        string id = args.String("control");
+        string? reason = args.Has("reason") ? PermissionDisplay.SingleLine(args.String("reason")) : null;
         if (share.Control?.Id == id) EndControl(share.Tab, reason);
         else if (share.Control is not null || share.LastControl != id) throw new ToolException("control_required");
         return Ok(share, new { cleanup_pending = share.Tab.IsAiTakingControl });
@@ -429,11 +430,11 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
 
     private async Task<object> SendAsync(Sharing share, Arguments args, CancellationToken token)
     {
-        args.Only("session", "control", "action_seq", "observation", "input");
-        if (share.Control is not { } control || args.String("control", 256) != control.Id)
+        args.Only();
+        if (share.Control is not { } control || args.String("control") != control.Id)
             throw new ToolException("control_required");
-        int sequence = args.Integer("action_seq", 1, int.MaxValue);
-        string observationId = args.String("observation", 256);
+        int sequence = args.Integer("action_seq");
+        string observationId = args.String("observation");
         if (sequence <= control.HighWater && !control.Ledger.ContainsKey(sequence))
             return DeliveryError("already_processed", "unknown", sequence, true, control);
         if (sequence > (long)control.HighWater + 1)
@@ -559,13 +560,13 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
 
     private async Task<object> WaitAsync(Sharing share, Arguments args, CancellationToken token)
     {
-        args.Only("session", "kind", "timeout_ms", "observation");
+        args.Only(args.Has("observation") ? 0 : 1);
         string kind = args.String("kind", 8);
         if (kind is not ("change" or "delay") || args.Has("observation") != (kind == "change"))
             throw new ToolException("invalid_request");
-        int timeout = args.Integer("timeout_ms", 0, 10_000, 1000);
+        int timeout = args.Integer("timeout_ms");
         Observation? prior = kind == "change"
-            ? Resolve<Observation>(share.Peer, share, args.String("observation", 256), "stale_observation") : null;
+            ? Resolve<Observation>(share.Peer, share, args.String("observation"), "stale_observation") : null;
         if (share.Waiting) throw new ToolException("busy");
         share.Waiting = true;
         try

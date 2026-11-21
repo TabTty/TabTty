@@ -29,7 +29,8 @@ internal static class ThemedMessageBox
 
     internal static Window Create(Window? owner, string message, string title, MessageBoxButton buttons,
         MessageBoxImage icon, MessageBoxResult defaultResult, Action<MessageBoxResult> select,
-        Func<MessageBoxResult, string>? label = null, ImageSource? windowIcon = null, bool notification = false)
+        Func<MessageBoxResult, string>? label = null, ImageSource? windowIcon = null, bool notification = false,
+        string? details = null)
     {
         owner = owner is { IsVisible: true } ? owner : null;
         var dialog = new Window
@@ -77,9 +78,17 @@ internal static class ThemedMessageBox
             DockPanel.SetDock(symbol, Dock.Left);
             body.Children.Add(symbol);
         }
+        var content = new StackPanel();
+        content.Children.Add(new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap });
+        if (!string.IsNullOrEmpty(details))
+            content.Children.Add(new Expander
+            {
+                Header = Text("TransferAllUnresolved"),
+                Content = new TextBox { Text = details, IsReadOnly = true, TextWrapping = TextWrapping.Wrap },
+            });
         body.Children.Add(new ScrollViewer
         {
-            Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap },
+            Content = content,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             MaxHeight = Math.Max(100, SystemParameters.WorkArea.Height - 180),
         });

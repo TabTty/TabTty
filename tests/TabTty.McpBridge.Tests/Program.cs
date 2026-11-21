@@ -30,6 +30,14 @@ try
         await Write(new { jsonrpc = "2.0", method = "notifications/initialized" });
         var legacyList = (await Request(2, "tools/list", new { })).GetProperty("result");
         Check(!legacyList.TryGetProperty("resultType", out _) && legacyList.GetProperty("tools").GetArrayLength() == 7);
+        var query = legacyList.GetProperty("tools").EnumerateArray()
+            .Single(item => item.GetProperty("name").GetString() == "tabtty_search_history")
+            .GetProperty("inputSchema").GetProperty("oneOf")[0].GetProperty("properties").GetProperty("query");
+        string pattern = query.GetProperty("pattern").GetString()!;
+        Check(query.GetProperty("maxLength").GetInt32() == 1024 &&
+            query.GetProperty("description").GetString()!.Contains("UTF-16") &&
+            System.Text.RegularExpressions.Regex.IsMatch("a\u0085\u2028\u2029b", pattern) &&
+            new[] { "a\rb", "a\nb", "a\r\nb", "a\n" }.All(value => !System.Text.RegularExpressions.Regex.IsMatch(value, pattern)));
         var list = (await Request(3, "tools/call", new { name = "tabtty_list_shared_sessions", arguments = new { } }))
             .GetProperty("result");
         var structured = list.GetProperty("structuredContent");
@@ -58,6 +66,7 @@ try
         Check(discovery.GetProperty("resultType").GetString() == "complete" && discovery.GetProperty("ttlMs").GetInt32() == 300000);
         var modernList = (await Request(6, "tools/list", new { _meta = metadata })).GetProperty("result");
         Check(modernList.GetProperty("cacheScope").GetString() == "public" && modernList.GetProperty("tools").GetArrayLength() == 7);
+        Check(JsonElement.DeepEquals(legacyList.GetProperty("tools"), modernList.GetProperty("tools")));
         metadata["fixture/optional"] = "界";
         int modernPadding = metadataLimit - JsonSerializer.SerializeToUtf8Bytes(metadata, wireJson).Length;
         metadata["fixture/optional"] = "界" + new string('x', modernPadding + 1);

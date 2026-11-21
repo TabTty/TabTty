@@ -5,7 +5,10 @@ namespace TabTty.Core;
 public readonly record struct TerminalHighlightStyle(uint? Foreground, uint? Background, bool? Bold, bool? Underline);
 public sealed record TerminalHighlightRule(Guid Id, string Name, string Pattern, bool Enabled, bool IgnoreCase,
     TerminalHighlightStyle Style);
-public readonly record struct TerminalHighlightSpan(int Start, int End, TerminalHighlightStyle Style);
+public readonly record struct TerminalHighlightSpan(int Start, int End, TerminalHighlightStyle Style)
+{
+    internal Guid RuleId { get; init; }
+}
 public sealed record TerminalHighlightResult(TerminalHighlightSpan[] Spans, Guid[] TimedOut, bool LimitReached);
 
 public sealed class TerminalHighlightRules
@@ -32,6 +35,13 @@ public sealed class TerminalHighlightRules
 
     public TerminalHighlightResult Match(ReadOnlySpan<char> line, IReadOnlySet<Guid> suspended,
         CancellationToken cancellationToken = default)
+        => MatchCore(line, suspended, includeRuleIds: false, cancellationToken);
+
+    internal TerminalHighlightResult MatchWithRuleIds(ReadOnlySpan<char> line, IReadOnlySet<Guid> suspended,
+        CancellationToken cancellationToken) => MatchCore(line, suspended, includeRuleIds: true, cancellationToken);
+
+    private TerminalHighlightResult MatchCore(ReadOnlySpan<char> line, IReadOnlySet<Guid> suspended,
+        bool includeRuleIds, CancellationToken cancellationToken)
     {
         if (line.Length > 65536) return new TerminalHighlightResult([], [], true);
         var spans = new List<TerminalHighlightSpan>();
@@ -49,7 +59,8 @@ public sealed class TerminalHighlightRules
                     if (++count > 4096) return new TerminalHighlightResult([], timeouts.ToArray(), true);
                     cancellationToken.ThrowIfCancellationRequested();
                     if (match.Length != 0)
-                        spans.Add(new TerminalHighlightSpan(match.Index, match.Index + match.Length, rule.Style));
+                        spans.Add(new TerminalHighlightSpan(match.Index, match.Index + match.Length, rule.Style)
+                            { RuleId = includeRuleIds ? rule.Id : Guid.Empty });
                 }
             }
             catch (RegexMatchTimeoutException)

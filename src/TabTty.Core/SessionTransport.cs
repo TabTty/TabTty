@@ -16,6 +16,7 @@ internal delegate Task TerminalPayloadConsumer(TerminalReceiveSource source, byt
 internal readonly record struct TransportStatus(bool Ready, bool ReceiveEnded, Exception? DeliveryFailure, bool ReleasePending);
 
 internal enum TransportSubmission { NotIssued, Submitted, Partial, Uncertain }
+internal class TransportAdmissionRejectedException(string reason) : InvalidOperationException(reason);
 internal readonly record struct TransportSendResult(TransportSubmission Status, int DefiniteBytes, Exception? Error,
     SshSendState? Ssh = null);
 internal enum GeometryNotification { NoNotification, Submitted, Superseded, Failed }

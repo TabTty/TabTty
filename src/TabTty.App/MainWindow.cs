@@ -34,6 +34,7 @@ internal sealed partial class MainWindow : Window
         Closed += (_, _) =>
         {
             closed = true;
+            groups.ReleaseReservations();
             app.CommitWindowClose(this);
         };
         // Register before WindowChrome so right-clicking the caption can open the tab menu.
@@ -613,15 +614,30 @@ internal sealed partial class MainWindow : Window
             ItemsControl parent = menu;
             if (profileGroup.Key is { } groupName)
             {
-                string[] paths = profileGroup.Select(profile => profile.Path).ToArray();
-                string label = string.Format(Text("ProfileGroupCount"), PermissionDisplay.Literal(groupName), paths.Length);
+                var displayed = profileGroup.ToArray();
+                string label = string.Format(Text("ProfileGroupCount"), PermissionDisplay.Literal(groupName), displayed.Length);
                 var header = new TextBlock { Text = label, Background = Brushes.Transparent };
                 var submenu = new MenuItem { Header = header };
                 AutomationProperties.SetName(submenu, label);
                 void ConnectGroup()
                 {
                     menu.IsOpen = false;
-                    OpenProfiles(paths, group);
+                    try
+                    {
+                        var current = app.Profiles.ReadRegistrations().ToDictionary(profile => profile.Id);
+                        if (displayed.All(profile => current.TryGetValue(profile.Id, out var registered) &&
+                            StringComparer.Ordinal.Equals(profile.Path, registered.Path) &&
+                            StringComparer.OrdinalIgnoreCase.Equals(groupName, registered.GroupName)))
+                        {
+                            OpenProfiles(displayed.Select(profile => profile.Path).ToArray(), group);
+                            return;
+                        }
+                    }
+                    catch (Exception exception) when (ProfileCatalog.IsFileProblem(exception))
+                    {
+                        app.Profiles.ReportStateFailure(this);
+                    }
+                    OpenNewTabMenu(sender, args);
                 }
                 bool pressedName = false;
                 submenu.PreviewMouseDown += (_, input) =>

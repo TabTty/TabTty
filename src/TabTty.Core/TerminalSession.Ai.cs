@@ -1,6 +1,6 @@
 namespace TabTty.Core;
 
-internal sealed class AiInputRejectedException(string code) : InvalidOperationException(code)
+internal sealed class AiInputRejectedException(string code) : TransportAdmissionRejectedException(code)
 {
     internal string Code { get; } = code;
 }
@@ -43,6 +43,19 @@ internal sealed class AiInputLease : IDisposable
             if (IsRevoked) throw new AiInputRejectedException("control_required");
             attempt.MarkAdmitted();
             return write();
+        }
+    }
+
+    internal void AdmitWrite(AiInputAttempt attempt)
+    {
+        lock (gate)
+        {
+            if (IsRevoked) throw new AiInputRejectedException("control_required");
+            try { attempt.MarkAdmitted(); }
+            catch (OperationCanceledException)
+            {
+                throw new AiInputRejectedException("control_required");
+            }
         }
     }
 
@@ -169,8 +182,16 @@ public sealed partial class TerminalSession
             else (payload, echo) = EncodeOperation(input);
             memory.Resize(echo.LongLength + payload.LongLength * (!IsTelnet ? 1 : 3));
             localEcho = echo.Length != 0 && LocalEcho;
-            submission = attempt.Lease.StartWrite(attempt, () =>
-                transport.SubmitPreparedAsync(EncodeInput(payload), deadline.Token));
+            submission = mouse.HasValue
+                ? attempt.Lease.StartWrite(attempt, () => SubmitInputAsync(payload, deadline.Token))
+                : SubmitInputAsync(payload, deadline.Token, () =>
+                {
+                    if (!ReferenceEquals(aiInputOwner, attempt.Lease) || IsMacroOwned || disconnected || ended)
+                        throw new AiInputRejectedException("control_required");
+                    if (attempt.LayoutEpoch != terminal.AiLayoutEpoch)
+                        throw new AiInputRejectedException("stale_observation");
+                    attempt.Lease.AdmitWrite(attempt);
+                });
         }
         finally { state.Release(); }
         var result = await submission.ConfigureAwait(false);
@@ -180,8 +201,7 @@ public sealed partial class TerminalSession
         await state.WaitAsync().ConfigureAwait(false);
         try
         {
-            if (localEcho && !terminalReleased)
-                await ProcessBatchAsync(() => Echo(echo.AsSpan(0, echoLength)), CancellationToken.None).ConfigureAwait(false);
+            if (localEcho) await EchoSubmittedInputAsync(echo, echoLength).ConfigureAwait(false);
             if (result.Error is { } error) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(error);
             if (mouse is not { } action) return null;
             int limit = mode.SgrCoordinates ? int.MaxValue : 223;

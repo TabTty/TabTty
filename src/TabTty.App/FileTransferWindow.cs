@@ -583,12 +583,16 @@ internal sealed class FileTransferWindow : Window
             var unresolved = operations?.UnresolvedForClose() ?? [];
             if (uncertain || ownership.IsBusy || ownership.NeedsRefresh || unresolved.Length != 0)
             {
-                string details = string.Join("\n", unresolved.Select(entry => $"{Text(entry.Reason)}  {entry.Path}"));
+                string counts = string.Join("\n", unresolved.GroupBy(entry => entry.Reason)
+                    .Select(group => $"{Text(group.Key)}  ({group.Count():N0})"));
+                var entries = unresolved.Select(entry => $"{Text(entry.Reason)}  {entry.Path}").ToArray();
+                string[] summary = [Text("SftpUnknownOutcome"), counts, .. entries.Take(10)];
                 try
                 {
                     Window report = ThemedMessageBox.Create(this,
-                        Text("SftpUnknownOutcome") + (details.Length == 0 ? "" : "\n" + details),
-                        Title, MessageBoxButton.OK, MessageBoxImage.Warning, MessageBoxResult.OK, _ => { });
+                        string.Join("\n", summary.Where(line => line.Length != 0)),
+                        Title, MessageBoxButton.OK, MessageBoxImage.Warning, MessageBoxResult.OK, _ => { },
+                        details: entries.Length > 10 ? string.Join("\n", entries) : null);
                     bool presented = false;
                     report.ContentRendered += (_, _) => presented = true;
                     ((App)Application.Current).Modal(report.ShowDialog);

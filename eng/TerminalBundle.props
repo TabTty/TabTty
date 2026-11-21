@@ -1,0 +1,10 @@
+<Project>
+  <ItemGroup>
+    <TerminalBundleFile Include="tabtty_terminal.dll" />
+    <TerminalBundleFile Include="terminal-build.json" />
+    <TerminalBundleFile Include="Rust-LICENSE-MIT.txt" />
+    <TerminalBundleFile Include="Rust-LICENSE-APACHE.txt" />
+    <TerminalBundleFile Include="Rust-COPYRIGHT.txt" />
+    <TerminalBundleFile Include="Unicode-Data-LICENSE.txt" />
+  </ItemGroup>
+</Project>

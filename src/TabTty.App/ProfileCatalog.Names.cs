@@ -93,6 +93,11 @@ internal sealed partial class ProfileCatalog
     {
         string destination = edit.Destination ?? path;
         bool moved = destination != path;
+        TrustState originalLocation = ReadTrust(path);
+        bool registrationAlreadyMoved = moved && originalLocation.Registration is null &&
+            ReadTrust(destination).Registration == edit.Trust.Registration;
+        if (originalLocation.Registration != edit.Trust.Registration && !registrationAlreadyMoved)
+            throw new IOException(Text("ProfileRenameStateChanged"));
         if (moved && !saved.IsSavedAt(destination))
             await Task.Run(() => saved.MoveSavedRevision(destination));
         try

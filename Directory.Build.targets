@@ -1,5 +1,6 @@
 <Project>
   <Import Project="$(MSBuildThisFileDirectory)eng/OpenSslSource.props" />
+  <Import Project="$(MSBuildThisFileDirectory)eng/TerminalBundle.props" />
   <PropertyGroup>
     <OpenSslNativeDirectory Condition="'$(OpenSslNativeDirectory)' == '' and Exists('$(MSBuildThisFileDirectory)artifacts/OpenSSL-MSVC-win-x64-$(OpenSslSourceVersion)/libcrypto-3-x64.dll')">$(MSBuildThisFileDirectory)artifacts/OpenSSL-MSVC-win-x64-$(OpenSslSourceVersion)</OpenSslNativeDirectory>
     <OpenSslNativeDirectory Condition="'$(OpenSslNativeDirectory)' == '' and Exists('$(MSBuildThisFileDirectory)artifacts/OpenSSL-win-x64-$(OpenSslSourceVersion)/libcrypto-3-x64.dll')">$(MSBuildThisFileDirectory)artifacts/OpenSSL-win-x64-$(OpenSslSourceVersion)</OpenSslNativeDirectory>
@@ -9,13 +10,14 @@
     <TabTtyTerminalDirectory Condition="'$(TabTtyTerminalDirectory)' == ''">$(MSBuildThisFileDirectory)artifacts/terminal-win-x64/$(Configuration)</TabTtyTerminalDirectory>
   </PropertyGroup>
   <ItemGroup Condition="'$(MSBuildProjectName)' == 'TabTty.Core' and '$(OS)' == 'Windows_NT'">
-    <TerminalCoreSource Include="$(MSBuildThisFileDirectory)src/TabTty.Terminal/src/**/*;$(MSBuildThisFileDirectory)src/TabTty.Terminal/Cargo.toml;$(MSBuildThisFileDirectory)src/TabTty.Terminal/Cargo.lock;$(MSBuildThisFileDirectory)eng/Build-TerminalCore.ps1;$(MSBuildThisFileDirectory)src/TabTty.Terminal/Unicode-Data-LICENSE.txt" />
-    <Content Include="$(TabTtyTerminalDirectory)/tabtty_terminal.dll;$(TabTtyTerminalDirectory)/terminal-build.json;$(TabTtyTerminalDirectory)/Unicode-Data-LICENSE.txt;$(TabTtyTerminalDirectory)/Rust-LICENSE-MIT.txt;$(TabTtyTerminalDirectory)/Rust-LICENSE-APACHE.txt;$(TabTtyTerminalDirectory)/Rust-COPYRIGHT.txt"
+    <TerminalCoreSource Include="$(MSBuildThisFileDirectory)src/TabTty.Terminal/src/**/*;$(MSBuildThisFileDirectory)src/TabTty.Terminal/Cargo.toml;$(MSBuildThisFileDirectory)src/TabTty.Terminal/Cargo.lock;$(MSBuildThisFileDirectory)eng/Build-TerminalCore.ps1;$(MSBuildThisFileDirectory)eng/TerminalBundle.props;$(MSBuildThisFileDirectory)eng/TerminalBundle.ps1;$(MSBuildThisFileDirectory)src/TabTty.Terminal/Unicode-Data-LICENSE.txt" />
+    <TerminalBundleOutput Include="@(TerminalBundleFile->'$(TabTtyTerminalDirectory)/%(Identity)')" />
+    <Content Include="@(TerminalBundleOutput)"
              Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
   <Target Name="BuildTerminalCore" BeforeTargets="PrepareForBuild"
           Condition="'$(MSBuildProjectName)' == 'TabTty.Core' and '$(OS)' == 'Windows_NT' and '$(SkipTerminalCoreBuild)' != 'true' and '$(DesignTimeBuild)' != 'true'"
-          Inputs="@(TerminalCoreSource)" Outputs="$(TabTtyTerminalDirectory)/tabtty_terminal.dll;$(TabTtyTerminalDirectory)/terminal-build.json;$(TabTtyTerminalDirectory)/Unicode-Data-LICENSE.txt;$(TabTtyTerminalDirectory)/Rust-LICENSE-MIT.txt;$(TabTtyTerminalDirectory)/Rust-LICENSE-APACHE.txt;$(TabTtyTerminalDirectory)/Rust-COPYRIGHT.txt">
+          Inputs="@(TerminalCoreSource)" Outputs="@(TerminalBundleOutput)">
     <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)eng/Build-TerminalCore.ps1&quot; -Configuration &quot;$(Configuration)&quot; -OutputDirectory &quot;$(TabTtyTerminalDirectory)&quot;" />
   </Target>
   <ItemGroup Condition="'$(OpenSslNativeDirectory)' != '' and ('$(MSBuildProjectName)' == 'TabTty.App' or '$(MSBuildProjectName)' == 'TabTty.Core.Tests' or '$(MSBuildProjectName)' == 'TabTty.App.Tests')">
@@ -39,7 +41,7 @@
   </Target>
   <Target Name="RequireTerminalCoreBundle" BeforeTargets="Publish"
           Condition="'$(RequireBundledTerminalCore)' == 'true'">
-    <Error Condition="!Exists('$(TabTtyTerminalDirectory)/tabtty_terminal.dll') or !Exists('$(TabTtyTerminalDirectory)/terminal-build.json') or !Exists('$(TabTtyTerminalDirectory)/Unicode-Data-LICENSE.txt') or !Exists('$(TabTtyTerminalDirectory)/Rust-COPYRIGHT.txt')"
-           Text="Build the Rust terminal core with eng/Build-TerminalCore.ps1 and retain its licenses and build metadata." />
+    <Error Condition="!Exists('$(TabTtyTerminalDirectory)/%(TerminalBundleFile.Identity)')"
+           Text="Missing terminal runtime distribution file: %(TerminalBundleFile.Identity)" />
   </Target>
 </Project>

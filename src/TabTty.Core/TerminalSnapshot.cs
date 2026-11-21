@@ -99,15 +99,53 @@ public sealed class TerminalSnapshot : IReadOnlyList<string>
         return backwards ? previous ?? last : first;
     }
 
+    internal IEnumerable<TerminalMatch> FindMatchesBackwards(string query, bool matchCase, CancellationToken token,
+        int? startRow = null)
+    {
+        if (query.Length is 0 or > 1024 || query.Contains('\n') || query.Contains('\r') || IsAlternateScreen)
+            yield break;
+        var comparison = matchCase ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+        string carry = "";
+        int firstRow = startRow ?? Count - 1;
+        for (int row = firstRow + 1; row < Count && rows[row - 1].SoftWrapToNext && carry.Length < query.Length - 1; row++)
+        {
+            token.ThrowIfCancellationRequested();
+            string next = rows[row].Text;
+            carry += next[..Math.Min(next.Length, query.Length - 1 - carry.Length)];
+        }
+        for (int row = firstRow; row >= 0; row--)
+        {
+            token.ThrowIfCancellationRequested();
+            string prefix = rows[row].Text;
+            string text = prefix + (rows[row].SoftWrapToNext ? carry : "");
+            for (int limit = Math.Min(text.Length, prefix.Length + query.Length - 1); limit >= query.Length;)
+            {
+                int offset = text.AsSpan(0, limit).LastIndexOf(query.AsSpan(), comparison);
+                if (offset < 0) break;
+                limit = offset + query.Length - 1;
+                int endRow = row;
+                int endOffset = offset + query.Length;
+                while (endOffset > rows[endRow].Text.Length)
+                    endOffset -= rows[endRow++].Text.Length;
+                yield return new(row, offset, endRow, endOffset);
+            }
+            carry = text[..Math.Min(text.Length, query.Length - 1)];
+        }
+    }
+
     public IEnumerable<TerminalMatch> FindMatches(string query, bool matchCase,
         CancellationToken cancellationToken = default)
+        => FindMatchesFrom(query, matchCase, 0, cancellationToken);
+
+    internal IEnumerable<TerminalMatch> FindMatchesFrom(string query, bool matchCase, int firstRow,
+        CancellationToken cancellationToken)
     {
         if (query.Length is 0 or > 1024 || query.Contains('\n') || query.Contains('\r') || IsAlternateScreen)
             yield break;
 
         var comparison = matchCase ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
         string carry = "";
-        for (int row = 0; row < Count; row++)
+        for (int row = firstRow; row < Count; row++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             string text = carry + rows[row].Text;

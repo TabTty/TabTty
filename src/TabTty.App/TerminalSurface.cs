@@ -487,6 +487,9 @@ internal sealed class TerminalSurface : FrameworkElement
                 list.Add(match);
             }
         }
+        TerminalCell? cursorCell = null;
+        TerminalStyleFlags cursorFlags = default;
+        uint cursorBackground = 0;
         for (int row = first; row < end; row++)
         {
             // Share horizontal cell translations across rows, including on the first view of a long scrollback.
@@ -520,6 +523,13 @@ internal sealed class TerminalSurface : FrameworkElement
                     (foreground, background) = (0, 0xFFD54F);
                 if (selection is { } selected && Covers(selected, row, cell))
                     (foreground, background) = (0xFFFFFF, 0x0050A0);
+                if (row == snapshot.CursorRow && snapshot.CursorColumn >= cell.Column &&
+                    snapshot.CursorColumn < cell.Column + cell.Width)
+                {
+                    cursorCell = cell;
+                    cursorFlags = flags;
+                    cursorBackground = background;
+                }
                 Rect rect = CellRect(0, cell.Column, cell.Width);
                 if (background != 0) drawing.DrawRectangle(BrushFor(background), null, rect);
                 if (!flags.HasFlag(TerminalStyleFlags.Conceal)) DrawGlyph(drawing, rect, cell.Text, foreground, flags);
@@ -529,22 +539,8 @@ internal sealed class TerminalSurface : FrameworkElement
         }
         if (connected && snapshot.CursorVisible && cursorOn && snapshot.CursorRow >= first && snapshot.CursorRow <= end)
         {
-            Rect caret = CellRect(snapshot.CursorRow, snapshot.CursorColumn, 1);
-            uint background = 0;
-            TerminalCell? content = null;
-            if (snapshot.CursorRow < snapshot.Count)
-            {
-                foreach (TerminalCell cell in snapshot.GetCells(snapshot.CursorRow).Span)
-                {
-                    if (snapshot.CursorColumn < cell.Column || snapshot.CursorColumn >= cell.Column + cell.Width) continue;
-                    background = cell.Style.Flags.HasFlag(TerminalStyleFlags.Inverse)
-                        ? cell.Style.Foreground ?? 0xFFFFFF : cell.Style.Background ?? 0;
-                    content = cell;
-                    caret = CellRect(snapshot.CursorRow, cell.Column, cell.Width);
-                    break;
-                }
-            }
-            uint cursor = Luminance(background) >= 128 ? 0u : 0xFFFFFFu;
+            Rect caret = CellRect(snapshot.CursorRow, cursorCell?.Column ?? snapshot.CursorColumn, cursorCell?.Width ?? 1);
+            uint cursor = ContrastCursor(cursorBackground);
             if (IsKeyboardFocusWithin)
             {
                 Rect shape = snapshot.CursorShape switch
@@ -554,9 +550,9 @@ internal sealed class TerminalSurface : FrameworkElement
                     _ => caret,
                 };
                 drawing.DrawRectangle(BrushFor(cursor), null, shape);
-                if (snapshot.CursorShape == TerminalCursorShape.Block && content is { } cell &&
-                    !cell.Style.Flags.HasFlag(TerminalStyleFlags.Conceal))
-                    DrawGlyph(drawing, caret, cell.Text, 0xFFFFFF ^ cursor, cell.Style.Flags);
+                if (snapshot.CursorShape == TerminalCursorShape.Block && cursorCell is { } cell &&
+                    !cursorFlags.HasFlag(TerminalStyleFlags.Conceal))
+                    DrawGlyph(drawing, caret, cell.Text, 0xFFFFFF ^ cursor, cursorFlags);
             }
             else drawing.DrawRectangle(null, new Pen(BrushFor(cursor), 1), caret);
             if (composition.Length > 0)
@@ -804,8 +800,18 @@ internal sealed class TerminalSurface : FrameworkElement
     private static TerminalStyleFlags Set(TerminalStyleFlags flags, TerminalStyleFlags bit, bool enabled) =>
         enabled ? flags | bit : flags & ~bit;
 
-    private static int Luminance(uint rgb) => ((int)(rgb >> 16) * 30 + (int)((rgb >> 8) & 255) * 59 +
-        (int)(rgb & 255) * 11) / 100;
+    internal static uint ContrastCursor(uint rgb)
+    {
+        double luminance = 0.2126 * Linear(rgb >> 16) + 0.7152 * Linear(rgb >> 8) + 0.0722 * Linear(rgb);
+        double adjusted = luminance + 0.05;
+        return adjusted / 0.05 >= 1.05 / adjusted ? 0u : 0xFFFFFFu;
+
+        static double Linear(uint component)
+        {
+            double srgb = (component & 255) / 255.0;
+            return srgb <= 0.04045 ? srgb / 12.92 : Math.Pow((srgb + 0.055) / 1.055, 2.4);
+        }
+    }
 
     private void ShowComposition(TextCompositionEventArgs e)
     {

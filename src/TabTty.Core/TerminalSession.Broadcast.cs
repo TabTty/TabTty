@@ -140,7 +140,11 @@ public sealed partial class TerminalSession
                             }
                             memory.Resize(echo.LongLength + payload.LongLength * (!IsTelnet ? 1 : 3));
                             localEcho = echo.Length > 0 && LocalEcho;
-                            submission = transport.SubmitPreparedAsync(EncodeInput(payload), cancellation);
+                            submission = SubmitInputAsync(payload, cancellation, mouseGeneration is not null ? null : () =>
+                            {
+                                if (!AcceptsInput || pasteActive)
+                                    throw new TransportAdmissionRejectedException("The terminal is no longer eligible for broadcast input.");
+                            });
                         }
                         finally { state.Release(); }
                         var result = await submission.ConfigureAwait(false);
@@ -149,10 +153,8 @@ public sealed partial class TerminalSession
                             await state.WaitAsync().ConfigureAwait(false);
                             try
                             {
-                                if (!terminalReleased)
-                                    await ProcessBatchAsync(() => Echo(echo.AsSpan(0, ConfirmedInputEchoLength(result, payload, echo,
-                                        input.Kind == TerminalInputKind.Text ? input.Text : null, input.Alt))),
-                                        CancellationToken.None).ConfigureAwait(false);
+                                await EchoSubmittedInputAsync(echo, ConfirmedInputEchoLength(result, payload, echo,
+                                    input.Kind == TerminalInputKind.Text ? input.Text : null, input.Alt)).ConfigureAwait(false);
                             }
                             finally { state.Release(); }
                         }

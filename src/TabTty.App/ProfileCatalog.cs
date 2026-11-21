@@ -19,7 +19,14 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
 {
     private readonly Dictionary<string, ProfileDetails> metadata = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim registrationChanges = new(1);
+    private readonly Dictionary<string, PendingProfileSave> verifiedSaves = new(StringComparer.Ordinal);
+    private sealed record PendingProfileSave(string? Original, string Attempted, ConnectionProfile Saved,
+        ProfileEdit? Edit, long Reset, long Removal)
+    {
+        internal FileObjectIdentity? Identity { get; set; }
+    }
     private event Action? ProfileSaved;
+    private event Action? RegistrationUsed;
     private (long Sequence, string? Location) lastCreatedProfile;
     private bool stateErrorShown;
     internal static string Filter => $"{Text("Profiles")} (*.ttty)|*.ttty";
@@ -119,13 +126,16 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
             catch (OperationCanceledException) { }
             if (app.Dispatcher.HasShutdownStarted) return location;
             RememberMetadata(location, profile);
+            bool changed = false;
             LocalState.Change(state =>
             {
                 if (FindRegistration(state, location) is not { } registration) return;
+                changed = used || registration["groupName"]?.GetValue<string>() != profile.GroupName;
                 StoreRegistrationGroup(registration, profile.GroupName);
                 if (used) registration["lastUsed"] = DateTimeOffset.UtcNow;
             });
             stateErrorShown = false;
+            if (changed) RegistrationUsed?.Invoke();
         }
         catch (Exception exception) when (IsFileProblem(exception))
         {
@@ -233,6 +243,9 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
             columns.Add("ProfileListName", nameof(Registration.Name), 175);
             columns.Add("ProfileListProtocol", nameof(Registration.Protocol), 80);
             columns.Add("ProfileListDestination", nameof(Registration.Destination), 160);
+            var lastUsed = columns.Add("ProfileListLastUsed", nameof(Registration.LastUsed), 145,
+                initialDirection: ListSortDirection.Descending);
+            lastUsed.DisplayMemberBinding = new Binding(nameof(Registration.LastUsedLocal)) { StringFormat = "g" };
             columns.Add("ProfileListFilePath", nameof(Registration.Path), 320);
             var searchLabel = new Label { Target = search, VerticalAlignment = VerticalAlignment.Center };
             var searchRow = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
@@ -326,7 +339,13 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 if (args.Source == groupTabs && !reloading) RefreshList();
             };
             form.Loaded += (_, _) => { ProfileSaved += Reload; Reload(); _ = LoadDetailsAsync(); };
-            form.Unloaded += (_, _) => { ProfileSaved -= Reload; detailsLoad?.Cancel(); };
+            RegistrationUsed += ReloadAfterConnection;
+            form.Unloaded += (_, _) =>
+            {
+                ProfileSaved -= Reload;
+                RegistrationUsed -= ReloadAfterConnection;
+                detailsLoad?.Cancel();
+            };
 
             static TabItem CreateGroupTab(string? name) => new()
             {
@@ -427,7 +446,11 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 catch (Exception exception) when (IsFileProblem(exception)) { MainWindow.ShowError(form.OwnerWindow, exception); }
             }
 
-            void Reload()
+            void ReloadAfterConnection() => ReloadCore(followMovedSelection: false);
+
+            void Reload() => ReloadCore(followMovedSelection: true);
+
+            void ReloadCore(bool followMovedSelection)
             {
                 try
                 {
@@ -438,13 +461,16 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                     lastSelectedCreation = creation.Sequence;
                     Guid? selectedId = (list.SelectedItem as Registration)?.Id;
                     Registration? selected = created ?? registrations.FirstOrDefault(item => item.Id == selectedId);
+                    HashSet<Guid> selectedIds = created is not null ? [created.Id] :
+                        list.SelectedItems.Cast<Registration>().Select(item => item.Id).ToHashSet();
                     string? group = (groupTabs.SelectedItem as TabItem)?.Tag as string;
-                    if (group is not null && selected is not null && (created is not null || list.SelectedItems.Count == 1))
+                    if (group is not null && selected is not null &&
+                        (created is not null || followMovedSelection && list.SelectedItems.Count == 1))
                         group = selected.GroupName ?? "";
                     reloading = true;
                     if (created is not null && !MatchesSearch(created, search.Text)) search.Clear();
-                    RefreshGroupTabs(group);
-                    RefreshList(created?.Id);
+                    RefreshGroupTabs(group, preserveEmpty: !followMovedSelection);
+                    RefreshList(selectedIds);
                     if (created is not null && list.SelectedItem is { } item) list.ScrollIntoView(item);
                 }
                 catch (Exception exception) when (IsFileProblem(exception))
@@ -456,10 +482,11 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 finally { reloading = false; }
             }
 
-            void RefreshGroupTabs(string? selected)
+            void RefreshGroupTabs(string? selected, bool preserveEmpty = false)
             {
-                var names = registrations.Select(item => item.GroupName ?? "")
-                    .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.CurrentCultureIgnoreCase);
+                var names = registrations.Select(item => item.GroupName ?? "");
+                if (preserveEmpty && selected is not null) names = names.Append(selected);
+                names = names.Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.CurrentCultureIgnoreCase);
                 string?[] keys = [null, .. names];
                 if (!keys.SequenceEqual(groupTabs.Items.OfType<TabItem>().Select(item => item.Tag as string)))
                 {
@@ -485,9 +512,9 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                     StringComparer.OrdinalIgnoreCase.Equals(item.Tag as string, selected)) ?? allGroups;
             }
 
-            void RefreshList(Guid? selectOnly = null)
+            void RefreshList(HashSet<Guid>? selected = null)
             {
-                HashSet<Guid> selected = selectOnly is Guid id ? [id] : list.SelectedItems.Cast<Registration>()
+                selected ??= list.SelectedItems.Cast<Registration>()
                     .Select(item => item.Id).ToHashSet();
                 var tab = groupTabs.SelectedItem as TabItem;
                 if (tab != contentTab)
@@ -569,13 +596,18 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
         var editor = new ProfileEditor(form, profile, app, creating, fromExplorer);
         string? attemptedPath = path;
         FilePublicationResult? pendingPublication = null;
-        ConnectionProfile? pendingCommit = null;
+        var resumed = path is null ? null : verifiedSaves.GetValueOrDefault(path);
+        ConnectionProfile? pendingCommit = resumed?.Saved;
+        attemptedPath = resumed?.Attempted ?? attemptedPath;
         long registrationReset = trustReset;
         ProfileEdit? pendingEdit = null;
+        PendingProfileSave? outstanding = resumed;
         form.DescribeUnresolvedPublication = () => pendingPublication is { } publication
             ? JsonStoreRecovery.DescribeFailure(publication)
             : pendingCommit is null ? null : Text("ProfileSaveNeedsCompletion");
-        form.AddActionRow(() => form.AddAsyncAction("RecheckFilePublication", async () =>
+        form.AddActionRow(() => form.AddAsyncAction("RecheckFilePublication", RecheckAsync));
+
+        async Task RecheckAsync()
         {
             if (attemptedPath is null) return;
             await registrationChanges.WaitAsync();
@@ -599,28 +631,26 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                     }
                     pendingPublication = null;
                     pendingCommit = committed;
+                    RetainVerifiedSave(path, committed);
                 }
                 await CompleteSaveAsync();
                 JsonStoreRecovery.ShowRetainedStages(app, form, VerifiedFilePublication.GetRetainedStagePaths(attemptedPath));
             }
             finally { registrationChanges.Release(); }
-        }));
+        }
         form.ShowFileOperationStatus();
         form.AddEditorButtons(async () =>
         {
             await registrationChanges.WaitAsync();
             try
             {
-                if (pendingCommit is { } verified)
-                {
-                    await CompleteSaveAsync();
-                    if (verified.ToEditorJson() == editor.GetDraft().ToEditorJson()) return true;
-                }
+                if (pendingCommit is not null)
+                    throw new IOException(Text("ProfileSaveNeedsCompletion"));
                 ConnectionProfile draft = editor.GetDraft();
                 await ReadLegacyNamesAsync(CancellationToken.None);
+                registrationReset = trustReset;
                 if (path is null)
                 {
-                    registrationReset = trustReset;
                     string destination = ProfilePathFor(app.ProfileSaveDirectory, draft.DisplayName);
                     _ = GetRegistrationName(LocalState.ReadForProfileTrust(), null, draft.DisplayName, allowSuffix: false);
                     using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
@@ -641,7 +671,12 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                     await ObserveSaveAsync(draft.BeginSaveEdit(issueProfiles, validateProfileStage));
                 }
                 pendingCommit = draft;
-                await CompleteSaveAsync();
+                RetainVerifiedSave(path, draft);
+                try { await CompleteSaveAsync(); }
+                catch (Exception error) when (IsFileProblem(error))
+                {
+                    throw new IOException(Text("ProfileSaveNeedsCompletion") + "\n\n" + error.Message, error);
+                }
                 JsonStoreRecovery.ShowRetainedStages(app, form, VerifiedFilePublication.GetRetainedStagePaths(attemptedPath!));
                 return true;
             }
@@ -651,19 +686,51 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
         async Task CompleteSaveAsync()
         {
             ConnectionProfile saved = pendingCommit!;
+            var completion = outstanding!;
+            string? previous = completion.Original;
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            string location = completion.Edit?.Destination is { } destination && saved.IsSavedAt(destination)
+                ? destination : completion.Attempted;
+            string normalized = await NormalizeLocationAsync(location, timeout.Token);
+            var identity = await saved.CheckSavedRevisionAsync(normalized, timeout.Token);
+            if (identity is null || completion.Identity is { } expected && identity != expected)
+                throw new IOException(Text("ProfileTrustVersionChanged"));
+            completion.Identity = identity;
+            var authority = ReadTrust(completion.Attempted);
+            if (authority.Reset != completion.Reset || authority.Removal != completion.Removal)
+                throw new IOException(Text("ProfileTrustWriteFailed"));
+            if (previous is null)
+            {
+                if (authority.Registration is not null && authority.Version != saved.TrustVersion)
+                    throw new IOException(Text("ProfileFileInUse"));
+                path = authority.Registration is not null ? normalized :
+                    await RegisterSavedAsync(completion.Attempted, saved, completion.Reset, selectNewProfile: true, createdInApp: true);
+            }
+            else
+            {
+                path = completion.Edit is { } edit ? await FinishEditAsync(previous, saved, edit) : normalized;
+            }
             editor.UseSavedRevision(saved);
-            string? previous = path;
-            path = previous is null
-                ? await RegisterSavedAsync(attemptedPath!, saved, registrationReset, selectNewProfile: true, createdInApp: true)
-                : await FinishEditAsync(previous, saved, pendingEdit ?? new(null, null, default, null));
             onSaved?.Invoke(path, saved.DisplayName);
             if (previous is not null) ProfileSaved?.Invoke();
             profile = saved;
             pendingEdit = null;
             pendingCommit = null;
+            var completed = verifiedSaves.Where(pair => ReferenceEquals(pair.Value, completion)).Select(pair => pair.Key).ToArray();
+            foreach (string key in completed) verifiedSaves.Remove(key);
+            outstanding = null;
             if (BackupCleanupWarning(saved) is { } warning)
                 app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow, warning, Text("EditProfile"),
                     icon: MessageBoxImage.Warning));
+        }
+
+        void RetainVerifiedSave(string? previous, ConnectionProfile saved)
+        {
+            string location = attemptedPath!;
+            outstanding = new(previous, location, saved, pendingEdit, registrationReset,
+                removals.GetValueOrDefault(location));
+            verifiedSaves[location] = outstanding;
+            if (pendingEdit?.Destination is { } destination) verifiedSaves[destination] = outstanding;
         }
 
         async Task ObserveSaveAsync(ConnectionProfile.ProfileSaveOperation operation)
@@ -694,5 +761,6 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
         public string FavoriteIcon => Favorite ? "★" : "☆";
         public string FavoriteAction => Text(Favorite ? "ProfileFavoriteRemove" : "ProfileFavoriteAdd");
         public string? Destination => Unavailable ? Text("ProfileUnavailable") : Target;
+        public DateTime? LastUsedLocal => LastUsed?.LocalDateTime;
     }
 }

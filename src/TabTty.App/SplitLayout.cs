@@ -35,17 +35,15 @@ internal sealed class SplitLayout : Grid
         public Branch? Parent { get; set; }
     }
 
-    private sealed class Leaf(FrameworkElement view, ResourceReservation? memory = null) : Node(view)
-    {
-        public ResourceReservation? Memory { get; } = memory;
-    }
+    private sealed class Leaf(FrameworkElement view) : Node(view);
 
-    private sealed class Branch(Grid grid, Node first, Node second, Orientation orientation) : Node(grid)
+    private sealed class Branch(Grid grid, Node first, Node second, Orientation orientation, ResourceReservation memory) : Node(grid)
     {
         public Node First = first;
         public Node Second = second;
         public Orientation Orientation { get; } = orientation;
         public Grid Grid => grid;
+        public ResourceReservation Memory { get; } = memory;
     }
 
     public SplitLayout(FrameworkElement initial)
@@ -78,10 +76,10 @@ internal sealed class SplitLayout : Grid
     {
         if (!leaves.TryGetValue(source, out var first)) return;
         var memory = ApplicationResources.LayoutCache.Reserve(8192);
-        var second = new Leaf(added, memory);
+        var second = new Leaf(added);
         var parent = first.Parent;
         var grid = new Grid();
-        var branch = new Branch(grid, first, second, orientation) { Parent = parent };
+        var branch = new Branch(grid, first, second, orientation, memory) { Parent = parent };
         Replace(parent, first, branch);
         first.Parent = second.Parent = branch;
         leaves.Add(added, second);
@@ -122,7 +120,7 @@ internal sealed class SplitLayout : Grid
         Replace(parent, branch, survivor);
         survivor.Parent = parent;
         leaves.Remove(view);
-        leaf.Memory?.Dispose();
+        branch.Memory.Dispose();
         RefreshMinimums();
         return true;
     }
@@ -160,6 +158,16 @@ internal sealed class SplitLayout : Grid
     }
 
     public void UpdateLabels() => LabelDividers(root);
+
+    public void ReleaseReservations() => Release(root);
+
+    private static void Release(Node node)
+    {
+        if (node is not Branch branch) return;
+        Release(branch.First);
+        Release(branch.Second);
+        branch.Memory.Dispose();
+    }
 
     private static void LabelDividers(Node node)
     {

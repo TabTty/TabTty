@@ -685,4 +685,6 @@ The host can send keys and multiple lines of commands without asking again, with
   <data name="ProfileRenameRecovery" xml:space="preserve"><value>The rename needs recovery. Check the file at this location.&#10;&#10;{0}</value></data>
   <data name="ProfileSaveNeedsCompletion" xml:space="preserve"><value>The file was saved. Recheck the save result to complete registration or renaming.</value></data>
   <data name="ProfileBackupCleanupFailed" xml:space="preserve"><value>The profile was saved, but TabTty could not delete this backup file.&#10;&#10;{0}</value></data>
+  <data name="TransferAllUnresolved" xml:space="preserve"><value>Show all unresolved outcomes</value></data>
+  <data name="ProfileListLastUsed" xml:space="preserve"><value>Last used</value></data>
 </root>

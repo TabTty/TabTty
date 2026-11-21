@@ -96,6 +96,8 @@ internal static partial class Program
                     throw new InvalidOperationException("The new-tab menu did not put the profile in its group.");
             }
             finally { profileMenu.IsOpen = false; }
+            await RefreshSelectionsAcrossWindowsAsync(list, groupTabs, groupName);
+            await CompleteVerifiedSaveAfterReopeningAsync(list);
             await app.Profiles.AdmitAsync(owner, path, null, token);
             await app.Profiles.EditFromExplorerAsync(path);
             await EditProfileNameAsync("Main editor version", "Standalone editor version");
@@ -172,6 +174,108 @@ internal static partial class Program
             catch (SshInteractionCancelledException) { }
         }
         finally { owner.Close(); }
+
+        async Task RefreshSelectionsAcrossWindowsAsync(ListView list, TabControl groupTabs, string groupName)
+        {
+            const string name = "Second catalog profile";
+            string extraPath = Path.Combine(directory, "catalog-second.ttty");
+            var extra = ConnectionProfile.CreateTelnet(name, "localhost", 23001);
+            var draft = System.Text.Json.Nodes.JsonNode.Parse(extra.ToEditorJson())!;
+            draft["groupName"] = groupName;
+            extra = extra.Edit(draft.ToJsonString());
+            await extra.SaveNewAsync(extraPath, token);
+            var registering = app.Profiles.AdmitAsync(owner, extraPath, null, token);
+            await AnswerAsync("ProfileRegisterAndConnect", "ProfileRegisterAndConnect");
+            await registering;
+            var other = app.CreateWindow(restorePlacement: false);
+            other.Show();
+            try
+            {
+                app.Profiles.Show(other);
+                await app.Profiles.RememberAsync(path, await ConnectionProfile.LoadAsync(path, token), used: true);
+                while (list.Items.Count != 2) await Task.Delay(10, token);
+                if (!((GridView)list.View).Columns.Select(column => column.Header).OfType<GridViewColumnHeader>().Any(header =>
+                    System.Windows.Automation.AutomationProperties.GetName(header) == App.Text("ProfileListLastUsed")))
+                    throw new InvalidOperationException("The catalog did not offer a last-used sort.");
+                list.SelectAll();
+                Guid[] selected = list.SelectedItems.Cast<ProfileCatalog.Registration>().Select(item => item.Id).Order().ToArray();
+                await app.Profiles.RememberAsync(extraPath, extra, used: true);
+                var reordered = list.Items.Cast<ProfileCatalog.Registration>().ToArray();
+                if (reordered[0].Name != name || !selected.SequenceEqual(list.SelectedItems.Cast<ProfileCatalog.Registration>()
+                    .Select(item => item.Id).Order()))
+                    throw new InvalidOperationException("Connection usage lost the catalog selection during sorting.");
+                draft["groupName"] = "Moved out";
+                extra = extra.Edit(draft.ToJsonString());
+                await app.Profiles.RememberAsync(extraPath, extra, used: true);
+                if ((groupTabs.SelectedItem as TabItem)?.Tag as string != groupName ||
+                    list.SelectedItems.Count != 1 || list.SelectedItem is not ProfileCatalog.Registration selectedItem ||
+                    selectedItem.Id == reordered[0].Id)
+                    throw new InvalidOperationException("Connection usage moved the group filter or kept a hidden selection.");
+            }
+            finally
+            {
+                other.Close();
+                LocalState.Change(state =>
+                {
+                    var entries = state["registrations"]!.AsArray();
+                    entries.Remove(entries.Single(entry => entry!["displayPath"]!.GetValue<string>() == extraPath));
+                });
+                await app.Profiles.RememberAsync(path, await ConnectionProfile.LoadAsync(path, token), used: true);
+            }
+        }
+
+        async Task CompleteVerifiedSaveAfterReopeningAsync(ListView profileList)
+        {
+            await ClickProfileActionAsync(profileList, "EditProfile");
+            while (!app.Windows.OfType<ProfileEditorWindow>().Any(window => window.IsVisible))
+                await Task.Delay(10, token);
+            var editor = app.Windows.OfType<ProfileEditorWindow>().Single(window => window.IsVisible);
+            var form = (FormView)editor.Content;
+            const string savedGroup = "Retained completion";
+            ((TextBox)form.FindName("ProfileGroupName")).Text = savedGroup;
+            using (File.Open(Path.Combine(LocalState.DirectoryPath, "state.json"), FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                Click(editor, "Save");
+                await AnswerEditorNotice(editor, App.Text("Error"));
+                while (form.IsBusy) await Task.Delay(10, token);
+                if ((await ConnectionProfile.LoadAsync(path, token)).GroupName != savedGroup ||
+                    form.UnresolvedPublication is null)
+                    throw new InvalidOperationException("The verified save did not retain its unfinished registration update.");
+            }
+            _ = editor.Dispatcher.BeginInvoke(() => editor.Close());
+            await AnswerEditorNotice(editor, editor.Title);
+            while (editor.IsVisible) await Task.Delay(10, token);
+            byte[] bytes = await File.ReadAllBytesAsync(path, token);
+
+            await app.Profiles.EditFromExplorerAsync(path);
+            editor = app.Windows.OfType<ProfileEditorWindow>().Single(window => window.IsVisible);
+            form = (FormView)editor.Content;
+            var field = (TextBox)form.FindName("ProfileGroupName");
+            field.Text = "Unsaved draft after reopening";
+            if (new ProfileCatalog(app).ReadRegistrations().Single().GroupName == savedGroup ||
+                form.UnresolvedPublication is null)
+                throw new InvalidOperationException("Reopening completed the profile save without consent.");
+            Click(editor, "RecheckFilePublication");
+            while (form.IsBusy) await Task.Delay(10, token);
+            byte[] after = await File.ReadAllBytesAsync(path, token);
+            if (form.UnresolvedPublication is not null || !form.HasUnsavedChanges ||
+                field.Text != "Unsaved draft after reopening" ||
+                new ProfileCatalog(app).ReadRegistrations().Single().GroupName != savedGroup ||
+                !bytes.AsSpan().SequenceEqual(after))
+                throw new InvalidOperationException("Explicit completion overwrote the draft or failed to update the registration.");
+            _ = editor.Dispatcher.BeginInvoke(() => editor.Close());
+            await AnswerEditorNotice(editor, editor.Title);
+            while (editor.IsVisible) await Task.Delay(10, token);
+
+            async Task AnswerEditorNotice(Window source, string title)
+            {
+                Window? dialog;
+                while ((dialog = app.Windows.OfType<Window>().SingleOrDefault(window =>
+                    window.IsVisible && window.Owner == source && window.Title == title)) is null)
+                    await Task.Delay(10, token);
+                Click(dialog, "OK");
+            }
+        }
 
         async Task<Window> ReviewAsync()
         {

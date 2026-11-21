@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using TabTty.Core;
+using TabTty.AiTransport;
 
 namespace TabTty.App;
 
@@ -9,45 +10,68 @@ internal sealed partial class AiCollaboration
     private readonly struct Arguments
     {
         private readonly JsonElement value;
-        internal Arguments(JsonElement value)
+        private readonly JsonElement schema;
+        internal Arguments(JsonElement value, JsonElement schema)
         {
             if (value.ValueKind != JsonValueKind.Object) throw new ToolException("invalid_request");
             this.value = value;
+            this.schema = schema;
         }
 
         internal bool Has(string name) => value.TryGetProperty(name, out _);
         internal Arguments Object(string name) => value.TryGetProperty(name, out var property)
-            ? new Arguments(property) : throw new ToolException("invalid_request");
+            ? new Arguments(property, Field(name)) : throw new ToolException("invalid_request");
 
-        internal void Only(params string[] names)
+        private JsonElement Field(string name)
         {
+            if (!schema.TryGetProperty("oneOf", out var variants))
+                return schema.GetProperty("properties").GetProperty(name);
+            foreach (var form in variants.EnumerateArray())
+                if (form.GetProperty("properties").TryGetProperty(name, out var field)) return field;
+            throw new ToolException("invalid_request");
+        }
+
+        internal void Only(int variant = 0)
+        {
+            var fields = McpArguments.Shape(schema, variant).GetProperty("properties");
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var property in value.EnumerateObject())
-                if (!names.Contains(property.Name, StringComparer.Ordinal) || !seen.Add(property.Name))
+                if (!fields.TryGetProperty(property.Name, out _) || !seen.Add(property.Name))
                     throw new ToolException("invalid_request");
         }
 
-        internal string String(string name, int maximum, bool allowEmpty = false)
+        internal string String(string name, int enumLimit = 0)
         {
             if (!value.TryGetProperty(name, out var property) || property.ValueKind != JsonValueKind.String)
                 throw new ToolException("invalid_request");
+            var field = Field(name);
+            int maximum = field.TryGetProperty("maxLength", out var bound) ? bound.GetInt32() : enumLimit;
+            bool allowEmpty = field.TryGetProperty("minLength", out var min) && min.GetInt32() == 0;
             string text = property.GetString()!;
             if ((!allowEmpty && text.Length == 0) || text.Length > maximum * 2L ||
                 text.EnumerateRunes().Count() > maximum) throw new ToolException("invalid_request");
             return text;
         }
 
-        internal int Integer(string name, int minimum, int maximum, int? fallback = null)
+        internal int Integer(string name, int? fallback = null)
         {
-            if (!value.TryGetProperty(name, out var property) && fallback is { } initial) return initial;
+            var field = Field(name);
+            if (!value.TryGetProperty(name, out var property))
+            {
+                if (fallback is { } initial) return initial;
+                if (field.TryGetProperty("default", out var configured) && configured.ValueKind == JsonValueKind.Number)
+                    return configured.GetInt32();
+            }
+            int minimum = field.GetProperty("minimum").GetInt32();
+            int maximum = field.GetProperty("maximum").GetInt32();
             if (property.ValueKind != JsonValueKind.Number || !property.TryGetInt32(out int number) ||
                 number < minimum || number > maximum) throw new ToolException("invalid_request");
             return number;
         }
 
-        internal bool Boolean(string name, bool fallback)
+        internal bool Boolean(string name)
         {
-            if (!value.TryGetProperty(name, out var property)) return fallback;
+            if (!value.TryGetProperty(name, out var property)) return Field(name).GetProperty("default").GetBoolean();
             return property.ValueKind switch
             {
                 JsonValueKind.True => true,
@@ -59,13 +83,18 @@ internal sealed partial class AiCollaboration
         internal TerminalModifiers Modifiers()
         {
             if (!value.TryGetProperty("modifiers", out var property)) return TerminalModifiers.None;
-            if (property.ValueKind != JsonValueKind.Array || property.GetArrayLength() > 3)
+            var field = Field("modifiers");
+            if (property.ValueKind != JsonValueKind.Array || property.GetArrayLength() > field.GetProperty("maxItems").GetInt32())
                 throw new ToolException("invalid_request");
+            var choices = field.GetProperty("items").GetProperty("enum");
             TerminalModifiers result = 0;
             foreach (var element in property.EnumerateArray())
             {
                 if (element.ValueKind != JsonValueKind.String) throw new ToolException("invalid_request");
-                TerminalModifiers flag = element.GetString() switch
+                string? name = element.GetString();
+                if (!choices.EnumerateArray().Any(choice => choice.GetString() == name))
+                    throw new ToolException("invalid_request");
+                TerminalModifiers flag = name switch
                 {
                     "Shift" => TerminalModifiers.Shift,
                     "Alt" => TerminalModifiers.Alt,
@@ -89,18 +118,17 @@ internal sealed partial class AiCollaboration
             {
                 case "text":
                 case "paste":
-                    if (kind == "text") args.Only("kind", "text");
-                    else args.Only("kind", "text", "character_delay_ms", "line_delay_ms");
-                    string text = args.String("text", 256 * 1024);
+                    args.Only(kind == "text" ? 0 : 1);
+                    string text = args.String("text");
                     if (TerminalPaste.Encoding.GetByteCount(text) > 256 * 1024)
                         throw new ToolException("resource_limit");
                     if (kind == "text" && text.Any(char.IsControl)) throw new ToolException("unsupported_action");
                     return new InputAction(kind, PasteText: text,
-                        CharacterDelay: args.Integer("character_delay_ms", 0, 10_000, 0),
-                        LineDelay: args.Integer("line_delay_ms", 0, 10_000, 0));
+                        CharacterDelay: kind == "paste" ? args.Integer("character_delay_ms") : 0,
+                        LineDelay: kind == "paste" ? args.Integer("line_delay_ms") : 0);
                 case "key":
-                    args.Only("kind", "key", "modifiers");
-                    return new InputAction(kind, ParseKey(args.String("key", 16), args.Modifiers()));
+                    args.Only(2);
+                    return new InputAction(kind, ParseKey(args.String("key"), args.Modifiers()));
                 case "mouse":
                     string action = args.String("action", 7);
                     int button;
@@ -108,7 +136,7 @@ internal sealed partial class AiCollaboration
                     {
                         case "press":
                         case "release":
-                            args.Only("kind", "action", "button", "row", "column", "modifiers");
+                            args.Only(3);
                             button = args.String("button", 6) switch
                             {
                                 "left" => 0, "middle" => 1, "right" => 2,
@@ -116,20 +144,20 @@ internal sealed partial class AiCollaboration
                             };
                             break;
                         case "wheel":
-                            args.Only("kind", "action", "wheel", "row", "column", "modifiers");
+                            args.Only(4);
                             button = args.String("wheel", 4) switch
                             {
                                 "up" => 4, "down" => 5, _ => throw new ToolException("invalid_request"),
                             };
                             break;
                         case "move":
-                            args.Only("kind", "action", "row", "column", "modifiers");
+                            args.Only(5);
                             button = 3;
                             break;
                         default: throw new ToolException("invalid_request");
                     }
                     return new InputAction(kind, Mouse: new AiMouseAction(action, button,
-                        args.Integer("row", 1, 512), args.Integer("column", 1, 1024), args.Modifiers()));
+                        args.Integer("row"), args.Integer("column"), args.Modifiers()));
                 default:
                     throw new ToolException("unsupported_action");
             }

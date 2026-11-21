@@ -279,6 +279,13 @@ internal static partial class Program
                 await WaitForNormal("BEFORE");
                 Check(ai.Share(tab, owner) is null, "The existing terminal could not be shared again.");
                 string sharedSession = tab.AiSharing!.Id;
+                foreach (string invalid in new[] { "a\rb", "a\nb", "a\r\nb", string.Concat(Enumerable.Repeat("😀", 513)) })
+                    Check(Code(await Search(invalid)) == "invalid_request", "History search accepted an invalid query.");
+                Check((await Search(string.Concat(Enumerable.Repeat("😀", 512)))).GetProperty("status").GetString() == "ok",
+                    "History search rejected exactly 1,024 UTF-16 code units.");
+                foreach (string separator in new[] { "\u0085", "\u2028", "\u2029" })
+                    Check((await Search(separator)).GetProperty("status").GetString() == "ok",
+                        "History search rejected a literal Unicode separator.");
                 var captured = await ai.CallAsync(owner, "tabtty_search_history",
                     JsonSerializer.SerializeToElement(new { session = sharedSession, query = "BEFORE" }), token);
                 await wire.WriteAsync("\rAFTER "u8.ToArray(), token);
@@ -289,6 +296,15 @@ internal static partial class Program
                 await ai.CommitReplyAsync(owner, captured, (body, _) => result = JsonSerializer.SerializeToElement(body), token);
                 Check(Code(result) == "range_changed", "A changed search page was committed to the bridge.");
                 ai.EndSharing(tab);
+
+                async Task<JsonElement> Search(string query)
+                {
+                    var reply = await ai.CallAsync(owner, "tabtty_search_history",
+                        JsonSerializer.SerializeToElement(new { session = sharedSession, query }), token);
+                    JsonElement body = default;
+                    await ai.CommitReplyAsync(owner, reply, (value, _) => body = JsonSerializer.SerializeToElement(value), token);
+                    return body;
+                }
 
                 async Task WaitForNormal(string expected)
                 {

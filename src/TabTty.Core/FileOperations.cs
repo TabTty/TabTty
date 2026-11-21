@@ -96,12 +96,18 @@ internal sealed class FileOperationOwnership
 internal sealed class FileOperations(IFileOperationIo files, FileOperationOwnership ownership, CancellationToken lifetime)
 {
     private static readonly SemaphoreSlim Batches = new(4);
-    private readonly TransferBatch batch = new(files);
+    private TransferBatch? transferBatch;
+    private TransferBatch batch => transferBatch ??= new(files, ReserveUnresolved);
+    private const int DetailCharacters = 2_000_000;
+    private const string Omission = "TransferResultsLimit";
+    private const int DetailEntries = SftpClient.MaxEntries - 1;
     private CancellationTokenSource? running;
     private FileOperationUpdate.Entry[] retained = [];
     private readonly List<FileOperationUpdate.Entry> current = [];
     private int characters;
     private bool omitted;
+    private int reservedEntries;
+    private int reservedCharacters;
 
     public bool IsRunning => running is not null;
     public bool CanStart => !lifetime.IsCancellationRequested && files.IsOpen && !ownership.IsBusy && !ownership.NeedsRefresh;
@@ -110,7 +116,7 @@ internal sealed class FileOperations(IFileOperationIo files, FileOperationOwners
     public FileOperationUpdate.Entry[] UnresolvedForClose() =>
         (IsRunning ? current.AsEnumerable() : retained)
             .Where(entry => entry.Reason is "TransferTemporaryRemains" or "SftpUnknownOutcome")
-            .Take(10).ToArray();
+            .ToArray();
     public event Action<FileOperationUpdate>? Changed;
     public void Cancel() => running?.Cancel();
 
@@ -137,7 +143,12 @@ internal sealed class FileOperations(IFileOperationIo files, FileOperationOwners
         if (await files.StatAsync(target, token) is not null) throw new SftpException(SftpFailure.ServerError);
         if (await files.StatAsync(item.Path, token) is not { } current || ChangedAttributes(item.Attributes, current))
             throw new SftpException(SftpFailure.SourceChanged);
-        await files.RenameAsync(item.Path, target, replace: false, token);
+        try { await files.RenameAsync(item.Path, target, replace: false, token); }
+        catch (SftpException error) when (error.Failure == SftpFailure.UnknownOutcome)
+        {
+            AddResult(files.Display(target), "SftpUnknownOutcome");
+            throw;
+        }
         AddResult(files.Display(target), "TransferDone");
     });
 
@@ -183,7 +194,7 @@ internal sealed class FileOperations(IFileOperationIo files, FileOperationOwners
             }
             finally
             {
-                retained = current.ToArray();
+                retained = omitted ? [.. current, new("", Omission)] : current.ToArray();
                 current.Clear();
                 running = null;
                 source.Dispose();
@@ -214,17 +225,53 @@ internal sealed class FileOperations(IFileOperationIo files, FileOperationOwners
 
     private void AddResult(string path, string key)
     {
-        if (omitted) return;
-        if (current.Count >= SftpClient.MaxEntries || path.Length + key.Length > 2_000_000 - characters)
+        bool priority = IsUnresolved(key);
+        int size = path.Length + key.Length;
+        if (priority) MakeRoom(1, size);
+        if (current.Count + reservedEntries >= DetailEntries ||
+            size > DetailCharacters - Omission.Length - characters - reservedCharacters)
         {
+            if (!omitted) Changed?.Invoke(new FileOperationUpdate.Entry("", Omission));
             omitted = true;
-            path = "";
-            key = "TransferResultsLimit";
+            return;
         }
-        characters += path.Length + key.Length;
+        characters += size;
         var entry = new FileOperationUpdate.Entry(path, key);
         current.Add(entry);
         Changed?.Invoke(entry);
+    }
+
+    private static bool IsUnresolved(string key) => key is "TransferTemporaryRemains" or "SftpUnknownOutcome";
+
+    private void MakeRoom(int entries, int size)
+    {
+        while (current.Count + entries > DetailEntries || characters + size > DetailCharacters - Omission.Length)
+        {
+            int index = current.FindLastIndex(entry => !IsUnresolved(entry.Reason));
+            if (index < 0) break;
+            var entry = current[index];
+            current.RemoveAt(index);
+            characters -= entry.Path.Length + entry.Reason.Length;
+            omitted = true;
+        }
+    }
+
+    private IDisposable ReserveUnresolved(string temporary, string destination)
+    {
+        const int entries = 2;
+        int size = temporary.Length + destination.Length + "TransferTemporaryRemains".Length + "SftpUnknownOutcome".Length;
+        MakeRoom(entries, size);
+        if (current.Count + entries > DetailEntries || characters + size > DetailCharacters - Omission.Length)
+            throw new SftpException(SftpFailure.Capacity);
+        reservedEntries += entries;
+        reservedCharacters += size;
+        return new DetailReservation(() => { reservedEntries -= entries; reservedCharacters -= size; });
+    }
+
+    private sealed class DetailReservation(Action release) : IDisposable
+    {
+        private Action? retire = release;
+        public void Dispose() => Interlocked.Exchange(ref retire, null)?.Invoke();
     }
 
     private void Report(string path, long bytes, long? total) =>

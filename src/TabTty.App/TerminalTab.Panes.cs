@@ -20,7 +20,6 @@ internal sealed partial class TerminalTab
     {
         public TerminalHighlightView Highlight { get; } = highlight;
         public TerminalMatch? CurrentMatch;
-        public bool HighlightSuspended;
     }
 
     private bool broadcastChecked = true;
@@ -61,12 +60,11 @@ internal sealed partial class TerminalTab
 
     private void AttachPane(TerminalSurface pane)
     {
-        var state = new PaneState(new TerminalHighlightView(pane));
+        var state = new PaneState(new TerminalHighlightView(pane, highlightState));
         panes.Add(pane, state);
         state.Highlight.Suspended += suspended =>
         {
-            state.HighlightSuspended = suspended;
-            highlightSuspended = panes.Values.Any(view => view.HighlightSuspended);
+            highlightSuspended = suspended;
             UpdateHighlightStatus();
         };
         pane.SetPresentationEnabled(presentationEnabled);
@@ -90,6 +88,7 @@ internal sealed partial class TerminalTab
                 Disconnect();
             }
         };
+        pane.ViewportChanged += _ => { if (searchWork is null) ScheduleSearchRefresh(); };
         pane.PreviewTextInput += OnTextInput;
         pane.PreviewKeyDown += OnKeyDown;
         pane.GotKeyboardFocus += (_, _) => ActivatePane(pane);
@@ -112,7 +111,6 @@ internal sealed partial class TerminalTab
             state.Highlight.SetSnapshot(view);
             pane.SetSearch(null, searchMatches, scroll: false);
         }
-        state.Highlight.SetRules(((App)Application.Current).Highlights.Find(highlightSetId));
         UpdatePaneMenu(pane);
     }
 
@@ -241,6 +239,7 @@ internal sealed partial class TerminalTab
         pane.CancelComposition();
         pane.SetPresentationEnabled(false);
         paneLayout.Remove(pane.Scroller);
+        panes[pane].Highlight.Detach();
         panes.Remove(pane);
         if (output == pane) output = OrderedPanes.First();
         if (panes.Count == 1) RestoreSinglePane(output);

@@ -10,9 +10,9 @@ internal sealed class TerminalHighlightView
     internal static SemaphoreSlim Workers { get; } = new(2);
     private readonly TerminalSurface surface;
     private readonly DispatcherTimer timer;
-    private readonly HashSet<Guid> suspended = [];
+    private readonly TerminalHighlightState state;
+    private bool cacheReusable = true;
     private TerminalSnapshot? snapshot;
-    private HighlightSet? set;
     private TerminalHighlightRules? rules;
     private CancellationTokenSource? work;
     private List<LineResult> cached = [];
@@ -28,13 +28,16 @@ internal sealed class TerminalHighlightView
 
     public event Action<bool>? Suspended;
 
-    public TerminalHighlightView(TerminalSurface surface)
+    public TerminalHighlightView(TerminalSurface surface, TerminalHighlightState? owner = null)
     {
         this.surface = surface;
+        state = owner ?? new TerminalHighlightState();
+        state.Changed += RulesChanged;
         timer = new DispatcherTimer(DispatcherPriority.Background, surface.Dispatcher)
         {
             Interval = TimeSpan.FromMilliseconds(100),
         };
+        RulesChanged(false);
         timer.Tick += async (_, _) => await UpdateAsync();
         surface.ViewportChanged += ViewportChanged;
         surface.PresentationChanged += () =>
@@ -52,26 +55,34 @@ internal sealed class TerminalHighlightView
         };
     }
 
-    public void SetRules(HighlightSet? updated)
+    public void SetRules(HighlightSet? updated) => state.SetRules(updated);
+
+    public void Resume() => state.Resume();
+
+    public void Detach()
     {
-        if (ReferenceEquals(updated, set)) return;
-        var old = set?.Rules.ToDictionary(rule => rule.Id);
-        var next = updated?.Rules.ToDictionary(rule => rule.Id);
-        suspended.RemoveWhere(id => old is null || next is null || !old.TryGetValue(id, out var original) ||
-            !next.TryGetValue(id, out var replacement) ||
-            original.Pattern != replacement.Pattern || original.IgnoreCase != replacement.IgnoreCase);
-        Suspended?.Invoke(suspended.Count > 0);
-        set = updated;
-        rules = updated is { Enabled: true } ? new TerminalHighlightRules(updated.Rules) : null;
-        Reset();
+        state.Changed -= RulesChanged;
+        timer.Stop();
+        work?.Cancel();
     }
 
-    public void Resume()
+    private void RulesChanged(bool preserveKnownSpans)
     {
-        if (suspended.Count == 0) return;
-        suspended.Clear();
-        Suspended?.Invoke(false);
-        Reset();
+        rules = state.Matcher;
+        if (preserveKnownSpans)
+        {
+            cacheReusable = false;
+            work?.Cancel();
+            evaluated = null;
+            Publish();
+            Queue(immediately: true);
+        }
+        else
+        {
+            cacheReusable = true;
+            Reset();
+        }
+        Suspended?.Invoke(state.Suspended.Count > 0);
     }
 
     public void SetSnapshot(TerminalSnapshot updated)
@@ -139,8 +150,8 @@ internal sealed class TerminalHighlightView
         lastViewport = (first, end);
         while (first > 0 && captured.IsSoftWrapped(first - 1)) first--;
         var result = new List<LineResult>();
-        var excluded = new HashSet<Guid>(suspended);
-        var existing = cached.ToDictionary(line => line.Anchor.StartRow);
+        var excluded = new HashSet<Guid>(state.Suspended);
+        var existing = cacheReusable ? cached.ToDictionary(line => line.Anchor.StartRow) : [];
         try
         {
             for (int row = first; row < end;)
@@ -173,19 +184,11 @@ internal sealed class TerminalHighlightView
                 finally { Workers.Release(); }
             }
             if (token.IsCancellationRequested || snapshot is not { } latest) return;
-            if (excluded.Count > suspended.Count)
-            {
-                suspended.UnionWith(excluded);
-                cached.Clear();
-                Queue(immediately: true);
-                Suspended?.Invoke(true);
-            }
-            else
-            {
-                cached = ReferenceEquals(latest, captured) ? result : Remap(latest, captured, result);
-                evaluated = latest.HasSameHighlightText(captured) ? latest : null;
-                evaluatedViewport = lastViewport;
-            }
+            cached = ReferenceEquals(latest, captured) ? result : Remap(latest, captured, result);
+            evaluatedViewport = lastViewport;
+            if (state.Suspend(excluded)) return;
+            cacheReusable = true;
+            evaluated = latest.HasSameHighlightText(captured) ? latest : null;
             Publish();
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
@@ -216,7 +219,7 @@ internal sealed class TerminalHighlightView
             memory?.Resize(128);
             return new LineResult(anchor, [], memory);
         }
-        TerminalHighlightResult matches = matcher.Match(text.ToString(), excluded, token);
+        TerminalHighlightResult matches = matcher.MatchWithRuleIds(text.ToString(), excluded, token);
         excluded.UnionWith(matches.TimedOut);
         memory.Resize(128 + matches.Spans.LongLength * 128);
         return new LineResult(anchor, matches.Spans, memory);
@@ -245,7 +248,7 @@ internal sealed class TerminalHighlightView
                 for (int row = line.Anchor.StartRow; row <= line.Anchor.EndRow; row++)
                 {
                     int end = offset + view[row].Length;
-                    var ranges = line.Spans.Where(span => span.Start < end && span.End > offset)
+                    var ranges = line.Spans.Where(span => !state.Suspended.Contains(span.RuleId) && span.Start < end && span.End > offset)
                         .Select(span => span with { Start = Math.Max(0, span.Start - offset),
                             End = Math.Min(end, span.End) - offset }).ToArray();
                     if (ranges.Length != 0) overlays.Add(row, ranges);

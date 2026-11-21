@@ -35,6 +35,7 @@ internal sealed partial class TerminalTab : UserControl
     private readonly TextBlock searchStatus = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(3) };
     private TerminalSurface output = new();
     private Guid? highlightSetId;
+    private readonly TerminalHighlightState highlightState = new();
     private bool highlightSuspended;
     private readonly DispatcherTimer resizeTimer;
     private readonly DispatcherTimer frameTimer;
@@ -62,6 +63,7 @@ internal sealed partial class TerminalTab : UserControl
     private CancellationTokenSource? searchWork;
     private TerminalSnapshot? snapshot;
     private TerminalMatch[] searchMatches = [];
+    private readonly DispatcherTimer searchRefreshTimer;
     private readonly ResourceReservation searchMemory = ApplicationResources.SearchCache.Reserve(0);
     private string? searchStatusKey;
     private readonly List<string> sshMessages = [];
@@ -103,6 +105,15 @@ internal sealed partial class TerminalTab : UserControl
             Interval = TimeSpan.FromMilliseconds(100),
         };
         resizeTimer.Tick += async (_, _) => await ResizeTerminalAsync();
+        searchRefreshTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(150),
+        };
+        searchRefreshTimer.Tick += async (_, _) =>
+        {
+            searchRefreshTimer.Stop();
+            if (searchWork is null) await SearchAsync(backwards: false, navigate: false);
+        };
         AttachPane(output);
         var catalog = ((App)Application.Current).Highlights;
         Window? host = null;
@@ -310,6 +321,7 @@ internal sealed partial class TerminalTab : UserControl
             connectedName = session.DisplayName;
             SetStatus("Connected");
             Connected?.Invoke(connectedName);
+            highlightState.Resume();
             highlightSetId = session.HighlightSetId;
             ApplyHighlightSet();
             foreach (var pane in panes.Keys) pane.SetConnected(!HasActiveMacro);
@@ -401,6 +413,10 @@ internal sealed partial class TerminalTab : UserControl
     {
         removed = true;
         frameTimer.Stop();
+        searchRefreshTimer.Stop();
+        searchWork?.Cancel();
+        paneLayout?.ReleaseReservations();
+        foreach (var pane in panes.Values) pane.Highlight.Detach();
         pendingFrame = null;
         var owner = session ?? retainedAiSession;
         retainedAiSession = null;
@@ -745,7 +761,7 @@ internal sealed partial class TerminalTab : UserControl
         previousMatch.Content = Text("PreviousMatch");
         nextMatch.Content = Text("NextMatch");
         closeSearch.Content = Text("CloseSearch");
-        SetSearchStatus(searchStatusKey);
+        UpdateSearchStatusText();
         paneLayout?.UpdateLabels();
         foreach (var pane in panes.Keys) UpdatePaneMenu(pane);
     }
@@ -851,7 +867,7 @@ internal sealed partial class TerminalTab : UserControl
     private void ApplyHighlightSet()
     {
         var rules = fixtureHighlights ?? ((App)Application.Current).Highlights.Find(highlightSetId);
-        foreach (var pane in panes.Values) pane.Highlight.SetRules(rules);
+        highlightState.SetRules(rules);
         UpdateHighlightStatus();
     }
 
@@ -926,6 +942,9 @@ internal sealed partial class TerminalTab : UserControl
         if (snapshot is { } previous && updated is not null)
             SetSearchMatches(searchMatches.Select(match => updated.MapMatchFrom(previous, match))
                 .OfType<TerminalMatch>().ToArray());
+        if (snapshot is { } prior && updated is not null && searchBar.Visibility == Visibility.Visible &&
+            !updated.HasSameHighlightText(prior))
+            ScheduleSearchRefresh();
         snapshot = updated;
         foreach (var (surface, pane) in panes)
         {
@@ -962,6 +981,7 @@ internal sealed partial class TerminalTab : UserControl
 
     private void CloseSearch()
     {
+        searchRefreshTimer.Stop();
         searchWork?.Cancel();
         searchBar.Visibility = Visibility.Collapsed;
         foreach (var pane in panes.Values) pane.CurrentMatch = null;
@@ -976,11 +996,18 @@ internal sealed partial class TerminalTab : UserControl
             snapshot is { IsAlternateScreen: false } && searchQuery.Text.Length > 0;
     }
 
-    private void SetSearchStatus(string? key)
+    private int? searchMatchCount;
+
+    private void SetSearchStatus(string? key, int? count = null)
     {
         searchStatusKey = key;
-        searchStatus.Text = key is null ? "" : Text(key);
+        searchMatchCount = count;
+        UpdateSearchStatusText();
     }
+
+    private void UpdateSearchStatusText() => searchStatus.Text = searchStatusKey is { } key ? Text(key) :
+        searchMatchCount is { } count ? Math.Min(count, TerminalSearch.Limit).ToString("N0") +
+            (count > TerminalSearch.Limit ? "+" : "") : "";
 
     private async Task RefreshSearchAsync()
     {
@@ -1005,8 +1032,17 @@ internal sealed partial class TerminalTab : UserControl
         }
     }
 
-    private async Task SearchAsync(bool backwards)
+    private void ScheduleSearchRefresh()
     {
+        if (searchBar.Visibility != Visibility.Visible || searchQuery.Text.Length == 0) return;
+        searchRefreshTimer.Stop();
+        searchRefreshTimer.Start();
+    }
+
+    private async Task SearchAsync(bool backwards, bool navigate = true)
+    {
+        searchRefreshTimer.Stop();
+        if (searchBar.Visibility != Visibility.Visible) return;
         searchWork?.Cancel();
         if (snapshot is not { IsAlternateScreen: false } captured || searchQuery.Text.Length == 0)
         {
@@ -1023,29 +1059,42 @@ internal sealed partial class TerminalTab : UserControl
         try
         {
             await TerminalHighlightView.Workers.WaitAsync(work.Token);
-            (TerminalMatch? Current, TerminalMatch[] Matches) result;
+            var viewports = panes.Keys.Select(surface => surface.VisibleRows()).ToArray();
             try
             {
-                ResourceReservation? ranges = null;
-                try { ranges = ApplicationResources.SearchCache.Reserve(10_000 * 64); }
-                catch (ResourceLimitException) { }
-                using (ranges)
-                    result = await Task.Run(() => (captured.Find(query, caseSensitive, anchor, backwards, work.Token),
-                        ranges is null ? [] : captured.FindMatches(query, caseSensitive, work.Token).Take(10_000).ToArray()), work.Token);
+                using var ranges = ApplicationResources.SearchCache.Reserve(TerminalSearch.Limit * 64);
+                Func<TerminalMatch?, Task>? announce = navigate
+                    ? match => Dispatcher.InvokeAsync(() => Navigate(match), DispatcherPriority.Normal, work.Token).Task
+                    : null;
+                var result = await Task.Run(() => TerminalSearch.ScanAsync(captured, query, caseSensitive,
+                    anchor, backwards, viewports, announce, work.Token), work.Token);
+                if (!IsCurrent())
+                {
+                    if (!work.IsCancellationRequested) ScheduleSearchRefresh();
+                    return;
+                }
+                if (!viewports.SequenceEqual(panes.Keys.Select(surface => surface.VisibleRows())))
+                    ScheduleSearchRefresh();
+                SetSearchMatches(result.Matches);
+                SetSearchStatus(result.Count == 0 ? "NoSearchMatch" : null, result.Count);
+                foreach (var (surface, pane) in panes) surface.SetSearch(pane.CurrentMatch, searchMatches, scroll: false);
             }
             finally { TerminalHighlightView.Workers.Release(); }
-            if (work.IsCancellationRequested || snapshot is not { IsAlternateScreen: false } latest ||
-                !panes.TryGetValue(operated, out var pane)) return;
-            pane.CurrentMatch = result.Current is { } found ? latest.MapMatchFrom(captured, found) : null;
-            SetSearchMatches(ReferenceEquals(captured, latest) ? result.Matches : result.Matches
-                .Select(match => latest.MapMatchFrom(captured, match)).OfType<TerminalMatch>().ToArray());
-            SetSearchStatus(result.Current is null && ReferenceEquals(captured, latest) ? "NoSearchMatch" : null);
-            foreach (var (surface, view) in panes) surface.SetSearch(view.CurrentMatch, searchMatches, scroll: surface == operated);
         }
         catch (OperationCanceledException) when (work.IsCancellationRequested) { }
+        catch (ResourceLimitException) { if (IsCurrent()) SetSearchStatus(null); }
         finally
         {
             if (searchWork == work) searchWork = null;
+        }
+        bool IsCurrent() => !work.IsCancellationRequested && ReferenceEquals(searchWork, work) &&
+            snapshot is { IsAlternateScreen: false } current && current.HasSameHighlightText(captured);
+
+        void Navigate(TerminalMatch? found)
+        {
+            if (!IsCurrent() || !panes.TryGetValue(operated, out var pane)) return;
+            pane.CurrentMatch = found;
+            operated.SetSearch(found, searchMatches, scroll: found.HasValue);
         }
     }
 
@@ -1339,15 +1388,7 @@ internal sealed partial class TerminalTab : UserControl
                 if (await send && session == active && !lifetime.IsCancellationRequested) operated.RevealCursor();
                 return;
             }
-            switch (input.Kind)
-            {
-                case TerminalInputKind.Text: await active.SendTextAsync(input.Text, lifetime, input.Alt); break;
-                case TerminalInputKind.Enter: await active.SendEnterAsync(lifetime); break;
-                case TerminalInputKind.Backspace: await active.SendBackspaceAsync(lifetime); break;
-                case TerminalInputKind.Tab: await active.SendTabAsync(lifetime); break;
-                case TerminalInputKind.Control: await active.SendControlAsync(input.Text[0], lifetime); break;
-                case TerminalInputKind.Key: await active.SendKeyAsync(input.Key, input.Modifiers, lifetime); break;
-            }
+            await active.DeliverInputAsync(input, lifetime);
             if (session == active && !lifetime.IsCancellationRequested)
             {
                 operated.RevealCursor();
