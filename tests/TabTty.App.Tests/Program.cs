@@ -144,7 +144,7 @@ internal static partial class Program
                 return 0;
             }
             if (args is ["--native-utf8-baseline" or "--disconnected-tabs" or "--terminal-tab-close" or "--broadcast-splits" or
-                "--profile-editor-heading" or "--macro-profile-connect" or
+                "--profile-editor-heading" or "--profile-log-collision" or "--macro-profile-connect" or
                 "--macro-launch" or "--macro-network" or "--macro-cloud" or "--profile-trust" or "--vault-first-use" or "--vault-rename"] or
                 ["--transfer-window-close" or "--fullscreen-vim" or "--overload-controls" or "--sftp-batch", _] or
                 ["--macro-reset-relaunch", _, _])
@@ -156,6 +156,7 @@ internal static partial class Program
                     "--disconnected-tabs" => DisconnectedTabsRespectSettingsAndBulkClose(application, settingsPath),
                     "--terminal-tab-close" => CheckTerminalClosure(application, settingsDirectory),
                     "--profile-editor-heading" => CheckProfileEditorHeadingAsync(application, settingsDirectory),
+                    "--profile-log-collision" => ProfileLogCollisionAsync(application, settingsDirectory),
                     "--broadcast-splits" => BroadcastAndSplitViews(application, settingsDirectory),
                     "--macro-launch" => MacroLaunchAndDialog(application, settingsDirectory),
                     "--macro-reset-relaunch" => CheckMacroResetRelaunch(application, args[1], args[2]),

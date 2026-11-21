@@ -8,7 +8,12 @@ while (Console.ReadLine() is { } line)
     {
         var request = JsonSerializer.Deserialize<EditorRequest>(line, jsonOptions)
             ?? throw new InvalidDataException("Missing request");
-        object result = request.Operation == "readLocal" ? ReadLocal(request.Path) : Analyze(request);
+        object result = request.Operation switch
+        {
+            "readLocal" => ReadLocal(request.Path),
+            "matchOpenLocal" => MatchOpenLocal(request),
+            _ => Analyze(request)
+        };
         Console.WriteLine(JsonSerializer.Serialize(result));
     }
     catch (Exception error)
@@ -41,9 +46,23 @@ static object ReadLocal(string path)
     catch (Exception) { return new { status = "unreadable" }; }
 }
 
+static object MatchOpenLocal(EditorRequest request)
+{
+    string? stored = StoredPath(request.Path);
+    string? match = stored is null ? null : request.Candidates?.FirstOrDefault(candidate =>
+        candidate.Equals(request.Path, StringComparison.OrdinalIgnoreCase) && StoredPath(candidate) == stored);
+    return new { match };
+
+    static string? StoredPath(string path)
+    {
+        try { return LocalMacroFile.StoredLocalPath(path); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return null; }
+    }
+}
+
 static object Analyze(EditorRequest request)
 {
-    var editor = new MacroEditorSymbols();
+    var editor = new MacroEditorSymbols(request.Offset);
     var symbols = new List<MacroEditorSymbol>();
     var members = new Dictionary<string, string>();
     MacroSourceException? diagnostic = null;
@@ -67,20 +86,27 @@ static object Analyze(EditorRequest request)
         }
     }
     catch (MacroSourceException error) { diagnostic = error; }
-    var diagnostics = diagnostic is null ? [] : new[] {
-        new { diagnostic.Code, diagnostic.Position.Line, diagnostic.Position.Column }
-    };
-    var tokens = editor.Tokens.Where(token => token.Kind != "end").Select(token =>
-        new { token.Kind, token.Text, token.Value, token.Offset, token.EndOffset,
-            token.Position.Line, token.Position.Column });
+    catch (ResourceLimitException) { diagnostic = new("MemoryLimit", new(1, 1)); }
+    var errors = editor.DependencyErrors;
+    if (diagnostic is not null && !errors.Contains(diagnostic)) errors.Add(diagnostic);
+    var diagnostics = errors.Select(error => new { error.Code, error.Position.Line, error.Position.Column, error.Length });
     var functions = MacroApi.Signatures.ToDictionary(
         pair => pair.Key,
         pair => pair.Value.Select(signature => new {
             Result = signature.Result.ToString(),
+            NamedParameters = MacroApi.NamedParameters.GetValueOrDefault(pair.Key),
             Parameters = signature.Parameters.Select(parameter => parameter.ToString()).ToArray()
         }).ToArray());
-    return new { tokens, diagnostics, functions, members, symbols };
+    var activeCall = editor.ActiveCall is { } call ? new {
+        name = call.Name, parameter = call.Parameter, usedSlots = call.UsedSlots, namedSlot = call.NamedSlot,
+        completeOption = call.CompleteOption, hasOptionColon = call.HasOptionColon
+    } : null;
+    var patternFix = editor.PatternFix is { } fix && diagnostic?.Code == "TypeMismatch" &&
+        diagnostic.Position == fix.Call ? fix : null;
+    return new { unsupportedVersion = editor.UnsupportedVersion, diagnostics, functions, members, symbols, activeCall, patternFix,
+        versionInsertion = editor.VersionInsertion, dependencies = editor.Dependencies,
+        constantSymbols = editor.ConstantSymbols, constantReference = editor.ConstantReference };
 }
 
 internal sealed record EditorRequest(string Path, string Source, bool ConstantsFile,
-    Dictionary<string, string>? Constants, string? Operation, int? Offset);
+    Dictionary<string, string>? Constants, string? Operation, int? Offset, string[]? Candidates);

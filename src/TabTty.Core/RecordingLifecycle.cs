@@ -149,6 +149,7 @@ internal sealed class RecordingLifecycle(TerminalOutput terminal, SemaphoreSlim 
                 throw new IOException("The previous recording part still owns its files.");
             starting = true;
             await previous.ActualRelease.WaitAsync(activation).ConfigureAwait(false);
+            if (previous.StartFailure) throw new RecordingStartException(previous.Failure!);
             int next = checked(++number);
             candidate = await PreparePartAsync(token => previous.OpenPart(next, token), activation).ConfigureAwait(false);
             await terminalOrder.WaitAsync(activation).ConfigureAwait(false);

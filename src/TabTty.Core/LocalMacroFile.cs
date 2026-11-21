@@ -34,14 +34,28 @@ internal static class LocalMacroFile
     [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     private static extern uint GetFileType(SafeFileHandle handle);
 
-    internal static SafeFileHandle? TryOpen(string path)
+    internal static SafeFileHandle? TryOpen(string path) =>
+        InspectLocal(path, FileShare.Read, static metadata =>
+        {
+            // Request data access only on this already inspected local object.
+            const uint openReparsePoint = 0x00200000;
+            var file = ReOpenFile(metadata, 0x80000000, FileShare.Read, openReparsePoint);
+            if (!file.IsInvalid) return file;
+            file.Dispose();
+            return null;
+        });
+
+    internal static string? StoredLocalPath(string path) =>
+        InspectLocal(path, FileShare.ReadWrite | FileShare.Delete, metadata => OpenedLocation(metadata, path));
+
+    private static T? InspectLocal<T>(string path, FileShare share, Func<SafeFileHandle, T?> inspect) where T : class
     {
         // Windows can disguise Cloud Files placeholders as ordinary files for
         // the calling application. Inspect the handle with placeholders exposed.
         const sbyte exposePlaceholders = 2;
         sbyte previous = RtlSetThreadPlaceholderCompatibilityMode(exposePlaceholders);
         if (previous < 0) return null;
-        try { return TryOpenLocalHandle(path); }
+        try { return InspectLocalHandle(path, share, inspect); }
         finally { RtlSetThreadPlaceholderCompatibilityMode(previous); }
     }
 
@@ -49,7 +63,7 @@ internal static class LocalMacroFile
     [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     private static extern sbyte RtlSetThreadPlaceholderCompatibilityMode(sbyte mode);
 
-    private static unsafe SafeFileHandle? TryOpenLocalHandle(string path)
+    private static unsafe T? InspectLocalHandle<T>(string path, FileShare share, Func<SafeFileHandle, T?> inspect) where T : class
     {
         // Resolve only a direct local volume mapping. A drive name can also
         // resolve to a redirector or to another path (SUBST).
@@ -84,7 +98,7 @@ internal static class LocalMacroFile
             };
             const uint attributesAndSynchronize = 0x00100080;
             const uint openOptions = 0x00600060; // NO_RECALL | OPEN_REPARSE_POINT | NON_DIRECTORY | SYNCHRONOUS_IO_NONALERT
-            int status = NtOpenFile(out SafeFileHandle metadata, attributesAndSynchronize, ref attributes, out _, 1, openOptions);
+            int status = NtOpenFile(out SafeFileHandle metadata, attributesAndSynchronize, ref attributes, out _, (uint)share, openOptions);
             using (metadata)
             {
                 if (status < 0 || metadata.IsInvalid)
@@ -98,12 +112,7 @@ internal static class LocalMacroFile
                     const FileAttributes recall = (FileAttributes)(0x00040000 | 0x00400000);
                     const FileAttributes unsupported = FileAttributes.ReparsePoint | FileAttributes.Offline | recall;
                     if ((File.GetAttributes(metadata) & unsupported) != 0) return null;
-                    // Even requesting data access can hydrate a cloud file. Acquire
-                    // data access only on this already inspected local object.
-                    const uint openReparsePoint = 0x00200000;
-                    var file = ReOpenFile(metadata, 0x80000000, FileShare.Read, openReparsePoint);
-                    if (!file.IsInvalid) return file;
-                    file.Dispose();
+                    return inspect(metadata);
                 }
                 catch (IOException) { }
                 return null;

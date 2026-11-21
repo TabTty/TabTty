@@ -8,7 +8,12 @@ internal sealed class MacroSyntaxBudget(ResourceReservation? tokens = null, Reso
 {
     public int Nodes;
     public int Depth;
-    public void Token() => tokens?.Add(96);
+    private int tokenCount;
+    public void Token(MacroPosition position)
+    {
+        if (++tokenCount > 500_000) throw new MacroSourceException("SyntaxLimit", position);
+        tokens?.Add(96);
+    }
     public T Add<T>(T node) where T : MacroNode
     {
         retained?.Add(64);
@@ -23,6 +28,7 @@ internal sealed class MacroSyntaxBudget(ResourceReservation? tokens = null, Reso
                 MacroMember m => m.Target.Depth,
                 MacroIndex i => Math.Max(i.Target.Depth, i.Index.Depth),
                 MacroCall c => c.Arguments.Select(a => a.Depth).DefaultIfEmpty(0).Max(),
+                MacroAlternatives a => a.Patterns.Max(p => p.Depth),
                 MacroListLiteral l => l.Values.Select(a => a.Depth).DefaultIfEmpty(0).Max(),
                 MacroInterpolation i => i.Parts.Select(a => a.Depth).DefaultIfEmpty(0).Max(),
                 _ => 0,
@@ -34,19 +40,23 @@ internal sealed class MacroSyntaxBudget(ResourceReservation? tokens = null, Reso
 }
 
 internal sealed record MacroToken(string Kind, string Text, object? Value, MacroPosition Position, int Offset, int EndOffset = -1);
-internal sealed record MacroStringExpression(string Source, MacroPosition Position);
 
-internal sealed class MacroLexer(string source, MacroPosition origin, bool allowInterpolation = true)
+internal sealed class MacroLexer(string source, MacroPosition origin, bool allowInterpolation = true,
+    MacroEditorSymbols? editor = null, MacroSyntaxBudget? budget = null)
 {
     private int offset;
     private int line = origin.Line, column = origin.Column;
     private bool wasCr;
     private int stringDepth;
+    internal int Offset => offset;
+    internal int FirstTokenOffset { get; private set; } = -1;
     public MacroToken Next()
     {
         SkipTrivia();
+        if (FirstTokenOffset < 0) FirstTokenOffset = offset;
         int start = offset;
         var at = new MacroPosition(line, column);
+        budget?.Token(at);
         if (offset == source.Length) return new("end", "", null, at, offset);
         char c = source[offset];
         if (c is '"' or '$' or '@')
@@ -86,13 +96,19 @@ internal sealed class MacroLexer(string source, MacroPosition origin, bool allow
         string symbol = Take().ToString();
         if (offset < source.Length && (symbol + Peek()) is "==" or "!=" or "<=" or ">=" or "&&" or "||"
             or "+=" or "-=" or "*=" or "/=" or "%=" or "++" or "--") symbol += Take();
-        if (!"#(){}[];,.+-*/%!=<>&|".Contains(symbol[0])) throw Error("UnexpectedCharacter", at);
+        if (!"#(){}[];,:.+-*/%!=<>&|".Contains(symbol[0])) throw Error("UnexpectedCharacter", at);
         return new("symbol", symbol, null, at, start);
     }
 
     private MacroToken ReadString(MacroPosition at, int start, bool interpolated, bool verbatim)
     {
         if (++stringDepth > 128) throw Error("NestingLimit", at);
+        try { return ReadStringParts(at, start, interpolated, verbatim); }
+        finally { stringDepth--; }
+    }
+
+    private MacroToken ReadStringParts(MacroPosition at, int start, bool interpolated, bool verbatim)
+    {
         Take();
         var parts = new List<object>();
         var text = new StringBuilder();
@@ -102,34 +118,49 @@ internal sealed class MacroLexer(string source, MacroPosition origin, bool allow
             if (c == '"')
             {
                 if (verbatim && Peek() == '"') { Take(); text.Append('"'); continue; }
-                parts.Add(text.ToString());
-                stringDepth--;
-                return new(interpolated ? "interp" : "str", "", interpolated ? parts : text.ToString(), at, start, offset);
+                return Finish();
             }
             if (!verbatim && c is '\r' or '\n') throw Error("StringNewline", at);
-            if (!verbatim && c == '\\') { AppendEscape(text, at); continue; }
+            if (!verbatim && c == '\\') { AppendEscape(text, new(line, column - 1)); continue; }
             if (interpolated && c is '{' or '}')
             {
                 if (Peek() == c) { Take(); text.Append(c); continue; }
                 if (c == '}') throw Error("InterpolationBrace", at);
                 parts.Add(text.ToString()); text.Clear();
-                int expressionStart = offset;
-                var expressionPosition = new MacroPosition(line, column);
+                var fragment = new List<MacroToken>();
                 int depth = 1;
                 MacroToken token;
                 do
                 {
-                    token = Next();
-                    if (token.Kind == "end") throw Error("UnterminatedInterpolation", at);
+                    try { token = Next(); }
+                    catch (MacroSourceException error) when (offset == source.Length && editor?.Recover(error) == true)
+                    { token = new("end", "", null, new(line, column), offset); }
+                    if (token.Kind == "end")
+                    {
+                        var error = Error("UnterminatedInterpolation", at);
+                        if (editor?.Recover(error) != true) throw error;
+                        break;
+                    }
                     if (token.Text == "{") depth++;
                     if (token.Text == "}") depth--;
                     if (depth > 128) throw Error("NestingLimit", at);
+                    if (depth != 0) fragment.Add(token);
                 } while (depth != 0);
-                parts.Add(new MacroStringExpression(source[expressionStart..token.Offset], expressionPosition));
+                fragment.Add(new("end", "", null, token.Position, token.Offset));
+                parts.Add(fragment);
             }
             else text.Append(c);
         }
-        throw Error("UnterminatedString", at);
+        var unfinished = Error("UnterminatedString", at);
+        if (!interpolated || editor?.Recover(unfinished) != true) throw unfinished;
+        return Finish();
+
+        MacroToken Finish()
+        {
+            if (!interpolated) return new("str", "", text.ToString(), at, start, offset);
+            parts.Add(text.ToString());
+            return new("interp", "", parts, at, start, offset);
+        }
     }
 
     private void AppendEscape(StringBuilder target, MacroPosition at)
@@ -137,15 +168,15 @@ internal sealed class MacroLexer(string source, MacroPosition origin, bool allow
         char c = Take();
         if (c is 'x' or 'u' or 'U')
         {
-            int min = c == 'x' ? 1 : c == 'u' ? 4 : 8, max = c == 'U' ? 8 : 4;
+            int digits = c == 'x' ? 2 : c == 'u' ? 4 : 8;
             uint value = 0;
             int count = 0;
-            while (count < max && char.IsAsciiHexDigit(Peek()))
+            while (count < digits && char.IsAsciiHexDigit(Peek()))
             {
                 value = (value << 4) | (uint)int.Parse(Take().ToString(), NumberStyles.HexNumber, CultureInfo.InvariantCulture);
                 count++;
             }
-            if (count < min || c == 'U' && (value > 0x10ffff || value is >= 0xd800 and <= 0xdfff))
+            if (count != digits || c == 'U' && (value > 0x10ffff || value is >= 0xd800 and <= 0xdfff))
                 throw Error("StringEscape", at);
             if (c == 'U') target.Append(char.ConvertFromUtf32((int)value));
             else target.Append((char)value);
@@ -169,7 +200,7 @@ internal sealed class MacroLexer(string source, MacroPosition origin, bool allow
         string plain = text.Replace("_", "").TrimEnd('l', 'L', 'd', 'D');
         if (floating && double.TryParse(plain, NumberStyles.Float, CultureInfo.InvariantCulture, out double d) && double.IsFinite(d)) return d;
         if (!floating && long.TryParse(plain, NumberStyles.None, CultureInfo.InvariantCulture, out long n)) return n;
-        if (!floating && plain == "9223372036854775808") return 9223372036854775808UL;
+        if (!floating && plain.AsSpan().TrimStart('0').SequenceEqual("9223372036854775808")) return 9223372036854775808UL;
         throw Error("NumericLiteral", at);
     }
 
@@ -179,13 +210,22 @@ internal sealed class MacroLexer(string source, MacroPosition origin, bool allow
         {
             if (char.IsWhiteSpace(Peek())) { Take(); continue; }
             if (Peek() == '/' && Peek(1) == '/')
-            { while (offset < source.Length && Peek() is not '\r' and not '\n') Take(); continue; }
+            {
+                int start = offset;
+                while (offset < source.Length && Peek() is not '\r' and not '\n') Take();
+                editor?.Comment(start, offset, includeEnd: true);
+                continue;
+            }
             if (Peek() == '/' && Peek(1) == '*')
             {
+                int start = offset;
                 var at = new MacroPosition(line, column); Take(); Take();
                 while (offset < source.Length && !(Peek() == '*' && Peek(1) == '/')) Take();
-                if (offset == source.Length) throw Error("UnterminatedComment", at);
-                Take(); Take(); continue;
+                bool closed = offset != source.Length;
+                if (closed) { Take(); Take(); }
+                editor?.Comment(start, offset, includeEnd: !closed);
+                if (!closed) throw Error("UnterminatedComment", at);
+                continue;
             }
             break;
         }
@@ -206,7 +246,7 @@ internal sealed class MacroLexer(string source, MacroPosition origin, bool allow
 
 internal sealed class MacroParser
 {
-    private readonly List<MacroToken> tokens = [];
+    private readonly List<MacroToken> tokens;
     private readonly MacroSyntaxBudget budget;
     private readonly string source;
     private readonly MacroEditorSymbols? editor;
@@ -218,18 +258,33 @@ internal sealed class MacroParser
         this.budget = budget;
         this.source = source;
         this.editor = editor;
-        if (editor is not null) editor.Tokens = tokens;
-        var lexer = new MacroLexer(source, origin);
+        tokens = [];
+        var lexer = new MacroLexer(source, origin, editor: editor, budget: budget);
         MacroToken token;
         do
         {
-            budget.Token();
+            int start = lexer.Offset;
             try { token = lexer.Next(); }
             catch (MacroSourceException error) when (editor?.Recover(error) == true)
-            { token = new("end", "", null, error.Position, source.Length); }
+            {
+                // A bad token does not hide later directives or calls from the editor.
+                token = start < lexer.Offset && lexer.Offset < source.Length
+                    ? new("invalid", "", null, error.Position, start, lexer.Offset)
+                    : new("end", "", null, error.Position, source.Length);
+            }
             tokens.Add(token);
-            if (tokens.Count > 500_000) throw new MacroSourceException("SyntaxLimit", token.Position);
+            if (tokens.Count == 3) editor?.CheckVersion(tokens);
         } while (token.Kind != "end");
+        editor?.VersionHeader(tokens, lexer.FirstTokenOffset, source.Length);
+    }
+
+    // Fragment tokens already carry positions and offsets in the original document.
+    private MacroParser(MacroParser parent, List<MacroToken> fragment)
+    {
+        source = parent.source;
+        budget = parent.budget;
+        editor = parent.editor;
+        tokens = fragment;
     }
 
     public (MacroBlock Body, Dictionary<string, MacroFunction> Functions) ParseFile()
@@ -244,7 +299,11 @@ internal sealed class MacroParser
         MacroToken version = Current;
         Expect("1");
         if (Current.Kind != "end" && Current.Position.Line == version.Position.Line) Fail("VersionLine");
-        while (Current.Text == "#") ParseConstantsDeclaration();
+        while (Current.Text == "#")
+        {
+            try { ParseConstantsDeclaration(); }
+            catch (MacroSourceException error) when (editor?.Recover(error) == true) { break; }
+        }
         var statements = new List<MacroStatement>();
         var functions = new Dictionary<string, MacroFunction>(StringComparer.Ordinal);
         while (Current.Kind != "end")
@@ -313,7 +372,7 @@ internal sealed class MacroParser
             throw new MacroSourceException("ConstantsAlias", alias.Position);
         if (constantsDeclarations.Count >= MacroConstantsFile.MaxDeclarations)
             throw new MacroSourceException("ConstantsLimit", start.Position);
-        constantsDeclarations.Add(new(name, (string)literal.Value!, literal.Position));
+        constantsDeclarations.Add(new(name, (string)literal.Value!, alias.Position, literal.Position));
     }
 
     private bool HorizontalSpace(int start, int end) =>
@@ -360,7 +419,7 @@ internal sealed class MacroParser
                 editor?.Name(attempt, nameToken);
                 return attempt;
             }
-            if (Current.Text is "return" or "break" or "continue")
+            if (Current.Text is "return" or "break" or "continue" or "throw")
             {
                 string kind = Take().Text;
                 var value = kind == "return" && Current.Text != ";" ? Expression() : null;
@@ -502,31 +561,136 @@ internal sealed class MacroParser
         }
         else if (token.Kind == "interp")
         {
-            var parts = ((List<object>)token.Value!).Select(part => part is MacroStringExpression fragment
-                ? new MacroParser(fragment.Source, fragment.Position, budget).ParseFragment()
+            var parts = ((List<object>)token.Value!).Select(part => part is List<MacroToken> fragment
+                ? ParseInterpolation(fragment)
                 : Add<MacroExpression>(new MacroLiteral((string)part, token.Position))).ToArray();
             expression = Add(new MacroInterpolation(parts, token.Position));
         }
         else if (token.Text is "true" or "false") expression = Add(new MacroLiteral(token.Text == "true", token.Position));
         else if (token.Kind == "id")
         {
-            if (Eat("("))
+            if (Current.Text == "(") expression = ParseCall(token);
+            else
             {
-                var args = new List<MacroExpression>();
-                if (!Eat(")"))
-                { do { args.Add(Expression()); if (args.Count > 32) Fail("ParameterLimit"); } while (Eat(",")); Expect(")"); }
-                expression = Add(new MacroCall(token.Text, args.ToArray(), token.Position));
+                editor?.ReferenceName(token);
+                expression = Add(new MacroName(token.Text, token.Position));
             }
-            else expression = Add(new MacroName(token.Text, token.Position));
         }
         else { throw new MacroSourceException("ExpressionExpected", token.Position); }
         while (true)
         {
-            if (Eat(".")) expression = Add(new MacroMember(expression, Identifier(), token.Position));
-            else if (Eat("[")) { var index = Expression(); Expect("]"); expression = Add(new MacroIndex(expression, index, token.Position)); }
+            if (Current.Text == ".")
+            {
+                var dot = Take();
+                editor?.QualifiedMember(expression, dot, Current);
+                var member = Current;
+                expression = Add(new MacroMember(expression, Identifier(), member.Position));
+            }
+            else if (Current.Text == "[")
+            {
+                var bracket = Take();
+                var index = Expression();
+                Expect("]");
+                expression = Add(new MacroIndex(expression, index, bracket.Position));
+            }
             else break;
         }
         return expression;
+    }
+
+    private MacroExpression ParseInterpolation(List<MacroToken> fragment)
+    {
+        try { return new MacroParser(this, fragment).ParseFragment(); }
+        catch (MacroSourceException error) when (editor?.Recover(error) == true)
+        { return Add(new MacroMissingExpression(error.Position)); }
+    }
+
+    private MacroCall ParseCall(MacroToken name)
+    {
+        int open = Take().Offset;
+        int argumentStart = open + 1;
+        var args = new List<MacroExpression>();
+        var parameterSlots = new List<MacroArgumentSlot>();
+        (int Start, int End)? patternRange = null;
+        while (true)
+        {
+            int index = args.Count;
+            if (Current.Text == ")" && index == 0)
+            {
+                editor?.CallArgument(name.Text, open, index, argumentStart, Current.Offset, parameterSlots);
+                break;
+            }
+            int first = Current.Offset;
+            int optionNameEnd = index > 0 && MacroApi.NamedParameters.ContainsKey(name.Text)
+                ? first + (Current.Kind == "id" ? Current.Text.Length : 0) : -1;
+            bool hasOptionColon = Current.Kind == "id" && tokens[cursor + 1].Text == ":";
+            try { args.Add(ParseCallArgument(name, index, parameterSlots)); }
+            finally
+            {
+                editor?.CallArgument(name.Text, open, index, argumentStart, Current.Offset, parameterSlots,
+                    optionNameEnd, hasOptionColon);
+            }
+            if (args.Count > 32) Fail("ParameterLimit");
+            if (editor is not null && index == 0 && name.Text == "WaitPrompt")
+            {
+                var last = tokens[cursor - 1];
+                int end = last.EndOffset >= 0 ? last.EndOffset : last.Offset + last.Text.Length;
+                patternRange = (first, end);
+            }
+            if (Current.Text != ",") break;
+            argumentStart = Take().Offset + 1;
+        }
+        Expect(")");
+        var call = Add(new MacroCall(name.Text, args.ToArray(), name.Position)
+            { ParameterSlots = parameterSlots.Count == 0 ? null : parameterSlots.ToArray() });
+        editor?.CallOptions(open, parameterSlots);
+        if (patternRange.HasValue) editor!.WaitPatternArgument(call, patternRange.Value);
+        return call;
+    }
+
+    private MacroExpression ParseCallArgument(MacroToken name, int index, List<MacroArgumentSlot> parameterSlots)
+    {
+        if (index == 0 && name.Text is "WaitAnyLine" or "WaitAnyPrompt")
+            return ParseAlternatives();
+        if (!MacroApi.NamedParameters.TryGetValue(name.Text, out var parameters))
+            return Expression();
+        if (index == 0) parameterSlots.Add(new(0, Current.Position));
+        else
+        {
+            var option = Current;
+            if (option.Kind != "id") Fail("NamedOptionExpected");
+            Take();
+            int slot = Array.IndexOf(parameters, option.Text, 1);
+            if (slot < 0) throw new MacroSourceException("UnknownOption", option.Position, length: option.Text.Length);
+            if (parameterSlots.Any(parameter => parameter.Index == slot))
+                throw new MacroSourceException("DuplicateOption", option.Position, length: option.Text.Length);
+            Expect(":");
+            parameterSlots.Add(new(slot, Current.Position));
+        }
+        return Expression();
+    }
+
+    private MacroAlternatives ParseAlternatives()
+    {
+        var opening = Current;
+        Expect("[");
+        var names = new List<string>();
+        var unique = new HashSet<string>(StringComparer.Ordinal);
+        var patterns = new List<MacroExpression>();
+        do
+        {
+            var label = Current;
+            if (label.Kind != "id" || MacroChecker.IsReserved(label.Text) ||
+                tokens[cursor + 1].Text != ":")
+                throw new MacroSourceException("AlternativeNameExpected", label.Position, length: Math.Max(1, label.Text.Length));
+            if (!unique.Add(label.Text))
+                throw new MacroSourceException("DuplicateAlternative", label.Position, length: label.Text.Length);
+            Take(); Take();
+            names.Add(label.Text);
+            patterns.Add(Expression());
+        } while (Eat(",") && Current.Text != "]");
+        Expect("]");
+        return Add(new MacroAlternatives(names.ToArray(), patterns.ToArray(), opening.Position));
     }
 
     private MacroType ParseType(bool allowVoid = false, int depth = 0)

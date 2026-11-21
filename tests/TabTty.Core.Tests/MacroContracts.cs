@@ -15,12 +15,24 @@ internal static partial class MacroContracts
         Console.WriteLine("PASS MacroSourceEncodingsAndSnapshot");
         await SharedConstantsLanguageAsync();
         Console.WriteLine("PASS SharedConstantsLanguage");
+        await LiteralBoundariesAsync();
+        Console.WriteLine("PASS MacroLiteralBoundaries");
         await MacroConstantsLoadTests.RunAsync();
         Console.WriteLine("PASS SharedConstantsLoadAndBudgets");
         await LanguageAsync();
         Console.WriteLine("PASS MacroFixedTypesControlFlowListsAndInvariantValues");
+        await RethrowAsync();
+        Console.WriteLine("PASS MacroRethrowPreservesActiveError");
+        await IndexedAssignmentAsync();
+        Console.WriteLine("PASS MacroIndexedAssignmentOrderAndAliases");
+        await AccessPositionsAsync();
+        Console.WriteLine("PASS MacroMemberAndIndexPositions");
         await ReceiveAsync();
         Console.WriteLine("PASS MacroReceivesOriginalLinesAndPromptSubstrings");
+        await NamedCallsAndReceiveBoundaryAsync();
+        Console.WriteLine("PASS MacroNamedCallsAndReceiveBoundary");
+        await NamedRecordingCollisionsAsync();
+        Console.WriteLine("PASS MacroNamedRecordingOptionCollisions");
         await CancellationAsync();
         Console.WriteLine("PASS MacroPauseResumeAndStopComputation");
         await ReceiveHoldsAsync();
@@ -80,6 +92,7 @@ internal static partial class MacroContracts
             "if (false) { var extension = Macro.Extension; }",
             "var n = 1D + ;", "long retries = ; Sleep(retries);",
             "try {} catch (MacroError err) { Sleep(", "var rate = 1 + 0.5; WaitPrompt(",
+            "WriteLine($\"{{n}}, {FormatNumber(1,", "WriteLine($\"{FormatNumber(1, \"D\")}",
         })
         {
             try { Parse(source); throw new Exception("Invalid source was accepted."); }
@@ -283,7 +296,7 @@ internal static partial class MacroContracts
         profileJson["logging"]!["directory"] = "logs";
         await profile.Edit(profileJson.ToJsonString()).SaveNewAsync(profilePath, deadline.Token);
         var program = MacroProgram.Parse(Path.Combine(root, "example.tttym"),
-            "#tttym 1\nConnect(\"profiles/profile.ttty\", \"logs\", \"<macroname>-<cpname>_<serial:0,4>\", false); Write(\"ready\");");
+            "#tttym 1\nConnect(\"profiles/profile.ttty\", logDirectory: \"logs\", logFilenameTemplate: \"<macroname>-<cpname>_<serial:0,4>\", logCollision: \"error\"); Write(\"ready\");");
         var rejectedHost = new Host { OpenRealProfile = true };
         using (var rejected = new MacroRun(program, [], rejectedHost))
         {
@@ -452,6 +465,7 @@ internal static partial class MacroContracts
         public bool WaitAtConnect { get; init; }
         public string? TransmitEncoding { get; init; }
         public string? ConnectedPath { get; private set; }
+        public RecordingOverrides Recording { get; private set; }
         public bool ConnectionFinished { get; private set; }
         public string? Password { get; init; }
         public CredentialReference? LastCredential { get; private set; }
@@ -465,6 +479,7 @@ internal static partial class MacroContracts
                 return Session = await TerminalSession.ConnectMacroAsync(profilePath, run, token, Ssh,
                     viewport: _ => Task.FromResult((120, 40)), overrides: recording);
             ConnectedPath = profilePath;
+            Recording = recording;
             var profile = ConnectionProfile.CreateTelnet("Macro", "localhost", transmitEncoding: TransmitEncoding);
             run.ProfileLoaded(profile);
             Session = new TerminalSession(Wire, profile, null, 100, macro: run);
@@ -489,6 +504,15 @@ internal static partial class MacroContracts
     {
         public List<byte> Bytes { get; } = [];
         public bool FailAfterFirstWrite { get; set; }
+        public Func<ValueTask>? OnWrite { get; set; }
+        public int ReturnZeroOnSubmission { get; set; }
+        private int submissions;
+        public async ValueTask<int> WriteSomeAsync(ReadOnlyMemory<byte> buffer, CancellationToken token)
+        {
+            if (++submissions == ReturnZeroOnSubmission) return 0;
+            await WriteAsync(buffer, token);
+            return buffer.Length;
+        }
         public ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken token) => ValueTask.FromResult(0);
         public ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken token)
         {
@@ -499,7 +523,7 @@ internal static partial class MacroContracts
                 throw new IOException("Simulated uncertain write.");
             }
             Bytes.AddRange(buffer.ToArray());
-            return ValueTask.CompletedTask;
+            return OnWrite?.Invoke() ?? ValueTask.CompletedTask;
         }
         public void Dispose() { }
     }

@@ -9,11 +9,11 @@ function activate(context) {
     const diagnostics = vscode.languages.createDiagnosticCollection('tabtty');
     const japanese = vscode.env.language.toLowerCase().startsWith('ja');
     const parameterNames = {
-        Connect: ['profilePath', 'logDirectory', 'logFilenameTemplate', 'allowLogOverwrite'],
         Literal: ['text', 'ignoreCase'], Regex: ['pattern', 'ignoreCase'],
         WaitLine: ['pattern', 'timeoutMs'], WaitPrompt: ['pattern', 'timeoutMs'],
         WaitAnyLine: ['patterns', 'timeoutMs'], WaitAnyPrompt: ['patterns', 'timeoutMs'],
-        Write: ['text'], WriteLine: ['text'], WritePassword: ['name'], WritePasswordLine: ['name'],
+        Write: ['text'], WritePassword: ['name'], WritePasswordLine: ['name'],
+        FormatNumber: ['value', 'format'], FormatTime: ['value', 'format'],
         Sleep: ['milliseconds'], SetBaseDirectory: ['path'], Length: ['text'], Count: ['items'],
         Substring: ['text', 'start', 'length'], Dialog: ['title', 'message', 'buttons', 'inputEnabled', 'initialText']
     };
@@ -68,20 +68,30 @@ function activate(context) {
         UnixMilliseconds: ['Get the Unix timestamp in milliseconds.', 'Unix 時刻をミリ秒で取得します。'],
         ElapsedMilliseconds: ['Get elapsed run time in milliseconds.', '実行開始からの経過時間をミリ秒で取得します。']
     };
-    function parameterLabel(name, type, index) {
-        const label = parameterNames[name]?.[index];
+    function parameterLabel(name, type, index, namedParameters) {
+        const label = (namedParameters ?? parameterNames[name])?.[index];
+        if (index > 0 && namedParameters) return '[' + label + ': ' + type + ']';
         return label ? type + ' ' + label : type;
     }
     const messages = {
         ConstantsMissing: ['Shared constants file was not found.', '共有定数ファイルが見つかりません。'],
         ConstantsInvalid: ['The shared constants file contains an error.', '共有定数ファイルにエラーがあります。'],
         ConstantsTooLarge: ['The shared constants file is too large.', '共有定数ファイルのサイズが大きすぎます。'],
+        ConstantsLimit: ['The declared constants exceed the permitted limit.', '宣言した定数が上限を超えています。'],
+        NumericLiteral: ['The numeric literal is malformed or out of range.', '数値リテラルの形式または範囲が正しくありません。'],
+        StringEscape: ['Invalid string escape. Use two hexadecimal digits after \\x.', 'エスケープが不正です。\\x の後には16進数字を2桁指定してください。'],
         ConstantsUnreadable: ['The shared constants file could not be read.', '共有定数ファイルを読み取れませんでした。'],
         ConstantsOpenRequired: ['Open the shared constants file to analyze it.', '共有定数ファイルを開いてください。'],
         VersionLine: ['A supported #tttym 1 version declaration is required.', '対応する #tttym 1 バージョン宣言が必要です。'],
         TypeMismatch: ['The value has an incompatible type.', '値の型が一致しません。'],
+        NamedOptionExpected: ['A named option is required here.', '名前付きオプションを指定してください。'],
+        UnknownOption: ['This option is not defined for this call.', 'この呼び出しでは使用できないオプションです。'],
+        DuplicateOption: ['This option has already been supplied.', 'このオプションは既に指定されています。'],
+        AlternativeNameExpected: ['Give each wait pattern a non-reserved name followed by a colon.', '各待機パターンに予約語以外の名前とコロンを指定してください。'],
+        DuplicateAlternative: ['This wait already has an alternative with this name.', 'この名前の待機候補は既に指定されています。'],
         UnknownName: ['This name is not defined.', 'この名前は定義されていません。'],
         UnknownMember: ['This member is not defined.', 'このメンバーは定義されていません。'],
+        RethrowOutsideCatch: ['Rethrow is only valid inside a catch in this function.', '再送出は同じ関数の catch 内でのみ使用できます。'],
         WaitPatternRequired: ['WaitPrompt requires a WaitPattern. Use Literal or Regex.',
             'WaitPrompt の引数には WaitPattern が必要です。Literal または Regex を使用してください。'],
         ConstantsType: ['The value does not match the declared type.', '値が宣言された型と一致しません。'],
@@ -148,6 +158,7 @@ function activate(context) {
     }
 
     async function analyze(document, position) {
+        const version = document.version;
         const payload = {
             path: document.uri.fsPath,
             source: document.getText(),
@@ -156,52 +167,77 @@ function activate(context) {
             constants: Object.create(null)
         };
         const initial = await request(payload);
+        if (document.isClosed || document.version !== version) return {};
         if (payload.constantsFile) return initial;
-        const extra = [];
-        const locations = Object.create(null);
-        const tokens = initial.tokens || [];
-        if (tokens[0]?.Text === '#' && tokens[1]?.Text === 'tttym' &&
-            tokens[2]?.Kind === 'num' && tokens[2].Text !== '1') {
+        if (initial.unsupportedVersion) {
             initial.functions = {};
-            initial.diagnostics = [{ Code: 'VersionLine', Line: tokens[2].Line, Column: tokens[2].Column }];
-            initial.unsupportedVersion = true;
             return initial;
         }
-        for (let index = 0; index + 3 < tokens.length; index++) {
-            const [hash, keyword, alias, literal] = tokens.slice(index, index + 4);
-            if (hash.Text !== '#' || keyword.Text !== 'constants' ||
-                alias.Kind !== 'id' || literal.Kind !== 'str' || typeof literal.Value !== 'string') continue;
-            const target = path.resolve(path.dirname(document.uri.fsPath), literal.Value);
-            locations[alias.Text] = target;
-            const openDocument = vscode.workspace.textDocuments.find(item =>
-                item.uri.scheme === 'file' && item.uri.fsPath.toLowerCase() === target.toLowerCase());
-            let contents;
-            if (openDocument) {
-                contents = openDocument.getText();
-            } else if (document.uri.scheme === 'file' && vscode.workspace.isTrusted) {
-                const read = await request({ path: target, source: '', operation: 'readLocal' });
-                if (read.status === 'ok') contents = read.text;
-                else {
-                    const codes = { missing: 'ConstantsMissing', tooLarge: 'ConstantsTooLarge',
-                        unreadable: 'ConstantsUnreadable', openRequired: 'ConstantsOpenRequired' };
-                    extra.push({ Code: codes[read.status] || 'ConstantsUnreadable',
-                        Line: literal.Line, Column: literal.Column });
-                }
-            } else {
-                extra.push({ Code: 'ConstantsOpenRequired', Line: literal.Line, Column: literal.Column });
-            }
-            if (contents !== undefined) {
-                payload.constants[alias.Text] = contents;
-            }
+        const dependencies = initial.dependencies || [];
+        if (!dependencies.length) return initial;
+        const targets = [...new Set(dependencies.map(dependency => dependency.FullPath).filter(Boolean))];
+        function openCandidates(target) {
+            const key = target.toUpperCase();
+            return vscode.workspace.textDocuments.filter(item =>
+                item.uri.scheme === 'file' && item.uri.fsPath.toUpperCase() === key);
         }
-        const result = Object.keys(payload.constants).length ? await request(payload) : initial;
-        if (extra.length) result.diagnostics = [
-            ...(result.diagnostics || []).filter(item => item.Code !== 'ConstantsRead'),
-            ...extra
-        ];
-        result.constants = payload.constants;
-        result.constantPaths = locations;
-        return result;
+        async function chooseOpen(target, candidates) {
+            const exact = candidates.find(item => item.uri.fsPath === vscode.Uri.file(target).fsPath);
+            if (exact || !candidates.length) return exact;
+            // A case variant can denote a different file. Compare only ordinary local
+            // file metadata before using the text of an already open document.
+            const { match } = await request({ path: target, source: '', operation: 'matchOpenLocal',
+                candidates: candidates.map(item => item.uri.fsPath) });
+            return candidates.find(item => item.uri.fsPath === match);
+        }
+        // Each alias observes the same saved or unsaved snapshot of its file.
+        while (!document.isClosed && document.version === version) {
+            const snapshots = new Map();
+            const trusted = vscode.workspace.isTrusted;
+            const constants = Object.create(null);
+            for (const target of targets) {
+                const candidates = openCandidates(target);
+                const open = await chooseOpen(target, candidates);
+                const snapshot = { candidates, open, version: open?.version, status: 'openRequired' };
+                snapshots.set(target, snapshot);
+                if (open) {
+                    constants[target] = open.getText();
+                    snapshot.status = 'ok';
+                } else if (document.uri.scheme === 'file' && trusted) {
+                    const read = await request({ path: target, source: '', operation: 'readLocal' });
+                    snapshot.status = read.status;
+                    if (read.status === 'ok') constants[target] = read.text;
+                }
+            }
+            const result = Object.keys(constants).length ? await request({ ...payload, constants }) : initial;
+            if (document.isClosed || document.version !== version) return {};
+            if (trusted !== vscode.workspace.isTrusted || targets.some(target => {
+                const current = openCandidates(target);
+                const snapshot = snapshots.get(target);
+                return current.length !== snapshot.candidates.length ||
+                    current.some((item, index) => item !== snapshot.candidates[index]) ||
+                    snapshot.open?.version !== snapshot.version;
+            })) continue;
+            const codes = { missing: 'ConstantsMissing', tooLarge: 'ConstantsTooLarge',
+                unreadable: 'ConstantsUnreadable', openRequired: 'ConstantsOpenRequired' };
+            const unavailable = dependencies.filter(dependency =>
+                dependency.FullPath && snapshots.get(dependency.FullPath).status !== 'ok');
+            if (unavailable.length) result.diagnostics = [
+                ...(result.diagnostics || []).filter(item => item.Code !== 'ConstantsRead'),
+                ...unavailable.map(dependency => ({ ...dependency.Position,
+                    Code: codes[snapshots.get(dependency.FullPath).status] || 'ConstantsUnreadable' }))
+            ];
+            return result;
+        }
+        return {};
+    }
+
+    function referencedConstant(result) {
+        const reference = result.constantReference;
+        const dependency = reference && result.dependencies?.find(entry => entry.Alias === reference.Alias);
+        if (!dependency) return undefined;
+        const members = result.constantSymbols?.[dependency.FullPath] || [];
+        return { dependency, reference, members, member: members.find(entry => entry.Name === reference.Member) };
     }
 
     function symbolDetail(symbol) {
@@ -220,15 +256,12 @@ function activate(context) {
             if (document.isClosed || document.version !== version || generations.get(key) !== generation) return;
             diagnostics.set(document.uri, (result.diagnostics || []).map(item => {
                 const position = new vscode.Position(Math.max(0, item.Line - 1), Math.max(0, item.Column - 1));
-                const call = (result.tokens || []).findIndex(token => token.Text === 'WaitPrompt' &&
-                    token.Line === item.Line && token.Column === item.Column);
-                const isWaitPattern = item.Code === 'TypeMismatch' && call >= 0 &&
-                    result.tokens[call + 1]?.Text === '(' &&
-                    result.tokens[call + 2]?.Kind === 'str' &&
-                    typeof result.tokens[call + 2]?.Value === 'string';
+                const call = result.patternFix?.Call;
+                const isWaitPattern = item.Code === 'TypeMismatch' &&
+                    item.Line === call?.Line && item.Column === call.Column;
                 const text = messages[isWaitPattern ? 'WaitPatternRequired' : item.Code];
                 const fallback = japanese ? 'マクロの構文または型にエラーがあります。' : 'The macro has a syntax or type error.';
-                const diagnostic = new vscode.Diagnostic(new vscode.Range(position, position.translate(0, 1)),
+                const diagnostic = new vscode.Diagnostic(new vscode.Range(position, position.translate(0, item.Length ?? 1)),
                     text ? text[japanese ? 1 : 0] : fallback);
                 diagnostic.code = item.Code;
                 return diagnostic;
@@ -254,11 +287,22 @@ function activate(context) {
             const result = await analyze(document, position);
             if (result.unsupportedVersion) return [];
             const items = [];
+            const call = result.activeCall;
+            const signature = result.functions?.[call?.name]?.at(-1);
+            if (call?.completeOption && signature?.NamedParameters) {
+                return signature.NamedParameters.flatMap((name, slot) => {
+                    if (!slot || call.usedSlots.includes(slot)) return [];
+                    const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
+                    item.detail = signature.Parameters[slot];
+                    item.insertText = call.hasOptionColon ? name : name + ': ';
+                    return [item];
+                });
+            }
             for (const [name, signatures] of Object.entries(result.functions || {})) {
                 const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Function);
                 item.detail = signatures.map(signature =>
                     signature.Result + ' ' + name + '(' + signature.Parameters.map((type, index) =>
-                        parameterLabel(name, type, index)).join(', ') + ')').join('\n');
+                        parameterLabel(name, type, index, signature.NamedParameters)).join(', ') + ')').join('\n');
                 items.push(item);
             }
             for (const entry of result.symbols || []) {
@@ -267,44 +311,37 @@ function activate(context) {
                 item.detail = symbolDetail(entry);
                 items.push(item);
             }
-            const current = document.lineAt(position.line).text.slice(0, position.character);
-            const member = /([A-Za-z_]\w*)\.(?:[A-Za-z_]\w*)?$/.exec(current);
-            if (member && result.constants && result.constants[member[1]] !== undefined) {
-                const constantText = result.constants[member[1]];
-                const response = await request({ path: result.constantPaths[member[1]], source: constantText, constantsFile: true });
-                return (response.symbols || []).map(entry => {
+            const constant = referencedConstant(result);
+            if (constant?.reference.OnMember) {
+                return constant.members.map(entry => {
                     const item = new vscode.CompletionItem(entry.Name, vscode.CompletionItemKind.Constant);
                     item.detail = entry.Type;
                     return item;
                 });
             }
-            const before = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
-            if (/^(?:\s|\/\/[^\r\n]*(?:\r?\n|$)|\/\*[\s\S]*?\*\/)*#?$/.test(before)) {
+            if (Number.isInteger(result.versionInsertion)) {
                 const header = new vscode.CompletionItem('#tttym 1', vscode.CompletionItemKind.Snippet);
                 header.insertText = new vscode.SnippetString('#tttym 1\n$0');
-                if (before.endsWith('#')) header.range = new vscode.Range(position.translate(0, -1), position);
+                header.range = new vscode.Range(document.positionAt(result.versionInsertion), position);
                 items.push(header);
             }
             return items;
         }
-    }, '#', '.'));
+    }, '#', '.', ','));
 
     context.subscriptions.push(vscode.languages.registerDefinitionProvider(macroSelector, {
         async provideDefinition(document, position) {
             const word = document.getWordRangeAtPosition(position);
             if (!word) return undefined;
             const name = document.getText(word);
-            const textBefore = document.lineAt(position.line).text.slice(0, word.start.character);
-            const member = /([A-Za-z_]\w*)\.$/.exec(textBefore);
             const result = await analyze(document, position);
-            if (member && result.constants?.[member[1]] !== undefined) {
-                const source = result.constants[member[1]];
-                const target = result.constantPaths[member[1]];
-                const response = await request({ path: target, source, constantsFile: true });
-                const entry = response.symbols?.find(item => item.Name === name);
-                if (entry) return new vscode.Location(vscode.Uri.file(target),
-                    new vscode.Position(entry.Position.Line - 1, entry.Position.Column - 1));
-                return undefined;
+            const constant = referencedConstant(result);
+            if (constant) {
+                const { reference, dependency, member } = constant;
+                const target = reference.OnMember ? member?.Position : dependency.AliasPosition;
+                if (!target) return undefined;
+                return new vscode.Location(reference.OnMember ? vscode.Uri.file(dependency.FullPath) : document.uri,
+                    new vscode.Position(target.Line - 1, target.Column - 1));
             }
             const entry = result.symbols?.findLast(item => item.Name === name);
             return entry ? new vscode.Location(document.uri,
@@ -318,19 +355,16 @@ function activate(context) {
             if (!range) return undefined;
             const name = document.getText(range);
             const result = await analyze(document, position);
-            const before = document.lineAt(position.line).text.slice(0, range.start.character);
-            const member = /([A-Za-z_]\w*)\.$/.exec(before);
-            if (member && result.constants?.[member[1]] !== undefined) {
-                const response = await request({ path: result.constantPaths[member[1]],
-                    source: result.constants[member[1]], constantsFile: true });
-                const type = response.members?.[name];
-                return type ? new vscode.Hover(type + ' ' + name, range) : undefined;
+            const constant = referencedConstant(result);
+            if (constant?.reference.OnMember) {
+                const member = constant.member;
+                return member ? new vscode.Hover(member.Type + ' ' + member.Name, range) : undefined;
             }
             const signatures = result.functions?.[name];
             if (signatures) {
                 const detail = signatures.map(signature =>
                     signature.Result + ' ' + name + '(' + signature.Parameters.map((type, index) =>
-                        parameterLabel(name, type, index)).join(', ') + ')').join('\n');
+                        parameterLabel(name, type, index, signature.NamedParameters)).join(', ') + ')').join('\n');
                 const description = descriptions[name]
                     ? '\n' + descriptions[name][japanese ? 1 : 0]
                     : (japanese ? '\nTabTty の組み込み関数です。' : '\nTabTty built-in function.');
@@ -347,20 +381,7 @@ function activate(context) {
         async provideSignatureHelp(document, position) {
             const result = await analyze(document, position);
             if (result.unsupportedVersion) return undefined;
-            const tokens = (result.tokens || []).filter(token => token.Offset < document.offsetAt(position));
-            const stack = [];
-            for (let index = 0; index < tokens.length; index++) {
-                const token = tokens[index];
-                if (token.Text === '(') {
-                    const previous = tokens[index - 1];
-                    stack.push({ name: previous?.Kind === 'id' ? previous.Text : undefined, parameter: 0 });
-                } else if (token.Text === ')') {
-                    stack.pop();
-                } else if (token.Text === ',' && stack.length) {
-                    stack[stack.length - 1].parameter++;
-                }
-            }
-            const call = stack[stack.length - 1];
+            const call = result.activeCall;
             if (!call?.name) return undefined;
             let signatures = result.functions && result.functions[call.name];
             if (!signatures) {
@@ -371,39 +392,39 @@ function activate(context) {
             if (!signatures) return undefined;
             const help = new vscode.SignatureHelp();
             help.signatures = signatures.map(signature => {
-                const parameters = signature.Parameters.map((type, index) => parameterLabel(call.name, type, index));
+                const parameters = signature.Parameters.map((type, index) => parameterLabel(call.name, type, index, signature.NamedParameters));
                 const info = new vscode.SignatureInformation(
                     signature.Result + ' ' + call.name + '(' + parameters.join(', ') + ')');
                 info.parameters = parameters.map(parameter => new vscode.ParameterInformation(parameter));
                 return info;
             });
-            const matching = signatures.findIndex(signature => signature.Parameters.length > call.parameter);
+            const parameter = call.namedSlot ?? call.parameter;
+            const matching = signatures.findIndex(signature => signature.Parameters.length > parameter);
             help.activeSignature = Math.max(0, matching);
-            help.activeParameter = call.parameter;
+            help.activeParameter = parameter;
             return help;
         }
     }, '(', ','));
 
     context.subscriptions.push(vscode.languages.registerCodeActionsProvider(macroSelector, {
         async provideCodeActions(document, range, actionContext) {
-            if (!actionContext.diagnostics.some(item => item.code === 'TypeMismatch')) return [];
+            const candidates = actionContext.diagnostics.filter(item => item.code === 'TypeMismatch');
+            if (!candidates.length) return [];
             const result = await analyze(document);
-            const tokens = result.tokens || [];
-            const call = tokens.findIndex(token => token.Text === 'WaitPrompt' &&
-                token.Line - 1 === range.start.line && token.Column - 1 === range.start.character);
-            const literal = tokens[call + 2];
-            if (call < 0 || tokens[call + 1]?.Text !== '(' || literal?.Kind !== 'str' ||
-                typeof literal.Value !== 'string' || literal.EndOffset < 0) return [];
-            const literalRange = new vscode.Range(document.positionAt(literal.Offset),
-                document.positionAt(literal.EndOffset));
-            const text = document.getText(literalRange);
+            const fix = result.patternFix;
+            if (!fix || !candidates.some(item => {
+                const start = (item.range || range).start;
+                return start.line === fix.Call.Line - 1 && start.character === fix.Call.Column - 1;
+            })) return [];
+            const argumentRange = new vscode.Range(document.positionAt(fix.Start), document.positionAt(fix.End));
+            const text = document.getText(argumentRange);
             return ['Literal', 'Regex'].map(name => {
                 const title = name === 'Literal'
                     ? (japanese ? '文字列そのものを待つ' : 'Match literal text')
                     : (japanese ? '正規表現として待つ' : 'Match a regular expression');
                 const action = new vscode.CodeAction(title, vscode.CodeActionKind.QuickFix);
                 action.edit = new vscode.WorkspaceEdit();
-                action.edit.replace(document.uri, literalRange, name + '(' + text + ')');
+                action.edit.replace(document.uri, argumentRange, name + '(' + text + ')');
                 return action;
             });
         }

@@ -51,20 +51,12 @@ internal sealed class MacroProgram : IDisposable
 
             int bytesRemaining = MacroLimits.SourceBytes;
             int membersRemaining = MacroConstantsFile.MaxMembers;
-            string directory = Path.GetDirectoryName(path)!;
             var files = new Dictionary<string, MacroConstantsFile>(StringComparer.Ordinal);
             var bindings = new List<MacroConstantsBinding>(declarations.Count);
             foreach (var declaration in declarations)
             {
                 token.ThrowIfCancellationRequested();
-                string fullPath;
-                try
-                {
-                    MacroLimits.Unicode(declaration.Path);
-                    fullPath = OrdinaryWindowsPath.Resolve(declaration.Path, directory);
-                }
-                catch (Exception error) when (error is MacroError or InvalidDataException or ArgumentException or PathTooLongException)
-                { throw new MacroSourceException("Path", declaration.Position, path); }
+                string fullPath = declaration.Resolve(path);
 
                 if (!files.TryGetValue(fullPath, out var file))
                 {
@@ -106,7 +98,7 @@ internal sealed class MacroProgram : IDisposable
         }
         catch (ResourceLimitException) { throw new MacroSourceException("MemoryLimit", new(1, 1), path); }
         catch (MacroSourceException error) when (error.FilePath is null)
-        { throw new MacroSourceException(error.Code, error.Position, path); }
+        { throw new MacroSourceException(error.Code, error.Position, path, error.Length); }
     }
 
     public static MacroProgram Parse(string path, string source)
@@ -122,29 +114,7 @@ internal sealed class MacroProgram : IDisposable
         IReadOnlyDictionary<string, string> constants, MacroEditorSymbols editor, int? offset)
     {
         using var program = ParseSource(Path.GetFullPath(path), source, NewQuota(), null, out var declarations, editor);
-        var bindings = new List<MacroConstantsBinding>();
-        int remaining = MacroConstantsFile.MaxMembers;
-        foreach (var declaration in declarations)
-        {
-            if (!constants.TryGetValue(declaration.Alias, out var text))
-            {
-                editor.Recover(new MacroSourceException("ConstantsRead", declaration.Position, path));
-                continue;
-            }
-            MacroConstantsFile file;
-            try
-            {
-                file = MacroConstantsFile.Parse(declaration.Path, "", text, remaining, () => { });
-            }
-            catch (MacroSourceException)
-            {
-                editor.Recover(new MacroSourceException("ConstantsInvalid", declaration.Position, path));
-                continue;
-            }
-            remaining -= file.Values.Count;
-            bindings.Add(new(declaration.Alias, file));
-        }
-        program.Constants = bindings.AsReadOnly();
+        program.Constants = editor.BindConstants(program.FullPath, declarations, constants);
         try { new MacroChecker(program, editor).Check(); }
         catch (MacroSourceException error) when (editor.Recover(error)) { }
         return offset.HasValue ? editor.At(program, offset.Value) : [];

@@ -20,10 +20,10 @@ internal readonly record struct RecordingDefaults(string Directory, string Profi
     }
 }
 
-internal readonly record struct RecordingOverrides(string? Directory, string? Template, bool? AllowOverwrite,
+internal readonly record struct RecordingOverrides(string? Directory, string? Template, LogCollisionPolicy? Collision,
     string? BaseDirectory = null);
 
-internal sealed record RecordingSettings(RecordingDestination Destination, RecordingNameTemplate Template, bool AllowOverwrite)
+internal sealed record RecordingSettings(RecordingDestination Destination, RecordingNameTemplate Template, LogCollisionPolicy Collision)
 {
     internal static RecordingSettings Resolve(string path, ConnectionProfile profile, string? macroName,
         RecordingDefaults? defaults = null, RecordingOverrides overrides = default, RecordingDestination? reviewed = null)
@@ -39,7 +39,7 @@ internal sealed record RecordingSettings(RecordingDestination Destination, Recor
             FirstNonblank(overrides.Directory, profile.LogDirectory, fallback.Directory, "Logs"),
             (hasDirectory ? overrides.BaseDirectory : null) ?? Path.GetDirectoryName(Path.GetFullPath(path))!));
         return new(destination, RecordingNameTemplate.Parse(template, macro),
-            overrides.AllowOverwrite ?? (!hasDirectory && !hasTemplate && profile.AllowLogOverwrite));
+            overrides.Collision ?? (hasDirectory || hasTemplate ? LogCollisionPolicy.Error : profile.LogCollision));
     }
 
     private static string FirstNonblank(params string?[] values) => values.First(value => !string.IsNullOrWhiteSpace(value))!;

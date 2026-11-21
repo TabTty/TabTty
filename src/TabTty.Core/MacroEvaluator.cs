@@ -3,6 +3,7 @@ namespace TabTty.Core;
 internal sealed partial class MacroRun
 {
     private List<Dictionary<string, object>> scopes = [];
+    private MacroError? caughtError;
     private sealed record Flow(string Kind, object? Value = null);
     private sealed record EnumRoot(string Name);
     private static readonly object VoidValue = new();
@@ -41,7 +42,7 @@ internal sealed partial class MacroRun
                     {
                         var target = (MacroIndex)assignment.Target;
                         list = (MacroList)await ValueAsync(target.Target).ConfigureAwait(false);
-                        index = Index(await ValueAsync(target.Index).ConfigureAwait(false), list.Items.Count);
+                        index = Index(await ValueAsync(target.Index).ConfigureAwait(false), list.Items.Count, at: target.Position);
                         previous = list.Items[index];
                     }
                     object right = assignment.Value is null ? 1L : await ValueAsync(assignment.Value).ConfigureAwait(false);
@@ -49,7 +50,7 @@ internal sealed partial class MacroRun
                     Own(value);
                     if (list is not null)
                     {
-                        Index((long)index, list.Items.Count);
+                        Index((long)index, list.Items.Count, at: assignment.Target.Position);
                         list.Items[index] = value;
                         list.Revision++;
                     }
@@ -109,9 +110,18 @@ internal sealed partial class MacroRun
                     {
                         await CheckpointAsync(attempt.Position).ConfigureAwait(false);
                         PushScope();
-                        try { Declare(attempt.ErrorName, error); return await ExecuteBlockAsync(attempt.Catch).ConfigureAwait(false); }
-                        finally { PopScope(); }
+                        var enclosingError = caughtError;
+                        caughtError = error;
+                        try
+                        {
+                            error.CaughtMessage ??= host.ErrorMessage(error.Code);
+                            Declare(attempt.ErrorName, error);
+                            return await ExecuteBlockAsync(attempt.Catch).ConfigureAwait(false);
+                        }
+                        finally { caughtError = enclosingError; PopScope(); }
                     }
+                case MacroFlow { Kind: "throw" }:
+                    throw caughtError!;
                 case MacroFlow flow:
                     return new(flow.Kind, flow.Value is null ? null : await ValueAsync(flow.Value).ConfigureAwait(false));
             }
@@ -154,6 +164,13 @@ internal sealed partial class MacroRun
                         result = (long)floating;
                     }
                     break;
+                case MacroAlternatives alternatives:
+                    if (alternatives.Patterns.Length > 16) throw new MacroError(MacroErrorCode.InvalidArgument);
+                    var candidates = new MacroCandidate[alternatives.Patterns.Length];
+                    for (int i = 0; i < candidates.Length; i++)
+                        candidates[i] = new(alternatives.Names[i], (MacroPattern)await ValueAsync(alternatives.Patterns[i]).ConfigureAwait(false));
+                    result = candidates;
+                    break;
                 case MacroListLiteral literal:
                     var values = new List<object>();
                     if (literal.Values.Length > MacroLimits.ListItems) throw new MacroError(MacroErrorCode.PayloadLimit);
@@ -175,8 +192,9 @@ internal sealed partial class MacroRun
                     }
                     result = builder.ToString(); break;
                 case MacroCall call:
-                    object[] args = new object[call.Arguments.Length];
-                    for (int i = 0; i < args.Length; i++) args[i] = await ValueAsync(call.Arguments[i]).ConfigureAwait(false);
+                    object[] args = new object[call.ParameterSlots is null ? call.Arguments.Length : MacroApi.NamedParameters[call.Name].Length];
+                    for (int i = 0; i < call.Arguments.Length; i++)
+                        args[call.ParameterSlots?[i].Index ?? i] = await ValueAsync(call.Arguments[i]).ConfigureAwait(false);
                     // Arguments may have suspended or called helpers. The call owns its own source location.
                     await CheckpointAsync(call.Position).ConfigureAwait(false);
                     if (Program.Functions.TryGetValue(call.Name, out var function))
@@ -211,13 +229,13 @@ internal sealed partial class MacroRun
             "BaseName" => BaseName, "RunId" => RunId, "Args" => arguments,
             _ => throw new InvalidOperationException(),
         },
-        MacroMatch m => name switch { "AlternativeIndex" => m.AlternativeIndex, "Text" => m.Text, "Index" => m.Index,
+        MacroMatch m => name switch { "AlternativeName" => m.AlternativeName, "Text" => m.Text, "Index" => m.Index,
             "Length" => m.Length, "Groups" => new MacroList(new("CaptureGroup"), m.Groups), _ => throw new InvalidOperationException() },
         MacroCapture g => name switch { "Number" => g.Number, "Name" => g.Name, "Success" => g.Success, "Value" => g.Value,
             "Index" => g.Index, "Length" => g.Length, "Captures" => new MacroList(MacroType.String, g.Captures), _ => throw new InvalidOperationException() },
         MacroDialogResult d => name switch { "Button" => d.Button, "HasText" => d.HasText,
             "Text" => d.HasText ? d.Text : throw new MacroError(MacroErrorCode.NoTextValue), _ => throw new InvalidOperationException() },
-        MacroError e => name switch { "Code" => e.Code, "Message" => host.ErrorMessage(e.Code),
+        MacroError e => name switch { "Code" => e.Code, "Message" => e.CaughtMessage!,
             "Line" => (long)e.Position.Line, "Column" => (long)e.Position.Column, _ => throw new InvalidOperationException() },
         _ => throw new InvalidOperationException(),
     };
@@ -231,10 +249,11 @@ internal sealed partial class MacroRun
         throw new InvalidOperationException();
     }
     private static object ConvertValue(object value, MacroType type) => type == MacroType.Double && value is long number ? (double)number : value;
-    private static int Index(object value, int length, bool insert = false)
+    private static int Index(object value, int length, bool insert = false, MacroPosition at = default)
     {
         long index = (long)value;
-        if (index < 0 || index >= (long)length + (insert ? 1 : 0)) throw new MacroError(MacroErrorCode.IndexOutOfRange);
+        if (index < 0 || index >= (long)length + (insert ? 1 : 0))
+            throw new MacroError(MacroErrorCode.IndexOutOfRange) { Position = at };
         return (int)index;
     }
     private static double Finite(double value) => double.IsFinite(value) ? value : throw new MacroError(MacroErrorCode.NumericOverflow);

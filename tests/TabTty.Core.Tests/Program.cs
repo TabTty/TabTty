@@ -17,6 +17,7 @@ try
         Console.WriteLine("PASS RecordingTemplatesFormatAndReplaceFiles");
         await RecordingStartErrorsDisconnect();
         Console.WriteLine("PASS RecordingStartErrorsDisconnect");
+        await RecordingCollisionContracts.RunAsync();
         await MacroContracts.RecordingStartAsync();
         Console.WriteLine("PASS MacroRecordingStartsBeforeTransport");
         return 0;
@@ -138,6 +139,7 @@ try
     Console.WriteLine("PASS RecordingTemplatesFormatAndReplaceFiles");
     await RecordingStartErrorsDisconnect();
     Console.WriteLine("PASS RecordingStartErrorsDisconnect");
+    await RecordingCollisionContracts.RunAsync();
     await ProfileEditsPreserveIdentityAndRejectExternalChanges();
     Console.WriteLine("PASS ProfileEditsPreserveIdentityAndRejectExternalChanges");
     await SavedSshProfileKeepsTheCredentialReference();
@@ -636,7 +638,9 @@ static async Task SshVaultFallbackUsesAllowedMethodsAsync(int port)
                 throw new InvalidOperationException("SSH did not preflight the profile's exact password reference.");
             return Task.FromResult(new SshCredentialAvailability(new Dictionary<string, string>()));
         });
-        await using var session = await TerminalSession.ConnectAsync(profilePath, token, shared);
+        // The early-data fixture also checks the initial PTY size for the shared interop account.
+        await using var session = await TerminalSession.ConnectAsync(profilePath, token, shared,
+            viewport: _ => Task.FromResult((120, 40)));
         session.Disconnect();
     }
 
@@ -1321,7 +1325,7 @@ static async Task RecordingTemplatesFormatAndReplaceFiles()
     await original.FinishAsync();
     try { await Open(text, "Server").FinishAsync(); throw new InvalidOperationException("A closed log was overwritten by default."); }
     catch (IOException) { }
-    var active = Open(text, "Server", overwrite: true);
+    var active = Open(text, "Server", LogCollisionPolicy.Overwrite);
     try
     {
         active.Enqueue(RecordingFormat.Text, "new"u8.ToArray());
@@ -1329,7 +1333,7 @@ static async Task RecordingTemplatesFormatAndReplaceFiles()
         {
             try
             {
-                var conflicting = Open(both, "Server", overwrite: true);
+                var conflicting = Open(both, "Server", LogCollisionPolicy.Overwrite);
                 await conflicting.FinishAsync();
                 throw new InvalidOperationException("A second writer opened an active recording.");
             }
@@ -1339,7 +1343,7 @@ static async Task RecordingTemplatesFormatAndReplaceFiles()
     finally { await active.FinishAsync(); }
     ExpectBytes(await File.ReadAllBytesAsync(Path.Combine(logs, "Server.log")), "new"u8.ToArray());
     ExpectBytes(await File.ReadAllBytesAsync(Path.Combine(logs, "Server.raw.tttylog")), "raw content"u8.ToArray());
-    await Open(raw, "Server", overwrite: true).FinishAsync();
+    await Open(raw, "Server", LogCollisionPolicy.Overwrite).FinishAsync();
     ExpectBytes(await File.ReadAllBytesAsync(Path.Combine(logs, "Server.raw.tttylog")), []);
 
     var unique = Open(both, "<uuid>");
@@ -1356,9 +1360,10 @@ static async Task RecordingTemplatesFormatAndReplaceFiles()
         catch (InvalidDataException) { }
     }
 
-    SessionRecording Open(ConnectionProfile profile, string template, bool overwrite = false, string? macro = null) =>
+    SessionRecording Open(ConnectionProfile profile, string template, LogCollisionPolicy collision = LogCollisionPolicy.Error,
+        string? macro = null) =>
         SessionRecording.Open(path, profile, macro, timeProvider: clock,
-            settings: RecordingSettings.Resolve(path, profile, macro, overrides: new(null, template, overwrite)));
+            settings: RecordingSettings.Resolve(path, profile, macro, overrides: new(null, template, collision)));
 }
 
 static async Task RecordingStartErrorsDisconnect()
@@ -1367,7 +1372,7 @@ static async Task RecordingStartErrorsDisconnect()
     using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
     string path = Path.Combine(folder.Path, "start.ttty");
     var profile = ConnectionProfile.CreateTelnet("Start", "localhost", recordRaw: true);
-    var fixedName = RecordingSettings.Resolve(path, profile, null, overrides: new(null, "fixed", false));
+    var fixedName = RecordingSettings.Resolve(path, profile, null, overrides: new(null, "fixed", LogCollisionPolicy.Error));
     var recording = SessionRecording.Open(path, profile, settings: fixedName);
     await using (var session = new TerminalSession(new RecordingFailureWire(), profile, recording, 100))
     {

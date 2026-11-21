@@ -115,7 +115,7 @@ internal sealed partial class MacroRun : IDisposable
                 else
                 {
                     reason = error.Code.ToString();
-                    displayDetail = error.DisplayDetail;
+                    displayDetail = error.DisplayDetail ?? error.CaughtMessage;
                     position = error.Position;
                     state = MacroRunState.Failed;
                 }
@@ -352,7 +352,7 @@ internal sealed partial class MacroRun : IDisposable
         timerStop.Cancel();
     }
 
-    private async Task<MacroMatch> WaitAsync(MacroPattern[] candidates, bool prompt, long? timeout)
+    private async Task<MacroMatch> WaitAsync(MacroCandidate[] candidates, bool prompt, long? timeout)
     {
         RequireSession();
         if (timeout < 0 || candidates.Length is < 1 or > 16) throw new MacroError(MacroErrorCode.InvalidArgument);
@@ -421,6 +421,7 @@ internal sealed partial class MacroRun : IDisposable
         {
             string text => 32 + text.Length * 2L,
             MacroList list => 32 + list.Items.Capacity * 16L,
+            MacroCandidate[] candidates => 32 + candidates.Length * 16L,
             MacroPattern pattern => 64 + pattern.Text.Length * 4L,
             MacroMatch match => 64 + match.Text.Length * 2L + match.Groups.Sum(g => 64L + g.Name.Length * 2L + g.Value.Length * 2L + g.Captures.Sum(c => 32L + c.Length * 2L)),
             MacroCapture group => 64 + group.Name.Length * 2L + group.Value.Length * 2L + group.Captures.Sum(c => 32L + c.Length * 2L),

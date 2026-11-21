@@ -34,7 +34,7 @@ internal static partial class Program
         const string source = """
             #tttym 1
             SetBaseDirectory("../profiles");
-            Connect("reviewed.ttty");
+            Connect("reviewed.ttty", logFilenameTemplate: "daily", logCollision: "append");
             WaitLine(Literal("reviewed-payload"), 5000);
             """;
         await File.WriteAllTextAsync(first, source, token);
@@ -49,6 +49,10 @@ internal static partial class Program
             CheckMacroLaunch(tab.Macro.Status.Result == "UserCancelled" && !listener.Pending() && !Directory.Exists(logs),
                 "Cancelling profile review started a connection or recording, or lost the cancellation result.");
 
+            Directory.CreateDirectory(logs);
+            string dailyLog = Path.Combine(logs, "daily.raw.tttylog");
+            byte[] existing = [0xff, 0x00, 0x41];
+            await File.WriteAllBytesAsync(dailyLog, existing, token);
             tab = await Launch(first);
             review = await Review(first);
             await File.WriteAllTextAsync(path, changed.ToEditorJson(), token);
@@ -67,6 +71,10 @@ internal static partial class Program
             await FinishConnection(tab);
             tab = await Launch(second, approveLaunch: true);
             await FinishConnection(tab);
+            byte[] payload = "reviewed-payload\r\n"u8.ToArray();
+            byte[] expected = [.. existing, .. payload, .. payload, .. payload];
+            CheckMacroLaunch((await File.ReadAllBytesAsync(dailyLog, token)).SequenceEqual(expected),
+                "The append policy failed to retain all three macro connections in the reviewed Raw log.");
             CheckMacroLaunch(app.Profiles.ReadRegistrations().Count == 0,
                 "A macro connection registered the reviewed profile.");
 

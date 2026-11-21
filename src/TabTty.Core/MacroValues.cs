@@ -14,11 +14,12 @@ internal enum MacroErrorCode
 
 internal readonly record struct MacroPosition(int Line, int Column);
 
-internal sealed class MacroSourceException(string code, MacroPosition position, string? filePath = null) : Exception(code)
+internal sealed class MacroSourceException(string code, MacroPosition position, string? filePath = null, int length = 1) : Exception(code)
 {
     public string Code { get; } = code;
     public MacroPosition Position { get; } = position;
     public string? FilePath { get; } = filePath;
+    public int Length { get; } = length;
 }
 
 internal sealed class MacroError(MacroErrorCode code, string? displayDetail = null) : Exception(code.ToString())
@@ -26,6 +27,7 @@ internal sealed class MacroError(MacroErrorCode code, string? displayDetail = nu
     public MacroErrorCode Code { get; } = code;
     public MacroPosition Position { get; set; }
     internal string? DisplayDetail { get; } = displayDetail;
+    internal string? CaughtMessage { get; set; }
 }
 
 internal sealed class MacroTermination(string reason) : Exception(reason)
@@ -40,7 +42,8 @@ internal sealed record MacroDialogRequest(string Title, string Message, MacroDia
 internal sealed record MacroDialogResult(MacroDialogButton Button, bool HasText, string Text);
 internal sealed record MacroCapture(long Number, string Name, bool Success, string Value, long Index,
     long Length, string[] Captures);
-internal sealed record MacroMatch(long AlternativeIndex, string Text, long Index, long Length, MacroCapture[] Groups);
+internal readonly record struct MacroCandidate(string Name, MacroPattern Pattern);
+internal sealed record MacroMatch(string AlternativeName, string Text, long Index, long Length, MacroCapture[] Groups);
 
 internal sealed record MacroType(string Name, MacroType? Element = null)
 {
@@ -126,7 +129,13 @@ internal sealed record MacroName(string Name, MacroPosition At) : MacroExpressio
 internal sealed record MacroUnary(string Operator, MacroExpression Value, MacroPosition At) : MacroExpression(At);
 internal sealed record MacroBinary(string Operator, MacroExpression Left, MacroExpression Right, MacroPosition At) : MacroExpression(At);
 internal sealed record MacroCast(MacroType Target, MacroExpression Value, MacroPosition At) : MacroExpression(At);
-internal sealed record MacroCall(string Name, MacroExpression[] Arguments, MacroPosition At) : MacroExpression(At);
+internal readonly record struct MacroArgumentSlot(int Index, MacroPosition ValueStart);
+internal sealed record MacroCall(string Name, MacroExpression[] Arguments, MacroPosition At) : MacroExpression(At)
+{
+    // Named options may omit slots or supply them in a different order from the signature.
+    public MacroArgumentSlot[]? ParameterSlots { get; init; }
+}
+internal sealed record MacroAlternatives(string[] Names, MacroExpression[] Patterns, MacroPosition At) : MacroExpression(At);
 internal sealed record MacroMember(MacroExpression Target, string Name, MacroPosition At) : MacroExpression(At)
 {
     public object? ConstantValue { get; set; }

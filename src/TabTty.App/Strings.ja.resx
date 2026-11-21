@@ -35,8 +35,10 @@
   <data name="LogFilenameTemplate" xml:space="preserve"><value>ログファイル名テンプレート</value></data>
   <data name="LogFilenameTemplateDescription" xml:space="preserve"><value>ベース名を入力します。拡張子は記録形式に応じて付きます。入力例は &lt;cpname&gt;_&lt;datetime:yyyy-MM-dd&gt;_&lt;serial:0,4&gt; です。空欄の場合は既定値を使います。</value></data>
   <data name="MacroLogFilenameTemplateDescription" xml:space="preserve"><value>ベース名を入力します。入力例は &lt;macroname&gt;-&lt;cpname&gt;_&lt;uuid&gt; です。空欄の場合は既定値を使います。</value></data>
-  <data name="AllowLogOverwrite" xml:space="preserve"><value>既存のログの上書きを許可する</value></data>
-  <data name="AllowLogOverwriteDescription" xml:space="preserve"><value>オフにすると、同名のファイルがある場合はログを開始できず、接続は失敗します。</value></data>
+  <data name="LogCollision" xml:space="preserve"><value>同名のログがある場合</value></data>
+  <data name="LogCollisionError" xml:space="preserve"><value>エラー</value></data>
+  <data name="LogCollisionOverwrite" xml:space="preserve"><value>上書き</value></data>
+  <data name="LogCollisionAppend" xml:space="preserve"><value>追記</value></data>
   <data name="LogDestinationReview" xml:space="preserve"><value>ログ保存先の確認</value></data>
   <data name="LogDestinationReviewNotice" xml:space="preserve"><value>ドライブの割り当て先が変わりました。新しい保存先を確認してから記録を開始してください。</value></data>
   <data name="ApproveLogDestination" xml:space="preserve"><value>このログ保存先を使う</value></data>
@@ -514,6 +516,8 @@
   <data name="MacroErrorConstantsDeclaration" xml:space="preserve"><value>定数ファイルの宣言が正しくありません。</value></data>
   <data name="MacroErrorConstantsAlias" xml:space="preserve"><value>定数ファイルの別名が別の名前と重複しています。</value></data>
   <data name="MacroErrorConstantsLimit" xml:space="preserve"><value>宣言した定数が上限を超えています。</value></data>
+  <data name="MacroErrorNumericLiteral" xml:space="preserve"><value>数値リテラルの形式または範囲が正しくありません。</value></data>
+  <data name="MacroErrorStringEscape" xml:space="preserve"><value>エスケープが不正です。\x の後には16進数字を2桁指定してください。</value></data>
   <data name="MacroErrorConstantsDefinition" xml:space="preserve"><value>var または単一値の型で定数を宣言し、初期値とセミコロンを指定してください。</value></data>
   <data name="MacroErrorConstantsLiteral" xml:space="preserve"><value>定数の初期値には、文字列、真偽値、または数値のリテラルを指定してください。</value></data>
   <data name="MacroErrorConstantsName" xml:space="preserve"><value>定数名が重複しているか、使用できない名前です。</value></data>
@@ -554,6 +558,7 @@
   <data name="MacroReadFailed" xml:space="preserve"><value>マクロファイルを読み込めませんでした。</value></data>
   <data name="MacroLocation" xml:space="preserve"><value>{0} 行 {1} 列: {2}</value></data>
   <data name="MacroErrorCode" xml:space="preserve"><value>マクロエラー ({0})</value></data>
+  <data name="MacroErrorRethrowOutsideCatch" xml:space="preserve"><value>再送出は同じ関数の catch 内でのみ使用できます。</value></data>
   <data name="MacroStateRunning" xml:space="preserve"><value>マクロ実行中</value></data>
   <data name="MacroStateWaiting" xml:space="preserve"><value>マクロ待機中</value></data>
   <data name="MacroStatePauseRequested" xml:space="preserve"><value>マクロの一時停止を要求済み</value></data>
@@ -579,6 +584,11 @@
   <data name="MacroErrorVaultStale" xml:space="preserve"><value>vault が変更されました。再度使用するには TabTty を再起動してください。</value></data>
   <data name="MacroErrorExpectedToken" xml:space="preserve"><value>構文またはバージョンヘッダーが正しくありません。</value></data>
   <data name="MacroErrorTypeMismatch" xml:space="preserve"><value>値の型が操作に適合しません。</value></data>
+  <data name="MacroErrorNamedOptionExpected" xml:space="preserve"><value>名前付きオプションを指定してください。</value></data>
+  <data name="MacroErrorUnknownOption" xml:space="preserve"><value>この呼び出しでは使用できないオプションです。</value></data>
+  <data name="MacroErrorDuplicateOption" xml:space="preserve"><value>このオプションは既に指定されています。</value></data>
+  <data name="MacroErrorAlternativeNameExpected" xml:space="preserve"><value>各待機パターンに予約語以外の名前とコロンを指定してください。</value></data>
+  <data name="MacroErrorDuplicateAlternative" xml:space="preserve"><value>この名前の待機候補は既に指定されています。</value></data>
   <data name="MacroErrorSourceEncoding" xml:space="preserve"><value>ファイルに文字コードとして無効なデータがあります。</value></data>
   <data name="MacroErrorMissingProfilePassword" xml:space="preserve"><value>プロファイルにパスワード参照が設定されていません。</value></data>
   <data name="MacroErrorWaitTimeout" xml:space="preserve"><value>端末の応答待機がタイムアウトしました。</value></data>

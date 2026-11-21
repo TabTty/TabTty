@@ -25,10 +25,11 @@ public sealed class ConnectionProfile
     private JsonElement Terminal => document.GetProperty("terminal");
     private JsonElement Logging => document.GetProperty("logging");
 
-    private ConnectionProfile(JsonElement document, string? groupName)
+    private ConnectionProfile(JsonElement document, string? groupName, LogCollisionPolicy logCollision)
     {
         this.document = document;
         GroupName = groupName;
+        LogCollision = logCollision;
     }
 
     public string DisplayName => document.GetProperty("displayName").GetString()!;
@@ -72,7 +73,7 @@ public sealed class ConnectionProfile
     public bool RecordsOutput => RecordRaw || RecordText || RecordTerminal;
     public string LogDirectory => Logging.TryGetProperty("directory", out var value) ? value.GetString()! : "";
     public string LogFilenameTemplate => Logging.TryGetProperty("filenameTemplate", out var value) ? value.GetString()! : "";
-    public bool AllowLogOverwrite => Logging.TryGetProperty("allowOverwrite", out var value) && value.GetBoolean();
+    public LogCollisionPolicy LogCollision { get; }
     public Guid? HighlightSetId => Terminal.GetProperty("highlightSetId").Deserialize<Guid?>();
     public string? FontFamily => Terminal.GetProperty("font").GetProperty("family").Deserialize<string?>();
     public double? FontSizePoints => Terminal.GetProperty("font").GetProperty("sizePoints").Deserialize<double?>();
@@ -162,7 +163,8 @@ public sealed class ConnectionProfile
                 retainedRows = new { mode = "inherit", value = (int?)null },
                 highlightSetId,
             },
-            logging = new { raw = recordRaw, text = recordText, terminal = recordTerminal, directory = "" },
+            logging = new { raw = recordRaw, text = recordText, terminal = recordTerminal, directory = "",
+                collision = LogCollisionPolicies.Format(LogCollisionPolicy.Error) },
         }));
 
     public static async Task<ConnectionProfile> LoadAsync(string path, CancellationToken cancellationToken = default)
@@ -450,8 +452,11 @@ public sealed class ConnectionProfile
         Boolean(logging, "terminal");
         OptionalLogText("directory", 32760);
         OptionalLogText("filenameTemplate", RecordingNameTemplate.MaximumLength);
-        if (logging.TryGetProperty("allowOverwrite", out _)) Boolean(logging, "allowOverwrite");
-        return new ConnectionProfile(root, groupName);
+        LogCollisionPolicy policy = LogCollisionPolicy.Error;
+        if (logging.TryGetProperty("collision", out var collision) &&
+            (collision.ValueKind != JsonValueKind.String || !LogCollisionPolicies.TryParse(collision.GetString(), out policy)))
+            throw new InvalidDataException("Invalid profile field: collision.");
+        return new ConnectionProfile(root, groupName, policy);
 
         void OptionalLogText(string key, int maximum)
         {

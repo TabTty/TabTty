@@ -81,6 +81,21 @@ extension.activate(context);
     assert(completion.some(item => item.label === 'before'));
     const signature = await providers.signature.provideSignatureHelp(doc, position);
     assert(signature.signatures[0].label.includes('WaitPattern pattern'));
+    doc.text = '#tttym 1\nWriteLine("command", mark';
+    const writeOptions = await providers.completion.provideCompletionItems(doc, doc.positionAt(doc.text.length));
+    assert.deepStrictEqual(writeOptions.map(item => [item.label, item.detail, item.insertText]),
+        [['markReceiveBoundary', 'bool', 'markReceiveBoundary: ']]);
+    doc.text = '#tttym 1\nConnect("profile", logCollision: "error", /* path */ ';
+    const connectOptions = await providers.completion.provideCompletionItems(doc, doc.positionAt(doc.text.length));
+    assert.deepStrictEqual(connectOptions.map(item => [item.label, item.detail]),
+        [['logDirectory', 'string'], ['logFilenameTemplate', 'string']]);
+    doc.text = '#tttym 1\nConnect("profile", logCollision: "append", logDirectory: "logs");';
+    const permissionPosition = doc.positionAt(doc.text.indexOf('Collision'));
+    const replacementOptions = await providers.completion.provideCompletionItems(doc, permissionPosition);
+    assert.deepStrictEqual(replacementOptions.map(item => [item.insertText, item.detail]),
+        [['logFilenameTemplate', 'string'], ['logCollision', 'string']]);
+    const namedSignature = await providers.signature.provideSignatureHelp(doc, doc.positionAt(doc.text.indexOf('append') + 2));
+    assert.strictEqual(namedSignature.activeParameter, 3);
     doc.text = '#tttym 1\nlong before = 1;\nSleep(before);';
     const definition = await providers.definition.provideDefinition(doc, new Position(2, 8));
     assert.strictEqual(definition.position.line, 1);
@@ -94,6 +109,19 @@ extension.activate(context);
     const target = await providers.definition.provideDefinition(doc, new Position(2, 18));
     assert(target.uri.fsPath.toLowerCase().endsWith('shared.tttyc'));
     assert.strictEqual(target.position.line, 0);
+    async function getDiagnostics() {
+        doc.version++;
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error('Timed out waiting for diagnostics')), 10000);
+            onDiagnostics = items => { onDiagnostics = undefined; clearTimeout(timer); resolve(items); };
+            onDocumentChange({ document: doc });
+        });
+    }
+    await require('./constants')(providers, vscode.workspace, doc, constants, getDiagnostics);
+    await require('./constants-casing')(providers, vscode.workspace, doc);
+    doc.text = '#tttym 1\nvar x = Macro\n    .Args\n    .Wrong;';
+    const memberError = (await getDiagnostics()).find(item => item.code === 'UnknownMember');
+    assert.deepStrictEqual(memberError.range, new Range(new Position(3, 5), new Position(3, 10)));
     doc.text = '#tttym 1\nWaitPrompt("Ready>");';
     const actions = await providers.action.provideCodeActions(doc,
         new Range(new Position(1, 0), new Position(1, 1)),
@@ -114,6 +142,10 @@ extension.activate(context);
     doc.text = '#tttym 2\nWaitPrompt(';
     const unsupported = await providers.completion.provideCompletionItems(doc, new Position(1, 11));
     assert.strictEqual(unsupported.length, 0);
+    doc.text = '#tttym 2\nWriteLine(' + '$"{'.repeat(129);
+    const [versionDiagnostic] = await getDiagnostics();
+    assert.strictEqual(versionDiagnostic.code, 'VersionLine');
+    assert.deepStrictEqual(versionDiagnostic.range.start, new Position(0, 7));
     doc.text = '#tttym 1\nHelper();\nvoid Helper() {\n}';
     const helperTarget = await providers.definition.provideDefinition(doc, new Position(1, 3));
     assert.strictEqual(helperTarget.position.line, 2);
@@ -148,13 +180,7 @@ extension.activate(context);
     for (const [declaration, expectedType] of [['long retries = ;', 'long'], ['var retries = ;', '?'],
         ['var retries = 1D + ;', '?']]) {
         doc.text = '#tttym 1\n' + declaration + '\nSleep(retries);';
-        doc.version++;
-        const diagnostics = await new Promise((resolve, reject) => {
-            const timer = setTimeout(() => reject(new Error('Timed out waiting for editor diagnostics')), 5000);
-            onDiagnostics = items => { clearTimeout(timer); resolve(items); };
-            onDocumentChange({ document: doc });
-        });
-        onDiagnostics = undefined;
+        const diagnostics = await getDiagnostics();
         assert(diagnostics.some(item => item.code === 'ExpressionExpected' &&
             item.range.start.line === 1 && item.range.start.character === declaration.indexOf(';')));
         await checkVariable('retries', positionOf('Sleep(retries', 8), expectedType, positionOf('retries ='));
@@ -164,6 +190,70 @@ extension.activate(context);
     doc.text = '#tttym 1\nfor (long i = 1; i < 2; i++) { Sleep(i); }\nWaitPrompt(i';
     await checkVariable('i', positionOf('Sleep(i', 7), 'long', positionOf('i ='));
     await checkVariable('i', positionOf('WaitPrompt(i', 12), undefined, undefined);
+    for (const [source, name, parameter, parameterName] of [
+        ['WaitAnyPrompt([a: Literal("A"), b: Literal("B|")], 1000);', 'Literal', 0, 'text'],
+        ['WaitAnyPrompt([a: Literal("A"), |b: Literal("B")], 1000);', 'WaitAnyPrompt', 0, 'patterns'],
+        ['WaitAnyPrompt([a: Literal("A")],|', 'WaitAnyPrompt', 1, 'timeoutMs'],
+        ['Sleep((|1 + 2));', 'Sleep', 0, 'milliseconds'],
+        ['WriteLine($"{{n}},| {FormatNumber(n, "D")}");', 'WriteLine', 0, 'text'],
+        ['WriteLine($"{{n}}, {FormatNumber(n,|', 'FormatNumber', 1, 'format'],
+        ['WriteLine($"{{n}}, {FormatNumber(n, |"D")}");', 'FormatNumber', 1, 'format'],
+        ['WriteLine($"{FormatNumber(n /* } , ( */, |"D")}");', 'FormatNumber', 1, 'format'],
+        ['WriteLine($"{FormatNumber(n, "},(|")}");', 'FormatNumber', 1, 'format'],
+        ['WriteLine($"{FormatNumber(n, "D")|}");', 'WriteLine', 0, 'text'],
+        ['WriteLine(' + '$"{'.repeat(48) + 'FormatNumber(n,|', 'FormatNumber', 1, 'format']
+    ]) {
+        const prefix = '#tttym 1\nlong n = 42;\n';
+        doc.text = prefix + source.replace('|', '');
+        const help = await providers.signature.provideSignatureHelp(doc, doc.positionAt(prefix.length + source.indexOf('|')));
+        const signature = help?.signatures[help.activeSignature];
+        assert(signature?.label.includes(' ' + name + '('), source + ': ' + signature?.label);
+        assert.strictEqual(help.activeParameter, parameter, source);
+        assert(signature.parameters[parameter].label.endsWith(' ' + parameterName), source);
+    }
+    for (const expression of ['"ready" /*keep*/ + ">"', '( "ready" + ">" )', 'Trim(" ready> ")']) {
+        const line = 'WaitPrompt( ' + expression + ' , 1000);';
+        doc.text = '#tttym 1\n' + line;
+        const originalText = doc.text;
+        const callRange = new Range(new Position(1, 0), new Position(1, 1));
+        const args = { diagnostics: await getDiagnostics() };
+        assert(args.diagnostics.some(item => item.message.includes('WaitPattern')));
+        const actions = await providers.action.provideCodeActions(doc, callRange, args);
+        assert.strictEqual(actions.length, 2);
+        for (const [index, kind] of ['Literal', 'Regex'].entries()) {
+            doc.text = originalText;
+            const { range, text } = actions[index].edit.replacement;
+            const result = doc.text.slice(0, doc.offsetAt(range.start)) + text + doc.text.slice(doc.offsetAt(range.end));
+            assert.strictEqual(result, doc.text.replace(expression, kind + '(' + expression + ')'));
+            doc.text = result;
+            assert.deepStrictEqual(await getDiagnostics(), []);
+        }
+    }
+    for (const line of ['WaitPrompt("ready" + , 1000);', 'WaitPrompt(42);', 'WaitPrompt(Literal("ok"), "1000");']) {
+        doc.text = '#tttym 1\n' + line;
+        const actions = await providers.action.provideCodeActions(doc, new Range(new Position(1, 0), new Position(1, 1)),
+            { diagnostics: [{ code: 'TypeMismatch' }] });
+        assert.strictEqual(actions.length, 0, line);
+    }
+    for (const [marked, replaced] of [
+        ['|', ''], ['  |   Sleep(0);', ''], ['|Sleep(0);', ''], ['/*memo*/ #|Sleep(0);', '#'],
+        ['// memo|', null], ['// memo|\n', null], ['/* me|mo */', null], ['/* memo|', null],
+        ['// memo\r|', ''], ['// memo\n|', ''], ['// memo\r\n|', ''], ['/* memo */|', ''],
+        ['|\n#tttym 1', null], ['|\n#tttym 2', null], ['|Sleep(0);\n#tttym 1', null],
+        ['|?\n#tttym 2', null], ['/* #tttym 2 */|Sleep(0);', '']
+    ]) {
+        const offset = marked.indexOf('|');
+        doc.text = marked.replace('|', '');
+        const items = await providers.completion.provideCompletionItems(doc, doc.positionAt(offset));
+        const header = items.find(item => item.label === '#tttym 1');
+        if (replaced === null) assert(!header, marked);
+        else {
+            assert(header, marked);
+            assert.strictEqual(doc.getText(header.range), replaced, marked);
+            assert.strictEqual(doc.offsetAt(header.range.end), offset, marked);
+            assert.strictEqual(header.insertText.value, '#tttym 1\n$0');
+        }
+    }
     console.log('Macro completion, signature help, and definition passed.');
 })().then(() => {
     for (const subscription of context.subscriptions) subscription.dispose();

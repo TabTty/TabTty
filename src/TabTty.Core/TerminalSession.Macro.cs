@@ -8,8 +8,8 @@ public sealed partial class TerminalSession
 {
     internal bool IsMacroOwned => macro?.IsActive == true;
 
-    internal Task<bool> SendMacroTextAsync(string text, bool appendEnter, MacroRun owner, CancellationToken token) =>
-        SendMacroAsync(text.AsMemory(), appendEnter, false, owner, token);
+    internal Task<bool> SendMacroTextAsync(string text, bool appendEnter, bool markReceiveBoundary, MacroRun owner, CancellationToken token) =>
+        SendMacroAsync(text.AsMemory(), appendEnter, false, markReceiveBoundary, owner, token);
 
     internal async Task<bool> SendMacroPasswordAsync(VaultSecret password, bool appendEnter, MacroRun owner, CancellationToken token)
     {
@@ -20,11 +20,11 @@ public sealed partial class TerminalSession
             StrictUtf8.GetChars(password.Bytes.Span, characters);
         }
         catch (DecoderFallbackException) { throw new MacroError(MacroErrorCode.Encoding); }
-        try { return await SendMacroAsync(characters, appendEnter, true, owner, token).ConfigureAwait(false); }
+        try { return await SendMacroAsync(characters, appendEnter, true, false, owner, token).ConfigureAwait(false); }
         finally { Array.Clear(characters); }
     }
 
-    private async Task<bool> SendMacroAsync(ReadOnlyMemory<char> text, bool appendEnter, bool secret,
+    private async Task<bool> SendMacroAsync(ReadOnlyMemory<char> text, bool appendEnter, bool secret, bool markReceiveBoundary,
         MacroRun owner, CancellationToken token)
     {
         if (!ReferenceEquals(macro, owner)) throw new MacroError(MacroErrorCode.OperationUnavailable);
@@ -33,6 +33,8 @@ public sealed partial class TerminalSession
         char[] characters = new char[text.Length + ending.Length];
         text.Span.CopyTo(characters); ending.AsSpan().CopyTo(characters.AsSpan(text.Length));
         bool mayHaveSent = false;
+        MacroReceiveCutoff? receiveBoundary = null;
+        Action? captureBoundary = markReceiveBoundary ? () => receiveBoundary = owner.CaptureReceiveBoundary() : null;
         try
         {
             using var unit = inputUnits.Reserve(1);
@@ -65,8 +67,15 @@ public sealed partial class TerminalSession
                     try
                     {
                         wireBytes = EncodeInput(chunk);
-                        mayHaveSent = true;
-                        await transport.WriteAsync(wireBytes, deadline.Token).ConfigureAwait(false);
+                        var outcome = await transport.SubmitPreparedAsync(wireBytes, deadline.Token,
+                            onFirstSubmission: offset == 0 ? captureBoundary : null).ConfigureAwait(false);
+                        mayHaveSent |= outcome.Status != TransportSubmission.NotIssued;
+                        if (outcome.Status != TransportSubmission.Submitted)
+                        {
+                            if (mayHaveSent) throw new MacroTermination("UncertainDelivery");
+                            token.ThrowIfCancellationRequested();
+                            throw new MacroError(MacroErrorCode.OperationUnavailable);
+                        }
                         if (!secret && LocalEcho)
                         {
                             byte[] echo = new byte[StrictUtf8.GetByteCount(characters.AsSpan(offset, count))];
@@ -83,6 +92,7 @@ public sealed partial class TerminalSession
                 finally { state.Release(); }
                 offset += count;
             }
+            if (receiveBoundary is { } boundary) owner.CommitReceiveBoundary(boundary);
             return true;
         }
         catch (EncoderFallbackException) when (!mayHaveSent) { throw new MacroError(MacroErrorCode.Encoding); }

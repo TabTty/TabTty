@@ -3,16 +3,81 @@ namespace TabTty.Core;
 internal sealed record MacroEditorParameter(string Name, string Type);
 internal sealed record MacroEditorSymbol(string Name, string Type, MacroPosition Position,
     MacroEditorParameter[]? Parameters = null);
+internal sealed record MacroEditorCall(string Name, int Parameter, int[] UsedSlots, int? NamedSlot,
+    bool CompleteOption, bool HasOptionColon);
+internal sealed record MacroPatternFix(MacroPosition Call, int Start, int End);
 
 // Filled by the shared parser only for editor requests. Positions refer to the current source.
-internal sealed class MacroEditorSymbols
+internal sealed partial class MacroEditorSymbols(int? cursorOffset = null)
 {
     private readonly Dictionary<object, (MacroToken Token, int VisibleFrom)> names =
         new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<MacroBlock, (int Start, int End)> blocks =
         new(ReferenceEqualityComparer.Instance);
     internal MacroSourceException? Error { get; private set; }
-    internal IReadOnlyList<MacroToken> Tokens { get; set; } = [];
+    internal bool UnsupportedVersion { get; private set; }
+    private int innermostOpen = -1;
+    private bool insideComment;
+    private readonly Dictionary<MacroCall, (int Start, int End)> waitPatterns = new(ReferenceEqualityComparer.Instance);
+    internal MacroEditorCall? ActiveCall { get; private set; }
+    internal MacroPatternFix? PatternFix { get; private set; }
+    internal int? VersionInsertion { get; private set; }
+
+    internal void CallArgument(string name, int open, int index, int start, int end, List<MacroArgumentSlot> slots,
+        int optionNameEnd = -1, bool hasOptionColon = false)
+    {
+        if (cursorOffset is int offset && open >= innermostOpen && offset >= start && offset <= end)
+        {
+            innermostOpen = open;
+            ActiveCall = new(name, index, slots.Take(index).Select(s => s.Index).ToArray(), slots.Count > index ? slots[index].Index : null,
+                !insideComment && offset <= optionNameEnd, hasOptionColon);
+        }
+    }
+
+    internal void WaitPatternArgument(MacroCall call, (int Start, int End) range) => waitPatterns[call] = range;
+
+    internal void CallOptions(int open, List<MacroArgumentSlot> slots)
+    {
+        if (open == innermostOpen && ActiveCall is { } call && slots.Count != 0)
+            ActiveCall = call with { UsedSlots = slots.Where((_, i) => i != call.Parameter).Select(s => s.Index).ToArray() };
+    }
+
+    internal void WaitPatternMismatch(MacroCall call)
+    {
+        if (waitPatterns.TryGetValue(call, out var range))
+            PatternFix ??= new(call.Position, range.Start, range.End);
+    }
+
+    internal void Comment(int start, int end, bool includeEnd)
+    {
+        if (cursorOffset > start && (cursorOffset < end || includeEnd && cursorOffset == end))
+            insideComment = true;
+    }
+
+    internal void CheckVersion(List<MacroToken> tokens)
+    {
+        if (tokens[0].Text == "#" && tokens[1].Text == "tttym" &&
+            tokens[2].Kind == "num" && tokens[2].Text != "1")
+        {
+            UnsupportedVersion = true;
+            throw new MacroSourceException("VersionLine", tokens[2].Position);
+        }
+    }
+
+    internal void VersionHeader(List<MacroToken> tokens, int firstTokenOffset, int length)
+    {
+        if (insideComment || cursorOffset is not int offset) return;
+        int first = firstTokenOffset >= 0 ? firstTokenOffset : length;
+        bool replaceHash = tokens[0].Text == "#" && offset == first + 1;
+        if (offset > first && !replaceHash) return;
+        for (int i = 0; i + 2 < tokens.Count; i++)
+        {
+            if (tokens[i].Text == "#" && tokens[i + 1].Text == "tttym" &&
+                tokens[i + 1].Offset == tokens[i].Offset + 1 && tokens[i + 2].Kind == "num" &&
+                tokens[i + 2].Position.Line == tokens[i].Position.Line) return;
+        }
+        VersionInsertion = replaceHash ? first : offset;
+    }
 
     internal bool Recover(MacroSourceException error)
     {

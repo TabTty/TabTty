@@ -154,14 +154,21 @@ internal sealed class ProfileEditor
             String(logging, "directory", "LogDirectory", "NetworkLogDestinationNotice", optional: true);
             String(logging, "filenameTemplate", "LogFilenameTemplate", "LogFilenameTemplateDescription", optional: true)
                 .MaxLength = RecordingNameTemplate.MaximumLength;
-            bool overwritePresent = logging.ContainsKey("allowOverwrite");
-            var overwrite = new CheckBox { IsChecked = logging["allowOverwrite"]?.GetValue<bool>() ?? false };
-            Add("AllowLogOverwrite", overwrite, descriptionKey: "AllowLogOverwriteDescription");
+            var collision = new ComboBox { SelectedValuePath = nameof(ComboBoxItem.Tag) };
+            foreach (var policy in LogCollisionPolicies.All)
+            {
+                var item = new ComboBoxItem { Tag = LogCollisionPolicies.Format(policy) };
+                form.AddLocalizedUpdate(() => item.Content = Text("LogCollision" + policy));
+                collision.Items.Add(item);
+            }
+            collision.SelectedValue = LogCollisionPolicies.Format(profile.LogCollision);
+            Add("LogCollision", collision);
+            bool hasCollision = logging.ContainsKey("collision");
             apply.Add(() =>
             {
-                if (overwritePresent || overwrite.IsChecked == true)
-                    logging["allowOverwrite"] = overwrite.IsChecked == true;
-                else logging.Remove("allowOverwrite");
+                string selected = (string)collision.SelectedValue;
+                if (hasCollision || selected != "error") logging["collision"] = selected;
+                else logging.Remove("collision");
             });
         }
         var validation = new TextBox { IsReadOnly = true, TextWrapping = System.Windows.TextWrapping.Wrap,

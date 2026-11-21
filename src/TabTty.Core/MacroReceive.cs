@@ -23,7 +23,7 @@ internal sealed class MacroPattern
         catch (ArgumentException) { throw new MacroError(MacroErrorCode.InvalidPattern); }
     }
 
-    public MacroMatch? Match(string text, int start, int alternative)
+    public MacroMatch? Match(string text, int start, string alternative)
     {
         if (Engine is null)
         {
@@ -163,11 +163,19 @@ internal sealed class MacroReceiveHistory
         units = 0;
     }
 
-    public void MarkBoundary()
+    public void MarkBoundary(MacroReceiveCutoff boundary)
     {
-        foreach (var line in lines) units -= line.Text.Length;
-        lines.Clear(); currentFloor = current.Length;
-        firstRetainedLine = currentId;
+        while (lines.First is { } first && first.Value.Id < boundary.Line)
+        {
+            units -= first.Value.Text.Length;
+            lines.RemoveFirst();
+        }
+        // The sampled line may have completed while the command was in flight.
+        if (boundary.Line == currentId && lostPrefix == 0)
+            currentFloor = Math.Max(currentFloor, boundary.Length);
+        else if (lines.First is { Value: var line } node && line.Id == boundary.Line && !line.Truncated)
+            node.Value = line with { Floor = Math.Max(line.Floor, boundary.Length) };
+        firstRetainedLine = lines.First?.Value.Id ?? currentId;
     }
 
     public bool Consume(long id, int end)
@@ -191,7 +199,7 @@ internal sealed class MacroReceiveHistory
     }
 
     public static async Task<((long Line, MacroMatch Match)? Match, long ScannedThrough)> SearchAsync(
-        MacroReceiveSnapshot snapshot, MacroPattern[] patterns, bool prompt, long scannedThrough,
+        MacroReceiveSnapshot snapshot, MacroCandidate[] patterns, bool prompt, long scannedThrough,
         Func<bool> isCurrent, CancellationToken token)
     {
         var work = new Stopwatch();
@@ -224,7 +232,7 @@ internal sealed class MacroReceiveHistory
                         sliceStart = work.Elapsed;
                         work.Start();
                     }
-                    var match = patterns[i].Match(line.Text, line.Floor, i);
+                    var match = patterns[i].Pattern.Match(line.Text, line.Floor, patterns[i].Name);
                     if (match is not null && (best is null || match.Index < best.Index)) best = match;
                 }
                 if (best is not null) return ((line.Id, best), scannedThrough);

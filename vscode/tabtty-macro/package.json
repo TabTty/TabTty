@@ -3,7 +3,7 @@
   "displayName": "TabTty Macro",
   "description": "Editing support for TabTty macros and shared constants.",
   "publisher": "tabtty",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Programming Languages"],
   "main": "./extension.js",

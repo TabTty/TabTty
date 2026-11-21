@@ -5,7 +5,7 @@
     { "name": "comment.block.tabtty", "begin": "/\\*", "end": "\\*/" },
     { "name": "string.quoted.verbatim.tabtty", "begin": "@\"", "end": "\"(?!\")", "patterns": [{ "match": "\"\"", "name": "constant.character.escape.tabtty" }] },
     { "name": "string.quoted.double.tabtty", "begin": "\"", "end": "\"", "patterns": [{ "match": "\\\\.", "name": "constant.character.escape.tabtty" }] },
-    { "name": "keyword.control.tabtty", "match": "\\b(if|else|while|for|foreach|in|return|break|continue|try|catch)\\b" },
+    { "name": "keyword.control.tabtty", "match": "\\b(if|else|while|for|foreach|in|return|break|continue|try|catch|throw)\\b" },
     { "name": "storage.type.tabtty", "match": "\\b(var|void|bool|long|double|string|List|WaitPattern|WaitMatch|Instant)\\b" },
     { "name": "constant.language.tabtty", "match": "\\b(true|false)\\b" },
     { "name": "constant.numeric.tabtty", "match": "\\b[0-9]+(?:\\.[0-9]+)?\\b" },

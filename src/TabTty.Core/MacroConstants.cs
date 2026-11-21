@@ -1,6 +1,18 @@
 namespace TabTty.Core;
 
-internal sealed record MacroConstantsDeclaration(string Alias, string Path, MacroPosition Position);
+internal sealed record MacroConstantsDeclaration(string Alias, string Path, MacroPosition AliasPosition, MacroPosition Position)
+{
+    internal string Resolve(string macroPath)
+    {
+        try
+        {
+            MacroLimits.Unicode(Path);
+            return OrdinaryWindowsPath.Resolve(Path, System.IO.Path.GetDirectoryName(macroPath)!);
+        }
+        catch (Exception error) when (error is MacroError or InvalidDataException or ArgumentException or PathTooLongException)
+        { throw new MacroSourceException("Path", Position, macroPath); }
+    }
+}
 internal sealed record MacroConstantsBinding(string Alias, MacroConstantsFile File);
 
 internal sealed record MacroConstantsFile(string FullPath, string Digest, string Source, IReadOnlyDictionary<string, object> Values)

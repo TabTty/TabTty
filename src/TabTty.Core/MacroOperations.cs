@@ -17,9 +17,15 @@ internal sealed partial class MacroRun
             case "Connect":
                 if (connectAttempted) throw new MacroError(MacroErrorCode.ConnectionAlreadyAttempted);
                 connectAttempted = true;
+                LogCollisionPolicy? collision = null;
+                if (args.ElementAtOrDefault(3) is string choice)
+                {
+                    if (!LogCollisionPolicies.TryParse(choice, out var policy)) throw new MacroError(MacroErrorCode.InvalidArgument);
+                    collision = policy;
+                }
                 string path = ResolvePath(S(0));
-                var recording = new RecordingOverrides(args.Length > 1 ? S(1) : null, args.Length > 2 ? S(2) : null,
-                    args.Length > 3 ? (bool)args[3] : null, baseDirectory);
+                var recording = new RecordingOverrides(args.ElementAtOrDefault(1) as string,
+                    args.ElementAtOrDefault(2) as string, collision, baseDirectory);
                 await HostOperationAsync("Connect", async () =>
                 {
                     try
@@ -51,7 +57,8 @@ internal sealed partial class MacroRun
                 catch (MacroError) { throw new MacroError(MacroErrorCode.Encoding); }
                 await HostOperationAsync(name, async () =>
                 {
-                    while (!await active.SendMacroTextAsync(S(0), name == "WriteLine", this, stop.Token).ConfigureAwait(false))
+                    while (!await active.SendMacroTextAsync(S(0), name == "WriteLine", args.ElementAtOrDefault(1) is true,
+                        this, stop.Token).ConfigureAwait(false))
                         await WaitForContinuationAsync(stop.Token).ConfigureAwait(false);
                     return true;
                 }).ConfigureAwait(false);
@@ -61,12 +68,11 @@ internal sealed partial class MacroRun
                 return VoidValue;
             case "Literal": case "Regex": return new MacroPattern(S(0), name == "Regex", args.Length > 1 && (bool)args[1]);
             case "WaitLine": case "WaitPrompt":
-                return await WaitAsync([(MacroPattern)args[0]], name == "WaitPrompt", args.Length == 2 ? N(1) : null).ConfigureAwait(false);
+                return await WaitAsync([new("", (MacroPattern)args[0])], name == "WaitPrompt", args.Length == 2 ? N(1) : null).ConfigureAwait(false);
             case "WaitAnyLine": case "WaitAnyPrompt":
-                if (L(0).Items.Count is < 1 or > 16) throw new MacroError(MacroErrorCode.InvalidArgument);
-                return await WaitAsync(L(0).Items.Cast<MacroPattern>().ToArray(), name == "WaitAnyPrompt", args.Length == 2 ? N(1) : null).ConfigureAwait(false);
+                return await WaitAsync((MacroCandidate[])args[0], name == "WaitAnyPrompt", args.Length == 2 ? N(1) : null).ConfigureAwait(false);
             case "MarkReceiveBoundary":
-                RequireSession(); lock (gate) { history.MarkBoundary(); generation++; Pulse(); } return VoidValue;
+                RequireSession(); CommitReceiveBoundary(); return VoidValue;
             case "Sleep": await SleepAsync(N(0)).ConfigureAwait(false); return VoidValue;
             case "MinimizeWindow": case "RestoreWindow":
                 await HostOperationAsync(name, async () => { await host.SetMinimizedAsync(name == "MinimizeWindow", stop.Token).ConfigureAwait(false); return true; }).ConfigureAwait(false);
@@ -172,6 +178,21 @@ internal sealed partial class MacroRun
             stop.Token.ThrowIfCancellationRequested();
             if (holds != MacroHold.None) return false;
             inFlight = true; return true;
+        }
+    }
+
+    internal MacroReceiveCutoff CaptureReceiveBoundary()
+    {
+        lock (gate) return history.Cutoff();
+    }
+
+    internal void CommitReceiveBoundary(MacroReceiveCutoff? cutoff = null)
+    {
+        lock (gate)
+        {
+            history.MarkBoundary(cutoff ?? history.Cutoff());
+            generation++;
+            Pulse();
         }
     }
 

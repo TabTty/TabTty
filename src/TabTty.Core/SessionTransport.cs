@@ -300,7 +300,7 @@ internal sealed class SessionTransport
     }
 
     internal async ValueTask<TransportSendResult> SubmitPreparedAsync(ReadOnlyMemory<byte> bytes, CancellationToken token,
-        SshSendProgress? progress = null)
+        SshSendProgress? progress = null, Action? onFirstSubmission = null)
     {
         bool issued = false;
         int definite = 0;
@@ -314,7 +314,7 @@ internal sealed class SessionTransport
                 if (connection is SshSessionWire ssh)
                 {
                     progress ??= new(bytes.Length);
-                    await ssh.WriteChannelAsync(bytes, token, progress).ConfigureAwait(false);
+                    await ssh.WriteChannelAsync(bytes, token, progress, onFirstSubmission).ConfigureAwait(false);
                     return new(TransportSubmission.Submitted, bytes.Length, null, progress.State);
                 }
                 while (definite < bytes.Length)
@@ -322,12 +322,14 @@ internal sealed class SessionTransport
                     token.ThrowIfCancellationRequested();
                     int requested = bytes.Length - definite;
                     if (IsSerial) requested = Math.Min(requested, SerialSessionWire.WriteChunkBytes);
+                    if (definite == 0) onFirstSubmission?.Invoke();
                     issued = true;
                     int count = await connection.WriteSomeAsync(bytes.Slice(definite, requested), token).ConfigureAwait(false);
-                    if (count < 0 || count > requested || count == 0 && !IsSerial)
+                    if (count < 0 || count > requested)
                         throw new IOException("The terminal write did not make valid progress.");
                     definite += count;
                     issued = false;
+                    if (count == 0 && !IsSerial) throw new IOException("The terminal write made no progress.");
                     if (IsSerial && count < requested)
                         throw new IOException("COM write timed out before sending the entire chunk.");
                 }

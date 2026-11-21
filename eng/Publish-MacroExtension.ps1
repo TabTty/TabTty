@@ -27,11 +27,12 @@ $notices = $assets.packageFolders.PSObject.Properties.Name | ForEach-Object {
 } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 if (-not $notices) { throw 'The published .NET runtime notices are missing.' }
 Copy-Item -LiteralPath $notices -Destination (Join-Path $server 'dotnet-THIRD-PARTY-NOTICES.txt')
-$manifest = @'
+$extensionVersion = (Get-Content -LiteralPath (Join-Path $extension 'package.json') -Raw | ConvertFrom-Json).version
+$manifest = @"
 <?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011">
   <Metadata>
-    <Identity Language="en-US" Id="tabtty-macro" Version="0.1.0" Publisher="tabtty" TargetPlatform="win32-x64" />
+    <Identity Language="en-US" Id="tabtty-macro" Version="$extensionVersion" Publisher="tabtty" TargetPlatform="win32-x64" />
     <DisplayName>TabTty Macro</DisplayName>
     <Description xml:space="preserve">Editing support for TabTty macros and shared constants.</Description>
     <Categories>Programming Languages</Categories>
@@ -43,7 +44,7 @@ $manifest = @'
     <Asset Type="Microsoft.VisualStudio.Services.Content.Details" Path="extension/README.md" Addressable="true" />
   </Assets>
 </PackageManifest>
-'@
+"@
 $types = @'
 <?xml version="1.0" encoding="utf-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">

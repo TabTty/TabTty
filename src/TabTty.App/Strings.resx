@@ -35,8 +35,10 @@
   <data name="LogFilenameTemplate" xml:space="preserve"><value>Log filename template</value></data>
   <data name="LogFilenameTemplateDescription" xml:space="preserve"><value>Enter the base name. TabTty adds the suffix for each recording format. For example, &lt;cpname&gt;_&lt;datetime:yyyy-MM-dd&gt;_&lt;serial:0,4&gt;. Leave blank to use the default.</value></data>
   <data name="MacroLogFilenameTemplateDescription" xml:space="preserve"><value>Enter the base name, for example &lt;macroname&gt;-&lt;cpname&gt;_&lt;uuid&gt;. Leave blank to use the default.</value></data>
-  <data name="AllowLogOverwrite" xml:space="preserve"><value>Allow existing logs to be overwritten</value></data>
-  <data name="AllowLogOverwriteDescription" xml:space="preserve"><value>With overwrite disabled, a same-name collision prevents recording and causes the connection to fail.</value></data>
+  <data name="LogCollision" xml:space="preserve"><value>If a log file already exists</value></data>
+  <data name="LogCollisionError" xml:space="preserve"><value>Error</value></data>
+  <data name="LogCollisionOverwrite" xml:space="preserve"><value>Overwrite</value></data>
+  <data name="LogCollisionAppend" xml:space="preserve"><value>Append</value></data>
   <data name="LogDestinationReview" xml:space="preserve"><value>Confirm log destination</value></data>
   <data name="LogDestinationReviewNotice" xml:space="preserve"><value>The drive now points to a different location. Confirm the new destination to start recording there.</value></data>
   <data name="ApproveLogDestination" xml:space="preserve"><value>Use this log destination</value></data>
@@ -514,6 +516,8 @@
   <data name="MacroErrorConstantsDeclaration" xml:space="preserve"><value>Invalid constants declaration.</value></data>
   <data name="MacroErrorConstantsAlias" xml:space="preserve"><value>The constants file alias conflicts with another name.</value></data>
   <data name="MacroErrorConstantsLimit" xml:space="preserve"><value>The declared constants exceed the permitted limit.</value></data>
+  <data name="MacroErrorNumericLiteral" xml:space="preserve"><value>The numeric literal is malformed or out of range.</value></data>
+  <data name="MacroErrorStringEscape" xml:space="preserve"><value>Invalid string escape. Use two hexadecimal digits after \x.</value></data>
   <data name="MacroErrorConstantsDefinition" xml:space="preserve"><value>Use a var or scalar type declaration with an initializer and a semicolon.</value></data>
   <data name="MacroErrorConstantsLiteral" xml:space="preserve"><value>A constant initializer must be a string, Boolean, or numeric literal.</value></data>
   <data name="MacroErrorConstantsName" xml:space="preserve"><value>A constant has a duplicate, reserved or invalid name.</value></data>
@@ -554,6 +558,7 @@
   <data name="MacroReadFailed" xml:space="preserve"><value>The macro file could not be read.</value></data>
   <data name="MacroLocation" xml:space="preserve"><value>Line {0}, column {1}: {2}</value></data>
   <data name="MacroErrorCode" xml:space="preserve"><value>Macro error ({0})</value></data>
+  <data name="MacroErrorRethrowOutsideCatch" xml:space="preserve"><value>Rethrow is only valid inside a catch in this function.</value></data>
   <data name="MacroStateRunning" xml:space="preserve"><value>Macro running</value></data>
   <data name="MacroStateWaiting" xml:space="preserve"><value>Macro waiting</value></data>
   <data name="MacroStatePauseRequested" xml:space="preserve"><value>Macro pause requested</value></data>
@@ -579,6 +584,11 @@
   <data name="MacroErrorVaultStale" xml:space="preserve"><value>The vault changed. Restart TabTty before using it again.</value></data>
   <data name="MacroErrorExpectedToken" xml:space="preserve"><value>The file has unexpected syntax or an unsupported version header.</value></data>
   <data name="MacroErrorTypeMismatch" xml:space="preserve"><value>The value type does not match the operation.</value></data>
+  <data name="MacroErrorNamedOptionExpected" xml:space="preserve"><value>A named option is required here.</value></data>
+  <data name="MacroErrorUnknownOption" xml:space="preserve"><value>This option is not defined for this call.</value></data>
+  <data name="MacroErrorDuplicateOption" xml:space="preserve"><value>This option has already been supplied.</value></data>
+  <data name="MacroErrorAlternativeNameExpected" xml:space="preserve"><value>Give each wait pattern a non-reserved name followed by a colon.</value></data>
+  <data name="MacroErrorDuplicateAlternative" xml:space="preserve"><value>This wait already has an alternative with this name.</value></data>
   <data name="MacroErrorSourceEncoding" xml:space="preserve"><value>The file contains invalid text for its encoding.</value></data>
   <data name="MacroErrorMissingProfilePassword" xml:space="preserve"><value>The profile has no configured password reference.</value></data>
   <data name="MacroErrorWaitTimeout" xml:space="preserve"><value>The terminal response wait timed out.</value></data>

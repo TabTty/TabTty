@@ -122,7 +122,7 @@ internal sealed class SessionRecording
             var expanded = recording.Template.Expand(profile.DisplayName, macroName, localTime);
             Directory.CreateDirectory(path);
             if (expanded.Width == 0)
-                return OpenFiles(number, Path.Combine(path, expanded.FileBase(0)), recording.AllowOverwrite, activation);
+                return OpenFiles(number, Path.Combine(path, expanded.FileBase(0)), recording.Collision, activation);
 
             BigInteger sequence = BigInteger.Max(expanded.Start,
                 ExistingSequences(path, expanded, "*").DefaultIfEmpty(expanded.Start - 1).Max() + 1);
@@ -135,23 +135,29 @@ internal sealed class SessionRecording
                 using FileStream? reservation = TryReserveStem(stem);
                 // A competing opener may have finished after the directory scan.
                 if (reservation is null || ExistingSequences(path, expanded, digits, exact: true).Contains(sequence)) continue;
-                return OpenFiles(number, stem, overwrite: false, activation);
+                return OpenFiles(number, stem, LogCollisionPolicy.Error, activation);
             }
         }
 
-        SessionRecording OpenFiles(int number, string stem, bool overwrite, CancellationToken activation)
+        SessionRecording OpenFiles(int number, string stem, LogCollisionPolicy collision, CancellationToken activation)
         {
-            List<FileStream>? toTruncate = overwrite ? [] : null;
+            var mode = collision switch
+            {
+                LogCollisionPolicy.Error => FileMode.CreateNew,
+                LogCollisionPolicy.Overwrite => FileMode.OpenOrCreate,
+                LogCollisionPolicy.Append => FileMode.Append,
+                _ => throw new InvalidDataException("Invalid log collision policy.")
+            };
+            List<FileStream>? toTruncate = collision == LogCollisionPolicy.Overwrite ? [] : null;
             return new SessionRecording(number, selected, clock, format =>
             {
                 activation.ThrowIfCancellationRequested();
                 destination?.Verify();
-                var stream = new FileStream(stem + FileExtension(format),
-                    overwrite ? FileMode.OpenOrCreate : FileMode.CreateNew, FileAccess.Write, FileShare.Read,
+                var stream = new FileStream(stem + FileExtension(format), mode, FileAccess.Write, FileShare.Read,
                     bufferSize: 1, FileOptions.Asynchronous | FileOptions.SequentialScan);
                 toTruncate?.Add(stream);
                 return new RecordingFile(stream);
-            }, OpenPartAtDestination, destination, overwrite ? TruncateFiles : null);
+            }, OpenPartAtDestination, destination, toTruncate is not null ? TruncateFiles : null);
 
             void TruncateFiles()
             {
@@ -310,7 +316,7 @@ internal sealed class SessionRecording
                 bool flush = await StageBatchAsync(batches).ConfigureAwait(false);
                 if (destination is not null && clock.GetElapsedTime(lastDestinationCheck) >= TimeSpan.FromSeconds(1))
                 {
-                    duringStart = batches.Values.Any(batch => batch.FileOffset == 0 && batch.Buffers.Count != 0);
+                    duringStart = batches.Values.Any(batch => batch.WrittenBytes == 0 && batch.Buffers.Count != 0);
                     destination.Verify();
                     lastDestinationCheck = clock.GetTimestamp();
                     duringStart = false;
@@ -318,14 +324,14 @@ internal sealed class SessionRecording
                 foreach (var (format, batch) in batches)
                 {
                     if (batch.Buffers.Count == 0) continue;
-                    duringStart = batch.FileOffset == 0;
+                    duringStart = batch.WrittenBytes == 0;
                     using var deadline = CancellationTokenSource.CreateLinkedTokenSource(abandon.Token);
                     await using var timeout = WatchProgress("Recording write timed out.", deadline, duringStart);
                     await ApplicationResources.LogIo.WaitAsync(deadline.Token).ConfigureAwait(false);
                     try
                     {
                         await streams[format].WriteAsync(batch.Buffers,
-                            batch.FileOffset, deadline.Token).ConfigureAwait(false);
+                            batch.WrittenBytes, deadline.Token).ConfigureAwait(false);
                     }
                     finally { ApplicationResources.LogIo.Release(); }
                     duringStart = false;
@@ -333,7 +339,7 @@ internal sealed class SessionRecording
                     {
                         pendingBytes -= batch.Bytes;
                         pendingItems -= batch.Buffers.Count;
-                        batch.FileOffset += batch.Bytes;
+                        batch.WrittenBytes += batch.Bytes;
                         batch.Dirty = true;
                         batch.Bytes = 0;
                         batch.Buffers.Clear();
@@ -412,14 +418,16 @@ internal sealed class SessionRecording
     {
         public List<ReadOnlyMemory<byte>> Buffers { get; } = [];
         public int Bytes { get; set; }
-        public long FileOffset { get; set; }
+        public long WrittenBytes { get; set; }
         public bool Dirty { get; set; } = true;
     }
 
     private sealed class RecordingFile(FileStream stream) : IRecordingFile
     {
+        // Append opens at EOF with exclusive write access. Each writer tracks progress from its own part's start.
+        private readonly long partStart = stream.Position;
         public ValueTask WriteAsync(IReadOnlyList<ReadOnlyMemory<byte>> buffers, long offset, CancellationToken token) =>
-            RandomAccess.WriteAsync(stream.SafeFileHandle, buffers, offset, token);
+            RandomAccess.WriteAsync(stream.SafeFileHandle, buffers, partStart + offset, token);
 
         public ValueTask FlushAsync(CancellationToken token)
         {

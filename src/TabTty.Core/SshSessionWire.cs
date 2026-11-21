@@ -741,22 +741,25 @@ internal sealed partial class SshSessionWire : ISessionWire
     public async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken) =>
         _ = await WriteChannelAsync(buffer, cancellationToken, new(buffer.Length)).ConfigureAwait(false);
 
-    internal ValueTask<int> WriteChannelAsync(ReadOnlyMemory<byte> buffer, CancellationToken token, SshSendProgress progress) =>
-        WriteObservedAsync(buffer, token, default, default, progress, null);
+    internal ValueTask<int> WriteChannelAsync(ReadOnlyMemory<byte> buffer, CancellationToken token, SshSendProgress progress,
+        Action? onFirstSubmission = null) =>
+        WriteObservedAsync(buffer, token, default, default, progress, null, onFirstSubmission);
 
     internal ValueTask<int> WritePreparedPasteAsync(ReadOnlyMemory<byte> data, ReadOnlyMemory<int> encodedEnds, CancellationToken lifetime,
         CancellationToken stopInput, Action<int>? confirmed = null) =>
         WriteObservedAsync(data, lifetime, stopInput, encodedEnds, new(data.Length), confirmed);
 
     private async ValueTask<int> WriteObservedAsync(ReadOnlyMemory<byte> buffer, CancellationToken lifetime,
-        CancellationToken stopInput, ReadOnlyMemory<int> encodedEnds, SshSendProgress progress, Action<int>? confirmed)
+        CancellationToken stopInput, ReadOnlyMemory<int> encodedEnds, SshSendProgress progress, Action<int>? confirmed,
+        Action? onFirstSubmission = null)
     {
-        try { return await WriteChannelBytesAsync(buffer, lifetime, stopInput, encodedEnds, progress, confirmed).ConfigureAwait(false); }
+        try { return await WriteChannelBytesAsync(buffer, lifetime, stopInput, encodedEnds, progress, confirmed, onFirstSubmission).ConfigureAwait(false); }
         finally { progress.Settle(); }
     }
 
     private async ValueTask<int> WriteChannelBytesAsync(ReadOnlyMemory<byte> buffer, CancellationToken lifetime,
-        CancellationToken stopInput, ReadOnlyMemory<int> encodedEnds, SshSendProgress progress, Action<int>? confirmed)
+        CancellationToken stopInput, ReadOnlyMemory<int> encodedEnds, SshSendProgress progress, Action<int>? confirmed,
+        Action? onFirstSubmission)
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(lifetime, stop.Token);
         using var beforeUnit = stopInput.CanBeCanceled
@@ -796,6 +799,7 @@ internal sealed partial class SshSessionWire : ISessionWire
                         {
                             await packets.SendChannelAsync(data.Memory, stop.Token, admission, () =>
                             {
+                                if (submitted == 0) onFirstSubmission?.Invoke();
                                 lock (creditGate) channelWindow.CommitSend(count);
                             }, progress, count).ConfigureAwait(false);
                         }
