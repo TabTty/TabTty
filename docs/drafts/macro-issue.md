@@ -462,6 +462,13 @@ expression of type `string` there. Wrap that entire expression, preserving
 its text and the rest of the call. An unfinished expression or an error in
 the timeout argument alone does not qualify for these fixes.
 
+During editor analysis, the parser records the argument's source range and
+the type checker determines whether the diagnostic qualifies for the two
+fixes. Return the replacement range on that diagnostic, separately from the
+location used to display the error. The extension uses the range from the
+same document version to wrap the original text in the author's choice of
+`Literal(...)` or `Regex(...)` and supplies the localized action labels.
+
 | Editor action | Expected result |
 | --- | --- |
 | In `WaitAnyPrompt([first: Literal("A"), second: Literal("B")], 1000)`, place the cursor in `"B"`, then between the two alternatives. | Inside `"B"`, show the signature of `Literal`. Between alternatives, keep the first argument of `WaitAnyPrompt` active. |
@@ -497,6 +504,14 @@ An incomplete directive, or one after an ordinary statement, does not trigger
 a file read or a request to open its path. Report the syntax error at the
 misplaced directive.
 
+When editing a `#tttym 1` file, report a malformed or unknown directive in
+the leading declaration section and resume parsing after that line. A lone
+`#` or an unfinished alias leaves the next line available to the parser.
+Use the shared lexer's tokens so that text inside a multiline comment or
+string stays part of that comment or string. The first statement or function
+ends the declaration section. At launch, a malformed or unknown directive
+is still a source error.
+
 Group aliases by the [normalized absolute path used at launch](macro-specification.md#capturing-declared-constants).
 Preserve case distinctions in case-sensitive directories. Within one analysis,
 obtain and parse each distinct file's text once under Editor Q5 and Q17. Count
@@ -509,7 +524,23 @@ new text for all its aliases.
 | --- | --- |
 | Declare `A` from `shared.tttyc` and `B` from `./shared.tttyc`, with 2,049 definitions in the shared file. | Both aliases resolve. This uses two declarations, one file and 2,049 definitions. If the aliases instead refer to distinct files with 2,049 definitions each, their combined count exceeds the 4,096-definition limit. |
 | While analysis is pending, rename a constant in that open file without saving it. | The next completion and diagnostic results use the new name for both aliases. A late result cannot restore the old name for either alias. |
+| Put `#constants Broken ;`, `#`, or `#note` above a valid `#constants Good "good.tttyc"` declaration, then type `Sleep(Good.` with that constants file open. | The faulty directive has a diagnostic. Signature help identifies `Sleep` and completion offers the members from the open file for `Good`. |
 | Complete a leading declaration for `A`, then request completion in the unfinished call `Sleep(A.`. Separately, place `#constants B "other.tttyc"` after a complete statement. | In the first case, completion still offers members of `A`. In the second, the editor marks the misplaced directive and neither reads `other.tttyc` nor asks the author to open it. |
+
+### Hover and Go to Definition at an identifier
+
+The shared parser and type checker resolve the identifier at the cursor in
+the current document. Hover and Go to Definition use that same result.
+For a built-in member, hover shows the value type and
+the owning type with the member name. For example, `match.Index` on a
+`WaitMatch` shows `long WaitMatch.Index`. Go to Definition offers a target
+only when the resolved name has a source declaration. This keeps the cursor
+on `Index` even if the macro also declares a local variable named `Index`.
+
+On a declaration name, hover shows that declaration's information and Go to
+Definition leaves the cursor in place. An identifier in a string interpolation
+expression resolves in its enclosing scope. The same spelling in literal
+text or a comment provides neither a hover nor a definition target.
 
 ### Navigating qualified shared constants
 

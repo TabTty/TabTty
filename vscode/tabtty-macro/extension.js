@@ -69,7 +69,7 @@ function activate(context) {
         ElapsedMilliseconds: ['Get elapsed run time in milliseconds.', '実行開始からの経過時間をミリ秒で取得します。']
     };
     function parameterLabel(name, type, index, namedParameters) {
-        const label = (namedParameters ?? parameterNames[name])?.[index];
+        const label = namedParameters?.[index].Name ?? parameterNames[name]?.[index];
         if (index > 0 && namedParameters) return '[' + label + ': ' + type + ']';
         return label ? type + ' ' + label : type;
     }
@@ -112,6 +112,7 @@ function activate(context) {
     let buffer = '';
     const generations = new Map();
     const timers = new Map();
+    const waitPatternFixes = new WeakMap();
 
     function request(payload) {
         if (!server) {
@@ -232,14 +233,6 @@ function activate(context) {
         return {};
     }
 
-    function referencedConstant(result) {
-        const reference = result.constantReference;
-        const dependency = reference && result.dependencies?.find(entry => entry.Alias === reference.Alias);
-        if (!dependency) return undefined;
-        const members = result.constantSymbols?.[dependency.FullPath] || [];
-        return { dependency, reference, members, member: members.find(entry => entry.Name === reference.Member) };
-    }
-
     function symbolDetail(symbol) {
         const parameters = symbol.Parameters?.map(p => p.Type + ' ' + p.Name).join(', ');
         return parameters === undefined ? symbol.Type : symbol.Type + ' ' + symbol.Name + '(' + parameters + ')';
@@ -256,14 +249,16 @@ function activate(context) {
             if (document.isClosed || document.version !== version || generations.get(key) !== generation) return;
             diagnostics.set(document.uri, (result.diagnostics || []).map(item => {
                 const position = new vscode.Position(Math.max(0, item.Line - 1), Math.max(0, item.Column - 1));
-                const call = result.patternFix?.Call;
-                const isWaitPattern = item.Code === 'TypeMismatch' &&
-                    item.Line === call?.Line && item.Column === call.Column;
-                const text = messages[isWaitPattern ? 'WaitPatternRequired' : item.Code];
+                const text = messages[item.WaitPatternFix ? 'WaitPatternRequired' : item.Code];
                 const fallback = japanese ? 'マクロの構文または型にエラーがあります。' : 'The macro has a syntax or type error.';
                 const diagnostic = new vscode.Diagnostic(new vscode.Range(position, position.translate(0, item.Length ?? 1)),
                     text ? text[japanese ? 1 : 0] : fallback);
                 diagnostic.code = item.Code;
+                if (item.WaitPatternFix) {
+                    const argument = new vscode.Range(document.positionAt(item.WaitPatternFix.Start),
+                        document.positionAt(item.WaitPatternFix.End));
+                    waitPatternFixes.set(diagnostic, { document, version, generation, argument });
+                }
                 return diagnostic;
             }));
         } catch (error) {
@@ -288,13 +283,13 @@ function activate(context) {
             if (result.unsupportedVersion) return [];
             const items = [];
             const call = result.activeCall;
-            const signature = result.functions?.[call?.name]?.at(-1);
-            if (call?.completeOption && signature?.NamedParameters) {
-                return signature.NamedParameters.flatMap((name, slot) => {
-                    if (!slot || call.usedSlots.includes(slot)) return [];
-                    const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
-                    item.detail = signature.Parameters[slot];
-                    item.insertText = call.hasOptionColon ? name : name + ': ';
+            const options = result.functions?.[call?.name]?.[0]?.NamedParameters;
+            if (call?.completeOption && options) {
+                return options.flatMap(option => {
+                    if (!option.Index || call.usedSlots.includes(option.Index)) return [];
+                    const item = new vscode.CompletionItem(option.Name, vscode.CompletionItemKind.Property);
+                    item.detail = option.Type;
+                    item.insertText = call.hasOptionColon ? option.Name : option.Name + ': ';
                     return [item];
                 });
             }
@@ -311,9 +306,8 @@ function activate(context) {
                 item.detail = symbolDetail(entry);
                 items.push(item);
             }
-            const constant = referencedConstant(result);
-            if (constant?.reference.OnMember) {
-                return constant.members.map(entry => {
+            if (result.constantCompletions) {
+                return result.constantCompletions.map(entry => {
                     const item = new vscode.CompletionItem(entry.Name, vscode.CompletionItemKind.Constant);
                     item.detail = entry.Type;
                     return item;
@@ -329,39 +323,26 @@ function activate(context) {
         }
     }, '#', '.', ','));
 
-    context.subscriptions.push(vscode.languages.registerDefinitionProvider(macroSelector, {
+    const navigationSelector = [macroSelector, { language: 'tabtty-constants' }];
+    context.subscriptions.push(vscode.languages.registerDefinitionProvider(navigationSelector, {
         async provideDefinition(document, position) {
-            const word = document.getWordRangeAtPosition(position);
-            if (!word) return undefined;
-            const name = document.getText(word);
-            const result = await analyze(document, position);
-            const constant = referencedConstant(result);
-            if (constant) {
-                const { reference, dependency, member } = constant;
-                const target = reference.OnMember ? member?.Position : dependency.AliasPosition;
-                if (!target) return undefined;
-                return new vscode.Location(reference.OnMember ? vscode.Uri.file(dependency.FullPath) : document.uri,
-                    new vscode.Position(target.Line - 1, target.Column - 1));
-            }
-            const entry = result.symbols?.findLast(item => item.Name === name);
-            return entry ? new vscode.Location(document.uri,
-                new vscode.Position(entry.Position.Line - 1, entry.Position.Column - 1)) : undefined;
+            const { reference } = await analyze(document, position);
+            if (!reference?.Definition) return undefined;
+            const target = reference.Definition;
+            return new vscode.Location(reference.FilePath ? vscode.Uri.file(reference.FilePath) : document.uri,
+                new vscode.Position(target.Line - 1, target.Column - 1));
         }
     }));
 
-    context.subscriptions.push(vscode.languages.registerHoverProvider(macroSelector, {
+    context.subscriptions.push(vscode.languages.registerHoverProvider(navigationSelector, {
         async provideHover(document, position) {
-            const range = document.getWordRangeAtPosition(position);
-            if (!range) return undefined;
-            const name = document.getText(range);
             const result = await analyze(document, position);
-            const constant = referencedConstant(result);
-            if (constant?.reference.OnMember) {
-                const member = constant.member;
-                return member ? new vscode.Hover(member.Type + ' ' + member.Name, range) : undefined;
-            }
-            const signatures = result.functions?.[name];
-            if (signatures) {
+            const reference = result.reference;
+            if (!reference) return undefined;
+            const range = new vscode.Range(document.positionAt(reference.Start), document.positionAt(reference.End));
+            if (reference.BuiltinFunction) {
+                const name = reference.Name;
+                const signatures = result.functions[name];
                 const detail = signatures.map(signature =>
                     signature.Result + ' ' + name + '(' + signature.Parameters.map((type, index) =>
                         parameterLabel(name, type, index, signature.NamedParameters)).join(', ') + ')').join('\n');
@@ -370,9 +351,7 @@ function activate(context) {
                     : (japanese ? '\nTabTty の組み込み関数です。' : '\nTabTty built-in function.');
                 return new vscode.Hover(detail + description, range);
             }
-            const entry = result.symbols?.findLast(item => item.Name === name);
-            if (!entry) return undefined;
-            const detail = entry.Parameters ? symbolDetail(entry) : entry.Type + ' ' + entry.Name;
+            const detail = reference.Parameters ? symbolDetail(reference) : reference.Type + ' ' + reference.Name;
             return new vscode.Hover(detail, range);
         }
     }));
@@ -407,25 +386,22 @@ function activate(context) {
     }, '(', ','));
 
     context.subscriptions.push(vscode.languages.registerCodeActionsProvider(macroSelector, {
-        async provideCodeActions(document, range, actionContext) {
-            const candidates = actionContext.diagnostics.filter(item => item.code === 'TypeMismatch');
-            if (!candidates.length) return [];
-            const result = await analyze(document);
-            const fix = result.patternFix;
-            if (!fix || !candidates.some(item => {
-                const start = (item.range || range).start;
-                return start.line === fix.Call.Line - 1 && start.character === fix.Call.Column - 1;
-            })) return [];
-            const argumentRange = new vscode.Range(document.positionAt(fix.Start), document.positionAt(fix.End));
-            const text = document.getText(argumentRange);
-            return ['Literal', 'Regex'].map(name => {
-                const title = name === 'Literal'
-                    ? (japanese ? '文字列そのものを待つ' : 'Match literal text')
-                    : (japanese ? '正規表現として待つ' : 'Match a regular expression');
-                const action = new vscode.CodeAction(title, vscode.CodeActionKind.QuickFix);
-                action.edit = new vscode.WorkspaceEdit();
-                action.edit.replace(document.uri, argumentRange, name + '(' + text + ')');
-                return action;
+        provideCodeActions(document, range, actionContext) {
+            return actionContext.diagnostics.flatMap(diagnostic => {
+                const fix = waitPatternFixes.get(diagnostic);
+                if (!fix || fix.document !== document || fix.version !== document.version ||
+                    fix.generation !== generations.get(document.uri.toString())) return [];
+                const text = document.getText(fix.argument);
+                return ['Literal', 'Regex'].map(name => {
+                    const title = name === 'Literal'
+                        ? (japanese ? '文字列そのものを待つ' : 'Match literal text')
+                        : (japanese ? '正規表現として待つ' : 'Match a regular expression');
+                    const action = new vscode.CodeAction(title, vscode.CodeActionKind.QuickFix);
+                    action.diagnostics = [diagnostic];
+                    action.edit = new vscode.WorkspaceEdit();
+                    action.edit.replace(document.uri, fix.argument, name + '(' + text + ')');
+                    return action;
+                });
             });
         }
     }, { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] }));

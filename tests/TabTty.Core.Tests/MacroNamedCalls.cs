@@ -110,6 +110,8 @@ internal static partial class MacroContracts
 
         foreach (var (source, code, at) in new (string, string, string)[]
         {
+            ("Connect();", "CallArguments", "Connect"),
+            ("WriteLine();", "CallArguments", "WriteLine"),
             ("WriteLine(\"x\", markReceiveBoundary: \"yes\");", "TypeMismatch", "\"yes\""),
             ("WriteLine(\"x\", markReceiveBoundary: (\"yes\" + \"no\"));", "TypeMismatch", "(\"yes\""),
             ("Connect(\"p\", logDirectry: \"x\");", "UnknownOption", "logDirectry"),

@@ -72,15 +72,8 @@ internal sealed record MacroConstantsFile(string FullPath, string Digest, string
         if (initializer.Kind == "str") return initializer.Value!;
         if (initializer.Text is "true" or "false") return initializer.Text == "true";
 
-        bool negative = initializer.Text == "-";
         MacroToken number = initializer.Text is "+" or "-" ? lexer.Next() : initializer;
         if (number.Kind != "num") throw new MacroSourceException("ConstantsLiteral", number.Position);
-        return number.Value switch
-        {
-            long integer => (object)(negative ? -integer : integer),
-            double real => negative ? -real : real,
-            ulong when negative => long.MinValue,
-            _ => throw new MacroSourceException("NumericLiteral", number.Position),
-        };
+        return number.LiteralValue(negative: initializer.Text == "-");
     }
 }

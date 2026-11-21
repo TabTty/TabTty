@@ -76,6 +76,7 @@ static object Analyze(EditorRequest request)
                     string type = MacroChecker.ScalarType(value).ToString();
                     members.Add(name.Text, type);
                     symbols.Add(new(name.Text, type, name.Position));
+                    editor.ConstantDeclaration(name, type);
                 });
         }
         else
@@ -89,23 +90,26 @@ static object Analyze(EditorRequest request)
     catch (ResourceLimitException) { diagnostic = new("MemoryLimit", new(1, 1)); }
     var errors = editor.DependencyErrors;
     if (diagnostic is not null && !errors.Contains(diagnostic)) errors.Add(diagnostic);
-    var diagnostics = errors.Select(error => new { error.Code, error.Position.Line, error.Position.Column, error.Length });
+    var diagnostics = errors.Select(error => new { error.Code, error.Position.Line, error.Position.Column,
+        error.Length, error.WaitPatternFix });
     var functions = MacroApi.Signatures.ToDictionary(
         pair => pair.Key,
-        pair => pair.Value.Select(signature => new {
-            Result = signature.Result.ToString(),
-            NamedParameters = MacroApi.NamedParameters.GetValueOrDefault(pair.Key),
-            Parameters = signature.Parameters.Select(parameter => parameter.ToString()).ToArray()
-        }).ToArray());
+        pair => {
+            var namedParameters = MacroApi.NamedSignature(pair.Key)?.NamedParameters
+                ?.Select(p => new { p.Name, Type = p.Type.ToString(), p.Index }).ToArray();
+            return pair.Value.Select(signature => new {
+                Result = signature.Result.ToString(),
+                NamedParameters = namedParameters,
+                Parameters = signature.Parameters.Select(parameter => parameter.ToString()).ToArray()
+            }).ToArray();
+        });
     var activeCall = editor.ActiveCall is { } call ? new {
         name = call.Name, parameter = call.Parameter, usedSlots = call.UsedSlots, namedSlot = call.NamedSlot,
         completeOption = call.CompleteOption, hasOptionColon = call.HasOptionColon
     } : null;
-    var patternFix = editor.PatternFix is { } fix && diagnostic?.Code == "TypeMismatch" &&
-        diagnostic.Position == fix.Call ? fix : null;
-    return new { unsupportedVersion = editor.UnsupportedVersion, diagnostics, functions, members, symbols, activeCall, patternFix,
+    return new { unsupportedVersion = editor.UnsupportedVersion, diagnostics, functions, members, symbols, activeCall,
         versionInsertion = editor.VersionInsertion, dependencies = editor.Dependencies,
-        constantSymbols = editor.ConstantSymbols, constantReference = editor.ConstantReference };
+        constantCompletions = editor.ConstantCompletions, reference = editor.Reference };
 }
 
 internal sealed record EditorRequest(string Path, string Source, bool ConstantsFile,
