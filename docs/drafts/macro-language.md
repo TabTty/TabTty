@@ -293,6 +293,14 @@ that out-of-range positive literal does not make it valid. Unary negation of an
 already evaluated long.MinValue is overflow. Arithmetic overflow is checked;
 no unchecked context, saturation or wrapping.
 
+The macro parser and the shared constants reader each determine which signs
+and parentheses their grammar permits. Both use the same rule to interpret
+an integer token of magnitude 2^63, supplying whether a
+minus applies directly to it. Whitespace and comments between the minus and
+the digits preserve that relationship. For `-(9223372036854775808)`, macro
+source reports `NumericLiteral` at the first digit and the shared constants
+reader reports `ConstantsLiteral` at the opening parenthesis.
+
 Long/long division truncates toward zero. Remainder has the dividend's sign;
 long.MinValue divided by -1 overflows, while its remainder by -1 is defined as
 zero. Division/remainder by either signed zero double or zero long is an error.
@@ -338,6 +346,14 @@ decimal long, round-trip double, ISO Instant and stable enum identifiers, all
 independent of UI culture. No generic object/credential/list/error interpolation.
 Alignment and `:format` interpolation syntax are deferred; use `FormatNumber`
 or `FormatTime` explicitly inside an ordinary interpolation expression.
+
+The lexer passes the parser an ordered sequence of typed parts for an
+interpolated string. Each part holds literal text or the tokens of an embedded expression.
+Each embedded expression keeps its original UTF-16 source positions and
+uses the enclosing parser's syntax budget. Keep empty text parts, including
+the one between adjacent expressions in `$"{a}{b}"`, so their syntax nodes
+continue to count toward the same limit. The existing interpolation
+expression supplies the parts to type checking and evaluation in source order.
 
 Strings are immutable UTF-16 sequences. Length, index, substring offsets and
 match indices count UTF-16 code units, never display cells or grapheme clusters.
@@ -449,6 +465,13 @@ var x = Macro
 Signatures use `T` only to describe builtin list operations and documented
 overloads, not to grant user-defined generics. No unspecified members exist.
 Arguments are positional except for the explicitly named options below.
+
+For `Connect` and `WriteLine`, keep each named option's spelling, type and
+destination parameter together in the builtin definition. The parser and
+editor use that definition even while the author is still typing an option.
+Keep each supplied expression in source order with its resolved parameter
+so the checker can select its expected type and the evaluator can evaluate
+it once and pass the value to its destination.
 
 ### Session, paths, input, waits and window
 

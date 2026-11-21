@@ -77,11 +77,32 @@ module.exports = async function checkConstants(providers, workspace, doc, shared
     assert.strictEqual(reads, 0);
     shared.getText = source;
 
+    for (const faulty of ['#constants Broken ;', '#constants Broken', '#constants', '#', '#note',
+        '#note /*\n#constants Hidden "unavailable.tttyc"\n*/',
+        '#note @"text\n#constants Hidden ""unavailable.tttyc""\nend" #constants Hidden "unavailable.tttyc"',
+        '#note $@"{?\n#constants Hidden "unavailable.tttyc"\n}"']) {
+        doc.text = '#tttym 1\n' + faulty + '\n#constants Good "shared.tttyc"\nSleep(Good.';
+        const errors = await diagnostics();
+        assert(errors.some(error => error.range.start.line === 1), faulty);
+        assert(!errors.some(error => error.code === 'ConstantsOpenRequired'), faulty);
+        assert.deepStrictEqual((await complete()).map(item => item.label), ['TimeoutMs'], faulty);
+        const help = await providers.signature.provideSignatureHelp(doc, doc.positionAt(doc.text.length));
+        assert(help.signatures[help.activeSignature].label.includes(' Sleep('), faulty);
+    }
+
     for (const languageId of ['tabtty-macro', 'tabtty-constants']) {
         doc.languageId = languageId;
         const prefix = languageId === 'tabtty-macro' ? '#tttym 1\n' : '';
         doc.text = prefix + 'long Min = -09_223_372_036_854_775_808L;';
         assert.deepStrictEqual(await diagnostics(), []);
+        const magnitude = '9223372036854775808';
+        for (const value of [magnitude, '+' + magnitude, '-(' + magnitude + ')']) {
+            doc.text = prefix + 'long n = ' + value + ';';
+            const [error] = await diagnostics();
+            const invalidParenthesis = languageId === 'tabtty-constants' && value.includes('(');
+            assert.strictEqual(error.code, invalidParenthesis ? 'ConstantsLiteral' : 'NumericLiteral');
+            assert.deepStrictEqual(error.range.start, doc.positionAt(doc.text.indexOf(invalidParenthesis ? '(' : magnitude)));
+        }
         doc.text = prefix + String.raw`string Bad = "😀\x1G";`;
         const [error] = await diagnostics();
         assert.strictEqual(error.code, 'StringEscape');

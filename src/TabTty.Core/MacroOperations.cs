@@ -18,14 +18,14 @@ internal sealed partial class MacroRun
                 if (connectAttempted) throw new MacroError(MacroErrorCode.ConnectionAlreadyAttempted);
                 connectAttempted = true;
                 LogCollisionPolicy? collision = null;
-                if (args.ElementAtOrDefault(3) is string choice)
+                if (args[MacroApi.LogCollision.Index] is string choice)
                 {
                     if (!LogCollisionPolicies.TryParse(choice, out var policy)) throw new MacroError(MacroErrorCode.InvalidArgument);
                     collision = policy;
                 }
                 string path = ResolvePath(S(0));
-                var recording = new RecordingOverrides(args.ElementAtOrDefault(1) as string,
-                    args.ElementAtOrDefault(2) as string, collision, baseDirectory);
+                var recording = new RecordingOverrides(args[MacroApi.LogDirectory.Index] as string,
+                    args[MacroApi.LogFilenameTemplate.Index] as string, collision, baseDirectory);
                 await HostOperationAsync("Connect", async () =>
                 {
                     try
@@ -53,11 +53,12 @@ internal sealed partial class MacroRun
             case "GetFileExtension": return GetFileExtension(S(0));
             case "Write": case "WriteLine":
                 TerminalSession active = RequireSession();
+                bool markReceiveBoundary = name == "WriteLine" && args[MacroApi.MarkReceiveBoundary.Index] is true;
                 try { MacroLimits.Unicode(S(0), allowNul: true); }
                 catch (MacroError) { throw new MacroError(MacroErrorCode.Encoding); }
                 await HostOperationAsync(name, async () =>
                 {
-                    while (!await active.SendMacroTextAsync(S(0), name == "WriteLine", args.ElementAtOrDefault(1) is true,
+                    while (!await active.SendMacroTextAsync(S(0), name == "WriteLine", markReceiveBoundary,
                         this, stop.Token).ConfigureAwait(false))
                         await WaitForContinuationAsync(stop.Token).ConfigureAwait(false);
                     return true;

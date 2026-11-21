@@ -5,7 +5,6 @@ internal sealed record MacroEditorSymbol(string Name, string Type, MacroPosition
     MacroEditorParameter[]? Parameters = null);
 internal sealed record MacroEditorCall(string Name, int Parameter, int[] UsedSlots, int? NamedSlot,
     bool CompleteOption, bool HasOptionColon);
-internal sealed record MacroPatternFix(MacroPosition Call, int Start, int End);
 
 // Filled by the shared parser only for editor requests. Positions refer to the current source.
 internal sealed partial class MacroEditorSymbols(int? cursorOffset = null)
@@ -18,35 +17,33 @@ internal sealed partial class MacroEditorSymbols(int? cursorOffset = null)
     internal bool UnsupportedVersion { get; private set; }
     private int innermostOpen = -1;
     private bool insideComment;
-    private readonly Dictionary<MacroCall, (int Start, int End)> waitPatterns = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<MacroExpression, MacroSourceRange> firstArgumentRanges = new(ReferenceEqualityComparer.Instance);
     internal MacroEditorCall? ActiveCall { get; private set; }
-    internal MacroPatternFix? PatternFix { get; private set; }
     internal int? VersionInsertion { get; private set; }
 
-    internal void CallArgument(string name, int open, int index, int start, int end, List<MacroArgumentSlot> slots,
+    internal void CallArgument(string name, int open, int index, int start, int end,
+        List<MacroBoundArgument>? arguments, int? namedSlot,
         int optionNameEnd = -1, bool hasOptionColon = false)
     {
         if (cursorOffset is int offset && open >= innermostOpen && offset >= start && offset <= end)
         {
             innermostOpen = open;
-            ActiveCall = new(name, index, slots.Take(index).Select(s => s.Index).ToArray(), slots.Count > index ? slots[index].Index : null,
+            var used = arguments?.Take(index).Select(a => a.Parameter.Index).ToArray() ?? [];
+            ActiveCall = new(name, index, used, namedSlot,
                 !insideComment && offset <= optionNameEnd, hasOptionColon);
         }
     }
 
-    internal void WaitPatternArgument(MacroCall call, (int Start, int End) range) => waitPatterns[call] = range;
+    internal void RecordFirstArgument(MacroExpression expression, int start, int end) =>
+        firstArgumentRanges[expression] = new(start, end);
 
-    internal void CallOptions(int open, List<MacroArgumentSlot> slots)
+    internal void CallOptions(int open, List<MacroBoundArgument> arguments)
     {
-        if (open == innermostOpen && ActiveCall is { } call && slots.Count != 0)
-            ActiveCall = call with { UsedSlots = slots.Where((_, i) => i != call.Parameter).Select(s => s.Index).ToArray() };
+        if (open == innermostOpen && ActiveCall is { } call)
+            ActiveCall = call with { UsedSlots = arguments.Where((_, i) => i != call.Parameter).Select(a => a.Parameter.Index).ToArray() };
     }
 
-    internal void WaitPatternMismatch(MacroCall call)
-    {
-        if (waitPatterns.TryGetValue(call, out var range))
-            PatternFix ??= new(call.Position, range.Start, range.End);
-    }
+    internal MacroSourceRange FirstArgumentRange(MacroExpression expression) => firstArgumentRanges[expression];
 
     internal void Comment(int start, int end, bool includeEnd)
     {
@@ -86,8 +83,11 @@ internal sealed partial class MacroEditorSymbols(int? cursorOffset = null)
         return true;
     }
 
-    internal void Name(object node, MacroToken token, int visibleFrom = 0) =>
+    internal void Name(object node, MacroToken token, int visibleFrom = 0)
+    {
         names.Add(node, (token, visibleFrom));
+        Identifier(token, node);
+    }
 
     internal void Block(MacroBlock block, int start, int end) => blocks.Add(block, (start, end));
 
@@ -97,8 +97,7 @@ internal sealed partial class MacroEditorSymbols(int? cursorOffset = null)
         MacroFunction? currentFunction = null;
         foreach (var function in program.Functions.Values)
         {
-            visible.Add(new(function.Name, function.Return.ToString(), names[function].Token.Position,
-                function.Parameters.Select(p => new MacroEditorParameter(p.Name, p.Type.ToString())).ToArray()));
+            visible.Add(FunctionSymbol(function));
             if (Inside(function.Body)) currentFunction = function;
         }
         if (currentFunction is not null)
@@ -110,6 +109,7 @@ internal sealed partial class MacroEditorSymbols(int? cursorOffset = null)
         {
             foreach (var statement in program.Body.Statements) Visit(statement);
         }
+        ResolveReference(program, visible);
         return visible;
 
         bool Inside(MacroBlock block)

@@ -68,6 +68,8 @@ internal static partial class MacroContracts
             "#tttym 1\n#constants Macro \"common.tttyc\"", "#tttym 1\n#constants Site $\"common.tttyc\"",
             "#tttym 1\n#constants Site \"common.tttyc\";", "#tttym 1\n#constants /*gap*/ Site \"common.tttyc\"",
             "#tttym 1\n#constants Site @\"common\n.tttyc\"", "#tttym 1\nvar n = 1;\n#constants Site \"common.tttyc\"",
+            "#tttym 1\n#note\n#constants Site \"common.tttyc\"\nSleep(0);",
+            "#tttym 1\n#\n#constants Site \"common.tttyc\"\nSleep(0);",
         })
         {
             await File.WriteAllTextAsync(source, invalid);

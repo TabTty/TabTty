@@ -13,6 +13,7 @@ internal enum MacroErrorCode
 }
 
 internal readonly record struct MacroPosition(int Line, int Column);
+internal readonly record struct MacroSourceRange(int Start, int End);
 
 internal sealed class MacroSourceException(string code, MacroPosition position, string? filePath = null, int length = 1) : Exception(code)
 {
@@ -20,6 +21,7 @@ internal sealed class MacroSourceException(string code, MacroPosition position, 
     public MacroPosition Position { get; } = position;
     public string? FilePath { get; } = filePath;
     public int Length { get; } = length;
+    internal MacroSourceRange? WaitPatternFix { get; init; }
 }
 
 internal sealed class MacroError(MacroErrorCode code, string? displayDetail = null) : Exception(code.ToString())
@@ -129,12 +131,11 @@ internal sealed record MacroName(string Name, MacroPosition At) : MacroExpressio
 internal sealed record MacroUnary(string Operator, MacroExpression Value, MacroPosition At) : MacroExpression(At);
 internal sealed record MacroBinary(string Operator, MacroExpression Left, MacroExpression Right, MacroPosition At) : MacroExpression(At);
 internal sealed record MacroCast(MacroType Target, MacroExpression Value, MacroPosition At) : MacroExpression(At);
-internal readonly record struct MacroArgumentSlot(int Index, MacroPosition ValueStart);
-internal sealed record MacroCall(string Name, MacroExpression[] Arguments, MacroPosition At) : MacroExpression(At)
-{
-    // Named options may omit slots or supply them in a different order from the signature.
-    public MacroArgumentSlot[]? ParameterSlots { get; init; }
-}
+internal readonly record struct MacroBoundArgument(MacroExpression Value, MacroBuiltinParameter Parameter, MacroPosition ValueStart);
+internal abstract record MacroCall(string Name, MacroPosition At) : MacroExpression(At);
+internal sealed record MacroPositionalCall(string Name, MacroExpression[] Arguments, MacroPosition At) : MacroCall(Name, At);
+internal sealed record MacroNamedCall(string Name, MacroSignature Signature, MacroBoundArgument[] Arguments, MacroPosition At)
+    : MacroCall(Name, At);
 internal sealed record MacroAlternatives(string[] Names, MacroExpression[] Patterns, MacroPosition At) : MacroExpression(At);
 internal sealed record MacroMember(MacroExpression Target, string Name, MacroPosition At) : MacroExpression(At)
 {

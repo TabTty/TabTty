@@ -192,9 +192,20 @@ internal sealed partial class MacroRun
                     }
                     result = builder.ToString(); break;
                 case MacroCall call:
-                    object[] args = new object[call.ParameterSlots is null ? call.Arguments.Length : MacroApi.NamedParameters[call.Name].Length];
-                    for (int i = 0; i < call.Arguments.Length; i++)
-                        args[call.ParameterSlots?[i].Index ?? i] = await ValueAsync(call.Arguments[i]).ConfigureAwait(false);
+                    object[] args;
+                    if (call is MacroNamedCall named)
+                    {
+                        args = new object[named.Signature.Parameters.Length];
+                        foreach (var argument in named.Arguments)
+                            args[argument.Parameter.Index] = await ValueAsync(argument.Value).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        var positional = ((MacroPositionalCall)call).Arguments;
+                        args = new object[positional.Length];
+                        for (int i = 0; i < positional.Length; i++)
+                            args[i] = await ValueAsync(positional[i]).ConfigureAwait(false);
+                    }
                     // Arguments may have suspended or called helpers. The call owns its own source location.
                     await CheckpointAsync(call.Position).ConfigureAwait(false);
                     if (Program.Functions.TryGetValue(call.Name, out var function))

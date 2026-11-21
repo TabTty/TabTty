@@ -44,7 +44,7 @@ const vscode = {
     Position, Range, Diagnostic, CompletionItem, SignatureInformation, ParameterInformation,
     SignatureHelp: class {}, SnippetString: class { constructor(value) { this.value = value; } },
     CodeAction, WorkspaceEdit,
-    Hover: class { constructor(contents) { this.contents = contents; } },
+    Hover: class { constructor(contents, range) { this.contents = contents; this.range = range; } },
     Location: class { constructor(uri, position) { this.uri = uri; this.position = position; } },
     Uri: { file: fsPath => ({ fsPath }) },
     CompletionItemKind: { Function: 1, Variable: 2, Constant: 3, Snippet: 4 },
@@ -96,6 +96,10 @@ extension.activate(context);
         [['logFilenameTemplate', 'string'], ['logCollision', 'string']]);
     const namedSignature = await providers.signature.provideSignatureHelp(doc, doc.positionAt(doc.text.indexOf('append') + 2));
     assert.strictEqual(namedSignature.activeParameter, 3);
+    doc.text = '#tttym 1\nConnect("profile", logCollision: ';
+    const pendingOption = await providers.signature.provideSignatureHelp(doc, doc.positionAt(doc.text.length));
+    assert.strictEqual(pendingOption.activeParameter, 3);
+    assert.strictEqual(pendingOption.signatures[pendingOption.activeSignature].parameters[3].label, '[logCollision: string]');
     doc.text = '#tttym 1\nlong before = 1;\nSleep(before);';
     const definition = await providers.definition.provideDefinition(doc, new Position(2, 8));
     assert.strictEqual(definition.position.line, 1);
@@ -119,20 +123,26 @@ extension.activate(context);
     }
     await require('./constants')(providers, vscode.workspace, doc, constants, getDiagnostics);
     await require('./constants-casing')(providers, vscode.workspace, doc);
+    await require('./references')(providers, doc);
     doc.text = '#tttym 1\nvar x = Macro\n    .Args\n    .Wrong;';
     const memberError = (await getDiagnostics()).find(item => item.code === 'UnknownMember');
     assert.deepStrictEqual(memberError.range, new Range(new Position(3, 5), new Position(3, 10)));
     doc.text = '#tttym 1\nWaitPrompt("Ready>");';
+    const [patternDiagnostic] = await getDiagnostics();
     const actions = await providers.action.provideCodeActions(doc,
         new Range(new Position(1, 0), new Position(1, 1)),
-        { diagnostics: [{ code: 'TypeMismatch' }] });
+        { diagnostics: [patternDiagnostic] });
     assert.strictEqual(actions.length, 2);
+    assert.deepStrictEqual(actions[0].diagnostics, [patternDiagnostic]);
     assert.strictEqual(actions[0].edit.replacement.text, 'Literal("Ready>")');
     assert.strictEqual(actions[1].edit.replacement.text, 'Regex("Ready>")');
     doc.text = '#tttym 1\nWaitPrompt(\n  "Ready>");';
+    doc.version++;
+    assert.deepStrictEqual(await providers.action.provideCodeActions(doc, patternDiagnostic.range,
+        { diagnostics: [patternDiagnostic] }), []);
     const multilineActions = await providers.action.provideCodeActions(doc,
         new Range(new Position(1, 0), new Position(1, 1)),
-        { diagnostics: [{ code: 'TypeMismatch' }] });
+        { diagnostics: await getDiagnostics() });
     assert.strictEqual(multilineActions[0].edit.replacement.text, 'Literal("Ready>")');
     doc.text = '#';
     const header = await providers.completion.provideCompletionItems(doc, new Position(0, 1));
@@ -232,7 +242,7 @@ extension.activate(context);
     for (const line of ['WaitPrompt("ready" + , 1000);', 'WaitPrompt(42);', 'WaitPrompt(Literal("ok"), "1000");']) {
         doc.text = '#tttym 1\n' + line;
         const actions = await providers.action.provideCodeActions(doc, new Range(new Position(1, 0), new Position(1, 1)),
-            { diagnostics: [{ code: 'TypeMismatch' }] });
+            { diagnostics: await getDiagnostics() });
         assert.strictEqual(actions.length, 0, line);
     }
     for (const [marked, replaced] of [

@@ -1,20 +1,22 @@
 namespace TabTty.Core;
 
 internal sealed record MacroEditorDependency(string Alias, string? FullPath, MacroPosition AliasPosition, MacroPosition Position);
-internal sealed record MacroEditorReference(string Alias, bool OnMember, string? Member = null);
 
 internal sealed partial class MacroEditorSymbols
 {
     internal List<MacroEditorDependency> Dependencies { get; } = [];
     internal List<MacroSourceException> DependencyErrors { get; } = [];
-    internal Dictionary<string, List<MacroEditorSymbol>> ConstantSymbols { get; } = new(StringComparer.Ordinal);
-    internal MacroEditorReference? ConstantReference { get; private set; }
+    private readonly Dictionary<string, List<MacroEditorSymbol>> constantSymbols = new(StringComparer.Ordinal);
+    private string? completionQualifier;
 
-    internal void ReferenceName(MacroToken name)
+    internal List<MacroEditorSymbol>? ConstantCompletions
     {
-        int start = name.Offset;
-        if (cursorOffset >= start && cursorOffset <= start + name.Text.Length)
-            ConstantReference = new(name.Text, false);
+        get
+        {
+            if (completionQualifier is null || Dependencies.Find(d => d.Alias == completionQualifier) is not { } dependency)
+                return null;
+            return dependency.FullPath is { } path && constantSymbols.TryGetValue(path, out var members) ? members : [];
+        }
     }
 
     internal void QualifiedMember(MacroExpression receiver, MacroToken dot, MacroToken next)
@@ -23,7 +25,7 @@ internal sealed partial class MacroEditorSymbols
         int start = next.Offset;
         bool hasName = next.Kind == "id";
         if (offset < dot.Offset + 1 || offset > start + (hasName ? next.Text.Length : 0)) return;
-        ConstantReference = new(alias.Name, true, hasName && offset >= start ? next.Text : null);
+        completionQualifier = alias.Name;
     }
 
     internal IReadOnlyList<MacroConstantsBinding> BindConstants(string macroPath,
@@ -52,7 +54,7 @@ internal sealed partial class MacroEditorSymbols
                     var file = MacroConstantsFile.Parse(path, "", text, remaining, () => { },
                         (token, value) => members.Add(new(token.Text, MacroChecker.ScalarType(value).ToString(), token.Position)));
                     remaining -= file.Values.Count;
-                    ConstantSymbols.Add(path, members);
+                    constantSymbols.Add(path, members);
                     result = (file, null);
                 }
                 catch (MacroSourceException error)
