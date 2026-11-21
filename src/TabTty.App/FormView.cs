@@ -441,13 +441,15 @@ internal sealed class FormView : DockPanel
         label.SetBinding(VisibilityProperty, new Binding(nameof(Visibility)) { Source = control });
         AutomationProperties.SetLabeledBy(control, label);
         (section ?? fields).Children.Add(label);
+        bool descriptionFollowsControl = addControl && control is CheckBox;
+        if (descriptionFollowsControl) (section ?? fields).Children.Add(control);
         if (descriptionKey is not null)
         {
             var description = AddFieldDescription(descriptionKey);
             description.SetBinding(VisibilityProperty, new Binding(nameof(Visibility)) { Source = control });
             control.SetBinding(AutomationProperties.HelpTextProperty, new Binding(nameof(TextBlock.Text)) { Source = description });
         }
-        if (addControl) (section ?? fields).Children.Add(control);
+        if (addControl && !descriptionFollowsControl) (section ?? fields).Children.Add(control);
         return text;
     }
 
