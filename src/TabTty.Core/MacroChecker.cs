@@ -17,6 +17,7 @@ internal static class MacroApi
             result.Add(name, second is null ? [first] : [first, second]);
         Add("Connect", new(v, s)); Add("SetBaseDirectory", new(v, s));
         Add("ResetBaseDirectory", new(v)); Add("BaseDirectory", new(s));
+        Add("GetParentDirectory", new(s, s)); Add("GetFileBaseName", new(s, s)); Add("GetFileExtension", new(s, s));
         Add("Write", new(v, s)); Add("WriteLine", new(v, s));
         Add("WritePassword", new(v), new(v, s)); Add("WritePasswordLine", new(v), new(v, s));
         Add("MarkReceiveBoundary", new(v));
@@ -45,7 +46,7 @@ internal static class MacroApi
     internal static MacroType? Member(MacroType target, string name) => (target.Name, name) switch
     {
         ("Macro", "Args") => MacroType.List(MacroType.String),
-        ("Macro", "FullPath" or "FileName" or "BaseName" or "Extension" or "RunId") => MacroType.String,
+        ("Macro", "FullPath" or "FileName" or "BaseName" or "RunId") => MacroType.String,
         ("WaitMatch", "AlternativeIndex" or "Index" or "Length") => MacroType.Long,
         ("WaitMatch", "Text") => MacroType.String,
         ("WaitMatch", "Groups") => MacroType.List(new("CaptureGroup")),

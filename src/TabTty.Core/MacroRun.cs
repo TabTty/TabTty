@@ -76,7 +76,7 @@ internal sealed partial class MacroRun : IDisposable
     private MacroProgram Program => programSnapshot!;
     public string FullPath { get; }
     public string RunId { get; } = Guid.NewGuid().ToString("N");
-    public string BaseName => Path.GetFileNameWithoutExtension(FullPath);
+    public string BaseName => GetFileBaseName(FullPath);
     public Task Completion { get; private set; } = Task.CompletedTask;
     public event Action? Changed;
     public MacroRunStatus Status

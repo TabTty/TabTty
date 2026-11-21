@@ -147,10 +147,13 @@ allocate the new run/tab with the following values.
 | --- | --- |
 | `Macro.FullPath` | Absolute normalized path used to load the source; no claim of resolving every symlink to its physical target |
 | `Macro.FileName` | Final path component including extension |
-| `Macro.BaseName` | Filename with only its last extension removed |
-| `Macro.Extension` | Last extension including the dot, preserving its spelling |
+| `Macro.BaseName` | `Macro.FileName` with its final dot and following characters removed when the dot is neither the first nor the last character. Otherwise, use the whole filename. |
 | `Macro.Args` | Run-local copy of invocation arguments |
 | `Macro.RunId` | Non-secret unique run identity, distinct from source and session generation |
+
+For example, `inspect.tttym` yields `inspect`, `inspect.prod.tttym` yields
+`inspect.prod`, and `.macro` yields `.macro`. This rule applies to the metadata
+of loaded source.
 
 These values survive file rename, base-directory change and tab movement.
 Source location diagnostics use one-based lines/UTF-16 columns, with CRLF one
@@ -278,6 +281,10 @@ relative paths against a run-local base initially equal to the source directory.
 `..`; do not expand environment variables or `~`, change process working
 directory, or alter other runs. Existing Windows absolute/UNC/long-path rules
 apply; invalid paths report errors without fallback.
+
+The [file path part functions](macro-language.md#file-path-parts) extract the
+directory, base name and extension from a string. Splitting uses the host OS's
+separator and root rules and requires no file-system access.
 
 Apply the [profile trust contract](../specification/profile-trust.md) when
 `Connect` resolves its profile. Look up the reviewed location and file version

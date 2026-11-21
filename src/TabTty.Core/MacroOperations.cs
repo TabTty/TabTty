@@ -40,6 +40,9 @@ internal sealed partial class MacroRun
             case "SetBaseDirectory": baseDirectory = ResolvePath(S(0)); return VoidValue;
             case "ResetBaseDirectory": baseDirectory = Path.GetDirectoryName(Program.FullPath)!; return VoidValue;
             case "BaseDirectory": return baseDirectory;
+            case "GetParentDirectory": return GetParentDirectory(S(0));
+            case "GetFileBaseName": return GetFileBaseName(S(0));
+            case "GetFileExtension": return GetFileExtension(S(0));
             case "Write": case "WriteLine":
                 TerminalSession active = RequireSession();
                 try { MacroLimits.Unicode(S(0), allowNul: true); }
@@ -117,6 +120,36 @@ internal sealed partial class MacroRun
             case "ElapsedMilliseconds": return ElapsedMilliseconds();
             default: throw new InvalidOperationException();
         }
+    }
+
+    private static string GetParentDirectory(string path)
+    {
+        ReadOnlySpan<char> fileName = Path.GetFileName(path.AsSpan());
+        int rootLength = Path.GetPathRoot(path.AsSpan()).Length;
+        int end = path.Length - fileName.Length;
+        while (end > rootLength &&
+            (path[end - 1] == Path.DirectorySeparatorChar || path[end - 1] == Path.AltDirectorySeparatorChar))
+            end--;
+
+        return end == rootLength && fileName.IsEmpty ? string.Empty : path[..end];
+    }
+
+    private static string GetFileBaseName(string path)
+    {
+        ReadOnlySpan<char> fileName = Path.GetFileName(path.AsSpan());
+        return fileName[..ExtensionStart(fileName)].ToString();
+    }
+
+    private static string GetFileExtension(string path)
+    {
+        ReadOnlySpan<char> fileName = Path.GetFileName(path.AsSpan());
+        return fileName[ExtensionStart(fileName)..].ToString();
+    }
+
+    private static int ExtensionStart(ReadOnlySpan<char> fileName)
+    {
+        int dot = fileName.LastIndexOf('.');
+        return dot > 0 && dot < fileName.Length - 1 ? dot : fileName.Length;
     }
 
     private string ResolvePath(string path)

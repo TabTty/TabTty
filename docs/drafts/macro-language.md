@@ -328,7 +328,7 @@ User code cannot construct builtin records except through their named factories.
 
 | Type | Exposed properties/values |
 | --- | --- |
-| `Macro` metadata root | Reserved root, not a first-class/declarable type; read-only FullPath/FileName/BaseName/Extension/RunId strings and Args as `List<string>` |
+| `Macro` metadata root | Reserved root, not a first-class/declarable type; read-only FullPath/FileName/BaseName/RunId strings and Args as `List<string>`. See [source identity](macro-specification.md#loading-launch-and-source-identity) for the basename rule. |
 | `Instant` | Opaque captured instant and offset; use time functions, no arbitrary members |
 | `WaitPattern` | Opaque validated literal/regex candidate; no exposed engine object |
 | `WaitMatch` | `long AlternativeIndex`, `string Text`, `long Index`, `long Length`, `List<CaptureGroup> Groups` |
@@ -398,6 +398,50 @@ WritePassword("Production password");
 ```
 
 Use exact, case-sensitive vault names under the [vault format](../specification/vault-format.md#encrypted-payload-schema-and-limits).
+
+### File path parts
+
+| Signature | Result |
+| --- | --- |
+| `string GetParentDirectory(string path)` | Directory portion of the path, or `""` when absent |
+| `string GetFileBaseName(string path)` | Final component with its extension removed, or `""` when there is no final component |
+| `string GetFileExtension(string path)` | Final extension including its leading dot, or `""` when absent |
+
+These functions interpret path text using the host operating system's path
+rules. Use the platform's path facilities to determine recognized directory
+separators and root or volume prefixes, including when checking for a trailing
+separator. Preserve case and separator spelling. The functions perform no
+file-system access, resolve nothing against the run's base directory, and
+preserve components such as `.` and `..` verbatim.
+
+On Windows, both `\` and `/` are directory separators. A drive prefix (`C:`),
+a drive or current-drive root (`C:\` or `\`), and a UNC share root
+(`\\server\share`) are outside the file name. This also applies to extended
+drive and UNC paths. On a host that recognizes only `/`, a `\` remains an
+ordinary character within a component.
+
+For a path beyond its root or prefix, split at the final separator, or just
+after the volume prefix if there is no separator. Strip trailing separators
+from the directory portion except where they are part of the root. If the
+input ends in a separator, the final component is empty and the directory
+portion is the path before that trailing run of separators. Empty input and a
+root or volume prefix by itself yield `""` for all three results.
+
+The final dot of a nonempty component begins an extension only when it is
+neither the first nor the last character. `GetFileBaseName` uses the same rule
+as `Macro.BaseName` on every host. The results below use Windows path rules
+and show path text without string-literal escaping.
+
+| Path | Parent directory | Base name | Extension |
+| --- | --- | --- | --- |
+| `C:\ops\trace.raw.log` | `C:\ops` | `trace.raw` | `.log` |
+| `C:\ops\archive\` | `C:\ops\archive` | `""` | `""` |
+| `config/.gitignore` | `config` | `.gitignore` | `""` |
+| `.env.local` | `""` | `.env` | `.local` |
+| `report.` | `""` | `report.` | `""` |
+| `C:\report` | `C:\` | `report` | `""` |
+| `C:report` | `C:` | `report` | `""` |
+| `\\server\share\report` | `\\server\share` | `report` | `""` |
 
 ### Dialog and ordinary data operations
 

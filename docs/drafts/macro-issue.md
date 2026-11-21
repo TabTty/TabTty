@@ -27,6 +27,11 @@ ready-for-agent on 2026-11-14; its body and label were verified.
 The [shared macro constants follow-up](#shared-macro-constants-follow-up)
 records subsequent decisions about external definitions.
 
+On 2026-11-21 the source metadata contract superseded Q38's extension member.
+The [current source identity contract](macro-specification.md#loading-launch-and-source-identity)
+defines which suffix `BaseName` removes and preserves names such as `.macro`
+whose only dot is the first character.
+
 ## Confirmed request
 
 - Connect using a connection-profile file. Use the application's configured

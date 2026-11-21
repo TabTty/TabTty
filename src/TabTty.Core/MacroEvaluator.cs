@@ -208,7 +208,7 @@ internal sealed partial class MacroRun
         MacroRun => name switch
         {
             "FullPath" => Program.FullPath, "FileName" => Path.GetFileName(Program.FullPath),
-            "BaseName" => BaseName, "Extension" => Path.GetExtension(Program.FullPath), "RunId" => RunId, "Args" => arguments,
+            "BaseName" => BaseName, "RunId" => RunId, "Args" => arguments,
             _ => throw new InvalidOperationException(),
         },
         MacroMatch m => name switch { "AlternativeIndex" => m.AlternativeIndex, "Text" => m.Text, "Index" => m.Index,

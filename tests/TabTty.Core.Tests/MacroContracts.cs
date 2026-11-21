@@ -9,6 +9,8 @@ internal static partial class MacroContracts
     {
         RejectsBeforeEffects();
         Console.WriteLine("PASS MacroRejectsInvalidUnusedCodeBeforeEffects");
+        await FilePathPartsAsync();
+        Console.WriteLine("PASS MacroFilePathParts");
         await SourceEncodingsAsync();
         Console.WriteLine("PASS MacroSourceEncodingsAndSnapshot");
         await SharedConstantsLanguageAsync();
@@ -75,6 +77,7 @@ internal static partial class MacroContracts
             "void Recurse() { Recurse(); }", "var x = [];", "var x = [1, \"x\"];",
             "long Missing() { while (true) { return 1; } }", "var x = 1; void Bad() { Write(x); }",
             "var x = (long)\"1\";", "var x = 1; { var x = 2; }", "System.Diagnostics.Process.Start(\"x\");",
+            "if (false) { var extension = Macro.Extension; }",
         })
         {
             try { Parse(source); throw new Exception("Invalid source was accepted."); }
@@ -344,6 +347,53 @@ internal static partial class MacroContracts
         Check(stopped.Status.Result == "AlternateScreen" && alternate.Wire.Bytes.Count == 0 &&
             alternate.ConnectionFinished && alternate.Session.AcceptsInput, "Startup alternate screen did not stop only the macro.");
         await alternate.CloseAsync();
+    }
+
+    private static async Task FilePathPartsAsync()
+    {
+        var cases = new List<(string Path, string Parent, string BaseName, string Extension)>
+        {
+            ("", "", "", ""),
+            ("/", "", "", ""),
+            ("/file.txt", "/", "file", ".txt"),
+            ("config/.gitignore", "config", ".gitignore", ""),
+            (".env.local", "", ".env", ".local"),
+            ("report.", "", "report.", ""),
+            ("dir//", "dir", "", ""),
+            ("dir/../sub//trace.raw.log", "dir/../sub", "trace.raw", ".log"),
+        };
+        if (OperatingSystem.IsWindows())
+            cases.AddRange([
+                (@"dir\", "dir", "", ""),
+                (@"C:\", "", "", ""),
+                ("C:report", "C:", "report", ""),
+                (@"C:\report", @"C:\", "report", ""),
+                (@"C:/ops\archive\", "C:/ops\\archive", "", ""),
+                (@"\\server\share", "", "", ""),
+                (@"\\server\share\", "", "", ""),
+                (@"\\server\share\report.txt", @"\\server\share", "report", ".txt"),
+                (@"\\?\UNC\server\share\report.txt", @"\\?\UNC\server\share", "report", ".txt"),
+            ]);
+        else
+            cases.Add((@"dir\", "", @"dir\", ""));
+
+        using var program = MacroProgram.Parse(".macro", """
+            #tttym 1
+            if (Macro.BaseName != ".macro") { var fail = 1 / 0; }
+            foreach (var path in Macro.Args)
+            {
+                Dialog(GetParentDirectory(path), GetFileBaseName(path), DialogButtons.OK, true, GetFileExtension(path));
+            }
+            """);
+        var host = new Host();
+        using var run = new MacroRun(program, cases.Select(test => test.Path).ToArray(), host);
+        run.Start();
+        await run.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+        Check(run.Status.State == MacroRunState.Completed && host.Dialogs.Count == cases.Count,
+            "Path operations did not complete: " + run.Status);
+        foreach (var (test, dialog) in cases.Zip(host.Dialogs))
+            Check((dialog.Title, dialog.Message, dialog.InitialText) == (test.Parent, test.BaseName, test.Extension),
+                $"Unexpected parts for '{test.Path}': ({dialog.Title}, {dialog.Message}, {dialog.InitialText}).");
     }
 
     private static async Task PathAndSendPreflightAsync()
