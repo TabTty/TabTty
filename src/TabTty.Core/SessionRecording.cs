@@ -34,7 +34,7 @@ internal sealed class SessionRecording
     private readonly CancellationTokenSource abandon = new();
     private readonly TaskCompletionSource incomplete = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TimeProvider clock;
-    private readonly Func<int, CancellationToken, SessionRecording> openPart;
+    private readonly Func<int, CancellationToken, Dictionary<RecordingFormat, IRecordingFile>> preparePart;
     private readonly RecordingDestination? destination;
 
     internal SessionRecording(RecordingFormat[] formats, TimeProvider clock, Func<RecordingFormat, IRecordingFile> open)
@@ -45,22 +45,36 @@ internal sealed class SessionRecording
 
     private SessionRecording(int part, RecordingFormat[] formats, TimeProvider clock,
         Func<int, RecordingFormat, IRecordingFile> open)
-        : this(part, formats, clock, format => open(part, format),
-            (next, _) => new SessionRecording(next, formats, clock, open)) { }
+        : this(part, clock, (number, _) => AcquireFiles(formats, format => open(number, format)), default) { }
 
-    private SessionRecording(int part, RecordingFormat[] formats, TimeProvider clock,
-        Func<RecordingFormat, IRecordingFile> open, Func<int, CancellationToken, SessionRecording> openPart,
-        RecordingDestination? destination = null, Action? finishPreparation = null)
+    private SessionRecording(int part, TimeProvider clock,
+        Func<int, CancellationToken, Dictionary<RecordingFormat, IRecordingFile>> preparePart,
+        CancellationToken activation, RecordingDestination? destination = null)
     {
         this.clock = clock;
-        this.openPart = openPart;
+        this.preparePart = preparePart;
         this.destination = destination;
         PartNumber = part;
+        Dictionary<RecordingFormat, IRecordingFile> streams;
+        try { streams = preparePart(part, activation); }
+        catch
+        {
+            payloadReservation.Dispose();
+            abandon.Dispose();
+            throw;
+        }
+        writer = Task.Run(() => WriteAsync(streams));
+    }
+
+    private static Dictionary<RecordingFormat, IRecordingFile> AcquireFiles(
+        RecordingFormat[] formats, Func<RecordingFormat, IRecordingFile> open, Action? finishPreparation = null)
+    {
         var streams = new Dictionary<RecordingFormat, IRecordingFile>();
         try
         {
             foreach (RecordingFormat format in formats) streams.Add(format, open(format));
             finishPreparation?.Invoke();
+            return streams;
         }
         catch
         {
@@ -69,11 +83,8 @@ internal sealed class SessionRecording
                 try { stream.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
                 catch (Exception error) when (IsFileFailure(error)) { }
             }
-            payloadReservation.Dispose();
             throw;
         }
-
-        writer = Task.Run(() => WriteAsync(streams));
     }
 
     private static string FileExtension(RecordingFormat format) => format switch
@@ -109,21 +120,20 @@ internal sealed class SessionRecording
         if (profile.RecordTerminal) formats.Add(RecordingFormat.Terminal);
         RecordingFormat[] selected = formats.ToArray();
         TimeProvider clock = timeProvider ?? TimeProvider.System;
-        return OpenPartAtDestination(part, token);
+        return new SessionRecording(part, clock, PreparePartAtDestination, token, destination);
 
-        SessionRecording OpenPartAtDestination(int number, CancellationToken activation)
+        Dictionary<RecordingFormat, IRecordingFile> PreparePartAtDestination(int number, CancellationToken activation)
         {
             activation.ThrowIfCancellationRequested();
             destination?.Verify();
             if (selected.Length == 0)
-                return new SessionRecording(number, selected, clock,
-                    _ => throw new InvalidOperationException("Recording has no selected formats."), OpenPartAtDestination, destination);
+                return [];
 
             DateTime localTime = DateTime.SpecifyKind(clock.GetLocalNow().DateTime, DateTimeKind.Local);
             var expanded = recording.Template.Expand(profile.DisplayName, macroName, localTime);
             Directory.CreateDirectory(path);
             if (expanded.Width == 0)
-                return OpenFiles(number, Path.Combine(path, expanded.FileBase(0)), recording.Collision, activation);
+                return OpenFiles(Path.Combine(path, expanded.FileBase(0)), recording.Collision, activation);
 
             BigInteger sequence = BigInteger.Max(expanded.Start,
                 ExistingSequences(path, expanded, "*", activation, enumerate).DefaultIfEmpty(expanded.Start - 1).Max() + 1);
@@ -138,11 +148,12 @@ internal sealed class SessionRecording
                 // A competing opener may have finished after the directory scan.
                 if (reservation is null || ExistingSequences(path, expanded, digits, activation, enumerate, exact: true).Contains(sequence)) continue;
                 activation.ThrowIfCancellationRequested();
-                return OpenFiles(number, stem, LogCollisionPolicy.Error, activation);
+                return OpenFiles(stem, LogCollisionPolicy.Error, activation);
             }
         }
 
-        SessionRecording OpenFiles(int number, string stem, LogCollisionPolicy collision, CancellationToken activation)
+        Dictionary<RecordingFormat, IRecordingFile> OpenFiles(
+            string stem, LogCollisionPolicy collision, CancellationToken activation)
         {
             var mode = collision switch
             {
@@ -152,7 +163,7 @@ internal sealed class SessionRecording
                 _ => throw new InvalidDataException("Invalid log collision policy.")
             };
             List<FileStream>? toTruncate = collision == LogCollisionPolicy.Overwrite ? [] : null;
-            return new SessionRecording(number, selected, clock, format =>
+            return AcquireFiles(selected, format =>
             {
                 activation.ThrowIfCancellationRequested();
                 destination?.Verify();
@@ -161,7 +172,7 @@ internal sealed class SessionRecording
                     bufferSize: 1, FileOptions.Asynchronous | FileOptions.SequentialScan);
                 toTruncate?.Add(stream);
                 return new RecordingFile(stream);
-            }, OpenPartAtDestination, destination, toTruncate is not null ? TruncateFiles : null);
+            }, toTruncate is not null ? TruncateFiles : null);
 
             void TruncateFiles()
             {
@@ -227,7 +238,8 @@ internal sealed class SessionRecording
         }
     }
 
-    public SessionRecording OpenPart(int part, CancellationToken token = default) => openPart(part, token);
+    public SessionRecording OpenPart(int part, CancellationToken token = default) =>
+        new(part, clock, preparePart, token, destination);
 
     public void Enqueue(RecordingFormat format, byte[] payload)
     {

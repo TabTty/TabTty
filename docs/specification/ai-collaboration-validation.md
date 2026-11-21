@@ -73,6 +73,12 @@ UTF-16 limit stated in discovery. Check CR and LF individually and together
 against both the schema and GUI. In retained text containing U+0085, U+2028,
 or U+2029, verify that a query can match that literal character.
 
+For `tabtty_send_input.input`, run the same cases against the six forms in
+their published order and in a different test order. With the same session
+state, both orders must yield the same terminal action and defaults for valid
+input and the same error for invalid input. Include both press and release,
+wheel and move, and their required and forbidden fields.
+
 A07 also covers 100, 5000, and 100000 retained rows, a single long wrapped logical
 line, edits spanning page boundaries, no-match search exhaustion, and continuations
 after eviction. Test exact limit, one below, and one above for every contract

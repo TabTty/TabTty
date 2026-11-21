@@ -52,8 +52,10 @@ attempt contract. There is no additional user-configurable timeout initially.
 Show the active stage and a Cancel action without blocking the UI. On user
 cancellation or expiry, invalidate the attempt, report cancelled/timed out as
 appropriate, and do not start its transport. If a connecting tab already exists,
-keep it with its failure/cancellation state under the established lifecycle;
-otherwise show an activation/open error without replacing an existing session.
+user cancellation closes an initial connection's tab. A cancelled reconnect
+follows the saved close-on-disconnect preference. Expiry keeps the tab open
+with the failure reason. Follow the [tab outcome contract](../specification/persistence-and-windows.md).
+If no tab exists, report the activation/open outcome without replacing an existing session.
 Do not add a second cancellation confirmation.
 
 An explicit retry starts a fresh attempt and rereads the profile. It must not

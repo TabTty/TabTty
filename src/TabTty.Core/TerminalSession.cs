@@ -360,8 +360,17 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
         Disconnect();
     }
 
-    internal Task WaitForTerminalPeerCloseAsync(CancellationToken token) =>
-        transport.IsSsh ? transport.PeerClosed.WaitAsync(token) : WaitForMacroPeerCloseAsync(token);
+    internal async Task WaitForTerminalPeerCloseAsync(CancellationToken token)
+    {
+        if (!transport.IsSsh)
+        {
+            await WaitForMacroPeerCloseAsync(token).ConfigureAwait(false);
+            return;
+        }
+        await transport.PeerClosed.WaitAsync(token).ConfigureAwait(false);
+        if (macro is null && transport.PeerCloseFailure is { } failure)
+            throw new IOException(failure.Message, failure);
+    }
 
     private async Task SendRepliesAsync(CancellationToken token)
     {

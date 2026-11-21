@@ -669,6 +669,7 @@ internal sealed partial class SshSessionWire : ISessionWire
     }
 
     internal Task PeerClosed => channelClosure.ProtocolEnded;
+    internal Exception? PeerCloseFailure => channelClosure.Failure;
 
     public async ValueTask<int> DeliverPayloadAsync(Memory<byte> buffer, TerminalPayloadConsumer consume, CancellationToken token)
     {
@@ -894,6 +895,7 @@ internal sealed partial class SshSessionWire : ISessionWire
         {
             if (!stop.IsCancellationRequested)
             {
+                channelClosure.RecordFailure(exception);
                 incomingReady.Writer.TryComplete(exception);
                 Dispose();
             }
@@ -951,6 +953,7 @@ internal sealed partial class SshSessionWire : ISessionWire
         }
         catch (Exception exception)
         {
+            if (!stop.IsCancellationRequested) channelClosure.RecordFailure(exception);
             incomingReady.Writer.TryComplete(stop.IsCancellationRequested ? null : exception);
             Dispose();
         }
@@ -996,6 +999,7 @@ internal sealed partial class SshSessionWire : ISessionWire
         catch (Exception error)
         {
             // Stop queued channel writes before handing the writer over after a failed trust decision or exchange.
+            if (!stop.IsCancellationRequested) channelClosure.RecordFailure(error);
             incomingReady.Writer.TryComplete(stop.IsCancellationRequested ? null : error);
             Dispose();
             throw;

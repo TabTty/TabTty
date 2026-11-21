@@ -789,8 +789,12 @@ internal seams.
 The user first aligned user-invoked bulk closure with explicit tab/window
 closure, then explicitly amended automatic removal to follow the same policy.
 Both close associated transfer windows using the existing cleanup/reporting
-rules. The bulk command selects eligible disconnected tabs in the current
-window; automatic closure selects its affected disconnected tab. Disconnect
+rules. Under the [current window contract](../specification/persistence-and-windows.md),
+**Close all disconnected tabs** covers all tab groups in the current window.
+The expanded scope includes tabs retained after an attempt failed or timed out
+or an established connection ended in a communication error. Those tabs stay
+open to show the reason. Automatic closure on normal disconnect selects its
+affected tab. Disconnect
 without removing the tab still retains transfer results while the application
 runs. Final application exit follows its existing rule.
 
@@ -996,7 +1000,9 @@ operation/provider ownership (`FileOperationsTests.cs:14/66/71`). Historical
 2026-11-15 adoption artifacts record relevant WPF checks passing, but are for
 the partial Rust/handoff implementation. Optional SSH fixtures were not rerun
 in that adoption evidence, and this review neither reran tests nor revalidated
-source/artifact identity.
+source/artifact identity. The failed-attempt preservation assertion predates the
+expansion of the bulk command's scope. The [closure acceptance cases](../specification/tab-and-window-closure.md)
+require the manual command to close those failed tabs.
 
 No directly corresponding maintained test was found in the inspected sources
 for refusing live explicit tab/window closure, the five-second choice with a

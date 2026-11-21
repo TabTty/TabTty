@@ -12,7 +12,10 @@
   <data name="Disconnect" xml:space="preserve"><value>切断</value></data>
   <data name="CloseTab" xml:space="preserve"><value>タブを閉じる</value></data>
   <data name="CloseDisconnectedTabs" xml:space="preserve"><value>切断済みをすべて閉じる</value></data>
-  <data name="AutoCloseDisconnectedTabs" xml:space="preserve"><value>切断済みタブを自動で閉じる</value></data>
+  <data name="AutoCloseDisconnectedTabs" xml:space="preserve"><value>正常切断時にタブを自動で閉じる</value></data>
+  <data name="AutoCloseDisconnectedTabsDescription" xml:space="preserve"><value>再接続を取り消した場合にも適用します。接続失敗・タイムアウト・通信エラーで終了したタブは、原因を確認できるよう残します。</value></data>
+  <data name="ConnectionAttemptFailed" xml:space="preserve"><value>接続失敗</value></data>
+  <data name="ConnectionLost" xml:space="preserve"><value>通信エラーで切断</value></data>
   <data name="ApplicationMenu" xml:space="preserve"><value>アプリケーション メニュー</value></data>
   <data name="ManagementTabOutdated" xml:space="preserve"><value>このタブを開いている間に保存済みの設定が変更されました。タブを開き直すと、現在の設定を編集できます。</value></data>
   <data name="MinimizeWindow" xml:space="preserve"><value>ウィンドウを最小化</value></data>
@@ -419,7 +422,7 @@
   <data name="TransferDownload" xml:space="preserve"><value>← 受信</value></data>
   <data name="TransferRetry" xml:space="preserve"><value>失敗した項目を再試行</value></data>
   <data name="TransferResults" xml:space="preserve"><value>結果</value></data>
-  <data name="TransferResultsLimit" xml:space="preserve"><value>結果の表示上限に達しました。これ以降の詳細は表示できません。</value></data>
+  <data name="TransferResultsLimit" xml:space="preserve"><value>一部の結果を省略しました。</value></data>
   <data name="TransferDropTarget" xml:space="preserve"><value>{0} にコピー</value></data>
   <data name="TransferWorking" xml:space="preserve"><value>処理中…</value></data>
   <data name="TransferFinished" xml:space="preserve"><value>処理が終了しました</value></data>

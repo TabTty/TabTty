@@ -101,8 +101,8 @@ internal sealed partial class MainWindow : Window
 
     private void OnTerminalDisconnected(WindowTab item)
     {
-        if (app.AutoCloseDisconnectedTabs && !closing && item.CanCloseAsDisconnected &&
-            item.Content is not TerminalTab { Macro: not null })
+        if (!closing && item.Content is TerminalTab { Macro: null } terminal &&
+            (terminal.CloseAfterInitialCancellation || app.AutoCloseDisconnectedTabs && terminal.CanAutoCloseOnDisconnect))
             terminalClosure.CloseAutomatically(item);
     }
 
@@ -772,7 +772,7 @@ internal sealed partial class MainWindow : Window
             }),
             ("SettingsTabBehavior", () =>
             {
-                form.AddField("AutoCloseDisconnectedTabs", autoClose);
+                form.AddField("AutoCloseDisconnectedTabs", autoClose, descriptionKey: "AutoCloseDisconnectedTabsDescription");
                 form.AddField("BroadcastAcrossWindows", broadcastScope);
                 form.AddField("MaxPasteSourceBytes", maxPaste);
             }),
@@ -1011,6 +1011,15 @@ internal sealed partial class MainWindow : Window
             StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round,
             VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed,
         };
+        private readonly Border warningIcon = new()
+        {
+            Background = Brushes.Gold, CornerRadius = new CornerRadius(2),
+            Width = 14, Height = 14, Margin = new Thickness(0, 0, 5, 0),
+            VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed,
+            Child = new TextBlock { Text = "!", FontSize = 11, FontWeight = FontWeights.Bold,
+                Foreground = Brushes.Black, HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center },
+        };
         private readonly System.Windows.Shapes.Path aiIcon = new()
         {
             Name = "AiCollaborationIndicator",
@@ -1041,6 +1050,7 @@ internal sealed partial class MainWindow : Window
             header.Children.Add(dismiss);
             header.Children.Add(targetCheck);
             header.Children.Add(disconnectedIcon);
+            header.Children.Add(warningIcon);
             header.Children.Add(aiIcon);
             header.Children.Add(label);
             Header = header;
@@ -1113,8 +1123,9 @@ internal sealed partial class MainWindow : Window
             set
             {
                 label.Text = value;
-                string description = disconnectedIcon.Visibility == Visibility.Visible
-                    ? $"({Text("Disconnected")}) {value}" : value;
+                string? statusKey = Content is TerminalTab terminal ? terminal.ConnectionWarning : null;
+                if (statusKey is null && disconnectedIcon.Visibility == Visibility.Visible) statusKey = "Disconnected";
+                string description = statusKey is null ? value : $"({Text(statusKey)}) {value}";
                 if (Content is TerminalTab { AiStateLabel: { } aiState }) description += $" ({aiState})";
                 ToolTip = description;
                 AutomationProperties.SetName(this, description);
@@ -1124,6 +1135,7 @@ internal sealed partial class MainWindow : Window
         public void UpdateTerminalCaption(TerminalTab terminal)
         {
             disconnectedIcon.Visibility = terminal.ShowDisconnectedIndicator ? Visibility.Visible : Visibility.Collapsed;
+            warningIcon.Visibility = terminal.ConnectionWarning is null ? Visibility.Collapsed : Visibility.Visible;
             aiIcon.Visibility = terminal.IsAiShared ? Visibility.Visible : Visibility.Collapsed;
             aiIcon.Data = terminal.IsAiControlling || terminal.IsAiTakingControl ? AiTerminal : AiEye;
             aiIcon.ToolTip = terminal.AiStateLabel;

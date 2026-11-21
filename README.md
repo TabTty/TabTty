@@ -93,12 +93,14 @@ settings by default. The UI falls back to English if the Windows display
 language preferences contain no supported language.
 
 Tabs can move between windows or detach by dragging outside a window. Closing an
-active connection asks for confirmation. TabTty closes disconnected tabs by
-default. To keep their output available after disconnect, turn off Automatically
-close disconnected tabs in Settings. A broken-link icon beside the connection
-name marks a retained disconnected tab. To close the disconnected
-tabs already in the current window, right-click its tab bar and choose Close all
-disconnected tabs. Closing the last tab leaves the window open for new tabs.
+active connection asks for confirmation. **Automatically close tabs on normal
+disconnection** is enabled by default and also applies when you cancel a
+reconnect. Turn it off to keep those tabs with a broken-link icon. Failed
+connections, timeouts, and communication errors leave a yellow warning icon
+and keep the tab open so you can read the cause. Right-click the tab bar and
+choose **Close all disconnected tabs** to close completed disconnected tabs
+of either kind in the current window. Closing the last tab leaves the window
+open for new tabs.
 Moving the last tab to another window closes the source window.
 
 ## Macros

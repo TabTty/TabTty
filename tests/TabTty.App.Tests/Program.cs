@@ -1623,7 +1623,7 @@ internal static partial class Program
             host.AddTerminalTab(failed);
             failed.Start();
             await failed.Completion.WaitAsync(deadline.Token);
-            CheckTabHeader((TabItem)tabs.SelectedItem, disconnected: false, caption: "missing");
+            CheckTabHeader((TabItem)tabs.SelectedItem, disconnected: false, caption: "missing", warning: "ConnectionAttemptFailed");
 
             using var source = new HwndSource(new HwndSourceParameters("TabTty context menu test")
             {
@@ -1647,11 +1647,12 @@ internal static partial class Program
                 throw new InvalidOperationException("The tab bar right-click did not offer to close disconnected tabs.");
             command.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent, command));
             menu.IsOpen = false;
-            while (tabs.Items.Count > 3) await Task.Delay(15, deadline.Token);
-            if (!tabs.Items.OfType<TabItem>().Select(item => item.Content).SequenceEqual(new object[] { form, active, failed }) ||
-                !active.IsRunning || failed.IsDisconnected)
-                throw new InvalidOperationException("Closing disconnected tabs did not preserve the editor, active session, and failed attempt.");
+            while (tabs.Items.Count > 2) await Task.Delay(15, deadline.Token);
+            if (!tabs.Items.OfType<TabItem>().Select(item => item.Content).SequenceEqual(new object[] { form, active }) ||
+                !active.IsRunning)
+                throw new InvalidOperationException("Bulk closure did not close the failed tab while preserving the editor and active session.");
 
+            tabs.SelectedItem = tabs.Items.OfType<TabItem>().Single(item => item.Content == active);
             root.UpdateLayout();
             var header = (DockPanel)((TabItem)tabs.SelectedItem).Header;
             var headerHit = root.InputHitTest(header.TranslatePoint(new Point(30, 10), root));
@@ -1668,8 +1669,8 @@ internal static partial class Program
 
             activePeer.Client.Shutdown(SocketShutdown.Send);
             await active.Completion.WaitAsync(deadline.Token);
-            while (tabs.Items.Count != 2) await Task.Delay(15, deadline.Token);
-            if (tabs.Items.Count != 2 || !active.IsDisconnected)
+            while (tabs.Items.Count != 1) await Task.Delay(15, deadline.Token);
+            if (tabs.Items.Count != 1 || !active.IsDisconnected)
                 throw new InvalidOperationException("Auto-close did not remove the tab after disconnect.");
 
             finalHost.Show();
@@ -1690,6 +1691,19 @@ internal static partial class Program
             if (finalTabs.HasItems || !finalHost.IsVisible || finalHost.IsClosing || !welcome.IsVisible)
                 throw new InvalidOperationException("Closing the final settings tab did not keep the window open.");
 
+            using (TcpClient brokenPeer = await Connect(finalHost))
+            {
+                brokenPeer.Client.LingerState = new LingerOption(true, 0);
+                brokenPeer.Close();
+            }
+            await terminals[^1].Completion.WaitAsync(deadline.Token);
+            if (finalTabs.Items.Count != 1 || terminals[^1].ConnectionWarning != "ConnectionLost")
+                throw new InvalidOperationException("A connection reset was not retained with a warning when automatic closure was enabled.");
+            CheckTabHeader((TabItem)finalTabs.SelectedItem, disconnected: false, warning: "ConnectionLost");
+            var closeBrokenTab = ((DockPanel)((TabItem)finalTabs.SelectedItem).Header).Children.OfType<Button>().Single();
+            closeBrokenTab.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            while (finalTabs.HasItems) await Task.Delay(15, deadline.Token);
+
             finalHost.Close();
             if (finalHost.IsVisible)
                 throw new InvalidOperationException("An explicit window close did not close the empty window.");
@@ -1706,13 +1720,16 @@ internal static partial class Program
                     logDefaults: originalLogDefaults);
         }
 
-        static void CheckTabHeader(TabItem tab, bool disconnected, string caption = "Close test")
+        static void CheckTabHeader(TabItem tab, bool disconnected, string caption = "Close test", string? warning = null)
         {
             var header = (DockPanel)tab.Header;
             var icon = header.Children.OfType<System.Windows.Shapes.Path>().Single(path => path.Name == "DisconnectedIndicator");
             var label = header.Children.OfType<TextBlock>().Single();
-            string description = disconnected ? $"({App.Text("Disconnected")}) {caption}" : caption;
+            var warningIcon = header.Children.OfType<Border>().Single();
+            string description = warning is not null ? $"({App.Text(warning)}) {caption}"
+                : disconnected ? $"({App.Text("Disconnected")}) {caption}" : caption;
             if (icon.Visibility != (disconnected ? Visibility.Visible : Visibility.Collapsed) ||
+                warningIcon.Visibility != (warning is not null ? Visibility.Visible : Visibility.Collapsed) ||
                 label.Text != caption || !Equals(tab.ToolTip, description) ||
                 AutomationProperties.GetName(tab) != description)
                 throw new InvalidOperationException("The tab header did not match the connection state.");

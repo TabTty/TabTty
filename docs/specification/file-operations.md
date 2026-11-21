@@ -139,6 +139,21 @@ ensure its path can be retained within the existing limits if cleanup cannot
 be confirmed. If capacity is still insufficient, report the capacity failure
 before starting the write for that file. Keep earlier unresolved details.
 
+During an operation, the transfer window lists the currently retained entries
+in the order their outcomes occurred. At the next display update, remove any
+ordinary entries displaced to make room and show newly retained entries in
+that same order. Once any detail has been omitted, keep one localized notice
+at the end of the list for that operation ("Some results were omitted.").
+The notice gives no count. Later retained entries appear before it.
+
+The file-operation module exposes one observable, read-only result list for
+its lifetime. The transfer window binds to that list and localizes each row's
+reason for display. Core owns the order, retention limits and omission notice.
+The window uses the same list through operation completion and the next
+accepted start. An ordinary append updates the affected rows without copying
+the full list. The close report selects unresolved entries from the same
+retained results.
+
 ## Connection, window, and resource lifetime
 
 Bind each operation context to its terminal session's current connection.
@@ -201,6 +216,8 @@ named operations, observation, answers, and cancellation used by the window.
 | Cancellation/disconnect wins before an answer is used | A late approval causes no new mutation. |
 | A mutation may succeed but its reply is lost | Unknown outcome is retained; no automatic replay or final-path cleanup occurs. |
 | Ordinary results fill the display before a later temporary file's cleanup is unconfirmed | The close report still gives the temporary path. If space for another temporary path cannot be retained, that file's write never starts and the capacity failure is visible. |
+| During a transfer, an ordinary result is displaced and an unconfirmed cleanup is recorded | At the next display update, the list shows the retained entries in occurrence order, including the temporary path, with one omission notice at the end. Subsequent results appear above that notice. |
+| Reserving space for a temporary path displaces an ordinary entry and the write then waits | On the next display update the displaced row is gone and the omission notice is visible, even while the next file outcome is still pending. |
 | One transfer batch reports twelve unconfirmed temporary-file cleanups and one unknown final rename | Closing by either route shows counts of twelve and one, ten entries initially, and access to all thirteen results before dismissal. |
 | Provider finishes after cancellation | Q8 admission remains blocked and resources remain owned until actual retirement. |
 | View closes/reopens during outstanding work | Results are discarded, but I/O ownership and same-connection admission restrictions survive. |

@@ -158,6 +158,14 @@ internal static partial class Program
 
         var faults = new ControlledFiles { FailManyCleanups = true };
         var reported = new FileOperations(faults, new FileOperationOwnership(), CancellationToken.None);
+        var liveResults = reported.Results;
+        bool observedDisplacement = false;
+        ((System.Collections.Specialized.INotifyCollectionChanged)liveResults).CollectionChanged += (_, change) =>
+        {
+            observedDisplacement |= change.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Remove;
+            if (liveResults.Take(Math.Max(0, liveResults.Count - 1)).Any(entry => entry.Reason == "TransferResultsLimit"))
+                throw new InvalidOperationException("The omission notice was followed by a result.");
+        };
         var batch = Enumerable.Range(0, 35).Select(index =>
         {
             string name = index == 34 ? "unknown" : index >= 22 ? $"cleanup{index}" : $"ordinary{index}";
@@ -168,7 +176,8 @@ internal static partial class Program
         var unresolved = reported.UnresolvedForClose();
         if (unresolved.Length != 13 || unresolved.Count(entry => entry.Reason == "TransferTemporaryRemains") != 12 ||
             unresolved.Count(entry => entry.Reason == "SftpUnknownOutcome" && entry.Path == "out/unknown") != 1 ||
-            !reported.Results.Any(entry => entry.Reason == "TransferResultsLimit"))
+            !ReferenceEquals(liveResults, reported.Results) || !observedDisplacement ||
+            liveResults.Last().Reason != "TransferResultsLimit")
             throw new InvalidOperationException("The latest result budget omitted an unresolved path.");
         Console.WriteLine("PASS CheckFileOperations");
     }

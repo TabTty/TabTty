@@ -22,6 +22,7 @@ internal static partial class Program
 
     private static async Task AiSharesAnExistingTerminal(App app, string directory)
     {
+        CheckInputFormOrder();
         PipeIdentityIncludesIntegrityLevel();
         Console.WriteLine("PASS PipeIdentityIncludesIntegrityLevel");
         await OwnedPipeSurvivesEarlyClientDisconnect();
@@ -500,6 +501,27 @@ internal static partial class Program
         {
             if (!condition) throw new InvalidOperationException(message);
         }
+    }
+
+    private static void CheckInputFormOrder()
+    {
+        var schema = TabTty.AiTransport.McpArguments.Schemas["tabtty_send_input"]
+            .GetProperty("properties").GetProperty("input");
+        var reversed = JsonSerializer.SerializeToElement(new { oneOf = schema.GetProperty("oneOf").EnumerateArray().Reverse() });
+        foreach (var (kind, action) in new (string, string?)[]
+        {
+            ("text", null), ("paste", null), ("key", null), ("mouse", "press"), ("mouse", "release"),
+            ("mouse", "wheel"), ("mouse", "move"),
+        })
+        {
+            if (!TabTty.AiTransport.McpArguments.TrySelectInputForm(schema, kind, action, out var published) ||
+                !TabTty.AiTransport.McpArguments.TrySelectInputForm(reversed, kind, action, out var reordered) ||
+                !JsonElement.DeepEquals(published, reordered))
+                throw new InvalidOperationException("Schema order changed the input definition.");
+        }
+        if (TabTty.AiTransport.McpArguments.TrySelectInputForm(reversed, "mouse", "unknown", out _))
+            throw new InvalidOperationException("An unsupported mouse action selected an input definition.");
+        Console.WriteLine("PASS McpInputFormOrder");
     }
 
     private static async Task CheckMcpAdmissionContracts()

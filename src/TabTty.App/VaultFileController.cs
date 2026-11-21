@@ -95,11 +95,16 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         ShowRetainedFilePaths(owner, VerifiedFilePublication.GetRetainedStagePaths(FilePath));
     }
 
-    public Task RestoreFromMenuAsync(MainWindow owner) => RunAsync(owner, () => RestoreAsync(owner));
+    public Task RestoreAsync(Window owner) => RunAsync(owner, () => RestoreFileAsync(owner));
 
-    public Task ArchiveAsync(MainWindow owner) => RunAsync(owner, () => ArchiveFileAsync(owner));
+    public async Task<bool> ArchiveAsync(Window owner)
+    {
+        bool archived = false;
+        await RunAsync(owner, async () => archived = await ArchiveFileAsync(owner));
+        return archived;
+    }
 
-    public async Task<bool> ArchiveFileAsync(Window owner)
+    private async Task<bool> ArchiveFileAsync(Window owner)
     {
         if (unlockInteraction.IsPending) throw new InvalidOperationException(Text("VaultBusy"));
         string path = FilePath;
@@ -781,7 +786,7 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         return owner.IsLoaded;
     }
 
-    public async Task RestoreAsync(Window owner)
+    private async Task RestoreFileAsync(Window owner)
     {
         CheckAvailable();
         if (unlockInteraction.IsPending) throw new InvalidOperationException(Text("VaultBusy"));

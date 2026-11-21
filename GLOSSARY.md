@@ -92,6 +92,11 @@ text input. It is distinct from authentication and vault-unlock dialogs.
 A tab representing one terminal session and its retained output through one or
 more terminal panes. It belongs to one tab group at a time.
 
+**Disconnected terminal tab**:
+A terminal tab with no live connection whose most recent attempt ended through
+disconnection, cancellation or failure. A failed attempt is included even when
+it never established a connection.
+
 **Explicit closure**:
 A user-requested end of a terminal tab, a window, or the eligible disconnected
 tabs in a window. Its associated transfer windows close with the targeted
@@ -99,8 +104,9 @@ terminal tabs. Automatic tab closure has the same closure behavior but is
 triggered by the saved disconnect setting rather than a new user command.
 
 **Automatic tab closure**:
-Closing a disconnected terminal tab according to the saved automatic-close
-setting, including its associated transfer windows. A disconnect that leaves
+Closing a terminal tab after an ordinary disconnection or a cancelled reconnect
+according to the saved automatic-close setting, including its associated
+transfer windows. A disconnect that leaves
 the terminal tab open also leaves its transfer results available.
 
 **Tab group**:

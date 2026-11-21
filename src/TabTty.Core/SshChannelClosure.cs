@@ -9,13 +9,16 @@ internal sealed class SshChannelClosure
     private int closeRequested;
     private int closeScheduled;
     private int releaseStarted;
+    private Exception? failure;
 
     internal bool ReceiveEnded => Volatile.Read(ref receiveEof) != 0;
     internal bool CloseRequested => Volatile.Read(ref closeRequested) != 0;
     internal Task ProtocolEnded => protocolEnded.Task;
     internal Task ActualRelease => released.Task;
+    internal Exception? Failure => Volatile.Read(ref failure);
 
     internal void ReceiveEof() => Interlocked.Exchange(ref receiveEof, 1);
+    internal void RecordFailure(Exception cause) => Interlocked.CompareExchange(ref failure, cause, null);
     internal void EndProtocol() => protocolEnded.TrySetResult();
     internal bool RequestClose() => Interlocked.Exchange(ref closeRequested, 1) == 0;
     internal bool ScheduleClosePacket() => Interlocked.Exchange(ref closeScheduled, 1) == 0;

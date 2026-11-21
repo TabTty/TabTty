@@ -69,8 +69,12 @@ attempt does not relock the shared already-unlocked vault or stop other sessions
 the accepted Q115 rule for cancelling one shared pending vault-unlock dialog
 still applies to its waiting attempts.
 
-On failure/cancellation retain the tab and available output, with a distinct
-status. Do not automatically reconnect or replay buffered input/paste. A manual
+The [tab outcome contract](../specification/persistence-and-windows.md) amends
+Q131 for user cancellation before connection readiness. Close an initial
+connection's tab. On a cancelled reconnect, apply the close-on-disconnect
+preference and show the broken-link icon on a retained tab. On failure, retain
+the tab, its output and its failure status. Do not automatically reconnect or
+replay buffered input/paste. A manual
 reconnect rereads the saved profile and obtains unsaved credentials again.
 SSH partial authentication success is not connection success; final success
 and terminal channel/shell establishment remain distinct protocol states.

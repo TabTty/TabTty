@@ -159,14 +159,16 @@ not authorization to implement window movement or an activation broker.
   An explicit disconnect stops file work and retains its results while the
   terminal tab is retained. Moving a tab
   preserves the transfer. See [transfer window ownership](../specification/file-transfer.md#transfer-window-and-operation-ownership).
-- Architecture Q10, amended on 2026-11-16, makes the user-invoked Close
-  disconnected tabs command and automatic disconnected-tab removal close the
-  affected tabs' transfer windows under the same cleanup/reporting policy as
-  explicit tab/window closure. Already disconnected targets have no connection
-  warning; existing necessary cleanup, reporting, and wait/loss choices still
-  apply. Disconnect or peer loss retains transfer results when the terminal
-  tab is retained. This changes the current bulk and automatic-removal
-  implementation; see the [closure design](../specification/tab-and-window-closure.md).
+- Architecture Q10 applies the explicit tab/window cleanup and reporting policy
+  to both automatic disconnected-tab removal and **Close all disconnected tabs**.
+  The [window contract](../specification/persistence-and-windows.md) includes
+  tabs retained after a failed or timed-out attempt or an established connection
+  lost to a communication error among the disconnected tabs covered by the
+  manual command. Both operations close the transfer windows
+  of the tabs they remove. The targets need no connection-ending warning.
+  Existing wait/loss choices still apply. Disconnect or peer loss retains transfer
+  results when the terminal tab is retained. These bulk and automatic-removal
+  changes are pending implementation. See the [closure design](../specification/tab-and-window-closure.md).
 - Q192 (2026-11-14) clarifies that a window closes when all of its tabs are gone,
   counting terminal and settings/editor tabs together. Empty split groups do
   not keep it alive. This applies to explicit, automatic, bulk, and transfer
@@ -314,8 +316,10 @@ Use a profile connection-wait budget of 30 seconds (range 1-300) for initial
 network/SSH setup and later non-authentication protocol waits. Exclude local
 host-key/vault/credential dialogs and do not apply this universal deadline to
 SSH authentication response waits. Server deadlines still apply. Connection
-cancellation invalidates pending work and leaves the tab without automatic
-reconnect or input replay.
+cancellation by the user before readiness invalidates pending work. Close an
+initial connection's tab. On a cancelled reconnect, apply the saved
+close-on-disconnect preference under the [tab outcome contract](../specification/persistence-and-windows.md).
+Do not automatically reconnect or replay input.
 
 SSH liveness checking is optional and defaults Off. When enabled, use authenticated
 response-requesting protocol checks at a default 30-second interval (range
@@ -418,8 +422,9 @@ Detailed screen-derived text semantics and remaining bounds are tracked in
   peer-close cleanup without sending an exit command or adding confirmation.
   The existing live-tab/window-close confirmation remains. Disk/log draining
   follows its own contract; two seconds is not a complete-save guarantee.
-- Close disconnected tabs by default. With automatic closure disabled, retain
-  the tab and its displayed output after disconnect.
+- Close tabs after a normal disconnect by default. With automatic closure
+  disabled, retain the tab and its displayed output. A communication error
+  that ends an established connection leaves the tab open to show the reason.
 - Reconnect on explicit user action; do not automatically reconnect in the
   initial release.
 - Do not replay buffered input or commands on a new connection.

@@ -12,7 +12,10 @@
   <data name="Disconnect" xml:space="preserve"><value>Disconnect</value></data>
   <data name="CloseTab" xml:space="preserve"><value>Close tab</value></data>
   <data name="CloseDisconnectedTabs" xml:space="preserve"><value>Close all disconnected tabs</value></data>
-  <data name="AutoCloseDisconnectedTabs" xml:space="preserve"><value>Automatically close disconnected tabs</value></data>
+  <data name="AutoCloseDisconnectedTabs" xml:space="preserve"><value>Automatically close tabs on normal disconnection</value></data>
+  <data name="AutoCloseDisconnectedTabsDescription" xml:space="preserve"><value>This also applies when you cancel a reconnect. If a connection fails, times out, or ends with a communication error, its tab stays open so you can see the cause.</value></data>
+  <data name="ConnectionAttemptFailed" xml:space="preserve"><value>Connection failed</value></data>
+  <data name="ConnectionLost" xml:space="preserve"><value>Connection lost due to an error</value></data>
   <data name="ApplicationMenu" xml:space="preserve"><value>Application menu</value></data>
   <data name="ManagementTabOutdated" xml:space="preserve"><value>The saved settings changed while this tab was open. Reopen the tab to edit the current settings.</value></data>
   <data name="MinimizeWindow" xml:space="preserve"><value>Minimize window</value></data>
@@ -419,7 +422,7 @@
   <data name="TransferDownload" xml:space="preserve"><value>← Download</value></data>
   <data name="TransferRetry" xml:space="preserve"><value>Retry failed items</value></data>
   <data name="TransferResults" xml:space="preserve"><value>Results</value></data>
-  <data name="TransferResultsLimit" xml:space="preserve"><value>The results limit was reached. Further details are unavailable.</value></data>
+  <data name="TransferResultsLimit" xml:space="preserve"><value>Some results were omitted.</value></data>
   <data name="TransferDropTarget" xml:space="preserve"><value>Copy to {0}</value></data>
   <data name="TransferWorking" xml:space="preserve"><value>Working…</value></data>
   <data name="TransferFinished" xml:space="preserve"><value>Operation finished</value></data>

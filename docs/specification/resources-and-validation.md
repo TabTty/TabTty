@@ -189,6 +189,18 @@ bounded navigation through uncached content; reaching the cache cap is not the
 end of search. Bound work by the same revision/cancellation and worker policy.
 Terminal content, selection/copy, logging, and transport never wait for a match.
 
+One search owner per terminal tab manages the query, case option, active scan,
+shared match ranges and their memory reservation. Each pane keeps its own
+current match. With no current match, Next starts at the beginning of the
+invoking pane's visible area and Previous starts at its end.
+
+Closing the search bar cancels its scan, clears match overlays and releases the
+retained-result reservation. Keep the query and case option for reopening in
+the same tab. Removing the tab ends its search owner and releases the retained
+results immediately. A late navigation notification or scan result cannot
+restore them. A cancelled scan retains its worker slot and temporary workspace
+until it actually finishes. Moving a tab preserves its search state.
+
 For a pane's Next or Previous command, use the same bounded scan to find the
 navigation target and collect matches for highlighting. As soon as the nearest
 match in the requested direction is certain, reveal and outline it in the
@@ -288,6 +300,8 @@ The [desktop and device acceptance inventory](desktop-acceptance-inventory.md) t
 | Highlight suspension in split panes | Time out a rule in one pane while another pane is evaluating it. Check both panes, a newly opened pane and a separate tab using the same rule set. Verify one notification, removal of the stopped style, and correct underlying colors while the replacement is pending. Resume two suspended rules from the other pane. In a separate case, save a style edit and then a pattern correction to verify that only the correction resumes the affected rule. |
 | Profiles/settings | All transport fields/defaults; basic activation versus editor validation; unknown optional preservation; version/corruption recovery; copied/moved/missing profiles; relative/UNC/case-sensitive/long paths; no secret fields |
 | Search navigation before the count is known | Invoke Next with a nearby match and a long unsearched tail. The invoking pane reveals the nearest match while the count is pending. Finishing the scan preserves both panes' positions and current matches. Repeat with Previous, including a case where wrapping is necessary. |
+| First navigation in a split tab | Put matches on rows 1, 55, 59 and 90. In a pane showing rows 50–60 with no current match, Next reveals row 55. From the same initial state, Previous reveals row 59. The other pane keeps its position and current match in both cases. |
+| Close a tab with cached results while a scan is still running | The retained-result reservation returns on tab removal without waiting for garbage collection. Late scan notifications cannot restore results or move a pane. The worker slot and temporary workspace return when the scan exits. |
 | Search highlights in split panes | Show early and late output in separate panes with more than 10,000 matches across the tab and only a few visible in each pane. Both visible sets receive highlights within the shared cap. Navigate to an uncached match and verify its outline. Compare exactly 10,000 matches with 10,001 to check the count indicator. |
 | Windows | Double-click ordering, modal queue/cancel, shared unlock, last-tab detach/merge, closure racing activation, per-monitor DPI/removal, disconnected retained output |
 | Terminal/encoding | Every supported control family and reset; Tera Term reference vectors and declared differences; every codec identity; all relevant byte splits; malformed prefixes; JIS/kana/extensions; combining/emoji/right-edge edits/reflow |
