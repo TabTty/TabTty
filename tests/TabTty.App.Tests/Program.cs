@@ -1031,8 +1031,14 @@ internal static partial class Program
                 WaitFor(() => IsDisplayed(tools), "the first level to open");
                 MoveMouseTo(tools);
                 WaitFor(() => IsDisplayed(vault), "the second level to open");
+                ClickMouse();
+                if (!menu.IsVisible || !tools.IsSubmenuOpen || !IsDisplayed(vault))
+                    throw new InvalidOperationException("Clicking an expanded category closed the application menu or its submenu.");
                 MoveMouseTo(vault);
                 WaitFor(() => IsDisplayed(unlock), "the third level to open");
+                ClickMouse();
+                if (!menu.IsVisible || !tools.IsSubmenuOpen || !vault.IsSubmenuOpen || !IsDisplayed(unlock))
+                    throw new InvalidOperationException("Clicking an expanded nested category closed a menu.");
                 MoveMouseTo(unlock);
                 if (!tools.IsSubmenuOpen || !vault.IsSubmenuOpen)
                     throw new InvalidOperationException("Moving the mouse onto the third level closed its parent menu.");
@@ -1062,6 +1068,15 @@ internal static partial class Program
             WaitFor(() => Mouse.DirectlyOver is Visual over && (over == item || item.IsAncestorOf(over)), $"the mouse to reach {item}");
         }
 
+        static void ClickMouse()
+        {
+            const uint leftDown = 0x0002;
+            const uint leftUp = 0x0004;
+            MouseEvent(leftDown, 0, 0, 0, 0);
+            MouseEvent(leftUp, 0, 0, 0, 0);
+            Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+        }
+
         static void WaitFor(Func<bool> ready, string expected)
         {
             var deadline = System.Diagnostics.Stopwatch.StartNew();
@@ -1085,6 +1100,9 @@ internal static partial class Program
     [DllImport("user32.dll", ExactSpelling = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetCursorPos(int x, int y);
+
+    [DllImport("user32.dll", EntryPoint = "mouse_event", ExactSpelling = true)]
+    private static extern void MouseEvent(uint flags, uint dx, uint dy, uint data, nuint extraInfo);
 
     private sealed class DesktopInputUnavailableException(string message) : Exception(message);
 

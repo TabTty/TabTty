@@ -48,7 +48,14 @@ internal sealed partial class MainWindow
         {
             if (!IsApplicationMenuOpen) return;
             var hit = InputHitTest(args.GetPosition(this)) as DependencyObject;
-            if (IsApplicationMenuElement(hit)) return;
+            if (IsApplicationMenuElement(hit))
+            {
+                // WPF exits menu mode when an open top-level header is pressed.
+                if (args.ChangedButton == MouseButton.Left &&
+                    Ancestor<MenuItem>(hit) is { Role: MenuItemRole.TopLevelHeader, IsSubmenuOpen: true })
+                    args.Handled = true;
+                return;
+            }
             if (Ancestor<Button>(hit) != menuButton) CloseApplicationMenu();
             else if (Mouse.Captured == mainMenu && args.ChangedButton == MouseButton.Left)
             {
