@@ -4,6 +4,9 @@ Drafted under accepted Q69 and confirmed in the consolidated final review on
 2026-11-14, including routine language and API details. Read the
 [behavior contract](macro-specification.md) and [validation](macro-validation.md).
 Q78–Q88 extend version 1 with [shared macro constants](#shared-macro-constants).
+The six [syntax acceptance cases](macro-validation.md#macro-syntax-acceptance)
+from [#103](https://github.com/TabTty/TabTty/issues/103) specify the next
+macro-enabled implementation.
 The examples describe the language for macro-enabled builds. See the
 [implementation status](../specification/implementation-status.md) for verification.
 
@@ -46,20 +49,26 @@ constantsFile  = "#constants", horizontalSpace, identifier, horizontalSpace,
 function       = returnType, identifier, "(", [ parameters ], ")", block ;
 parameters     = type, identifier, { ",", type, identifier } ;
 block          = "{", { statement }, "}" ;
-statement      = block | declaration, ";" | assignment, ";" | call, ";"
+statement      = block | declaration, ";" | assignment, ";" | statementCall, ";"
                | if | while | for | foreach | try
-               | "break", ";" | "continue", ";"
+               | "break", ";" | "continue", ";" | "throw", ";"
                | "return", [ expression ], ";" ;
 declaration    = ("var" | type), identifier, "=", expression ;
 assignment     = lvalue, ("=" | "+=" | "-=" | "*=" | "/=" | "%="), expression
                | lvalue, ("++" | "--") ;
-lvalue         = identifier | identifier, "[", expression, "]" ;
-call           = functionIdentifier, "(", [ expression, { ",", expression } ], ")" ;
+lvalue         = identifier | indexedTarget | "(", lvalue, ")" ;
+indexedTarget  = listReceiver, "[", expression, "]" ;
+listReceiver   = identifier | "Macro", ".", "Args" | indexedTarget
+               | "(", listReceiver, ")" ;
+statementCall  = call | "(", statementCall, ")" ;
+call           = functionIdentifier, "(", [ argument, { ",", argument } ], ")" ;
+argument       = expression | identifier, ":", expression | alternatives ;
+alternatives   = "[", identifier, ":", expression, { ",", identifier, ":", expression }, [ "," ], "]" ;
 if             = "if", "(", expression, ")", block,
                  [ "else", (block | if) ] ;
 while          = "while", "(", expression, ")", block ;
-for            = "for", "(", [ declaration | assignment | call ], ";",
-                 [ expression ], ";", [ assignment | call ], ")", block ;
+for            = "for", "(", [ declaration | assignment | statementCall ], ";",
+                 [ expression ], ";", [ assignment | statementCall ], ")", block ;
 foreach        = "foreach", "(", ("var" | type), identifier, "in",
                  expression, ")", block ;
 try            = "try", block, "catch", "(", "MacroError", identifier, ")", block ;
@@ -72,9 +81,9 @@ type           = "bool" | "long" | "double" | "string" | "List", "<", type, ">"
 functions are not first-class values. `expression` consists of literals,
 variable/enum/metadata names, qualified shared constants, calls, parentheses,
 list literals and permitted postfix member/index access, combined by the
-precedence rules below. Only a local/parameter identifier or a direct index of
-such a list variable is an lvalue. To change `Macro.Args` or a nested list by index, first bind that list to
-a local alias; members themselves are read-only. `foreach` accepts `List<T>`
+precedence rules below. Rebinding requires a writable variable. Indexed writes
+follow the [list receiver rules](#lists-and-read-only-api-values). Members
+themselves are read-only. `foreach` accepts `List<T>`
 only, not a string; an explicit iterator type must accept T by the usual
 assignment conversion, while var infers T.
 
@@ -82,10 +91,11 @@ assignment conversion, while var infers T.
 boundary. A `for` continue runs its iteration clause; a while continue rechecks
 its condition. Empty for condition means true. Top-level `return;` completes
 the run; top-level return with a value is invalid. A void function can use
-`return;`; a non-void function must return an assignable value on all paths.
-For definite-return checking, a loop alone is not assumed to terminate/return;
-an `if/else` returns on all paths only when both branches do, and a try/catch
-requires both blocks. This finite check avoids inheriting all C# flow analysis.
+`return;`; every reachable exit of a non-void function must return an
+assignable value or [rethrow a caught error](#rethrowing-a-caught-error).
+For definite-return checking, both arms of an `if/else`, and both blocks
+of a try/catch, must end in a return or valid rethrow if execution could
+otherwise reach the end of the helper. A loop alone does not establish this.
 
 Every variable has an initializer. Variables have lexical block scope, cannot
 refer to themselves in their initializer, and cannot be read before declaration.
@@ -93,7 +103,30 @@ Duplicate names or shadowing another visible local/parameter are source errors.
 Parameters are local variables passed by value; a list value is a shared list
 reference. Helpers do not implicitly capture top-level locals: pass them as
 parameters. They can call builtins, which operate on the same run/session.
-No `ref`, `out`, optional parameters, named arguments or user overloads initially.
+Helpers have positional arguments and no `ref`, `out`, optional parameters or
+user overloads. Only the explicitly listed builtin options accept a named
+argument. An alternatives literal is admitted only by the multi-pattern waits.
+
+### Parentheses in assignments and call statements
+
+Version 1 accepts parentheses around a variable used as an assignment target,
+the list variable being indexed, the complete indexed target, or a complete
+call used as a statement. Grouping preserves the operation, its evaluation
+order and the existing type and writability checks. The same forms apply in
+the initializer and update clauses of a `for` loop.
+
+Use the following cases for both the TabTty launch checker and VS Code.
+Assume `n` is a writable `long` and `items` is a writable `List<long>`
+with a first element.
+
+| Source | Expected result |
+| --- | --- |
+| `(n) = 2;`, `(items)[0]++;`, `(items[0]) += 1;` | Accept each as the corresponding assignment or update. Evaluate the index once. |
+| `(Sleep(0));` | Accept the complete call as a statement. It invokes `Sleep` once. |
+| `for ((n) = 0; n < 2; (n)++) {}` | Accept the grouped targets in both clauses. The loop finishes with `n` equal to 2. |
+| Start with `n` equal to zero, then run `for ((Sleep(0)); n < 2; (Sleep(0))) { n++; }`. | Call `Sleep` once during initialization and once after each of the two iterations. |
+| `(n + 1) = 2;`, `(1 + 2);` | Reject the computed assignment target and the standalone arithmetic expression. Arithmetic grouping on a right-hand side such as `n = (1 + 2) * 3;` remains valid. |
+| `(Sleep)(0);`, `(n++);` | Reject both forms. The first attempts to use the function name as a value. The second puts a statement-level update inside an expression. |
 
 ## Shared macro constants
 
@@ -252,7 +285,10 @@ double. Use `0.5`, not `.5`. Reject malformed separators, overflow and non-finit
 literal values before execution. There are no NaN/Infinity literals.
 
 Positive integer magnitude must fit long, except directly applying unary minus
-to decimal magnitude 9223372036854775808 yields long.MinValue. Parenthesizing
+to decimal magnitude 9223372036854775808 yields long.MinValue. In both macro
+source and shared constants files, `-09_223_372_036_854_775_808L` and
+`-9223372036854775808` denote this same value. A leading zero, valid digit
+separators and the optional suffix preserve the decimal magnitude. Parenthesizing
 that out-of-range positive literal does not make it valid. Unary negation of an
 already evaluated long.MinValue is overflow. Arithmetic overflow is checked;
 no unchecked context, saturation or wrapping.
@@ -283,11 +319,16 @@ Verbatim strings preserve physical CR/LF and other literal contents; `""` inside
 one represents a quote. Backslash is ordinary in verbatim strings.
 
 Ordinary escapes are `\0`, `\a`, `\b`, `\f`, `\n`, `\r`, `\t`, `\v`, `\\`,
-`\'`, `\"`, `\x` with 1-4 hex digits, `\u` with exactly 4 and `\U` with exactly
+`\'`, `\"`, `\x` with exactly two ASCII hex digits, `\u` with exactly 4 and `\U` with exactly
 8. `\U` must name a Unicode scalar. `\u` can produce a UTF-16 code unit, including
 a surrogate; send/path/UI boundaries strictly reject unpaired surrogates rather
-than silently replacing them. `\x` consumes as many as four following hex digits;
-prefer `\u001B` when an ESC is followed by hex characters. Unknown escapes fail
+than silently replacing them. After the two digits ordinary text resumes:
+`"\x1BD"` contains U+001B and D, `"\x01BD"` contains U+0001, B and D,
+and `"\u01BD"` contains U+01BD. Both cases of A–F are accepted. A missing,
+single or nonhex digit in either required position is a source diagnostic at
+the backslash, in TabTty and VS Code. Apply this rule in ordinary strings,
+interpolated ordinary text, quoted directive paths and shared constants.
+In verbatim text `@"\x1BD"` preserves all five characters. Unknown escapes fail
 source validation. Source decoding itself never accepts malformed Unicode bytes.
 
 Interpolation uses `{expression}` and `{{`/`}}` for literal braces. Embedded
@@ -324,6 +365,26 @@ mutable copies; changing them never changes the original result or runtime state
 `Macro.Args` is one run-local mutable list, initially copied from launch arguments.
 User code cannot construct builtin records except through their named factories.
 
+For an indexed write, start from a list variable, list parameter or
+`Macro.Args`. Follow any number of indices through list elements. Evaluate
+the root once and each index once, from left to right. At each bracket check
+the index before traversing further. Retain the final list identity and slot.
+A compound update reads the old element once before evaluating its right-hand
+side. Evaluate the right-hand side once, apply assignment conversion, and
+write once. If the right-hand side changes the list length, check the saved
+slot before writing. A failing index, conversion or arithmetic operation
+leaves the target unwritten; earlier evaluation effects are not rolled back.
+
+For `List<List<long>> rows = [[1, 2]]; var row = rows[0];`,
+`rows[0][1] = 4; rows[0][1] += 3;` leaves `row[1]` equal to 7. An invalid
+outer index fails at the first `[` before evaluating the inner index or RHS;
+an invalid inner index fails at the second `[`. An existing argument can be
+replaced with `Macro.Args[0] = "changed";` in this run. Both checkers reject
+direct writes through a temporary such as `Clone(row)[0]` or
+`match.Groups[0].Captures[0]`. To edit captured text, bind
+`var copy = match.Groups[0].Captures;` and write `copy[0]`: only that copy
+changes. Strings remain immutable, even when reached through a list.
+
 ## Control and result types
 
 | Type | Exposed properties/values |
@@ -331,7 +392,7 @@ User code cannot construct builtin records except through their named factories.
 | `Macro` metadata root | Reserved root, not a first-class/declarable type; read-only FullPath/FileName/BaseName/RunId strings and Args as `List<string>`. See [source identity](macro-specification.md#loading-launch-and-source-identity) for the basename rule. |
 | `Instant` | Opaque captured instant and offset; use time functions, no arbitrary members |
 | `WaitPattern` | Opaque validated literal/regex candidate; no exposed engine object |
-| `WaitMatch` | `long AlternativeIndex`, `string Text`, `long Index`, `long Length`, `List<CaptureGroup> Groups` |
+| `WaitMatch` | `string AlternativeName`, `string Text`, `long Index`, `long Length`, `List<CaptureGroup> Groups` |
 | `CaptureGroup` | `long Number`, `string Name`, `bool Success`, `string Value`, `long Index`, `long Length`, `List<string> Captures` |
 | `DialogButtons` | `OK`, `OKCancel`, `YesNo`, `YesNoCancel` |
 | `DialogButton` | `OK`, `Cancel`, `Yes`, `No` |
@@ -339,8 +400,9 @@ User code cannot construct builtin records except through their named factories.
 | `MacroError` | `ErrorCode Code`, `string Message`, `long Line`, `long Column` |
 
 WaitMatch.Index/Length and successful group indices refer to the original
-receive-line subject at match time under accepted Q72. AlternativeIndex is 0
-for a single-pattern call. Regex Groups contains group 0 and numbered groups in
+receive-line subject at match time under accepted Q72. AlternativeName is the
+winning label for a multi-pattern wait and the empty string for a single
+pattern. Regex Groups contains group 0 and numbered groups in
 numeric order, with the .NET name (numeric string for unnamed groups). An
 unmatched group has Success=false, Value="", Index=-1, Length=0 and no Captures;
 a successful empty capture remains distinguishable. Value/Index/Length describe
@@ -353,22 +415,51 @@ even if the input previously contained text. MacroError.Message is localized
 non-secret explanatory text; scripts branch on Code, never Message. Source
 positions refer to the failed operation, including a helper call's source file.
 
+### Source positions for member and index access
+
+The shared parser retains the start and end of each member name and the
+position of each opening index bracket. For an unknown member, the launch
+diagnostic points to the first character of its name and VS Code underlines
+the full name. A runtime failure while reading a member points to the same
+first character. Each access in a chain has its own position, including when
+the chain spans several lines.
+
+An out-of-range index points to the opening `[` of the failed access, for
+both reads and writes. If evaluating the receiver or the index expression
+itself fails, preserve the position of the operation that raised that error.
+For a given runtime failure, the caught `MacroError.Line` and
+`MacroError.Column` and the location shown if it goes uncaught follow the
+same [source coordinate rules](macro-specification.md#loading-launch-and-source-identity).
+
+```text
+#tttym 1
+var x = Macro
+    .Args
+    .Wrong;
+```
+
+| Case | Expected location |
+| --- | --- |
+| Check the macro above in VS Code and at launch. | VS Code underlines all five characters of `Wrong`. TabTty reports line 4, column 6, at `W`. |
+| Read `result.Text` when the dialog result has no text. | `NoTextValue` points to `T` in `Text`. Check the location both in a catch handler and in the uncaught failure display. |
+| Read `rows[1 / divisor]`, then repeat with this access as a list assignment target. | A zero divisor points to `/`. A successful division whose result is outside the list points to `[`. Moving the bracket and division to separate lines preserves the distinction for both reads and writes. |
+
 ## Builtin signatures
 
 Signatures use `T` only to describe builtin list operations and documented
 overloads, not to grant user-defined generics. No unspecified members exist.
-Arguments below are positional; names shown in signatures explain their roles.
+Arguments are positional except for the explicitly named options below.
 
 ### Session, paths, input, waits and window
 
 | Signature | Behavior |
 | --- | --- |
-| `void Connect(string profilePath)` and overloads with `string logDirectory`, `string logFilenameTemplate`, and `bool allowLogOverwrite` in that order | One explicit attempt. Blank strings inherit the corresponding setting. The recording contract defines defaults, readiness, and logging errors. |
+| `void Connect(string profilePath)` with optional named `logDirectory` (string), `logFilenameTemplate` (string), `allowLogOverwrite` (bool) | One explicit attempt. See [connection recording options](#connection-recording-options). |
 | `void SetBaseDirectory(string path)` | Replace this run's relative-path base |
 | `void ResetBaseDirectory()` | Restore captured source directory |
 | `string BaseDirectory()` | Current absolute run-local base |
 | `void Write(string text)` | Ordered text send, no implicit ending |
-| `void WriteLine(string text)` | Append one captured Enter ending |
+| `void WriteLine(string text)` with optional named `markReceiveBoundary` (bool) | Append one captured Enter ending; optionally start the next wait's receive window at submission |
 | `void WritePassword()` / `void WritePassword(string name)` | Send the captured profile password or the password with the specified vault name |
 | `void WritePasswordLine()` / `void WritePasswordLine(string name)` | Same, with captured Enter ending |
 | `void MarkReceiveBoundary()` | Advance match-start floor to admitted tail |
@@ -376,13 +467,13 @@ Arguments below are positional; names shown in signatures explain their roles.
 | `WaitPattern Regex(string pattern)` / `Regex(string pattern, bool ignoreCase)` | Compile/validate bounded pattern; default case-sensitive |
 | `WaitMatch WaitLine(WaitPattern pattern)` / `WaitLine(WaitPattern pattern, long timeoutMs)` | Completed-line mode, indefinite or explicitly finite |
 | `WaitMatch WaitPrompt(WaitPattern pattern)` / `WaitPrompt(WaitPattern pattern, long timeoutMs)` | Include unfinished line |
-| `WaitMatch WaitAnyLine(List<WaitPattern> patterns)` / overload with `long timeoutMs` | Snapshot nonempty ordered candidates; completed-line mode |
-| `WaitMatch WaitAnyPrompt(List<WaitPattern> patterns)` / overload with `long timeoutMs` | Snapshot candidates; prompt mode |
+| `WaitAnyLine([name: pattern, ...])` / overload with `long timeoutMs` | Return a WaitMatch for the winning named candidate on a completed line |
+| `WaitAnyPrompt([name: pattern, ...])` / overload with `long timeoutMs` | Return a WaitMatch; the current unfinished line is also eligible |
 | `void Sleep(long milliseconds)` | Pause-aware local delay; 0 yields/checks cancellation |
 | `void MinimizeWindow()` / `void RestoreWindow()` | Current run-tab host, including deferred-dialog rule |
 
-There is no implicit conversion from string to WaitPattern. WaitAny copies its
-candidate list at operation start. A no-timeout overload is indefinite; a finite
+There is no implicit conversion from string to WaitPattern. Each multi-pattern
+wait snapshots its labels and evaluated candidates at entry. A no-timeout overload is indefinite; a finite
 timeout must be nonnegative and within bounds. A zero timeout performs one search
 of already-admitted eligible history without waiting for future input; it still
 has finite regex evaluation work and remains interruptible. Connect retains its
@@ -398,6 +489,78 @@ WritePassword("Production password");
 ```
 
 Use exact, case-sensitive vault names under the [vault format](../specification/vault-format.md#encrypted-payload-schema-and-limits).
+
+### Starting a receive window at submission
+
+`WriteLine("status", markReceiveBoundary: true); WaitLine(Literal("OK"), 2000);`
+ignores an unconsumed, preexisting `OK`. After preparation and immediately
+before submission, capture the admitted receive tail in the same ordering
+as the run's receive observer. When the send succeeds, commit that floor.
+An identical fresh line admitted during the send is eligible even if the wait
+starts later. The boundary orders local observations; it does not establish
+which remote action produced a response. Omission or `false` leaves the
+cursor unchanged. An ordinary first wait after Connect deliberately includes
+startup history. The floor applies to line, prompt and named multi-pattern
+waits with indefinite, finite or zero timeouts under the usual matching rules.
+
+If the send provably submitted no payload, discard the provisional boundary,
+raise the existing recoverable send error and retain the prior wait cursor
+(subject to normal history retention). Partial or uncertain submission ends
+the run: there is no subsequent wait or automatic replay. A healthy session
+can still be operated manually. Keep the original line for regex context.
+
+### Connection recording options
+
+These calls show the supported forms:
+
+```csharp
+Connect("lab.ttty");
+Connect("lab.ttty", allowLogOverwrite: false);
+Connect("lab.ttty", logDirectory: @"C:\Logs");
+Connect("lab.ttty", logFilenameTemplate: "lab-<serial:1,3>");
+Connect("lab.ttty", logFilenameTemplate: "lab-<serial:1,3>", logDirectory: @"C:\Logs", allowLogOverwrite: true);
+```
+
+After the required profile path, each option is optional, in any order and
+at most once. Values are evaluated once in written order. Omission or a blank
+directory/template (empty or whitespace-only) inherits that field under the recording contract. A
+nonblank value explicitly selects a field even if its text matches the
+profile. Profile choice of log formats still applies.
+
+| Effective naming choice | `allowLogOverwrite: true` | `allowLogOverwrite: false` | Option omitted |
+| --- | --- | --- | --- |
+| Both fields inherited | Allow replacement | Deny | Use the profile's overwrite permission |
+| Directory or template explicitly selected | Allow replacement | Deny | Deny |
+
+An application naming default grants no overwrite permission. Complete source
+checking precedes profile access, connection and recording. Both TabTty and
+VS Code identify an unknown name at that option, a duplicate at its second
+name, or a wrong type at the supplied value. VS Code offers the remaining
+option names and their types as the author edits.
+
+### Named wait alternatives
+
+Use an ordered, nonempty literal of `name: WaitPattern` pairs as the first
+argument of either `WaitAnyLine` or `WaitAnyPrompt`. Each name is a
+non-reserved ASCII identifier, unique within that call under ordinal,
+case-sensitive comparison. The name is its source spelling, independent of
+local variables and UI language. Both checkers diagnose a missing or invalid
+label where it is required and report `DuplicateAlternative` on the second
+occurrence of a repeated name. Evaluate patterns once in source order at
+call entry. Labels neither change pattern validation nor consume input.
+
+```csharp
+var result = WaitAnyPrompt([password: Literal("Password:"), ready: Literal("$ ")], 10000);
+if (result.AlternativeName == "password") { WritePasswordLine(); }
+else if (result.AlternativeName == "ready") { WriteLine("status"); }
+```
+
+Prepending `notice: Literal("Notice:")` preserves both branches. Match the
+earliest eligible receive line, then the earliest start within it. For equal
+starts, the first candidate wins and supplies its own name. A prompt wait can
+return `"ready"` on an unfinished `$ ` line; line mode waits for its delimiter.
+The only multi-pattern form is the named literal. The result's `Index` is
+the offset of the match in the receive line.
 
 ### File path parts
 
@@ -501,8 +664,39 @@ ordinary keyboard navigation and bounds. No string is evaluated as markup.
 
 ## Error model
 
-Use one `catch (MacroError e)` per try; nest try blocks if needed. No catch-all
-CLR type, exception filters, throw/rethrow or finally in version 1. A catch runs
+### Rethrowing a caught error
+
+`throw;` propagates the currently handled MacroError, including its original
+code, message, line and UTF-16 column. A helper may rethrow from its own
+catch. Calling a helper from a catch does not put the helper's body inside
+the caller's handler. In nested catches, bare rethrow refers to the innermost
+active handler; after that handler finishes, the outer caught error is active
+again. A rethrow leaves that handler and never re-enters it. The uncaught
+display points to the original failed operation.
+
+```csharp
+bool IsReady() {
+    try { WaitLine(Literal("ready"), 250); return true; }
+    catch (MacroError e) {
+        if (e.Code == ErrorCode.WaitTimeout) { return false; }
+        throw;
+    }
+}
+try { var ready = IsReady(); }
+catch (MacroError outer) { throw; }
+```
+
+A timeout returns false. If the wait instead reports recoverable
+`EndOfInput`, the outer handler sees its original code and the location of
+`WaitLine`. The second rethrow reports that same location. A valid rethrow
+ends its path for definite-return analysis. TabTty and VS Code report
+`RethrowOutsideCatch` at `throw` outside a lexical catch of the same function,
+even in an unreachable branch. Stop and other terminal conditions bypass
+these handlers.
+
+Use one `catch (MacroError e)` per try; nest try blocks if needed. Bare
+`throw;` is the supported rethrow. CLR catch-all, exception filters, throwing
+an expression and finally are outside the grammar. A catch runs
 after the failed operation and does not roll back completed sends or other
 effects. Stable ErrorCode members are:
 
@@ -551,13 +745,12 @@ if (Count(Macro.Args) > 0)
 
 Connect(@"profiles\server.ttty");
 var ready = WaitPrompt(Literal("$ "));
-MarkReceiveBoundary();
-WriteLine("sudo -v");
+WriteLine("sudo -v", markReceiveBoundary: true);
 
 try
 {
-    var result = WaitAnyPrompt([Literal("[sudo] password:"), Literal("$ ")], 10000);
-    if (result.AlternativeIndex == 0)
+    var result = WaitAnyPrompt([password: Literal("[sudo] password:"), ready: Literal("$ ")], 10000);
+    if (result.AlternativeName == "password")
     {
         WritePasswordLine();
         WaitPrompt(Literal("$ "));

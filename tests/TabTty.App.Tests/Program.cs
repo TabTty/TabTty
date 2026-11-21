@@ -23,6 +23,8 @@ internal static partial class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args is ["--macro-cloud-provider", var syncRoot])
+            return CloudConstantsProvider.Run(syncRoot);
         bool nativeClipboard = args is ["--isolated-clipboard", _];
         bool clipboardFixture = nativeClipboard || args is ["--clipboard-block", _];
         if (nativeClipboard)
@@ -37,7 +39,7 @@ internal static partial class Program
         string settingsDirectory = Directory.CreateTempSubdirectory("TabTty-settings-test-").FullName;
         LocalState.UseTestDirectory(settingsDirectory);
         MacroTrust.UseTestStore();
-        if (args is not ["--profile-trust"])
+        if (args is not ["--profile-trust" or "--macro-profile-connect"])
             AcceptFixtureProfileReviews();
         string settingsPath = Path.Combine(settingsDirectory, "settings.json");
         var settingsFixture = args is ["--file-editors"] ? new FilePublicationFixture() : null;
@@ -142,9 +144,10 @@ internal static partial class Program
                 return 0;
             }
             if (args is ["--native-utf8-baseline" or "--disconnected-tabs" or "--terminal-tab-close" or "--broadcast-splits" or
-                "--profile-editor-heading" or
-                "--macro-launch" or "--macro-network" or "--profile-trust" or "--vault-first-use" or "--vault-rename"] or
-                ["--transfer-window-close" or "--fullscreen-vim" or "--overload-controls" or "--sftp-batch", _])
+                "--profile-editor-heading" or "--macro-profile-connect" or
+                "--macro-launch" or "--macro-network" or "--macro-cloud" or "--profile-trust" or "--vault-first-use" or "--vault-rename"] or
+                ["--transfer-window-close" or "--fullscreen-vim" or "--overload-controls" or "--sftp-batch", _] or
+                ["--macro-reset-relaunch", _, _])
             {
                 var integrationFrame = new DispatcherFrame();
                 Task run = application.Dispatcher.InvokeAsync(() => args[0] switch
@@ -155,8 +158,11 @@ internal static partial class Program
                     "--profile-editor-heading" => CheckProfileEditorHeadingAsync(application, settingsDirectory),
                     "--broadcast-splits" => BroadcastAndSplitViews(application, settingsDirectory),
                     "--macro-launch" => MacroLaunchAndDialog(application, settingsDirectory),
+                    "--macro-reset-relaunch" => CheckMacroResetRelaunch(application, args[1], args[2]),
                     "--macro-network" => SharedConstantsNetworkAsync(application, settingsDirectory),
+                    "--macro-cloud" => SharedConstantsCloudAsync(application, settingsDirectory),
                     "--profile-trust" => CheckProfileTrustAsync(application, settingsDirectory),
+                    "--macro-profile-connect" => CheckMacroProfileConnectionsAsync(application, settingsDirectory),
                     "--vault-first-use" => CheckVaultFirstUseAsync(application, settingsDirectory),
                     "--vault-rename" => CheckVaultRenameAsync(application, settingsDirectory),
                     "--fullscreen-vim" => CheckFullScreenApplicationAsync(application, settingsDirectory, args[1]),

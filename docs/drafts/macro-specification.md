@@ -309,8 +309,8 @@ startup complete, Telnet TCP ready, or serial open/configuration complete.
 Telnet readiness does not prove account login. The macro cannot send terminal
 input until readiness, but startup history is available to its first wait.
 
-The optional positional arguments `logDirectory`, `logFilenameTemplate`, and
-`allowLogOverwrite` follow `profilePath`. See the [recording contract](receive-logging-issue.md#log-filename-template-redesign)
+The optional [named connection recording options](macro-language.md#connection-recording-options)
+follow `profilePath`. See the [recording contract](receive-logging-issue.md#log-filename-template-redesign)
 for resolution and overwrite rules. All selected files open before transport
 startup. A preparation error fails `Connect` immediately. A recording start
 failure detected on the connected terminal disconnects the session, including
@@ -457,9 +457,15 @@ line as the regex subject and restrict match start to the cursor/boundary floor
 can match. Retained lookbehind context remains available, but neither a match
 body before the floor nor context across a history gap is permitted.
 
+`WriteLine(command, markReceiveBoundary: true)` captures the admitted tail
+immediately before submission. Successful submission commits that floor,
+including when a fresh reply arrived before the send completed. Known
+zero-payload rejection preserves the previous floor; uncertain delivery
+ends the run under Q76. See [send and receive ordering](macro-language.md#starting-a-receive-window-at-submission).
+
 For an alternative wait, inspect eligible unconsumed lines in receive order,
 then select the earliest match start within the earliest matching line, then
-candidate declaration order. Return a zero-based alternative index, match text
+candidate declaration order. Return the winning alternative's name, match text
 and captures. Evaluate against immutable text snapshots; update scheduling may
 coalesce still-unstarted searches, so prompt results can depend on available
 receive batches. Once committed, a match is never lengthened or withdrawn by

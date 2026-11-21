@@ -654,6 +654,7 @@ The host can send keys and multiple lines of commands without asking again, with
   <data name="MacroTrustReset" xml:space="preserve"><value>Reset all macro trust</value></data>
   <data name="MacroTrustResetConfirm" xml:space="preserve"><value>Clear every remembered macro allow and block decision on this PC?</value></data>
   <data name="MacroTrustResetFailed" xml:space="preserve"><value>The macro trust reset could not be verified. Retry the operation.</value></data>
+  <data name="MacroTrustResetRetry" xml:space="preserve"><value>Retry reset</value></data>
   <data name="RecordingDestinationChanged" xml:space="preserve"><value>The reviewed recording destination changed.</value></data>
   <data name="AddProfile" xml:space="preserve"><value>Create new profile</value></data>
   <data name="ProfileSaveDirectory" xml:space="preserve"><value>Connection profile folder</value></data>

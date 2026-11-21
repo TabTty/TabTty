@@ -9,7 +9,7 @@ internal sealed record MacroConstantsFile(string FullPath, string Digest, string
     internal const int MaxMembers = 4096;
 
     internal static MacroConstantsFile Parse(string fullPath, string digest, string source, int remainingMembers,
-        Action admitMember)
+        Action admitMember, Action<MacroToken, object>? onDefinition = null)
     {
         var values = new Dictionary<string, object>(StringComparer.Ordinal);
         var lexer = new MacroLexer(source, new(1, 1), allowInterpolation: false);
@@ -45,6 +45,7 @@ internal sealed record MacroConstantsFile(string FullPath, string Digest, string
                     "string" when value is string => value,
                     _ => throw new MacroSourceException("ConstantsType", initializer.Position),
                 });
+                onDefinition?.Invoke(name, values[name.Text]);
             }
         }
         catch (MacroSourceException error)

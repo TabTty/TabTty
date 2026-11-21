@@ -379,10 +379,11 @@ Contract for destination defaults, filename templates, and recording startup.
   allow overwrite for that connection to replace existing logs. If it inherits
   both fields, it also inherits the profile's overwrite setting unless the macro
   explicitly overrides it. Application defaults confer no overwrite permission.
-- Keep `Connect(profilePath)` and allow additional positional arguments in this
-  order: `logDirectory`, `logFilenameTemplate`, `allowLogOverwrite`. The first
-  two are strings and may be blank to inherit. The last is a Boolean and may
-  be omitted to use the overwrite rule above. The profile still selects Text,
+- Keep `Connect(profilePath)` and accept
+  [named recording options](macro-language.md#connection-recording-options)
+  in any order. Directory and template are strings and may be blank to inherit.
+  Overwrite permission is Boolean and may be omitted to use the rule above.
+  The profile still selects Text,
   Raw, and Terminal and controls whether recording is enabled. These are
   session logs for the macro's connection.
 - Report an initial recording preparation failure directly through macro

@@ -147,10 +147,11 @@ function activate(context) {
         });
     }
 
-    async function analyze(document) {
+    async function analyze(document, position) {
         const payload = {
             path: document.uri.fsPath,
             source: document.getText(),
+            offset: position && document.offsetAt(position),
             constantsFile: document.languageId === 'tabtty-constants',
             constants: Object.create(null)
         };
@@ -158,7 +159,6 @@ function activate(context) {
         if (payload.constantsFile) return initial;
         const extra = [];
         const locations = Object.create(null);
-        const constantTypes = Object.create(null);
         const tokens = initial.tokens || [];
         if (tokens[0]?.Text === '#' && tokens[1]?.Text === 'tttym' &&
             tokens[2]?.Kind === 'num' && tokens[2].Text !== '1') {
@@ -192,127 +192,21 @@ function activate(context) {
             }
             if (contents !== undefined) {
                 payload.constants[alias.Text] = contents;
-                const checked = await request({ path: target, source: contents, constantsFile: true });
-                constantTypes[alias.Text] = checked.members || {};
             }
         }
-        const result = await request(payload);
+        const result = Object.keys(payload.constants).length ? await request(payload) : initial;
         if (extra.length) result.diagnostics = [
             ...(result.diagnostics || []).filter(item => item.Code !== 'ConstantsRead'),
             ...extra
         ];
         result.constants = payload.constants;
         result.constantPaths = locations;
-        result.constantTypes = constantTypes;
         return result;
     }
 
-    function declarations(tokens, offset, functions = {}, constantTypes = {}, inferred = []) {
-        const types = new Set(['var', 'bool', 'long', 'double', 'string', 'void',
-            'WaitPattern', 'WaitMatch', 'Instant', 'DialogResult', 'CaptureGroup',
-            'MacroError', 'ErrorCode', 'DialogButtons', 'DialogButton']);
-        const scopes = [[]];
-        const helpers = [];
-        const functionParameters = new Map();
-        let functionScope = -1;
-        function typeAt(index) {
-            if (types.has(tokens[index]?.Text)) return { text: tokens[index].Text, next: index + 1 };
-            if (tokens[index]?.Text !== 'List' || tokens[index + 1]?.Text !== '<') return undefined;
-            const element = typeAt(index + 2);
-            if (!element || tokens[element.next]?.Text !== '>') return undefined;
-            return { text: 'List<' + element.text + '>', next: element.next + 1 };
-        }
-        function enclosingLoopEnd(index) {
-            let open = index - 1;
-            while (open >= 0 && tokens[open].Text !== '(' && tokens[open].Text !== ';' &&
-                tokens[open].Text !== '{' && tokens[open].Text !== '}') open--;
-            if (open < 1 || !['for', 'foreach'].includes(tokens[open - 1].Text)) return undefined;
-            let depth = 1;
-            let close = open + 1;
-            while (close < tokens.length && depth > 0) {
-                if (tokens[close].Text === '(') depth++;
-                else if (tokens[close].Text === ')') depth--;
-                close++;
-            }
-            if (tokens[close]?.Text !== '{') return undefined;
-            depth = 1;
-            close++;
-            while (close < tokens.length && depth > 0) {
-                if (tokens[close].Text === '{') depth++;
-                else if (tokens[close].Text === '}') depth--;
-                close++;
-            }
-            return depth === 0 ? tokens[close - 1].Offset : undefined;
-        }
-        let depth = 0;
-        for (let index = 0; index + 2 < tokens.length; index++) {
-            const token = tokens[index];
-            if (token.Text === '{') { depth++; continue; }
-            if (token.Text === '}') { depth--; continue; }
-            const type = typeAt(index);
-            if (depth !== 0 || !type || tokens[type.next]?.Kind !== 'id' ||
-                tokens[type.next + 1]?.Text !== '(') continue;
-            let end = type.next + 2;
-            while (end < tokens.length && tokens[end].Text !== ')') end++;
-            if (tokens[end + 1]?.Text !== '{') continue;
-            const parameters = [];
-            for (let part = type.next + 2; part + 1 < end; part++) {
-                const parameterType = typeAt(part);
-                if (parameterType && tokens[parameterType.next]?.Kind === 'id') {
-                    parameters.push({ name: tokens[parameterType.next].Text, type: parameterType.text,
-                        token: tokens[parameterType.next], isFunction: false });
-                    part = parameterType.next;
-                }
-            }
-            const helper = { name: tokens[type.next].Text, type: type.text,
-                token: tokens[type.next], isFunction: true, parameters };
-            helpers.push(helper);
-            functionParameters.set(tokens[end + 1].Offset, parameters);
-            index = end;
-        }
-        for (let index = 0; index < tokens.length; index++) {
-            const token = tokens[index];
-            if (token.Offset >= offset) break;
-            if (token.Text === '{') {
-                scopes.push([...(functionParameters.get(token.Offset) || [])]);
-                if (functionParameters.has(token.Offset)) functionScope = scopes.length - 1;
-            } else if (token.Text === '}' && scopes.length > 1) {
-                if (functionScope === scopes.length - 1) functionScope = -1;
-                scopes.pop();
-            }
-            else if (typeAt(index) && tokens[typeAt(index).next]?.Kind === 'id') {
-                const parsedType = typeAt(index);
-                const name = tokens[parsedType.next];
-                const isFunction = tokens[parsedType.next + 1]?.Text === '(' && scopes.length === 1;
-                if (isFunction) {
-                    while (index < tokens.length && tokens[index].Text !== ')') index++;
-                } else {
-                    const loopEnd = enclosingLoopEnd(index);
-                    if (loopEnd !== undefined && offset > loopEnd) {
-                        index = parsedType.next;
-                        continue;
-                    }
-                    let type = parsedType.text;
-                    const checked = inferred.find(item => item.Name === name.Text &&
-                        item.Line === token.Line && item.Column <= token.Column);
-                    if (checked) type = checked.Type;
-                    if (type === 'var' && tokens[parsedType.next + 1]?.Text === '=') {
-                        const value = tokens[parsedType.next + 2];
-                        if (value?.Kind === 'str') type = 'string';
-                        else if (value?.Kind === 'num') type = /[.eE]/.test(value.Text) ? 'double' : 'long';
-                        else if (value?.Text === 'true' || value?.Text === 'false') type = 'bool';
-                        else if (value?.Kind === 'id' && tokens[parsedType.next + 3]?.Text === '.')
-                            type = constantTypes[value.Text]?.[tokens[parsedType.next + 4]?.Text] || type;
-                        else if (value?.Kind === 'id' && tokens[parsedType.next + 3]?.Text === '(')
-                            type = functions[value.Text]?.[0]?.Result ||
-                                helpers.find(helper => helper.name === value.Text)?.type || type;
-                    }
-                    scopes[scopes.length - 1].push({ name: name.Text, type, token: name, isFunction: false });
-                    index = parsedType.next;
-                }
-            }
-        }
-        return [...helpers, ...scopes.slice(functionScope < 0 ? 0 : functionScope).flat()];
+    function symbolDetail(symbol) {
+        const parameters = symbol.Parameters?.map(p => p.Type + ' ' + p.Name).join(', ');
+        return parameters === undefined ? symbol.Type : symbol.Type + ' ' + symbol.Name + '(' + parameters + ')';
     }
 
     async function update(document) {
@@ -357,7 +251,7 @@ function activate(context) {
     const macroSelector = { language: 'tabtty-macro' };
     context.subscriptions.push(vscode.languages.registerCompletionItemProvider(macroSelector, {
         async provideCompletionItems(document, position) {
-            const result = await analyze(document);
+            const result = await analyze(document, position);
             if (result.unsupportedVersion) return [];
             const items = [];
             for (const [name, signatures] of Object.entries(result.functions || {})) {
@@ -367,14 +261,10 @@ function activate(context) {
                         parameterLabel(name, type, index)).join(', ') + ')').join('\n');
                 items.push(item);
             }
-            const offset = document.offsetAt(position);
-            for (const entry of declarations(result.tokens || [], offset, result.functions, result.constantTypes, result.inferred)) {
-                const item = new vscode.CompletionItem(entry.name,
-                    entry.isFunction ? vscode.CompletionItemKind.Function : vscode.CompletionItemKind.Variable);
-                item.detail = entry.isFunction
-                    ? entry.type + ' ' + entry.name + '(' + entry.parameters.map(parameter =>
-                        parameter.type + ' ' + parameter.name).join(', ') + ')'
-                    : entry.type;
+            for (const entry of result.symbols || []) {
+                const item = new vscode.CompletionItem(entry.Name,
+                    entry.Parameters ? vscode.CompletionItemKind.Function : vscode.CompletionItemKind.Variable);
+                item.detail = symbolDetail(entry);
                 items.push(item);
             }
             const current = document.lineAt(position.line).text.slice(0, position.character);
@@ -382,9 +272,9 @@ function activate(context) {
             if (member && result.constants && result.constants[member[1]] !== undefined) {
                 const constantText = result.constants[member[1]];
                 const response = await request({ path: result.constantPaths[member[1]], source: constantText, constantsFile: true });
-                return declarations(response.tokens || [], constantText.length + 1).map(entry => {
-                    const item = new vscode.CompletionItem(entry.name, vscode.CompletionItemKind.Constant);
-                    item.detail = response.members?.[entry.name] || entry.type;
+                return (response.symbols || []).map(entry => {
+                    const item = new vscode.CompletionItem(entry.Name, vscode.CompletionItemKind.Constant);
+                    item.detail = entry.Type;
                     return item;
                 });
             }
@@ -406,20 +296,19 @@ function activate(context) {
             const name = document.getText(word);
             const textBefore = document.lineAt(position.line).text.slice(0, word.start.character);
             const member = /([A-Za-z_]\w*)\.$/.exec(textBefore);
-            const result = await analyze(document);
+            const result = await analyze(document, position);
             if (member && result.constants?.[member[1]] !== undefined) {
                 const source = result.constants[member[1]];
                 const target = result.constantPaths[member[1]];
                 const response = await request({ path: target, source, constantsFile: true });
-                const entry = declarations(response.tokens || [], source.length + 1).find(item => item.name === name);
+                const entry = response.symbols?.find(item => item.Name === name);
                 if (entry) return new vscode.Location(vscode.Uri.file(target),
-                    new vscode.Position(entry.token.Line - 1, entry.token.Column - 1));
+                    new vscode.Position(entry.Position.Line - 1, entry.Position.Column - 1));
                 return undefined;
             }
-            const entries = declarations(result.tokens || [], document.offsetAt(position), result.functions, result.constantTypes, result.inferred);
-            const entry = entries.reverse().find(item => item.name === name);
+            const entry = result.symbols?.findLast(item => item.Name === name);
             return entry ? new vscode.Location(document.uri,
-                new vscode.Position(entry.token.Line - 1, entry.token.Column - 1)) : undefined;
+                new vscode.Position(entry.Position.Line - 1, entry.Position.Column - 1)) : undefined;
         }
     }));
 
@@ -428,7 +317,7 @@ function activate(context) {
             const range = document.getWordRangeAtPosition(position);
             if (!range) return undefined;
             const name = document.getText(range);
-            const result = await analyze(document);
+            const result = await analyze(document, position);
             const before = document.lineAt(position.line).text.slice(0, range.start.character);
             const member = /([A-Za-z_]\w*)\.$/.exec(before);
             if (member && result.constants?.[member[1]] !== undefined) {
@@ -447,20 +336,16 @@ function activate(context) {
                     : (japanese ? '\nTabTty の組み込み関数です。' : '\nTabTty built-in function.');
                 return new vscode.Hover(detail + description, range);
             }
-            const entry = declarations(result.tokens || [], document.offsetAt(position), result.functions, result.constantTypes, result.inferred).reverse()
-                .find(item => item.name === name);
+            const entry = result.symbols?.findLast(item => item.Name === name);
             if (!entry) return undefined;
-            const detail = entry.isFunction
-                ? entry.type + ' ' + entry.name + '(' + entry.parameters.map(parameter =>
-                    parameter.type + ' ' + parameter.name).join(', ') + ')'
-                : entry.type + ' ' + entry.name;
+            const detail = entry.Parameters ? symbolDetail(entry) : entry.Type + ' ' + entry.Name;
             return new vscode.Hover(detail, range);
         }
     }));
 
     context.subscriptions.push(vscode.languages.registerSignatureHelpProvider(macroSelector, {
         async provideSignatureHelp(document, position) {
-            const result = await analyze(document);
+            const result = await analyze(document, position);
             if (result.unsupportedVersion) return undefined;
             const tokens = (result.tokens || []).filter(token => token.Offset < document.offsetAt(position));
             const stack = [];
@@ -479,10 +364,9 @@ function activate(context) {
             if (!call?.name) return undefined;
             let signatures = result.functions && result.functions[call.name];
             if (!signatures) {
-                const helper = declarations(result.tokens || [], document.offsetAt(position))
-                    .find(entry => entry.isFunction && entry.name === call.name);
-                if (helper) signatures = [{ Result: helper.type,
-                    Parameters: helper.parameters.map(parameter => parameter.type + ' ' + parameter.name) }];
+                const helper = result.symbols?.find(entry => entry.Parameters && entry.Name === call.name);
+                if (helper) signatures = [{ Result: helper.Type,
+                    Parameters: helper.Parameters.map(p => p.Type + ' ' + p.Name) }];
             }
             if (!signatures) return undefined;
             const help = new vscode.SignatureHelp();

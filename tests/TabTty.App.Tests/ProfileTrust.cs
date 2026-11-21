@@ -2,6 +2,7 @@ using System.IO;
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Threading;
 using TabTty.App;
 using TabTty.Core;
@@ -44,6 +45,8 @@ internal static partial class Program
                 app.Profiles.ReadRegistrations().Count == 0, "Connect once registered a file.");
 
             admission = app.Profiles.AdmitAsync(owner, path, "Fixture macro", token);
+            await ReviewAsync();
+            MacroTrust.Reset();
             await AnswerAsync("ProfileTrustAndConnect", "ProfileTrustAndConnect");
             await admission;
             await app.Profiles.AdmitAsync(owner, path, "Second macro", token);
@@ -59,7 +62,11 @@ internal static partial class Program
             await AnswerAsync("ProfileTrustAndConnect", "ProfileTrustAndConnect");
             var modified = await admission;
             CheckMacroLaunch(modified.TrustVersion != originalVersion, "A file-only byte change reused trust.");
+            MacroTrust.Reset();
+            CheckMacroLaunch(app.Profiles.ReadRegistrations().Count == 1, "A macro reset removed a profile registration.");
             await app.Profiles.AdmitAsync(owner, path, null, token);
+            await app.Profiles.AdmitAsync(owner, path, "Another approved macro", token)
+                .WaitAsync(TimeSpan.FromSeconds(2), token);
 
             app.Profiles.Show(owner);
             ListView? list;
@@ -83,7 +90,8 @@ internal static partial class Program
             try
             {
                 var submenu = profileMenu.Items.OfType<MenuItem>().Single(item =>
-                    System.Windows.Automation.AutomationProperties.GetName(item) == groupName);
+                    System.Windows.Automation.AutomationProperties.GetName(item) ==
+                    string.Format(App.Text("ProfileGroupCount"), groupName, 1));
                 if (!profileMenu.IsOpen || submenu.Items.OfType<MenuItem>().Single().ToolTip is not string)
                     throw new InvalidOperationException("The new-tab menu did not put the profile in its group.");
             }
@@ -115,8 +123,23 @@ internal static partial class Program
                 Click(confirm, "Yes");
             };
             timer.Start();
-            try { app.Profiles.ResetTrust(owner); }
-            finally { timer.Stop(); }
+            var sourceDigest = new string('A', 64);
+            var macroAllow = MacroTrustKey.Create(sourceDigest, ["left", "right"]);
+            var macroBlock = MacroTrustKey.Create(sourceDigest, ["right", "left"]);
+            try
+            {
+                MacroTrust.Save(macroAllow, MacroTrustDecision.Allow);
+                MacroTrust.Save(macroBlock, MacroTrustDecision.Block);
+                using var pendingMacro = MacroTrust.BeginReview(MacroTrustKey.Create(sourceDigest, []));
+                app.Profiles.ResetTrust(owner);
+                CheckMacroLaunch(!pendingMacro.Expired && MacroTrust.Read(macroAllow) == MacroTrustDecision.Allow &&
+                    MacroTrust.Read(macroBlock) == MacroTrustDecision.Block, "A profile reset affected macro decisions.");
+            }
+            finally
+            {
+                timer.Stop();
+                MacroTrust.Reset();
+            }
             Click(review, "ProfileTrustAndConnect");
             await AnswerAsync("ProfileTrustAndConnect", "Cancel");
             try { await admission; throw new InvalidOperationException("A stale reply admitted a connection."); }
@@ -192,10 +215,14 @@ internal static partial class Program
             var opened = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             RoutedEventHandler onOpened = (_, _) => opened.TrySetResult();
             menu.Opened += onOpened;
-            menu.PlacementTarget = list;
             try
             {
-                menu.IsOpen = true;
+                list.UpdateLayout();
+                var row = (ListViewItem)list.ItemContainerGenerator.ContainerFromItem(list.SelectedItem);
+                row.Focus();
+                InputManager.Current.ProcessInput(new KeyEventArgs(Keyboard.PrimaryDevice,
+                    PresentationSource.FromVisual(row), Environment.TickCount, Key.Apps)
+                { RoutedEvent = Keyboard.KeyUpEvent, Source = row });
                 await opened.Task.WaitAsync(token);
                 var item = menu.Items.OfType<MenuItem>().Single(entry => Equals(entry.Header, App.Text(action)));
                 item.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent, item));

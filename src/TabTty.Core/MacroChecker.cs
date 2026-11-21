@@ -73,7 +73,7 @@ internal static class MacroApi
     };
 }
 
-internal sealed class MacroChecker(MacroProgram program)
+internal sealed class MacroChecker(MacroProgram program, MacroEditorSymbols? editor = null)
 {
     private sealed record Variable(MacroType Type, bool ReadOnly = false);
     private readonly List<Dictionary<string, Variable>> scopes = [];
@@ -91,8 +91,12 @@ internal sealed class MacroChecker(MacroProgram program)
         CheckFrame("", MacroType.Void, [], program.Body);
         foreach (var function in program.Functions.Values)
         {
-            CheckFrame(function.Name, function.Return, function.Parameters, function.Body);
-            if (function.Return != MacroType.Void && !Returns(function.Body)) Fail("MissingReturn", function.Position);
+            try
+            {
+                CheckFrame(function.Name, function.Return, function.Parameters, function.Body);
+                if (function.Return != MacroType.Void && !Returns(function.Body)) Fail("MissingReturn", function.Position);
+            }
+            catch (MacroSourceException error) when (editor?.Recover(error) == true) { }
         }
         var visited = new Dictionary<string, int>(); var visiting = new HashSet<string>();
         foreach (string function in program.Functions.Keys) Visit(function);
@@ -117,7 +121,20 @@ internal sealed class MacroChecker(MacroProgram program)
     }
 
     private void CheckBlock(MacroBlock block)
-    { Push(); foreach (var statement in block.Statements) CheckStatement(statement); Pop(); }
+    {
+        Push();
+        foreach (var statement in block.Statements)
+        {
+            int previousScopes = scopes.Count, previousLoops = loops;
+            try { CheckStatement(statement); }
+            catch (MacroSourceException error) when (editor?.Recover(error) == true)
+            {
+                scopes.RemoveRange(previousScopes, scopes.Count - previousScopes);
+                loops = previousLoops;
+            }
+        }
+        Pop();
+    }
 
     private void CheckStatement(MacroStatement statement)
     {
@@ -125,10 +142,19 @@ internal sealed class MacroChecker(MacroProgram program)
         {
             case MacroBlock block: CheckBlock(block); break;
             case MacroDeclaration declaration:
-                declaration.Type = Expression(declaration.Value, declaration.Declared);
-                if (declaration.Declared is { } declared)
-                { Require(declared.Accepts(declaration.Type), declaration); declaration.Type = declared; }
-                Require(declaration.Type != MacroType.Void && !declaration.Type.Name.StartsWith('$') && declaration.Type != MacroType.Meta, declaration);
+                try
+                {
+                    if (declaration.Value is not MacroMissingExpression)
+                    {
+                        declaration.Type = Expression(declaration.Value, declaration.Declared);
+                        if (declaration.Declared is { } declared)
+                        { Require(declared.Accepts(declaration.Type), declaration); declaration.Type = declared; }
+                        Require(declaration.Type != MacroType.Void && !declaration.Type.Name.StartsWith('$') && declaration.Type != MacroType.Meta, declaration);
+                    }
+                    else declaration.Type = declaration.Declared ?? MacroType.Unknown;
+                }
+                catch (MacroSourceException error) when (editor?.Recover(error) == true)
+                { declaration.Type = declaration.Declared ?? MacroType.Unknown; }
                 Declare(declaration.Name, declaration.Type, declaration.Position); break;
             case MacroAssignment assignment:
                 if (assignment.Target is not MacroName && assignment.Target is not MacroIndex { Target: MacroName }) Fail("AssignmentTarget", assignment.Position);
@@ -294,7 +320,7 @@ internal sealed class MacroChecker(MacroProgram program)
         if (++locals > 1024) Fail("LocalLimit", at);
         scopes[^1].Add(name, new(type, readOnly));
     }
-    private static MacroType ScalarType(object value) => value switch
+    internal static MacroType ScalarType(object value) => value switch
     {
         bool => MacroType.Bool,
         long => MacroType.Long,

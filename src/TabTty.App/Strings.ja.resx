@@ -654,6 +654,7 @@ AI アプリは個別の確認なしでキーや複数行のコマンドを入�
   <data name="MacroTrustReset" xml:space="preserve"><value>マクロの信頼を一括リセット</value></data>
   <data name="MacroTrustResetConfirm" xml:space="preserve"><value>この PC で記憶したマクロの許可と拒否をすべて消去しますか？</value></data>
   <data name="MacroTrustResetFailed" xml:space="preserve"><value>マクロの信頼のリセットを確認できませんでした。操作をやり直してください。</value></data>
+  <data name="MacroTrustResetRetry" xml:space="preserve"><value>リセットを再試行</value></data>
   <data name="RecordingDestinationChanged" xml:space="preserve"><value>確認したログ保存先が変わりました。</value></data>
   <data name="AddProfile" xml:space="preserve"><value>プロファイルを新規作成</value></data>
   <data name="ProfileSaveDirectory" xml:space="preserve"><value>接続プロファイルの保存先</value></data>

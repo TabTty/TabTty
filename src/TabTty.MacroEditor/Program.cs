@@ -43,97 +43,44 @@ static object ReadLocal(string path)
 
 static object Analyze(EditorRequest request)
 {
-    var tokens = new List<object>();
-    var diagnostics = new List<object>();
+    var editor = new MacroEditorSymbols();
+    var symbols = new List<MacroEditorSymbol>();
     var members = new Dictionary<string, string>();
-    var inferred = new List<object>();
-    var lexer = new MacroLexer(request.Source, new(1, 1));
+    MacroSourceException? diagnostic = null;
     try
     {
-        while (true)
+        if (request.ConstantsFile)
         {
-            var token = lexer.Next();
-            if (token.Kind == "end") break;
-            tokens.Add(new { token.Kind, token.Text, token.Value, token.Offset, token.EndOffset,
-                token.Position.Line, token.Position.Column });
+            MacroConstantsFile.Parse(request.Path, "", request.Source, MacroConstantsFile.MaxMembers, () => { },
+                (name, value) =>
+                {
+                    string type = MacroChecker.ScalarType(value).ToString();
+                    members.Add(name.Text, type);
+                    symbols.Add(new(name.Text, type, name.Position));
+                });
+        }
+        else
+        {
+            symbols = MacroProgram.AnalyzeForEditor(request.Path, request.Source,
+                request.Constants ?? new Dictionary<string, string>(), editor, request.Offset);
+            diagnostic = editor.Error;
         }
     }
-    catch (MacroSourceException error)
-    {
-        diagnostics.Add(new { error.Code, error.Position.Line, error.Position.Column });
-    }
-    if (diagnostics.Count == 0)
-    {
-        try
-        {
-            if (request.ConstantsFile)
-            {
-                var file = MacroConstantsFile.Parse(request.Path, "", request.Source, MacroConstantsFile.MaxMembers, () => { });
-                foreach (var (name, value) in file.Values)
-                    members[name] = value switch
-                    {
-                        string => "string",
-                        long => "long",
-                        double => "double",
-                        bool => "bool",
-                        _ => "?"
-                    };
-            }
-            else
-            {
-                using var program = MacroProgram.ParseForEditor(request.Path, request.Source,
-                    request.Constants ?? new Dictionary<string, string>());
-                Collect(program.Body);
-                foreach (var function in program.Functions.Values) Collect(function.Body);
-            }
-        }
-        catch (MacroSourceException error)
-        {
-            diagnostics.Add(new { error.Code, error.Position.Line, error.Position.Column });
-        }
-    }
+    catch (MacroSourceException error) { diagnostic = error; }
+    var diagnostics = diagnostic is null ? [] : new[] {
+        new { diagnostic.Code, diagnostic.Position.Line, diagnostic.Position.Column }
+    };
+    var tokens = editor.Tokens.Where(token => token.Kind != "end").Select(token =>
+        new { token.Kind, token.Text, token.Value, token.Offset, token.EndOffset,
+            token.Position.Line, token.Position.Column });
     var functions = MacroApi.Signatures.ToDictionary(
         pair => pair.Key,
         pair => pair.Value.Select(signature => new {
             Result = signature.Result.ToString(),
             Parameters = signature.Parameters.Select(parameter => parameter.ToString()).ToArray()
         }).ToArray());
-    return new { tokens, diagnostics, functions, members, inferred };
-
-    void Collect(MacroStatement statement)
-    {
-        switch (statement)
-        {
-            case MacroDeclaration declaration:
-                inferred.Add(new { declaration.Name, Type = declaration.Type.ToString(),
-                    declaration.Position.Line, declaration.Position.Column });
-                break;
-            case MacroBlock block:
-                foreach (var child in block.Statements) Collect(child);
-                break;
-            case MacroIf branch:
-                Collect(branch.Yes);
-                if (branch.No is not null) Collect(branch.No);
-                break;
-            case MacroWhile loop:
-                Collect(loop.Body);
-                break;
-            case MacroFor loop:
-                if (loop.Initial is not null) Collect(loop.Initial);
-                Collect(loop.Body);
-                break;
-            case MacroForeach loop:
-                inferred.Add(new { loop.Name, Type = loop.Type.ToString(),
-                    loop.Position.Line, loop.Position.Column });
-                Collect(loop.Body);
-                break;
-            case MacroTry attempt:
-                Collect(attempt.Body);
-                Collect(attempt.Catch);
-                break;
-        }
-    }
+    return new { tokens, diagnostics, functions, members, symbols };
 }
 
 internal sealed record EditorRequest(string Path, string Source, bool ConstantsFile,
-    Dictionary<string, string>? Constants, string? Operation);
+    Dictionary<string, string>? Constants, string? Operation, int? Offset);

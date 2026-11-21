@@ -2,6 +2,7 @@ const Module = require('module');
 const path = require('path');
 const assert = require('assert');
 const providers = {};
+let onDocumentChange, onDiagnostics;
 class Position {
     constructor(line, character) { this.line = line; this.character = character; }
     translate(line, character) { return new Position(this.line + line, this.character + character); }
@@ -49,9 +50,11 @@ const vscode = {
     CompletionItemKind: { Function: 1, Variable: 2, Constant: 3, Snippet: 4 },
     env: { language: 'en' },
     workspace: { isTrusted: false, textDocuments: [doc], onDidOpenTextDocument: noop,
-        onDidChangeTextDocument: noop, onDidCloseTextDocument: noop, onDidGrantWorkspaceTrust: noop },
+        onDidChangeTextDocument: callback => { onDocumentChange = callback; return noop(); },
+        onDidCloseTextDocument: noop, onDidGrantWorkspaceTrust: noop },
     languages: {
-        createDiagnosticCollection: () => ({ set() {}, delete() {}, dispose() {} }),
+        createDiagnosticCollection: () => ({ set(uri, diagnostics) { onDiagnostics?.(diagnostics); },
+            delete() {}, dispose() {} }),
         registerCompletionItemProvider: (_, provider) => (providers.completion = provider, noop()),
         registerDefinitionProvider: (_, provider) => (providers.definition = provider, noop()),
         registerHoverProvider: (_, provider) => (providers.hover = provider, noop()),
@@ -118,6 +121,49 @@ extension.activate(context);
     const local = await providers.completion.provideCompletionItems(doc, new Position(3, 6));
     assert(local.some(item => item.label === 'input'));
     assert(!local.some(item => item.label === 'top'));
+    function positionOf(text, within = 0) {
+        const offset = doc.text.indexOf(text);
+        assert(offset >= 0, text);
+        return doc.positionAt(offset + within);
+    }
+    async function checkVariable(name, use, expectedType, declaration) {
+        const items = await providers.completion.provideCompletionItems(doc, use);
+        assert.strictEqual(items.find(item => item.label === name)?.detail, expectedType);
+        const hover = await providers.hover.provideHover(doc, use);
+        assert.strictEqual(hover?.contents, expectedType && expectedType + ' ' + name);
+        const location = await providers.definition.provideDefinition(doc, use);
+        assert.deepStrictEqual(location?.position, declaration);
+    }
+    doc.text = '#tttym 1\ntry {} catch (MacroError err) {\nvar code = err.Code;\n}\nWaitPrompt(err';
+    await checkVariable('err', positionOf('err.Code', 2), 'MacroError', positionOf('err)'));
+    await checkVariable('err', positionOf('WaitPrompt(err', 13), undefined, undefined);
+    doc.text = '#tttym 1\r\ntry {} catch (MacroError err) {} try {} catch (MacroError err) {\r\nvar code = err.Code;';
+    await checkVariable('err', positionOf('err.Code', 2), 'MacroError',
+        doc.positionAt(doc.text.lastIndexOf('err)')));
+    doc.text = '#tttym 1\nvar ratio = 1 + 0.5;\ndouble copy = ratio;\nWaitPrompt(';
+    for (const [source, type] of [['1 + 0.5', 'double'], ['1 + 2', 'long'], ['-1D', 'double']]) {
+        doc.text = doc.text.replace(/var ratio = [^;]+;/, 'var ratio = ' + source + ';');
+        await checkVariable('ratio', positionOf('= ratio;', 4), type, positionOf('ratio ='));
+    }
+    for (const [declaration, expectedType] of [['long retries = ;', 'long'], ['var retries = ;', '?'],
+        ['var retries = 1D + ;', '?']]) {
+        doc.text = '#tttym 1\n' + declaration + '\nSleep(retries);';
+        doc.version++;
+        const diagnostics = await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error('Timed out waiting for editor diagnostics')), 5000);
+            onDiagnostics = items => { clearTimeout(timer); resolve(items); };
+            onDocumentChange({ document: doc });
+        });
+        onDiagnostics = undefined;
+        assert(diagnostics.some(item => item.code === 'ExpressionExpected' &&
+            item.range.start.line === 1 && item.range.start.character === declaration.indexOf(';')));
+        await checkVariable('retries', positionOf('Sleep(retries', 8), expectedType, positionOf('retries ='));
+        const initializer = await providers.completion.provideCompletionItems(doc, positionOf('= ', 2));
+        assert(!initializer.some(item => item.label === 'retries'));
+    }
+    doc.text = '#tttym 1\nfor (long i = 1; i < 2; i++) { Sleep(i); }\nWaitPrompt(i';
+    await checkVariable('i', positionOf('Sleep(i', 7), 'long', positionOf('i ='));
+    await checkVariable('i', positionOf('WaitPrompt(i', 12), undefined, undefined);
     console.log('Macro completion, signature help, and definition passed.');
 })().then(() => {
     for (const subscription of context.subscriptions) subscription.dispose();

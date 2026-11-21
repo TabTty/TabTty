@@ -94,7 +94,7 @@ internal static partial class Program
             var priorTabs = window.TerminalTabs.ToHashSet();
             request = launch();
             await DecideMacroRequest(app, window, remote, null, "MacroReadSource");
-            if (picked) await AcceptArguments();
+            if (picked) await AcceptFixtureMacroArguments(app, window);
             await DecideMacroRequest(app, window, source, arguments, "MacroRunOnce");
             await request.WaitAsync(TimeSpan.FromSeconds(8));
             var run = window.TerminalTabs.Single(tab => !priorTabs.Contains(tab)).Macro!;
@@ -103,15 +103,16 @@ internal static partial class Program
                 && window.TerminalTabs.Count() == ++tabs, "The consented dependency did not supply the macro values.");
         }
 
-        async Task AcceptArguments()
-        {
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
-            Window? dialog;
-            while ((dialog = app.Windows.OfType<Window>().SingleOrDefault(candidate =>
-                candidate.Owner == window && candidate.IsVisible && candidate.Title == App.Text("MacroArguments"))) is null)
-                await Task.Delay(10, timeout.Token);
-            FindControls<Button>(dialog).Single(button => Equals(button.Content, App.Text("RunMacro")))
-                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        }
+    }
+
+    private static async Task AcceptFixtureMacroArguments(App app, MainWindow window)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        Window? dialog;
+        while ((dialog = app.Windows.OfType<Window>().SingleOrDefault(candidate =>
+            candidate.Owner == window && candidate.IsVisible && candidate.Title == App.Text("MacroArguments"))) is null)
+            await Task.Delay(10, timeout.Token);
+        FindControls<Button>(dialog).Single(button => Equals(button.Content, App.Text("RunMacro")))
+            .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
     }
 }

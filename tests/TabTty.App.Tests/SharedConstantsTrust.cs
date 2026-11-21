@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Security.Cryptography;
 using System.Windows;
@@ -35,7 +36,12 @@ internal static partial class Program
         var launch = new InstanceLaunch(source, []);
         string previousLanguage = app.LanguageChoice;
         bool failWrite = false;
-        MacroTrust.UseTestStore(() => { if (failWrite) throw new Win32Exception(5); });
+        var storeId = Guid.NewGuid();
+        int deletesBeforeFailure = 0;
+        MacroTrust.UseTestStore(
+            beforeWrite: () => { if (failWrite) throw new Win32Exception(5); },
+            beforeDelete: () => { if (deletesBeforeFailure > 0 && --deletesBeforeFailure == 0) throw new IOException("Test deletion failure."); },
+            storeId: storeId);
         try
         {
             await SetLanguage("en");
@@ -129,41 +135,64 @@ internal static partial class Program
             CheckMacroLaunch(MacroTrust.Read(block) is null && window.TerminalTabs.Count() == before, "Failed save admitted a run.");
 
             MacroTrust.Save(legacy, MacroTrustDecision.Allow);
-            var resetOwner = app.CreateWindow(restorePlacement: false);
-            resetOwner.Show();
-            try
+            MacroTrust.Save(MacroTrustKey.Create(digest, ["left", "right"], swapped), MacroTrustDecision.Allow);
+            MacroTrust.Save(MacroTrustKey.Create(digest, ["right", "left"], swapped), MacroTrustDecision.Block);
+            foreach (string language in new[] { "en", "ja" })
             {
-                OpenSettings(resetOwner);
-                var form = (FormView)((TabControl)resetOwner.FindName("tabs")).SelectedContent;
-                var navigation = FindControls<ListBox>(form).Single();
-                navigation.SelectedItem = navigation.Items.OfType<ListBoxItem>()
-                    .Single(item => item.Content is TextBlock heading && heading.Text == App.Text("SettingsMaintenance"));
-                void ResetFromOtherWindow(string choice)
+                await SetLanguage(language);
+                var resetOwner = app.CreateWindow(restorePlacement: false);
+                resetOwner.Show();
+                try
                 {
-                    var answer = resetOwner.Dispatcher.InvokeAsync(() =>
+                    OpenSettings(resetOwner);
+                    var form = (FormView)((TabControl)resetOwner.FindName("tabs")).SelectedContent;
+                    var navigation = FindControls<ListBox>(form).Single();
+                    navigation.SelectedItem = navigation.Items.OfType<ListBoxItem>()
+                        .Single(item => item.Content is TextBlock heading && heading.Text == App.Text("SettingsMaintenance"));
+                    void ResetFromOtherWindow(params string[] choices)
                     {
-                        var confirm = app.Windows.OfType<Window>().Single(w => w.Title == App.Text("MacroTrustReset") && w.IsVisible);
-                        try
+                        var answers = choices.Select((choice, index) => resetOwner.Dispatcher.InvokeAsync(() =>
                         {
-                            CheckMacroLaunch(FindControls<Button>(confirm).Single(button => button.IsDefault).Content.Equals(App.Text("No")),
-                                "Reset did not default to cancellation.");
-                            Click(confirm, choice);
-                        }
-                        finally { if (confirm.IsVisible) confirm.Close(); }
-                    }, DispatcherPriority.ContextIdle);
-                    Click(resetOwner, "MacroTrustReset");
-                    answer.Task.GetAwaiter().GetResult();
+                            var confirm = app.Windows.OfType<Window>().Single(w => w.Owner == resetOwner && w.Title == App.Text("MacroTrustReset") && w.IsVisible);
+                            try
+                            {
+                                CheckMacroLaunch(FindControls<Button>(confirm).Single(button => button.IsDefault).Content.Equals(App.Text("Cancel")),
+                                    "Reset did not default to Cancel.");
+                                string expected = index == 0 ? "MacroTrustResetConfirm" : "MacroTrustResetFailed";
+                                CheckMacroLaunch(FindControls<TextBlock>(confirm).Any(text => text.Text == App.Text(expected)),
+                                    "Reset omitted its confirmation or failure notice.");
+                                Click(confirm, choice);
+                            }
+                            finally { if (confirm.IsVisible) confirm.Close(); }
+                        }, DispatcherPriority.ContextIdle)).ToArray();
+                        Click(resetOwner, "MacroTrustReset");
+                        foreach (var answer in answers) answer.Task.GetAwaiter().GetResult();
+                    }
+                    ResetFromOtherWindow("Cancel");
+                    CheckMacroLaunch(MacroTrust.Read(legacy) == MacroTrustDecision.Allow && MacroTrust.Read(allow) == MacroTrustDecision.Allow &&
+                        MacroTrust.Read(otherArgs) == MacroTrustDecision.Block, "Cancelling reset changed remembered decisions.");
+                    if (language == "ja")
+                    {
+                        deletesBeforeFailure = 2;
+                        request = window.OpenExternalMacroAsync(launch);
+                        await DecideMacroRequest(app, window, source, App.Text("MacroNoArguments"), "MacroAlwaysAllow",
+                            () => ResetFromOtherWindow("MacroTrustReset", "MacroTrustResetRetry"));
+                        await DismissError("MacroTrustChanged");
+                        await request;
+                    }
                 }
-                ResetFromOtherWindow("No");
-                CheckMacroLaunch(MacroTrust.Read(legacy) == MacroTrustDecision.Allow && MacroTrust.Read(allow) == MacroTrustDecision.Allow &&
-                    MacroTrust.Read(otherArgs) == MacroTrustDecision.Block, "Cancelling reset changed remembered decisions.");
-                request = window.OpenExternalMacroAsync(launch);
-                await DecideMacroRequest(app, window, source, App.Text("MacroNoArguments"), "MacroAlwaysAllow", () => ResetFromOtherWindow("Yes"));
-                await DismissError("MacroTrustChanged");
-                await request;
+                finally { resetOwner.Close(); }
             }
-            finally { resetOwner.Close(); }
             CheckMacroLaunch(MacroTrust.List().Count == 0 && window.TerminalTabs.Count() == before, "A stale review recreated a reset decision.");
+            var start = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, CreateNoWindow = true };
+            if (Path.GetFileNameWithoutExtension(start.FileName).Equals("dotnet", StringComparison.OrdinalIgnoreCase))
+                start.ArgumentList.Add(typeof(Program).Assembly.Location);
+            start.ArgumentList.Add("--macro-reset-relaunch");
+            start.ArgumentList.Add(storeId.ToString());
+            start.ArgumentList.Add(source);
+            using var child = Process.Start(start) ?? throw new IOException("Could not start macro reset relaunch test.");
+            await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(35));
+            CheckMacroLaunch(child.ExitCode == 0, "The restarted app failed to review the cleared decisions.");
         }
         finally
         {
@@ -193,5 +222,24 @@ internal static partial class Program
                 await Task.Delay(10, timeout.Token);
             }
         }
+    }
+
+    private static async Task CheckMacroResetRelaunch(App app, string storeId, string source)
+    {
+        MacroTrust.UseTestStore(storeId: Guid.Parse(storeId));
+        var owner = app.CreateWindow(restorePlacement: false);
+        owner.Show();
+        try
+        {
+            CheckMacroLaunch(MacroTrust.List().Count == 0, "Recovered obsolete macro decisions after restart.");
+            foreach (var arguments in new[] { new[] { "left", "right" }, new[] { "right", "left" } })
+            {
+                var launch = owner.OpenExternalMacroAsync(new InstanceLaunch(source, arguments));
+                await DecideMacroRequest(app, owner, source, $"[0] \"{arguments[0]}\"\n[1] \"{arguments[1]}\"");
+                await launch;
+            }
+            CheckMacroLaunch(!owner.TerminalTabs.Any(), "Cancelling a fresh review admitted the macro.");
+        }
+        finally { owner.Close(); }
     }
 }

@@ -78,6 +78,8 @@ internal static partial class MacroContracts
             "long Missing() { while (true) { return 1; } }", "var x = 1; void Bad() { Write(x); }",
             "var x = (long)\"1\";", "var x = 1; { var x = 2; }", "System.Diagnostics.Process.Start(\"x\");",
             "if (false) { var extension = Macro.Extension; }",
+            "var n = 1D + ;", "long retries = ; Sleep(retries);",
+            "try {} catch (MacroError err) { Sleep(", "var rate = 1 + 0.5; WaitPrompt(",
         })
         {
             try { Parse(source); throw new Exception("Invalid source was accepted."); }

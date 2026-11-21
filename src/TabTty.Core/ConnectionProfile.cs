@@ -176,6 +176,8 @@ public sealed class ConnectionProfile
         System.Security.Cryptography.SHA256.HashData(sourceBytes ??
             throw new InvalidOperationException("Profile has no verified file revision.")));
 
+    internal string? LocalOpeningLocation { get; private set; }
+
     internal static async Task<ConnectionProfile?> TryLoadLocalAsync(string path, CancellationToken token)
     {
         string source = OpeningPath(path);
@@ -186,8 +188,11 @@ public sealed class ConnectionProfile
             {
                 using var handle = LocalMacroFile.TryOpen(source);
                 if (handle is null) return null;
+                string location = LocalMacroFile.OpenedLocation(handle, source);
                 await using var stream = new FileStream(handle, FileAccess.Read);
-                return ParseProfile(source, await ReadBytesAsync(stream, token).ConfigureAwait(false));
+                var profile = ParseProfile(source, await ReadBytesAsync(stream, token).ConfigureAwait(false));
+                profile.LocalOpeningLocation = location;
+                return profile;
             }, token).ConfigureAwait(false);
         }
         finally { ApplicationResources.FilePreparations.Release(); }

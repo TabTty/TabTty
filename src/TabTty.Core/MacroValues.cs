@@ -121,6 +121,7 @@ internal abstract record MacroExpression(MacroPosition Position) : MacroNode(Pos
     public int Depth { get; set; } = 1;
 }
 internal sealed record MacroLiteral(object Value, MacroPosition At) : MacroExpression(At);
+internal sealed record MacroMissingExpression(MacroPosition At) : MacroExpression(At);
 internal sealed record MacroName(string Name, MacroPosition At) : MacroExpression(At);
 internal sealed record MacroUnary(string Operator, MacroExpression Value, MacroPosition At) : MacroExpression(At);
 internal sealed record MacroBinary(string Operator, MacroExpression Left, MacroExpression Right, MacroPosition At) : MacroExpression(At);

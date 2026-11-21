@@ -118,49 +118,47 @@ internal sealed class MacroProgram : IDisposable
         return program;
     }
 
-    internal static MacroProgram ParseForEditor(string path, string source,
-        IReadOnlyDictionary<string, string> constants)
+    internal static List<MacroEditorSymbol> AnalyzeForEditor(string path, string source,
+        IReadOnlyDictionary<string, string> constants, MacroEditorSymbols editor, int? offset)
     {
-        var program = ParseSource(Path.GetFullPath(path), source, NewQuota(), null, out var declarations);
-        try
+        using var program = ParseSource(Path.GetFullPath(path), source, NewQuota(), null, out var declarations, editor);
+        var bindings = new List<MacroConstantsBinding>();
+        int remaining = MacroConstantsFile.MaxMembers;
+        foreach (var declaration in declarations)
         {
-            var bindings = new List<MacroConstantsBinding>();
-            int remaining = MacroConstantsFile.MaxMembers;
-            foreach (var declaration in declarations)
+            if (!constants.TryGetValue(declaration.Alias, out var text))
             {
-                if (!constants.TryGetValue(declaration.Alias, out var text))
-                    throw new MacroSourceException("ConstantsRead", declaration.Position, path);
-                MacroConstantsFile file;
-                try
-                {
-                    file = MacroConstantsFile.Parse(declaration.Path, "", text, remaining, () => { });
-                }
-                catch (MacroSourceException)
-                {
-                    throw new MacroSourceException("ConstantsInvalid", declaration.Position, path);
-                }
-                remaining -= file.Values.Count;
-                bindings.Add(new(declaration.Alias, file));
+                editor.Recover(new MacroSourceException("ConstantsRead", declaration.Position, path));
+                continue;
             }
-            program.Constants = bindings.AsReadOnly();
-            new MacroChecker(program).Check();
-            return program;
+            MacroConstantsFile file;
+            try
+            {
+                file = MacroConstantsFile.Parse(declaration.Path, "", text, remaining, () => { });
+            }
+            catch (MacroSourceException)
+            {
+                editor.Recover(new MacroSourceException("ConstantsInvalid", declaration.Position, path));
+                continue;
+            }
+            remaining -= file.Values.Count;
+            bindings.Add(new(declaration.Alias, file));
         }
-        catch
-        {
-            program.Dispose();
-            throw;
-        }
+        program.Constants = bindings.AsReadOnly();
+        try { new MacroChecker(program, editor).Check(); }
+        catch (MacroSourceException error) when (editor.Recover(error)) { }
+        return offset.HasValue ? editor.At(program, offset.Value) : [];
     }
 
     private static MacroProgram ParseSource(string path, string source, ResourceQuota quota,
-        ResourceReservation? retained, out IReadOnlyList<MacroConstantsDeclaration> declarations)
+        ResourceReservation? retained, out IReadOnlyList<MacroConstantsDeclaration> declarations,
+        MacroEditorSymbols? editor = null)
     {
         if (source.Length > MacroLimits.StringUnits) throw new MacroSourceException("SourceLimit", new(1, 1), path);
         using var tokens = quota.Reserve(512 + source.Length * 4L);
         retained?.Add(source.Length * 2L);
         var budget = new MacroSyntaxBudget(tokens, retained);
-        var parser = new MacroParser(source, new(1, 1), budget);
+        var parser = new MacroParser(source, new(1, 1), budget, editor);
         var (body, functions) = parser.ParseFile();
         declarations = parser.ConstantsDeclarations;
         return new(path, source, body, functions, budget.Nodes, quota);

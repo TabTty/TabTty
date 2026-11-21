@@ -427,7 +427,7 @@ first release is ready for implementation.
 | Editor Q7 — Editing a shared constants file | Recognize `.tttyc` automatically. Authors can select the TabTty shared constants language mode for other filenames. Even with no macro open, highlight declarations and report type errors at their source, such as assigning `"5000"` to a `long`. |
 | Editor Q8 — Unavailable shared constants | Report the reason once on the affected `#constants` directive. Mark a missing local file as an error at its path. For a file that may require network access, prompt the author there to open it explicitly. While the file is unavailable, suppress unknown-member errors for that alias at its use sites. |
 | Editor Q9 — Go to Definition | From a variable or a same-file helper function, navigate to its declaration in the macro. From a shared constant such as `Common.TimeoutMs`, navigate to that member’s declaration in the constants file. Resolve the target against the same text used for completion, including unsaved edits in the same VS Code window (Q5). |
-| Editor Q10 — Version directive completion | In a new `.tttym` file, offer `#tttym 1` when the author invokes completion or types `#` at the first non-comment, non-whitespace position. Selecting the suggestion inserts the directive and a line break, leaving the cursor ready for the next line. |
+| Editor Q10 — Version directive completion | In a `.tttym` file missing its version directive, offer `#tttym 1` on manual completion or typing `#` at a valid position before the body, even when the body already exists. Insert the directive and a line break. See [version directive completion](#version-directive-completion). |
 | Editor Q11 — Unsupported language version | If the macro declares a version the extension does not support, show one diagnostic on the directive identifying the supported version. Keep text editing and basic syntax highlighting available. Suspend type checking and function completion for that file. |
 | Editor Q12 — Fixing a string passed to WaitPrompt | For a call such as `WaitPrompt("Ready>")`, offer two quick fixes on the string argument. The author chooses whether to wrap it in `Literal(...)` to match the text literally or `Regex(...)` to interpret it as a regular expression. Apply the selected edit only. |
 | Editor Q13 — Hover information | For a built-in function, show its parameters, return type and a short usage note. For example, explain that `WaitPrompt` can match a line before its ending arrives and that its timeout is in milliseconds. For a variable or shared constant, show its name and type. For a same-file helper function, show its declared parameters and return type. |
@@ -435,6 +435,126 @@ first release is ready for implementation.
 | Editor Q15 — Supported editing environments | Support desktop VS Code on Windows 11 x64 in a local window. Verify opening a macro on its own, opening its folder, and explicitly opening a declared constants file on a Windows network share. Defer WSL, Remote SSH and browser-based VS Code support beyond the first release. |
 | Editor Q16 — Offline installation and first use | On a supported PC with desktop VS Code already installed, the author can transfer the VSIX to the PC and install it offline. Bundle all additional components needed for local editing in the VSIX. Verify that completion, diagnostics and Go to Definition work on first use without installing a separate runtime or downloading anything. |
 | Editor Q17 — Workspace Trust and local constants | Use a declared local constants file for completion, diagnostics and Go to Definition if the author has it open in the same window or the macro's workspace is trusted. Only when the file is unopened and the workspace is untrusted, show one message on the `#constants` directive asking the author to open the file. Opening it enables these features immediately, including in Restricted Mode. Network paths follow Q5 in both modes. |
+
+For an unknown member, Editor Q4 underlines the full member name. The
+[member and index diagnostic examples](macro-language.md#source-positions-for-member-and-index-access)
+give the matching positions for editing, launch checks and runtime failures.
+
+### Signature help and quick fixes for call arguments
+
+Use the shared parser's call and argument structure at the cursor for Editor
+Q4. Inside a nested call, show its signature. After its closing parenthesis,
+return to the enclosing call when the cursor is still within its arguments.
+A comma separating list elements keeps the same argument active in that
+enclosing call. A comma separating call arguments advances signature help as
+soon as it is typed, even while the next argument is empty.
+
+Inside a [string interpolation](macro-language.md#strings), use the innermost
+call whose opening parenthesis and argument separators can be identified at
+the cursor. Show its signature while the embedded expression and outer string
+are still open. In the text portion, literal commas and escaped braces
+(`{{` and `}}`) leave the enclosing call's argument active. Launch still
+requires the complete expression and string.
+
+Offer the two Editor Q12 fixes when the first argument to `WaitPrompt`
+requires a `WaitPattern` and the parser and type checker identify a complete
+expression of type `string` there. Wrap that entire expression, preserving
+its text and the rest of the call. An unfinished expression or an error in
+the timeout argument alone does not qualify for these fixes.
+
+| Editor action | Expected result |
+| --- | --- |
+| In `WaitAnyPrompt([first: Literal("A"), second: Literal("B")], 1000)`, place the cursor in `"B"`, then between the two alternatives. | Inside `"B"`, show the signature of `Literal`. Between alternatives, keep the first argument of `WaitAnyPrompt` active. |
+| While typing the same call, type the comma after `]` and pause before entering the timeout. | Show the two-argument overload with `timeoutMs` active. It stays active while entering `1000`. |
+| With a numeric `n` in scope, type `WriteLine($"{{n}}, {FormatNumber(n,` and pause after the last comma. | In the literal text, signature help stays on the first argument of `WriteLine`. At the last comma it shows `FormatNumber` with its second parameter, `format`, active, before the author types the rest of the expression or closes the string. |
+| In `WaitPrompt("ready" + ">", 1000)`, choose each fix in turn. | The literal fix produces `WaitPrompt(Literal("ready" + ">"), 1000)`. The regex fix wraps the same expression in `Regex(...)`. Both preserve the timeout. |
+| Request fixes while the first argument ends in an unfinished `+`, or for the timeout in `WaitPrompt(Literal("ready"), "1000")`. | Neither case offers a pattern-wrapping edit. |
+
+### Version directive completion
+
+Use the current document for Editor Q10. A valid insertion position is outside
+comments, with only whitespace and complete comments before it. This includes
+the start of an empty file, a position within leading whitespace and the start
+of the first body token. When the author has already typed `#` at such a
+position, replace that character only. Otherwise insert at the cursor.
+Preserve the surrounding text and place the cursor after the inserted line
+break. An existing version directive anywhere in the document, including an
+unsupported version under Q11, suppresses the suggestion.
+
+| Editor action | Expected result |
+| --- | --- |
+| In a file containing only `Sleep(0);`, invoke completion immediately before the `S` and select `#tttym 1`. | The first line is `#tttym 1`. The second line still contains `Sleep(0);`, with the cursor at its start. |
+| Type `#` after `/* memo */ ` at the start of the file and accept the suggestion. | The line becomes `/* memo */ #tttym 1`, followed by a line break. The comment and space are preserved. |
+| Invoke completion at the end of `// memo`, then immediately after its line ending. Repeat with CR, LF and CRLF. | The suggestion is absent inside the comment and available at the start of the next line for all three endings. |
+| Invoke completion on a blank line before an existing `#tttym 1`. Repeat with `#tttym 2`. | Neither document offers a second version directive. The unsupported version keeps its Q11 diagnostic. |
+
+### Shared constants files during editing
+
+For each editor analysis, resolve the complete `#constants` declarations
+recognized by the shared parser in the leading declaration section. A later
+unfinished statement leaves those declarations available for completion.
+An incomplete directive, or one after an ordinary statement, does not trigger
+a file read or a request to open its path. Report the syntax error at the
+misplaced directive.
+
+Group aliases by the [normalized absolute path used at launch](macro-specification.md#capturing-declared-constants).
+Preserve case distinctions in case-sensitive directories. Within one analysis,
+obtain and parse each distinct file's text once under Editor Q5 and Q17. Count
+each alias as a declaration and each file's definitions once. Use the same
+version for every alias of that file. If the open constants document changes
+before the results are published, discard the stale results and analyze the
+new text for all its aliases.
+
+| Editor scenario | Expected result |
+| --- | --- |
+| Declare `A` from `shared.tttyc` and `B` from `./shared.tttyc`, with 2,049 definitions in the shared file. | Both aliases resolve. This uses two declarations, one file and 2,049 definitions. If the aliases instead refer to distinct files with 2,049 definitions each, their combined count exceeds the 4,096-definition limit. |
+| While analysis is pending, rename a constant in that open file without saving it. | The next completion and diagnostic results use the new name for both aliases. A late result cannot restore the old name for either alias. |
+| Complete a leading declaration for `A`, then request completion in the unfinished call `Sleep(A.`. Separately, place `#constants B "other.tttyc"` after a complete statement. | In the first case, completion still offers members of `A`. In the second, the editor marks the misplaced directive and neither reads `other.tttyc` nor asks the author to open it. |
+
+### Navigating qualified shared constants
+
+In a reference such as `Common.TimeoutMs`, Go to Definition on `Common`
+selects the alias name in the macro's `#constants Common` declaration. On
+`TimeoutMs`, it goes to the member's declaration in the selected constants
+file. Hover on the member shows that constant's name and type. Resolve these
+tokens with the shared parser so that whitespace, comments and line breaks
+around the dot preserve the reference.
+
+After a declared alias and its dot, offer only members from that alias's file.
+If the file is unavailable, the member list is empty and the reason appears
+on the directive under Editor Q8. A qualified member with no resolved
+definition has no hover or definition target. A local variable of the same
+name remains available at its own unqualified uses.
+
+| Editor scenario | Expected result |
+| --- | --- |
+| Declare `Common` from `shared.tttyc`, which defines `long TimeoutMs`. Also declare a local `string TimeoutMs`. Use `Sleep(Common /* ms */ . TimeoutMs);` and repeat with a line break before the dot. | Go to Definition on `Common` reaches its alias declaration in the macro. On the member, it reaches `TimeoutMs` in the constants file and hover shows `long TimeoutMs`. On an unqualified use of the local, hover shows `string TimeoutMs`. |
+| Make the constants file unavailable and request completion after `Common.`, then hover or request Go to Definition on `TimeoutMs` in `Common.TimeoutMs`. | The completion list is empty and neither member operation resolves to the local variable. The alias still leads to the macro's directive, which explains why the file is unavailable. |
+
+### Variable scope while editing incomplete macros
+
+Completion, hover and Go to Definition use the same declarations and lexical
+scopes from the current unsaved text. The [shared macro language implementation](../adr/0010-share-macro-parser-with-vs-code.md)
+determines where a name is visible. A later unfinished statement preserves the
+type and source location of an earlier declaration whose initializer can be
+checked. Recompute those facts when the author edits that declaration.
+
+If the declaration's name, position and enclosing scope are clear, completion
+and Go to Definition at later uses can identify it even with a missing or
+unfinished initializer. Completion and hover show the explicit type when
+present. For `var`, show the type inferred from the whole initializer once
+it can be checked in the current document. Until then, show that the type is
+undetermined, including when the first operand already has a known type.
+Keep the initializer diagnostic and exclude the new variable from completion
+in its own initializer. TabTty still checks the complete program before a
+macro can run.
+
+| Editor scenario | Expected through the VS Code extension |
+| --- | --- |
+| Declare `var ratio = 1 + 0.5;`, use `ratio`, then start an unfinished `WaitPrompt(` | At the use, hover shows `double` and Go to Definition reaches the declaration. Changing `0.5` to `2` in the unsaved text changes the hover to `long` while the call remains unfinished. |
+| Declare `var n = -1D;`, use `n` in `double copy = n;`, then start an unfinished `Sleep(` later in the file. Change the initializer to `1D +`, leaving the semicolon in place. | Before the edit, completion and hover at the use report `double`. After the edit they identify `n` with an undetermined type. Completing the initializer as `1D + 2` restores `double` while `Sleep(` remains unfinished. |
+| Write `long retries = ;` followed by `Sleep(retries);`, then change `long` to `var` | At the later use, completion and Go to Definition identify `retries` in both versions. Hover changes from `long` to an undetermined type. The initializer diagnostic remains until the author supplies the expression. |
+| Complete a `catch (MacroError err)` block, then start an unfinished call after its closing brace | Inside the handler, completion offers `err` and Go to Definition reaches its declaration. After the handler, that declaration is unavailable to completion, hover and Go to Definition. |
 
 ## Historical branch inventory
 

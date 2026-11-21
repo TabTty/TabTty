@@ -94,10 +94,11 @@ internal sealed partial class ProfileCatalog
     internal async Task<ConnectionProfile> AdmitAsync(
         Window? owner, string path, string? macroName, CancellationToken token)
     {
-        ConnectionProfile profile = await LoadForUseAsync(owner, path, token);
-        string location;
-        using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(token))
+        ConnectionProfile profile = await LoadForUseAsync(owner, path, token, macroName);
+        string? location = profile.LocalOpeningLocation;
+        if (location is null)
         {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
             timeout.CancelAfter(TimeSpan.FromSeconds(10));
             location = await NormalizeLocationAsync(path, timeout.Token);
         }
@@ -172,14 +173,15 @@ internal sealed partial class ProfileCatalog
         static string Digest(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     }
 
-    private async Task<ConnectionProfile> LoadForUseAsync(Window? owner, string path, CancellationToken token)
+    private async Task<ConnectionProfile> LoadForUseAsync(Window? owner, string path, CancellationToken token, string? macroName = null)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
         var profile = await ConnectionProfile.TryLoadLocalAsync(path, timeout.Token);
         if (profile is not null) return profile;
-        if (await AskAsync(owner, "ProfileReadSource", Text("ProfileReadSourceNotice") + "\n\n" +
-            PermissionDisplay.Literal(path), "ProfileReadSource", null, token) == ProfileAnswer.Cancel)
+        var details = Text("ProfileReadSourceNotice") + "\n\n" + PermissionDisplay.Literal(path);
+        if (macroName is not null) details += "\n" + Text("MacroSourceFile") + "  " + PermissionDisplay.Literal(macroName);
+        if (await AskAsync(owner, "ProfileReadSource", details, "ProfileReadSource", null, token) == ProfileAnswer.Cancel)
             throw new SshInteractionCancelledException();
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
         return await ConnectionProfile.LoadAsync(path, timeout.Token);
@@ -199,8 +201,7 @@ internal sealed partial class ProfileCatalog
             var names = methods.Select(method => Text(method == "publicKey" ? "PublicKey" : "VaultPassword"));
             if (profile.SshAllowsKeyboardInteractive) names = names.Append(Text("KeyboardInteractive"));
             lines.Add(string.Join(", ", names));
-            foreach (var reference in new[] { methods.Contains("password") ? profile.SshPassword : null,
-                methods.Contains("publicKey") ? profile.SshPrivateKey : null })
+            foreach (var reference in new[] { profile.SshPassword, profile.SshPrivateKey })
                 if (reference is not null) lines.Add(PermissionDisplay.Literal(reference.ToString()));
         }
         if (profile.RecordsOutput)

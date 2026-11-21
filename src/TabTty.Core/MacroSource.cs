@@ -209,19 +209,25 @@ internal sealed class MacroParser
     private readonly List<MacroToken> tokens = [];
     private readonly MacroSyntaxBudget budget;
     private readonly string source;
+    private readonly MacroEditorSymbols? editor;
     private int cursor;
     private readonly List<MacroConstantsDeclaration> constantsDeclarations = [];
     internal IReadOnlyList<MacroConstantsDeclaration> ConstantsDeclarations => constantsDeclarations;
-    public MacroParser(string source, MacroPosition origin, MacroSyntaxBudget budget)
+    public MacroParser(string source, MacroPosition origin, MacroSyntaxBudget budget, MacroEditorSymbols? editor = null)
     {
         this.budget = budget;
         this.source = source;
+        this.editor = editor;
+        if (editor is not null) editor.Tokens = tokens;
         var lexer = new MacroLexer(source, origin);
         MacroToken token;
         do
         {
             budget.Token();
-            token = lexer.Next(); tokens.Add(token);
+            try { token = lexer.Next(); }
+            catch (MacroSourceException error) when (editor?.Recover(error) == true)
+            { token = new("end", "", null, error.Position, source.Length); }
+            tokens.Add(token);
             if (tokens.Count > 500_000) throw new MacroSourceException("SyntaxLimit", token.Position);
         } while (token.Kind != "end");
     }
@@ -243,34 +249,46 @@ internal sealed class MacroParser
         var functions = new Dictionary<string, MacroFunction>(StringComparer.Ordinal);
         while (Current.Kind != "end")
         {
-            int save = cursor;
-            if (IsType(Current.Text) || Current.Text == "void")
+            int start = cursor;
+            try
             {
-                MacroType type = ParseType(allowVoid: true);
-                string name = Identifier();
-                if (Eat("("))
-                {
-                    var args = new List<MacroParameter>();
-                    if (!Eat(")"))
-                    {
-                        do
-                        {
-                            MacroType argType = ParseType();
-                            args.Add(new(Identifier(), argType));
-                            if (args.Count > 32) Fail("ParameterLimit");
-                        } while (Eat(","));
-                        Expect(")");
-                    }
-                    var function = new MacroFunction(name, type, args.ToArray(), Block(), tokens[save].Position);
-                    if (!functions.TryAdd(name, function)) Fail("DuplicateFunction");
-                    if (functions.Count > 256) Fail("FunctionLimit");
-                    continue;
-                }
+                if (!TryFunction(functions)) statements.Add(Statement());
             }
-            cursor = save;
-            statements.Add(Statement());
+            catch (MacroSourceException error) when (editor?.Recover(error) == true)
+            {
+                RecoverStatement(start, inBlock: false);
+            }
         }
         return (Add(new MacroBlock(statements.ToArray(), new(1, 1))), functions);
+    }
+
+    private bool TryFunction(Dictionary<string, MacroFunction> functions)
+    {
+        if (!IsType(Current.Text) && Current.Text != "void") return false;
+        int start = cursor;
+        MacroType type = ParseType(allowVoid: true);
+        var name = Current;
+        string identifier = Identifier();
+        if (!Eat("(")) { cursor = start; return false; }
+        var parameters = new List<MacroParameter>();
+        if (!Eat(")"))
+        {
+            do
+            {
+                MacroType argType = ParseType();
+                var argName = Current;
+                var parameter = new MacroParameter(Identifier(), argType);
+                parameters.Add(parameter);
+                editor?.Name(parameter, argName);
+                if (parameters.Count > 32) Fail("ParameterLimit");
+            } while (Eat(","));
+            Expect(")");
+        }
+        var function = new MacroFunction(identifier, type, parameters.ToArray(), Block(), tokens[start].Position);
+        if (!functions.TryAdd(identifier, function)) Fail("DuplicateFunction");
+        if (functions.Count > 256) Fail("FunctionLimit");
+        editor?.Name(function, name);
+        return true;
     }
 
     private void ParseConstantsDeclaration()
@@ -327,14 +345,20 @@ internal sealed class MacroParser
             if (Eat("foreach"))
             {
                 Expect("("); MacroType? type = Eat("var") ? null : ParseType();
+                var nameToken = Current;
                 string name = Identifier(); Expect("in"); var values = Expression(); Expect(")");
-                return Add(new MacroForeach(name, type, values, Block(), at));
+                var loop = Add(new MacroForeach(name, type, values, Block(), at));
+                editor?.Name(loop, nameToken);
+                return loop;
             }
             if (Eat("try"))
             {
                 var body = Block(); Expect("catch"); Expect("("); Expect("MacroError");
+                var nameToken = Current;
                 string name = Identifier(); Expect(")");
-                return Add(new MacroTry(body, name, Block(), at));
+                var attempt = Add(new MacroTry(body, name, Block(), at));
+                editor?.Name(attempt, nameToken);
+                return attempt;
             }
             if (Current.Text is "return" or "break" or "continue")
             {
@@ -352,8 +376,26 @@ internal sealed class MacroParser
         var at = Current.Position;
         if (allowDeclaration && (Current.Text == "var" || IsType(Current.Text)))
         {
-            MacroType? type = Eat("var") ? null : ParseType(); string name = Identifier();
-            Expect("="); return Add(new MacroDeclaration(name, type, Expression(), at));
+            MacroType? type = Eat("var") ? null : ParseType();
+            var nameToken = Current;
+            string name = Identifier();
+            Expect("=");
+            int start = cursor;
+            MacroExpression value;
+            try
+            {
+                value = Expression();
+                if (editor is not null && Current.Text != ";") Fail("ExpectedToken");
+            }
+            catch (MacroSourceException error) when (editor?.Recover(error) == true)
+            {
+                cursor = start;
+                while (Current.Kind != "end" && Current.Text is not (";" or "}")) Take();
+                value = Add(new MacroMissingExpression(error.Position));
+            }
+            var declaration = Add(new MacroDeclaration(name, type, value, at));
+            editor?.Name(declaration, nameToken, Current.Offset + 1);
+            return declaration;
         }
         var target = Expression();
         if (Current.Text is "=" or "+=" or "-=" or "*=" or "/=" or "%=" or "++" or "--")
@@ -367,9 +409,42 @@ internal sealed class MacroParser
 
     private MacroBlock Block()
     {
-        var at = Current.Position; Expect("{"); var statements = new List<MacroStatement>();
-        while (!Eat("}")) { if (Current.Kind == "end") Fail("BlockExpected"); statements.Add(Statement()); }
-        return Add(new MacroBlock(statements.ToArray(), at));
+        var open = Current; Expect("{"); var statements = new List<MacroStatement>();
+        while (Current.Text != "}" && Current.Kind != "end")
+        {
+            int start = cursor;
+            try { statements.Add(Statement()); }
+            catch (MacroSourceException error) when (editor?.Recover(error) == true)
+            { RecoverStatement(start, inBlock: true); }
+        }
+        int end = Current.Offset + 1;
+        if (!Eat("}"))
+        {
+            var error = new MacroSourceException("BlockExpected", Current.Position);
+            if (editor?.Recover(error) != true) throw error;
+        }
+        var block = Add(new MacroBlock(statements.ToArray(), open.Position));
+        editor?.Block(block, open.Offset + 1, end);
+        return block;
+    }
+
+    private void RecoverStatement(int start, bool inBlock)
+    {
+        // Re-scan from the statement start: an expression may already have consumed its delimiter.
+        cursor = start;
+        int braces = 0;
+        while (Current.Kind != "end")
+        {
+            if (Current.Text == "}" && braces == 0)
+            {
+                if (!inBlock) Take();
+                return;
+            }
+            string token = Take().Text;
+            if (token == "{") braces++;
+            if (token == "}" && --braces == 0) return;
+            if (braces == 0 && token == ";") return;
+        }
     }
 
     public MacroExpression ParseFragment()

@@ -1,5 +1,35 @@
 # Implementation and validation status
 
+## Macro editing, file consent and trust, 2026-11-21
+
+- [#95](https://github.com/TabTty/TabTty/issues/95): completion, hover and
+  definition use symbols from the shared parser and checker on the current
+  buffer. The self-contained Windows editor helper was exercised through the VS Code providers
+  with missing initializers, later unfinished calls, edited numeric expressions,
+  and catch variables inside and outside their handlers. Launch validation
+  continues to require a complete program.
+- [#75](https://github.com/TabTty/TabTty/issues/75): the macro connection
+  review identifies the calling file and the resolved profile. The Windows
+  tests exercised Cancel, one-time approval and remembered trust in English
+  and Japanese, a changed base directory, and a loopback connection recording
+  through the captured profile after the file changed during review.
+- [#76](https://github.com/TabTty/TabTty/issues/76): the Settings checks
+  covered cancellation, retry after partial removal, pending decisions across
+  windows, and a fresh process reviewing previously allowed and blocked
+  argument lists. Profile and macro reset invalidate their own decisions.
+- [#80](https://github.com/TabTty/TabTty/issues/80): a disposable Windows
+  Cloud Files sync provider supplied four online-only constants files. The
+  WPF `--macro-cloud` check exercised the picker, Explorer, CLI and forwarded
+  launch entries. On each route Cancel left the provider's fetch count
+  unchanged and created no tab. Consent hydrated the file, presented the
+  execution review and ran the macro against the fetched value. The local
+  probe uses a metadata-only handle with placeholders exposed before opening
+  a verified ordinary file for data.
+
+[#103](https://github.com/TabTty/TabTty/issues/103) and its six children
+deliver [language and acceptance specifications](../drafts/macro-validation.md#macro-syntax-acceptance).
+Runtime implementation of those six revisions is separate.
+
 ## Shared macro constants, 2026-11-20
 
 Macro-enabled builds support the shared constants in Q78–Q88. A launch
@@ -21,9 +51,8 @@ in an NTFS directory with case-sensitive lookup enabled.
 | M67–M69 | Resolved relative and absolute dependencies and reused one snapshot per normalized path. Verified the declaration, byte and member limits with concurrent pending reviews and capacity release. WPF consent tests covered loopback SMB, a mapped drive and a junction, including Cancel and a remembered execution allow. They exercised the entry points after file selection, Explorer and CLI parsing, and forwarding-envelope decoding. |
 | M70–M73 | Verified inspected and executed values against the captured inputs after an edit and deletion. Exercised exact-byte changes, restoration and identical copies, version-specific forgetting without original files, failed trust writes, and reset with an outstanding review in another window. WPF trust coverage used English and Japanese. |
 
-Unrun environment-dependent scenario: hydration of an online-only cloud file
-through a live cloud provider. The machine had no disposable cloud placeholder
-fixture. The native redirect and SMB scenarios ran with real Windows paths.
+The November 20 run covered real redirect and SMB paths. The November 21
+Cloud Files check above completes the online-only placeholder case.
 
 The constants format now uses the macro's initialized declaration syntax.
 The regression tests cover explicit and inferred types, signed numeric

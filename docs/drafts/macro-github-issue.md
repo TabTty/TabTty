@@ -1,3 +1,8 @@
+This is the historical issue text for [#3](https://github.com/TabTty/TabTty/issues/3).
+For the current macro-enabled language, including named waits, recording
+options, rethrow and character escapes, see the [language reference](macro-language.md)
+and its [acceptance cases](macro-validation.md#macro-syntax-acceptance).
+
 ## Problem Statement
 
 TabTty users need to repeat terminal workflows reliably: open a saved connection profile, recognize a prompt or line of received text, assemble and submit commands, reuse a configured password, wait, and ask the person for input or a decision. Manual repetition is slow and error-prone. Screen scraping and unrestricted C# execution would make receive semantics, cancellation, credential lifetime, and recovery difficult to reason about.

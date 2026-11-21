@@ -270,7 +270,7 @@ internal sealed partial class TerminalTab : UserControl
             {
                 Window? owner = MacroWindow ?? Window.GetWindow(this);
                 string attemptPath = path;
-                var profile = await app.Profiles.AdmitAsync(owner, attemptPath, Macro?.BaseName, startup.Token);
+                var profile = await app.Profiles.AdmitAsync(owner, attemptPath, Macro?.FullPath, startup.Token);
                 RecordingSettings? logging = null;
                 if (profile.RecordsOutput)
                 {

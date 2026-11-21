@@ -213,11 +213,23 @@ internal sealed partial class MainWindow
 
     private void ResetMacroTrust(Window owner)
     {
-        if (app.Modal(() => ThemedMessageBox.Show(owner, Text("MacroTrustResetConfirm"), Text("MacroTrustReset"),
-            MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No)) != MessageBoxResult.Yes) return;
-        try { MacroTrust.Reset(); }
-        catch (Exception error) when (error is IOException or Win32Exception or UnauthorizedAccessException)
-        { ShowError(owner, new IOException(Text("MacroTrustResetFailed"), error)); }
+        string message = "MacroTrustResetConfirm", action = "MacroTrustReset";
+        while (true)
+        {
+            bool confirmed = false;
+            var dialog = ThemedMessageBox.Create(owner, Text(message), Text("MacroTrustReset"),
+                MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel,
+                result => confirmed = result == MessageBoxResult.OK,
+                result => Text(result == MessageBoxResult.OK ? action : "Cancel"));
+            app.Modal(dialog.ShowDialog);
+            if (!confirmed) return;
+            try { MacroTrust.Reset(); return; }
+            catch (Exception error) when (error is IOException or Win32Exception or UnauthorizedAccessException)
+            {
+                message = "MacroTrustResetFailed";
+                action = "MacroTrustResetRetry";
+            }
+        }
     }
 
     private void ShowMacroLaunchError(string detail) =>

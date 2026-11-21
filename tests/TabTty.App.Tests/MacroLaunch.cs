@@ -53,6 +53,8 @@ internal static partial class Program
                 await Task.Delay(10, timeout.Token);
             TerminalTab tab = window.TerminalTabs.Single();
             MacroRun run = tab.Macro!;
+            MacroTrust.Reset();
+            CheckMacroLaunch(run.IsActive, "Resetting macro trust ended an admitted run.");
             if (!ReferenceEquals(prompt.Owner, window) || !window.IsEnabled)
                 throw new InvalidOperationException("The macro dialog disabled or lost its host.");
             if (!FindControls<TextBlock>(prompt).Any(block => block.Text == "A B"))
@@ -186,12 +188,14 @@ internal static partial class Program
         try
         {
             string title = displayedArguments is null ? "MacroReadRemote" : "MacroReview";
-            CheckMacroLaunch(dialog.Title == App.Text(title), "Unexpected macro consent dialog.");
+            CheckMacroLaunch(dialog.Title == App.Text(title),
+                $"Expected macro dialog '{App.Text(title)}', received '{dialog.Title}'.");
             var buttons = FindControls<Button>(dialog).ToArray();
             CheckMacroLaunch(buttons.Single(button => button.IsDefault).IsCancel, "External macro consent must default to Cancel.");
             var fields = FindControls<TextBox>(dialog).Where(box => box.IsReadOnly).Select(box => box.Text.ReplaceLineEndings("\n")).ToArray();
-            CheckMacroLaunch(fields.Contains(path) && (displayedArguments is null || fields.Contains(displayedArguments)),
-                "Macro review must show the path and all argument boundaries.");
+            CheckMacroLaunch(fields.Contains(path), $"Macro review for '{path}' showed '{fields.FirstOrDefault()}'.");
+            CheckMacroLaunch(displayedArguments is null || fields.Contains(displayedArguments),
+                "Macro review must show all argument boundaries.");
             beforeDecision?.Invoke();
             if (action is not null)
                 buttons.Single(button => Equals(button.Content, App.Text(action))).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));

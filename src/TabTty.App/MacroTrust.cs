@@ -58,11 +58,13 @@ internal static class MacroTrust
 {
     private static string prefix = "TabTty/MacroTrust/";
     private static Action? beforeTestWrite;
+    private static Action? beforeTestDelete;
 
-    internal static void UseTestStore(Action? beforeWrite = null)
+    internal static void UseTestStore(Action? beforeWrite = null, Action? beforeDelete = null, Guid? storeId = null)
     {
-        prefix = $"TabTty/Tests/{Guid.NewGuid():N}/MacroTrust/";
+        prefix = $"TabTty/Tests/{storeId ?? Guid.NewGuid():N}/MacroTrust/";
         beforeTestWrite = beforeWrite;
+        beforeTestDelete = beforeDelete;
     }
     private static string FormatPrefix(byte version) => prefix + (version switch
     {
@@ -176,6 +178,7 @@ internal static class MacroTrust
     {
         if (fingerprint.Length != 64 || !fingerprint.All(char.IsAsciiHexDigit))
             throw new ArgumentException(nameof(fingerprint));
+        beforeTestDelete?.Invoke();
         if (!CredDelete(FormatPrefix(version) + fingerprint, Generic, 0))
         {
             int error = Marshal.GetLastWin32Error();

@@ -1,10 +1,32 @@
 using System.Runtime.InteropServices;
+using System.Text;
 using Microsoft.Win32.SafeHandles;
 
 namespace TabTty.Core;
 
 internal static class LocalMacroFile
 {
+    internal static string OpenedLocation(SafeFileHandle handle, string path)
+    {
+        // TryOpen excludes reparse points and drive redirects. The handle supplies
+        // the stored spelling without traversing the original path a second time.
+        const int volumeNameNone = 4;
+        var name = new StringBuilder(260);
+        int size = GetFinalPathNameByHandleW(handle, name, name.Capacity, volumeNameNone);
+        if (size >= name.Capacity && size <= 32768)
+        {
+            name.EnsureCapacity(size);
+            size = GetFinalPathNameByHandleW(handle, name, name.Capacity, volumeNameNone);
+        }
+        string drive = path[..2].ToUpperInvariant();
+        return size > 0 && size < name.Capacity && name[0] == '\\'
+            ? drive + name.ToString() : drive + path[2..];
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    private static extern int GetFinalPathNameByHandleW(SafeFileHandle file, StringBuilder name, int size, int flags);
+
     internal static bool IsOrdinaryFile(SafeFileHandle handle) => GetFileType(handle) == 1 &&
         (File.GetAttributes(handle) & (FileAttributes.Directory | FileAttributes.Device)) == 0;
 
@@ -12,7 +34,22 @@ internal static class LocalMacroFile
     [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     private static extern uint GetFileType(SafeFileHandle handle);
 
-    internal static unsafe SafeFileHandle? TryOpen(string path)
+    internal static SafeFileHandle? TryOpen(string path)
+    {
+        // Windows can disguise Cloud Files placeholders as ordinary files for
+        // the calling application. Inspect the handle with placeholders exposed.
+        const sbyte exposePlaceholders = 2;
+        sbyte previous = RtlSetThreadPlaceholderCompatibilityMode(exposePlaceholders);
+        if (previous < 0) return null;
+        try { return TryOpenLocalHandle(path); }
+        finally { RtlSetThreadPlaceholderCompatibilityMode(previous); }
+    }
+
+    [DllImport("ntdll.dll", ExactSpelling = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    private static extern sbyte RtlSetThreadPlaceholderCompatibilityMode(sbyte mode);
+
+    private static unsafe SafeFileHandle? TryOpenLocalHandle(string path)
     {
         // Resolve only a direct local volume mapping. A drive name can also
         // resolve to a redirector or to another path (SUBST).
@@ -45,28 +82,38 @@ internal static class LocalMacroFile
                 Name = (nint)(&nativeName),
                 Attributes = 0x1040, // OBJ_DONT_REPARSE | OBJ_CASE_INSENSITIVE
             };
-            const uint readAndSynchronize = 0x00100081;
-            const uint openOptions = 0x00400060; // NO_RECALL | NON_DIRECTORY | SYNCHRONOUS_IO_NONALERT
-            int status = NtOpenFile(out SafeFileHandle file, readAndSynchronize, ref attributes, out _, 1, openOptions);
-            if (status < 0 || file.IsInvalid)
+            const uint attributesAndSynchronize = 0x00100080;
+            const uint openOptions = 0x00600060; // NO_RECALL | OPEN_REPARSE_POINT | NON_DIRECTORY | SYNCHRONOUS_IO_NONALERT
+            int status = NtOpenFile(out SafeFileHandle metadata, attributesAndSynchronize, ref attributes, out _, 1, openOptions);
+            using (metadata)
             {
-                file.Dispose();
-                if (status is unchecked((int)0xC0000034) or unchecked((int)0xC000003A))
-                    throw new FileNotFoundException();
+                if (status < 0 || metadata.IsInvalid)
+                {
+                    if (status is unchecked((int)0xC0000034) or unchecked((int)0xC000003A))
+                        throw new FileNotFoundException();
+                    return null;
+                }
+                try
+                {
+                    const FileAttributes recall = (FileAttributes)(0x00040000 | 0x00400000);
+                    const FileAttributes unsupported = FileAttributes.ReparsePoint | FileAttributes.Offline | recall;
+                    if ((File.GetAttributes(metadata) & unsupported) != 0) return null;
+                    // Even requesting data access can hydrate a cloud file. Acquire
+                    // data access only on this already inspected local object.
+                    const uint openReparsePoint = 0x00200000;
+                    var file = ReOpenFile(metadata, 0x80000000, FileShare.Read, openReparsePoint);
+                    if (!file.IsInvalid) return file;
+                    file.Dispose();
+                }
+                catch (IOException) { }
                 return null;
             }
-
-            try
-            {
-                const FileAttributes recall = (FileAttributes)(0x00040000 | 0x00400000);
-                const FileAttributes unsupported = FileAttributes.ReparsePoint | FileAttributes.Offline | recall;
-                if ((File.GetAttributes(file) & unsupported) == 0) return file;
-            }
-            catch (IOException) { }
-            file.Dispose();
-            return null;
         }
     }
+
+    [DllImport("kernel32.dll", ExactSpelling = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    private static extern SafeFileHandle ReOpenFile(SafeFileHandle original, uint access, FileShare share, uint flags);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct UnicodeString
