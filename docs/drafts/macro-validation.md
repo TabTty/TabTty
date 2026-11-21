@@ -168,12 +168,16 @@ assumptions in later tests. This implements the accepted Q74 contract.
 ## Log names and file preparation
 
 Apply the shared [recording contract](receive-logging-issue.md#log-filename-template-redesign)
-to macro `Connect`. Verify that an invalid override, an unavailable path, and
-a same-name collision with overwrite Off fail the macro connection before
-transport. Verify that the profile selects the formats and that the macro's
-relative directory uses its captured working directory. Exercise the start
-failure rule on both resume and retry. Preserve the source `FileName` and
-`BaseName` values when sanitizing substitutions in the filename template.
+to macro `Connect`. With a fixed name, verify that `error` preserves existing
+files and fails the connection before transport, `overwrite` replaces the
+contents and `append` preserves the original bytes and adds the new recording
+at the end. Repeat with one selected file missing and confirm it is created
+when preparation succeeds. Exercise an unavailable path and a file held by
+another writer. Verify that the profile selects the formats and that the
+macro's relative directory uses its captured working directory. On resume
+and retry, use the policy captured at connection start and verify the shared
+recording start failure rule. Preserve the source `FileName` and `BaseName`
+values when sanitizing substitutions in the filename template.
 
 ## Acceptance matrix for later authorized implementation
 
@@ -232,7 +236,7 @@ observable behavior without replacing them.
 | M44 | Macro input ownership with broadcast checked targets and frozen operations | Preserve ordinary checks/exclude new eligibility; no mutation of frozen recipients; restore later eligibility only |
 | M45 | AI read-only sharing starts/ends on macro tab; AI attempts control while paused | Apply accepted AI-specific OFF/disabled rule; no automatic control grant on macro Stop |
 | M46 | Macro ends while healthy SFTP work runs; actual disconnect/tab close | Independent transfer survives macro end; normal disconnect/close cancels it |
-| M47 | Same basename concurrent runs, illegal basename chars, empty name, collision, partial group failure | Distinct grouped names; no overwrite; visible retry/new parts; no secret/argument filename content |
+| M47 | Concurrent runs using a serial template, illegal basename characters, empty name, fixed-name collision, partial group failure | Serial allocation yields distinct grouped names. Fixed names follow the effective collision policy. Group failures and retry outcomes are visible. Names omit secrets and invocation arguments. |
 | M48 | EN/JA/system UI and Light/Dark/system changes during run | Stable script identifiers/semantics, localized state/errors, readable accessible controls |
 | M49 | Repeated stop/restart while regex/host work remains in flight | Old work remains charged and cannot write into new run; new admission bounded |
 | M50 | Telnet/serial first password send and remote echo | Q77: the persistent nonblocking notice requires no per-send confirmation. Profile trust was checked at connection time. |
@@ -269,7 +273,7 @@ They define acceptance in the macro-enabled build.
 | --- | --- |
 | [#104](https://github.com/TabTty/TabTty/issues/104) | Admit an old completed `OK`. Start `WriteLine("status", markReceiveBoundary: true)`, admit a fresh identical line while submission is in progress, then start `WaitLine(Literal("OK"), 0)`. Only the fresh line satisfies it. A proven zero-byte rejection leaves the old line eligible in a subsequent catch; an uncertain partial send ends the run with no retry. Exercise a prompt and an ordinary startup-history wait. Both checkers accept the Boolean option and flag a string value at that argument. Editor completion offers the option. |
 | [#105](https://github.com/TabTty/TabTty/issues/105) | Run the IsReady helper in the [rethrow example](macro-language.md#rethrowing-a-caught-error) with a timeout and with EndOfInput. Verify the outer catch and the uncaught display use the original wait location. Inside nested catches verify the inner error, then the outer one after the inner catch completes. Both checkers accept a returning/rethrowing helper and reject a bare throw in an unused helper outside its own catch. |
-| [#106](https://github.com/TabTty/TabTty/issues/106) | Exercise every cell of the [recording option table](macro-language.md#connection-recording-options) with existing log files, including blanks and an overwrite-only call. An allowed collision follows recording policy and a denied collision preserves the file. At launch and in VS Code, check a misspelling, repeated option and wrong value type before any connection. Confirm completion offers each unused name. |
+| [#106](https://github.com/TabTty/TabTty/issues/106) | Exercise the [recording option table](macro-language.md#connection-recording-options) with a fixed filename. Cover all three explicit policies, a policy-only call, blank naming fields, each nonblank override on its own, and an override equal to the profile value. Confirm the inherited or explicit policy through the files and the connection outcome. Both the launch checker and VS Code flag `allowLogOverwrite` or a misspelling as unknown, a duplicate at its second name and a Boolean `logCollision` at its value. Completion offers each unused option with its string type. At execution, pass `"append"` as a literal and through a variable. Pass an unsupported string, a blank, `"Append"` and `"append "` as literals and computed values. Each invalid value raises catchable `InvalidArgument` before any recording file opens or transport starts. |
 | [#107](https://github.com/TabTty/TabTty/issues/107) | Run the [named waits](macro-language.md#named-wait-alternatives) with the same two distinct prompts before and after prepending a third candidate. Both original branches retain their names. Use two matches at the same start to select the first label, then swap them and check the new winner. Check unfinished versus completed lines. At launch and in VS Code underline the second name in `[ok: Literal("a"), ok: Literal("b")]` as DuplicateAlternative. |
 | [#108](https://github.com/TabTty/TabTty/issues/108) | With two index helpers that each record one call, run `rows[Outer()][Inner()] += 3;` and observe the changed element through its original alias. Check outer then inner evaluation, invalid outer with no inner/RHS call, and invalid inner with no write. Each bounds error identifies its own bracket. Both checkers reject string writes, fresh result receivers and incompatible RHS types, including in unused functions. Compare writes to Macro.Args, a saved copy of capture text and the original match. |
 | [#109](https://github.com/TabTty/TabTty/issues/109) | Exercise M09 through launch validation, VS Code diagnostics and session submission, including an ordinary directive path and its verbatim counterpart. |

@@ -49,7 +49,7 @@ otherwise. Defaults describe newly created profiles, not missing-field repair.
 | jis | `kanjiIn`: `B` (`@/B`); `kanjiOut`: `B` (`B/J`); both are retained in existing files as inert fields. `receiveKana`: `eightBit` (`eightBit/soSi`); `transmitKana`: `eightBit` (`eightBit/soSi`); applicability is fixed by the codec contract |
 | font | `mode`: `inherit` or `override`; `family`: null when inherited, otherwise requested installed-font name; `sizePoints`: null when inherited, otherwise 6-72 |
 | retainedRows | `mode`: `inherit` or `override`; `value`: null when inherited, otherwise integer 100-100000 |
-| logging | `raw`: false, `text`: false, `terminal`: false, `directory`: `Logs` |
+| logging | `raw`: false, `text`: false, `terminal`: false, `directory`: `Logs`. Optional `collision` accepts `error` (default), `overwrite`, or `append`. |
 
 A profile belongs to one group when `groupName` is set. Trim surrounding
 whitespace and compare group names ordinally without case. Accept at most 256
@@ -196,9 +196,12 @@ Language/theme/bell and saved rule content apply live after successful save.
 Application logging defaults are stored as the optional strings
 `defaultLogDirectory`, `defaultLogFilenameTemplate`, and
 `defaultMacroLogFilenameTemplate` in `settings.json`. Legacy filename component
-booleans migrate to text templates on save. The profile's `logging` object can
-use `directory`, `filenameTemplate`, and `allowOverwrite`. See the
-[recording naming policy](../drafts/receive-logging-issue.md#log-filename-template-redesign).
+booleans migrate to text templates on save. The profile editor offers **If a log
+file already exists** with **Error**, **Overwrite**, and **Append**. It saves
+the selection in `logging.collision`. An omitted field means `error`. The
+former `logging.allowOverwrite` Boolean has no effect. A macro can override
+the policy for its connection through `logCollision`.
+[Recording naming policy](../drafts/receive-logging-issue.md#log-filename-template-redesign)
 
 The auto-close preference applies to subsequent disconnections after saving.
 Broadcast scope is captured at Start under Q181, while Q187's broadened

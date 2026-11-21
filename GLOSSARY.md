@@ -177,6 +177,10 @@ A text pattern for the base name shared by a recording part's files, using
 literal text and optional placeholders such as the connection profile name.
 Each recording format supplies its filename suffix.
 
+**Log collision policy**:
+The choice to stop recording startup, overwrite, or append when a selected
+session log filename resolves to an existing file.
+
 **Host key**:
 A public key used by an SSH server to authenticate its identity to the client.
 It is distinct from a user's public key used to log in to that server.

@@ -454,7 +454,7 @@ Arguments are positional except for the explicitly named options below.
 
 | Signature | Behavior |
 | --- | --- |
-| `void Connect(string profilePath)` with optional named `logDirectory` (string), `logFilenameTemplate` (string), `allowLogOverwrite` (bool) | One explicit attempt. See [connection recording options](#connection-recording-options). |
+| `void Connect(string profilePath)` with optional named string arguments `logDirectory`, `logFilenameTemplate` and `logCollision` | One explicit attempt. See [connection recording options](#connection-recording-options). |
 | `void SetBaseDirectory(string path)` | Replace this run's relative-path base |
 | `void ResetBaseDirectory()` | Restore captured source directory |
 | `string BaseDirectory()` | Current absolute run-local base |
@@ -511,14 +511,15 @@ can still be operated manually. Keep the original line for regex context.
 
 ### Connection recording options
 
-These calls show the supported forms:
+Each example shows an independent connection attempt.
 
 ```csharp
 Connect("lab.ttty");
-Connect("lab.ttty", allowLogOverwrite: false);
+Connect("lab.ttty", logCollision: "error");
 Connect("lab.ttty", logDirectory: @"C:\Logs");
 Connect("lab.ttty", logFilenameTemplate: "lab-<serial:1,3>");
-Connect("lab.ttty", logFilenameTemplate: "lab-<serial:1,3>", logDirectory: @"C:\Logs", allowLogOverwrite: true);
+Connect("lab.ttty", logFilenameTemplate: "latest", logCollision: "overwrite");
+Connect("lab.ttty", logCollision: "append", logDirectory: @"C:\Logs", logFilenameTemplate: "lab-<datetime:yyyy-MM-dd>");
 ```
 
 After the required profile path, each option is optional, in any order and
@@ -527,16 +528,29 @@ directory/template (empty or whitespace-only) inherits that field under the reco
 nonblank value explicitly selects a field even if its text matches the
 profile. Profile choice of log formats still applies.
 
-| Effective naming choice | `allowLogOverwrite: true` | `allowLogOverwrite: false` | Option omitted |
-| --- | --- | --- | --- |
-| Both fields inherited | Allow replacement | Deny | Use the profile's overwrite permission |
-| Directory or template explicitly selected | Allow replacement | Deny | Deny |
+| Effective naming choice | `logCollision` omitted | `logCollision` supplied |
+| --- | --- | --- |
+| Both directory and template inherited | Use the profile's collision policy, which defaults to `error` | Use the supplied value |
+| Directory or template explicitly selected | Use `error` | Use the supplied value |
 
-An application naming default grants no overwrite permission. Complete source
-checking precedes profile access, connection and recording. Both TabTty and
-VS Code identify an unknown name at that option, a duplicate at its second
-name, or a wrong type at the supplied value. VS Code offers the remaining
+An application naming default supplies only the directory or template. When a
+selected filename already exists, `"error"` fails recording startup,
+`"overwrite"` replaces the file's contents and `"append"` writes at its end.
+A missing file is created in all three modes. A template containing `<serial:start,width>`
+continues to allocate the next available serial under every policy.
+The [recording contract](receive-logging-issue.md#log-filename-template-redesign)
+governs active writers, grouped formats, resume and retry.
+
+Complete source checking precedes profile access, connection and recording.
+Both TabTty and VS Code identify an unknown name at that option, a duplicate
+at its second name, or a wrong type at the supplied value. The former Boolean
+option `allowLogOverwrite` is an unknown name. VS Code offers the remaining
 option names and their types as the author edits.
+
+When `Connect` executes, it accepts exactly `"error"`, `"overwrite"` or
+`"append"`. The same check applies to a string literal and a computed string.
+Any other value, including a blank, different casing or surrounding whitespace,
+raises `InvalidArgument` before opening recording files or starting transport.
 
 ### Named wait alternatives
 

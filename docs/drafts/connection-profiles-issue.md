@@ -357,8 +357,8 @@ On failure disconnect and retain the tab. Do not automatically probe Telnet/seri
   turn standalone CR into LF, and remove other terminal controls. Logging is
   independent of tab visibility and scrollback browsing.
 
-The profile can specify the log folder, filename template, and overwrite
-permission. The [recording contract](receive-logging-issue.md#log-filename-template-redesign)
+The profile can specify the log folder, filename template, and log collision
+policy (`error`, `overwrite`, or `append`). The [recording contract](receive-logging-issue.md#log-filename-template-redesign)
 defines application defaults, macro overrides, and startup failures. Use `<stem>.log`
 for Text, `<stem>.raw.tttylog` for Raw,
 and `<stem>.term.tttylog` for Terminal. Q95 is accepted with the user's Terminal
@@ -368,8 +368,10 @@ for single-format recordings. Raw and Terminal share the extension but have
 different contents; select serialization by mode, not by extension.
 Keep this naming policy replaceable for user/macro/invocation naming without changing recording
 lifecycle; see `receive-logging-issue.md` and `future-macro-design.md`.
-A pause closes the current files; resuming creates a new
-numbered part without backfilling paused output. On pause, disconnect, and orderly
+A pause closes the current files. Resume starts a new recording part and applies
+the captured template and collision policy. A serial allocates a new name. With
+a fixed name and `append`, recording continues at the end of the closed file.
+Both cases omit paused output. On pause, disconnect, and orderly
 exit, flush eligible incomplete normal-screen Text without adding a newline.
 This means the current edited contents eligible for that recording interval,
 not the history of keystrokes or received editing operations.
@@ -389,8 +391,8 @@ and resumes normal-screen handling without dumping the restored screen.
 Switching screens cannot backfill missed output or duplicate unchanged text;
 it does not add diagnostic markers, blank lines, or new recording parts.
 
-Do not automatically split by file size. This does not change the agreed new
-files at connection/reconnect, pause/resume, or error retry.
+Connect, reconnect, resume, and recording retry start a recording part.
+File size alone never starts another part.
 Do not automatically delete recordings. An action to open the log folder in
 Explorer is not required and is excluded; a dedicated log viewer/search UI is
 also outside the initial scope.

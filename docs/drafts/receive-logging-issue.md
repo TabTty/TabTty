@@ -312,11 +312,11 @@ does not guarantee immediate OS cancellation or deletion of already-created file
 - This is the initial naming policy, not a permanent restriction to profile-based
   names. Preserve the extension path described below for later user-specified
   names and macro/invocation-derived names.
-- Do not automatically split files by size. The proposed 100 MiB split threshold
-  is rejected. This does not remove the agreed separate files for a new
-  connection, pause/resume, or explicit retry after a write failure.
-- Retain recordings until the user removes them (Q68 accepted with revision).
-  Do not automatically delete recordings by age, count, or size.
+- Do not automatically split files by size. A connection, resume, or explicit
+  retry starts a new recording part. Its expanded name and log collision policy
+  determine which files the part opens.
+- Retain recordings without an automatic deletion policy based on age, count,
+  or size (Q68 accepted with revision).
 - Do not provide an action to open the recording folder in Explorer; the user
   explicitly rejected that feature. A dedicated in-app log viewer/search UI is
   also outside the initial scope. Searching retained terminal output is a
@@ -360,32 +360,22 @@ Contract for destination defaults, filename templates, and recording startup.
   `.raw.tttylog` for Raw, and `.term.tttylog` for Terminal. Treat a suffix entered
   in the template as literal text. For example, `backup.log` produces
   `backup.log.log` for Text. Share all placeholder values across formats.
-- Require explicit overwrite permission at profile or macro-connection scope.
-  Overwrite defaults to Off. If any selected filename already exists with
-  overwrite Off, treat the collision as a recording start failure. A file owned
-  by an active writer also causes a start failure, even with overwrite On. Open
-  every selected file for writing before truncating existing content.
 - Required recordings must start successfully on ordinary connect, reconnect,
   macro `Connect`, resume, and recording retry. A failure to start any selected
   format fails the connection. This includes template expansion, invalid or
   unavailable paths, destination confirmation, name collisions, permissions,
-  timeouts, cancellation, file opens, and the first data write to a new file
-  failing because of a full disk or another I/O error.
+  timeouts, cancellation, and file opens. A full disk or another I/O error on
+  a format's first data write in the part also counts as a start failure.
 - Open every selected file before starting transport. If a start failure is
   detected after transport has started, close the session through the normal
   disconnect path and report the recording failure. An intentionally paused
   recording leaves the session connected until a later start is requested.
-- If a macro supplies a destination or filename template, it must also explicitly
-  allow overwrite for that connection to replace existing logs. If it inherits
-  both fields, it also inherits the profile's overwrite setting unless the macro
-  explicitly overrides it. Application defaults confer no overwrite permission.
 - Keep `Connect(profilePath)` and accept
   [named recording options](macro-language.md#connection-recording-options)
   in any order. Directory and template are strings and may be blank to inherit.
-  Overwrite permission is Boolean and may be omitted to use the rule above.
-  The profile still selects Text,
-  Raw, and Terminal and controls whether recording is enabled. These are
-  session logs for the macro's connection.
+  The optional `logCollision` argument follows the [log collision policy](#log-collision-policy).
+  The profile selects Text, Raw, and Terminal and controls whether recording is
+  enabled for the macro's connection.
 - Report an initial recording preparation failure directly through macro
   `Connect`. A recording start failure detected after macro connection
   establishment follows the ordinary disconnect behavior for a macro. Later
@@ -414,14 +404,12 @@ Contract for destination defaults, filename templates, and recording startup.
   specifies how to match existing serial spellings and when to stop a cancelled
   directory scan.
 - Migrate the existing date, time, microsecond, and sequence settings into the
-  two application fallback templates. Use the new macro base name and keep
-  overwrite disabled. Preserve any nonblank destination saved in a profile,
-  including `Logs`. Users can clear it to inherit the application default.
-- Freeze the effective logging settings at connection start. Resume and retry
-  use that snapshot and evaluate placeholders for the new part. With overwrite
-  Off, a fixed name that collides with even the same session's closed previous
-  part causes a recording start failure and disconnect. With overwrite On, an
-  eligible closed file may be replaced.
+  two application fallback templates. Use the new macro base name. Preserve any
+  nonblank destination saved in a profile, including `Logs`. Users can clear it
+  to inherit the application default.
+- Freeze the effective logging settings, including the log collision policy, at
+  connection start. Resume and retry use that snapshot and expand placeholders
+  again when opening each new recording part.
 - Scope profile trust to the normalized profile file location and the SHA-256
   of its exact bytes. Logging fields saved in a profile are part of those bytes.
   Resolve and verify the effective log destination and drive mapping separately
@@ -435,21 +423,79 @@ Contract for destination defaults, filename templates, and recording startup.
   Recheck the captured mapping when opening files and stop recording if a
   changed mapping would redirect writes.
 
+### Log collision policy
+
+In the profile editor, label this choice **If a log file already exists**
+(**同名のログがある場合**). Offer **Error** (エラー), **Overwrite** (上書き),
+and **Append** (追記).
+The optional profile field `logging.collision` accepts the exact strings
+`error`, `overwrite`, and `append`. Its default is `error` when absent.
+The former `allowOverwrite` Boolean has no effect on the policy.
+
+The macro argument `logCollision` accepts the same exact strings.
+An explicit argument takes precedence. If it is omitted, a macro that inherits
+both the directory and the template also inherits the profile's policy. A
+macro that supplies either nonblank field defaults to `error` for that call.
+Application settings supply only naming and directory defaults.
+
+Apply one policy to all selected formats after resolving the destination and
+expanding the part's filename template.
+
+| Policy | Selected file is missing | Selected file already exists and is available for writing |
+| --- | --- | --- |
+| `error` | Create it. | Fail to start the whole part. |
+| `overwrite` | Create it. | Truncate it before recording the new part. |
+| `append` | Create it. | Preserve every existing byte and write new eligible bytes at the end. |
+
+An active writer or a failure to obtain a writable handle for any selected
+file fails the whole start under every policy. Open every selected file before
+truncating or writing any of them. For a mixture of closed existing and missing
+files, apply the chosen row to each. If preparation fails during open, release
+the opened handles and preserve existing contents. Newly created empty files
+can remain. A later I/O failure can leave different amounts of data in the
+selected files.
+
+Append requires no decoding, format validation, or repair of existing contents.
+Each format writes exactly the bytes it would emit into an empty file. Joining
+two intervals adds no separator, newline, BOM, timestamp, session marker, or
+terminal reset. For example, if a Text log ends in `abc` and the next eligible
+output is `def`, the result is `abcdef`. Raw preserves the received bytes,
+and Terminal continues with the next eligible operation.
+
+On reconnect, resume, or retry, a fixed template such as `console` can resolve
+to the same closed files. The policy then determines whether the new part
+fails, replaces those files' contents, or appends to them. A template such as
+`console_<serial:0,4>` takes the next available serial even with `append`.
+If a changed date or a new UUID produces a different name, the part opens
+the newly resolved name. A retry uses a new writer and records only newly
+eligible output. Never replay a failed batch or fill a recording gap.
+
 ### Acceptance cases for the redesign
 
 - Resolve destination and template independently across macro, profile, and
   application settings. Check blank inheritance and the source directory used
   to resolve each relative path. Verify migration preserves explicit profile
   paths and transfers the old filename choices into the fallback templates.
+- For a profile set to `append`, omit `logCollision` and check inheritance
+  with both macro path fields blank. Override just the directory, just the
+  template, then both and verify `error` in each case. Supply `logCollision`
+  explicitly and verify its policy applies to the resolved filenames.
 - Check that ordinary and macro defaults use the expected base names, and that
   all selected formats share the expanded name plus their own suffix. Check
   invariant .NET date formats, a format that yields an invalid Windows name,
   correct serial padding and rollover, a fresh UUID on reopening, and concurrent
   serial allocation.
+- Verify each policy with missing, closed existing, and mixed selected files.
+  With `append`, compare the complete result to the original bytes followed
+  by the new eligible bytes for each format. Cover a Text tail without LF, Raw
+  with arbitrary binary bytes, and Terminal with display controls. Resume a
+  fixed name and a serial template and verify the filenames and contents.
 - Exercise recording start failures on ordinary connect, reconnect, macro
-  `Connect`, resume, and retry. Include collisions with overwrite Off, an active
-  writer with overwrite On, an invalid expansion, an unavailable folder, and a
+  `Connect`, resume, and retry. Include a collision with `error`, an active
+  writer under each policy, an invalid expansion, an unavailable folder, and a
   full disk when opening or first writing a file in a multi-format recording.
+  If a later selected file cannot open, verify the original bytes in an
+  earlier existing file under both `append` and `overwrite`.
   Verify that preparation faults leave transport unopened and that faults first
   detected after transport startup disconnect it. An initial macro preparation
   failure returns the `Connect` error immediately.
@@ -501,11 +547,11 @@ Contract for destination defaults, filename templates, and recording startup.
 - Bound pending writes; do not accumulate unlimited log data while disk output
   is unavailable. This is a write-queue requirement, not permission to finalize
   still-editable Text contents at an arbitrary byte threshold.
-- Explicit retry after correction starts new files under the active configuration
-  without reconstructing missed output. None remains ineligible for mid-session
-  logging start. Text retry follows the same rules as resume for the current
-  screen: mixed-line exclusion on the normal screen and immediate recording of
-  new received text on the alternate screen.
+- Explicit retry after correction opens a new recording part under the captured
+  configuration without reconstructing missed output. A session started with
+  recording disabled remains ineligible. On retry, Text excludes mixed lines
+  on the normal screen and immediately records newly received text on the
+  alternate screen, as on resume.
 - Screen switching does not reset recording eligibility or reconstruct output
   from paused/error periods. Detailed per-unit provenance and event ordering
   remain design work, subject to these confirmed behavior requirements.
@@ -651,12 +697,12 @@ Terminal; Q95 records the user's name, provisional extension, and filename marke
 - Configure the set before connecting and keep it fixed for that session.
   Write a separate file per selected format. Share pause/resume/retry across
   the selected files; do not add individual per-format pause controls.
-- Open every configured file before transport startup. If any fails, the
-  connection attempt does not proceed. If a write fails during the session,
-  stop the selected recordings together, retain the connection, and report
-  the error. Explicit retry creates new parts for the selected set without
-  reconstructing missing output, extending the existing Both failure rule.
-  Multi-file recording is not a transaction: a failure can leave unequal tails.
+- Open every configured file before transport startup. An open failure blocks
+  the connection. Failure on a format's first data write in the part disconnects
+  an established session. A subsequent write failure stops the selected
+  recordings together, retains the connection, and reports the error. Explicit
+  retry opens a new part for the selected set without reconstructing missing
+  output. A multi-file write failure can leave unequal tails.
 
 ### Q97: Terminal log scope (accepted)
 
@@ -819,10 +865,9 @@ stripped receive stream. Preserve CR/BS/erase behavior and local-wrap suppressio
 - Aggregate resource limits for terminal cells/characters, pending item counts,
   sessions, and failed-I/O cleanup; exact scheduling, partial-write accounting,
   and drain/cancellation races under accepted Q146-Q148.
-- Exact timestamp/identifier serialization, collision handling, and path
-  validation within the agreed file organization. Future naming UI, template
-  syntax, macro arguments, and precedence are deferred and do not block initial
-  release readiness. No Explorer-opening action is planned.
+- The [filename template and collision policy](#log-filename-template-redesign)
+  specify timestamp/identifier expansion, path and filename validation, and
+  macro argument precedence.
 
 ## Agreed acceptance cases
 
@@ -921,12 +966,12 @@ screen cases below belong to Text. Q95-Q98 cases reflect the accepted revisions.
   without an added newline. Returning does not dump unchanged restored content.
   A screen switch while paused produces no recording; a screen switch after
   resume does not make excluded normal-screen text eligible again.
-- A recording can exceed 100 MiB without size-triggered splitting. Resume/retry
-  still uses new parts, and reconnect still uses new session files.
+- A recording can exceed 100 MiB without size-triggered splitting. Resume,
+  retry, and reconnect open new parts using the resolved filenames and policy.
 - Relative `Logs` resolves from the profile's directory, independently of where
   TabTty was launched, and is the initial default. A missing folder is created
-  before connecting; failure prevents transport startup. Existing recordings
-  are not overwritten.
+  before connecting; failure prevents transport startup. With the default
+  `error` policy, an existing selected filename fails the start.
 - Selecting all three formats creates `<stem>.log`, `<stem>.raw.tttylog`, and
   `<stem>.term.tttylog` under the initial naming rule, with separate contents.
   The final extension does not identify Raw versus Terminal. Single-format
@@ -944,9 +989,10 @@ screen cases below belong to Text. Q95-Q98 cases reflect the accepted revisions.
   receive processing or file-write/pause/retry behavior. No future naming input,
   template engine, or macro execution is required for initial acceptance.
 - All unchecked produces no log files and cannot start recording mid-session.
-  Each selected combination shares pause/resume/retry; any write failure stops
-  its recordings together while the connection continues. Initial open failure
-  prevents transport startup. Retry creates new parts without backfill.
+  Each selected combination shares pause/resume/retry. An initial open failure
+  prevents transport startup. A format's first-write failure disconnects an
+  established session. A later write failure stops the recordings together
+  while the connection continues. Retry opens a new part without backfill.
 - Terminal excludes non-display controls, queries/replies, and unsupported raw
   control fragments under Q97. Supported visible text/replacement output remains
   eligible; Raw preserves received bytes without adopting these exclusions.

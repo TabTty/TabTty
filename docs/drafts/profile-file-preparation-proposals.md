@@ -25,8 +25,9 @@ file-backed connections, and existing log/error behavior.
 - Prepare the selected log directory and open every selected log file before
   starting the transport. Initial preparation failure prevents that connection;
   failure after connection startup follows the accepted recording-error policy.
-- Do not overwrite previous log files, replay data into old parts, or automatically
-  reconnect. Other existing sessions and windows remain usable.
+- Apply the [log collision policy](receive-logging-issue.md#log-filename-template-redesign)
+  to existing files. Each new recording part admits only its own eligible data.
+  Reconnection is explicit. Other sessions and windows remain usable.
 
 These are not new product questions. Exact path identity, unsupported path forms,
 schema fields, and parser/resource limits remain technical specification work.

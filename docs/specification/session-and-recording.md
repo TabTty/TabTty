@@ -36,9 +36,9 @@ Moving the tab never transfers transport or file ownership. The remaining
 split-view interactions are consolidated in
 [broadcast and split views](broadcast-and-split-views.md), confirmed in Q199.
 The decision history is tracked in `../drafts/broadcast-and-split-issue.md`.
-Every connection attempt has a unique generation; reconnect
-creates a fresh generation, terminal state, and files. Late results carry their
-original generation and can only release original resources.
+Every connection attempt has a unique generation. Reconnect creates a fresh
+generation and terminal state and opens a new recording part when enabled.
+Late results carry their original generation and can only release original resources.
 
 An SSH session's generation also owns its on-demand
 [SFTP channel](file-transfer.md#ssh-and-sftp-channel). Moving the terminal tab
@@ -255,6 +255,14 @@ write for any selected format fails the connection. A later write failure
 marks the whole group Failed and leaves transport available for explicit retry.
 See the [recording rules](../drafts/receive-logging-issue.md#log-filename-template-redesign).
 
+The log collision policy applies each time a recording part opens. All three
+policies create missing files. If a selected filename exists, `error` (the
+default) fails the start, `overwrite` replaces its contents, and `append`
+writes the new interval's eligible output at the end. Text, Raw, and Terminal
+each retain their usual encoding and add no separator between intervals. Open
+all selected files before truncating or writing any. A file still held by a
+writer causes a start failure under every policy.
+
 | Boundary | Required ordering |
 | --- | --- |
 | Initial connection | Open all selected files successfully before starting transport; no files for Disabled |
@@ -292,8 +300,9 @@ batching target, ten-second no-progress failure, and five-second close choice.
 
 On failure, stop new admissions and best-effort finish the accepted prefix.
 Never replay a partly written batch into the same file or guess how much failed
-I/O reached storage. Explicit retry uses fresh part numbers and new owners. Late
-completions cannot affect a newer owner. Resume/retry waits or fails visibly if
+I/O reached storage. Explicit retry opens a new part with new owners even if
+the filename template resolves to the same closed files. Late completions
+cannot affect a newer owner. Resume/retry waits or fails visibly if
 old I/O consumes the cleanup allowance. Close-with-loss abandons unissued work
 and requests cancellation of issued work; only actual completion releases its
 buffers. Continue-waiting on close overrides automatic stall abandonment.
@@ -330,8 +339,9 @@ files in place. Do not start transport or silently record only a subset.
 
 ### Allocating a serial for a recording part
 
-At the verified destination, match existing filenames using the same expanded
-log filename template that generates the new name. Count a serial only if
+All log collision policies allocate a fresh serial when the template includes
+`<serial:start,width>`. At the verified destination, match existing filenames
+using the same expanded log filename template that generates the new name. Count a serial only if
 formatting its numeric value with the template reproduces the digits in the
 filename. Apply Windows filename comparison to the rest of the name and check
 all three recording suffixes, even when opening only one format. Start at the

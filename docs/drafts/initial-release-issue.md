@@ -293,14 +293,14 @@ baseline and readiness of later scope additions are tracked in
   output and continue normal-screen handling without dumping restored content.
   Screen switches cannot backfill missed output or add duplicate text, synthetic
   labels, blank lines, or recording parts.
-- Do not split recordings automatically by file size. The agreed new files on
-  connection/reconnect, pause/resume, and error retry still apply. Logging paths
+- Do not split recordings automatically by file size. Connect, reconnect,
+  resume, and recording retry each start a recording part. Logging paths
   may be absolute or relative to the directory containing the profile file.
 - Default the recording folder to relative `Logs` and create it if needed before
-  connecting. The application log-name preferences default to
-  `<sanitized-profile-name>_yyyy-MM-dd_<sequence>` for each part. Time is optional
-  when Date is enabled. Turning Sequence off allows same-name replacement. See
-  `receive-logging-issue.md` for the shared naming policy. Use the common stem
+  connecting. The default template for ordinary connections uses the profile
+  name, local date, and a serial. If a name resolves to an existing file, the
+  log collision policy selects error (default), overwrite, or append. See the
+  [recording contract](receive-logging-issue.md#log-filename-template-redesign). Use the common stem
   with `.log` for Text, `.raw.tttylog` for Raw, and `.term.tttylog` for Terminal. `.term` is the shortened
   filename marker; `.tttylog` remains the provisional final extension.
   Keep naming separate from recording lifecycle so user-specified names, macro
