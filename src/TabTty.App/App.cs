@@ -46,16 +46,19 @@ public sealed class App : Application
     internal long MaxPasteTextBytes => settings["maxPasteTextBytes"]?.GetValue<long>() ??
         TabTty.Core.TerminalPaste.DefaultMaxSourceBytes;
     internal bool BroadcastAcrossWindows => settings["broadcastAcrossWindows"]?.GetValue<bool>() ?? false;
-    internal RecordingNameOptions RecordingNames
+    internal RecordingDefaults LogDefaults => ReadLogDefaults(settings);
+
+    private static RecordingDefaults ReadLogDefaults(JsonObject state)
     {
-        get
-        {
-            var defaults = RecordingNameOptions.Default;
-            bool date = settings["logNameIncludeDate"]?.GetValue<bool>() ?? defaults.IncludeDate;
-            bool time = date && (settings["logNameIncludeTime"]?.GetValue<bool>() ?? defaults.IncludeTime);
-            return new(date, time, settings["logNameIncludeSequence"]?.GetValue<bool>() ?? defaults.IncludeSequence,
-                time && (settings["logNameIncludeMicroseconds"]?.GetValue<bool>() ?? defaults.IncludeMicroseconds));
-        }
+        bool date = state["logNameIncludeDate"]?.GetValue<bool>() ?? true;
+        bool time = date && state["logNameIncludeTime"]?.GetValue<bool>() == true;
+        bool microseconds = time && state["logNameIncludeMicroseconds"]?.GetValue<bool>() == true;
+        string dateFormat = date ? "_<datetime:yyyy-MM-dd" +
+            (time ? "_HH-mm-ss" + (microseconds ? "-ffffff" : "") : "") + ">" : "";
+        string suffix = dateFormat + (state["logNameIncludeSequence"]?.GetValue<bool>() != false ? "_<serial:0,4>" : "");
+        return new(state["defaultLogDirectory"]?.GetValue<string>() ?? "",
+            state["defaultLogFilenameTemplate"]?.GetValue<string>() ?? RecordingDefaults.ProfileName + suffix,
+            state["defaultMacroLogFilenameTemplate"]?.GetValue<string>() ?? RecordingDefaults.MacroAndProfileName + suffix);
     }
     internal BroadcastInput Broadcast { get; }
     internal AiCollaboration Ai { get; }
@@ -370,7 +373,7 @@ public sealed class App : Application
     internal async Task SaveSettingsAsync(string languageChoice, string themeChoice, string bellChoice,
         string terminalFontFamily, double terminalFontSize, int retainedRows, bool autoCloseDisconnectedTabs,
         string vaultPath, int revision, bool? broadcastAcrossWindows = null, long? maxPasteTextBytes = null,
-        string? profileSaveDirectory = null, RecordingNameOptions? recordingNames = null)
+        string? profileSaveDirectory = null, RecordingDefaults? logDefaults = null)
     {
         if (revision != SettingsRevision)
             throw new InvalidOperationException(Text("ManagementTabOutdated"));
@@ -400,13 +403,13 @@ public sealed class App : Application
             candidate["credentialVaultPath"] = vaultPath;
         if (profileSaveDirectory is not null)
             candidate["profileSaveDirectory"] = NormalizeProfileSaveDirectory(profileSaveDirectory);
-        if (recordingNames is { } naming)
-        {
-            candidate["logNameIncludeDate"] = naming.IncludeDate;
-            candidate["logNameIncludeTime"] = naming.IncludeDate && naming.IncludeTime;
-            candidate["logNameIncludeMicroseconds"] = naming.IncludeDate && naming.IncludeTime && naming.IncludeMicroseconds;
-            candidate["logNameIncludeSequence"] = naming.IncludeSequence;
-        }
+        RecordingDefaults logging = logDefaults ?? ReadLogDefaults(candidate);
+        logDefaults?.Validate();
+        candidate["defaultLogDirectory"] = logging.Directory;
+        candidate["defaultLogFilenameTemplate"] = logging.ProfileTemplate;
+        candidate["defaultMacroLogFilenameTemplate"] = logging.MacroTemplate;
+        foreach (string legacy in new[] { "logNameIncludeDate", "logNameIncludeTime", "logNameIncludeMicroseconds", "logNameIncludeSequence" })
+            candidate.Remove(legacy);
         byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(candidate, new JsonSerializerOptions { WriteIndented = true });
         if (bytes.Length > 65536) throw new InvalidDataException("Settings exceed 64 KiB.");
         var operation = JsonStoreRecovery.BeginSave(settingsPath, bytes, settingsOriginal,
@@ -481,10 +484,9 @@ public sealed class App : Application
         ["defaultTerminalFont"] = new JsonObject { ["family"] = "Consolas", ["sizePoints"] = 12d },
         ["defaultRetainedRows"] = 5000,
         ["autoCloseDisconnectedTabs"] = DefaultAutoCloseDisconnectedTabs,
-        ["logNameIncludeDate"] = RecordingNameOptions.Default.IncludeDate,
-        ["logNameIncludeTime"] = RecordingNameOptions.Default.IncludeTime,
-        ["logNameIncludeMicroseconds"] = RecordingNameOptions.Default.IncludeMicroseconds,
-        ["logNameIncludeSequence"] = RecordingNameOptions.Default.IncludeSequence,
+        ["defaultLogDirectory"] = RecordingDefaults.BuiltIn.Directory,
+        ["defaultLogFilenameTemplate"] = RecordingDefaults.BuiltIn.ProfileTemplate,
+        ["defaultMacroLogFilenameTemplate"] = RecordingDefaults.BuiltIn.MacroTemplate,
     };
 
     internal static string NormalizeVaultPath(string path)
@@ -536,6 +538,9 @@ public sealed class App : Application
                 (parsed["broadcastAcrossWindows"] is not JsonValue broadcast || !broadcast.TryGetValue<bool>(out _))) ||
             !IsOptionalBoolean("logNameIncludeDate") || !IsOptionalBoolean("logNameIncludeTime") ||
             !IsOptionalBoolean("logNameIncludeMicroseconds") || !IsOptionalBoolean("logNameIncludeSequence") ||
+            !IsOptionalLogText("defaultLogDirectory", 32760) ||
+            !IsOptionalLogText("defaultLogFilenameTemplate", RecordingNameTemplate.MaximumLength) ||
+            !IsOptionalLogText("defaultMacroLogFilenameTemplate", RecordingNameTemplate.MaximumLength) ||
             (parsed.ContainsKey("autoCloseDisconnectedTabs") &&
                 (parsed["autoCloseDisconnectedTabs"] is not JsonValue autoClose || !autoClose.TryGetValue<bool>(out _))))
         {
@@ -556,5 +561,8 @@ public sealed class App : Application
 
         bool IsOptionalBoolean(string key) => !parsed.ContainsKey(key) ||
             parsed[key] is JsonValue value && value.TryGetValue<bool>(out _);
+        bool IsOptionalLogText(string key, int maximum) => !parsed.ContainsKey(key) ||
+            parsed[key] is JsonValue value && value.TryGetValue<string>(out string? text) &&
+            text is not null && text.Length <= maximum && !text.Contains('\0');
     }
 }

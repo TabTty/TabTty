@@ -15,7 +15,8 @@ internal static class MacroApi
         var result = new Dictionary<string, MacroSignature[]>(StringComparer.Ordinal);
         void Add(string name, MacroSignature first, MacroSignature? second = null) =>
             result.Add(name, second is null ? [first] : [first, second]);
-        Add("Connect", new(v, s)); Add("SetBaseDirectory", new(v, s));
+        result.Add("Connect", [new(v, s), new(v, s, s), new(v, s, s, s), new(v, s, s, s, b)]);
+        Add("SetBaseDirectory", new(v, s));
         Add("ResetBaseDirectory", new(v)); Add("BaseDirectory", new(s));
         Add("GetParentDirectory", new(s, s)); Add("GetFileBaseName", new(s, s)); Add("GetFileExtension", new(s, s));
         Add("Write", new(v, s)); Add("WriteLine", new(v, s));

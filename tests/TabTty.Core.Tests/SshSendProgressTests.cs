@@ -26,7 +26,7 @@ internal static partial class ArchitectureOwnershipContracts
         if (last?.Contains("reverse confirmed") != true)
             throw new InvalidOperationException("Input after exit status did not reach the peer.");
         await session.PauseRecordingAsync(token);
-        string file = Directory.EnumerateFiles(Path.GetFullPath(profile.LogDirectory, directory.Path), "*.raw.tttylog").Single();
+        string file = Directory.EnumerateFiles(Path.Combine(directory.Path, "Logs"), "*.raw.tttylog").Single();
         byte[] expected = System.Text.Encoding.ASCII.GetBytes(string.Concat(Enumerable.Repeat("AB", 768)) +
             "\r\nburst finished\r\nreverse confirmed");
         if (!(await File.ReadAllBytesAsync(file, token)).AsSpan().SequenceEqual(expected))
@@ -52,7 +52,7 @@ internal static partial class ArchitectureOwnershipContracts
             var profile = ConnectionProfile.CreateSsh("Startup recording", "127.0.0.1", user, port, recordRaw: true,
                 recordText: true, recordTerminal: true);
             await profile.SaveNewAsync(path, token);
-            string logs = Path.GetFullPath(profile.LogDirectory, directory.Path);
+            string logs = Path.Combine(directory.Path, "Logs");
             Task<TerminalSession> connecting = TerminalSession.ConnectAsync(path, stop.Token, interaction);
             if (cancel)
             {

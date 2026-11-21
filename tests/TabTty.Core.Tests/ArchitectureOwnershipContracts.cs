@@ -559,7 +559,7 @@ internal static partial class ArchitectureOwnershipContracts
         try
         {
             for (; claimed < 3; claimed++) await ApplicationResources.FilePreparations.WaitAsync(deadline.Token);
-            Task<SessionRecording> cancelled = RecordingLifecycle.PreparePartAsync(() => new SessionRecording(
+            Task<SessionRecording> cancelled = RecordingLifecycle.PreparePartAsync(_ => new SessionRecording(
                 [RecordingFormat.Raw, RecordingFormat.Text], TimeProvider.System, format =>
                 {
                     if (format == RecordingFormat.Raw) return first;
@@ -579,7 +579,7 @@ internal static partial class ArchitectureOwnershipContracts
             permitOpen.SetResult();
             await closeStarted.Task.WaitAsync(deadline.Token);
 
-            Task<SessionRecording> next = RecordingLifecycle.PreparePartAsync(() => new SessionRecording(
+            Task<SessionRecording> next = RecordingLifecycle.PreparePartAsync(_ => new SessionRecording(
                 [RecordingFormat.Raw], TimeProvider.System, _ => new PreparationFile(null, null)), deadline.Token);
             if (next.IsCompleted || first.Closed)
                 throw new InvalidOperationException("Preparation released its admission before the old handle closed.");

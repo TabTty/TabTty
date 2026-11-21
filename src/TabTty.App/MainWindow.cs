@@ -682,23 +682,10 @@ internal sealed partial class MainWindow : Window
         var autoClose = new CheckBox { IsChecked = app.AutoCloseDisconnectedTabs };
         var maxPaste = new TextBox { Text = app.MaxPasteTextBytes.ToString(CultureInfo.InvariantCulture), MaxLength = 19 };
         var broadcastScope = new CheckBox { IsChecked = app.BroadcastAcrossWindows };
-        var naming = app.RecordingNames;
-        var logDate = new CheckBox { IsChecked = naming.IncludeDate };
-        var logTime = new CheckBox { IsChecked = naming.IncludeTime, IsEnabled = naming.IncludeDate };
-        var logMicroseconds = new CheckBox { IsChecked = naming.IncludeMicroseconds, IsEnabled = naming.IncludeTime };
-        var logSequence = new CheckBox { IsChecked = naming.IncludeSequence };
-        logTime.Checked += (_, _) => logMicroseconds.IsEnabled = true;
-        logTime.Unchecked += (_, _) =>
-        {
-            logMicroseconds.IsChecked = false;
-            logMicroseconds.IsEnabled = false;
-        };
-        logDate.Checked += (_, _) => logTime.IsEnabled = true;
-        logDate.Unchecked += (_, _) =>
-        {
-            logTime.IsChecked = false;
-            logTime.IsEnabled = false;
-        };
+        var naming = app.LogDefaults;
+        var logDirectory = new TextBox { Text = naming.Directory, MaxLength = 32760 };
+        var logTemplate = new TextBox { Text = naming.ProfileTemplate, MaxLength = RecordingNameTemplate.MaximumLength };
+        var macroLogTemplate = new TextBox { Text = naming.MacroTemplate, MaxLength = RecordingNameTemplate.MaximumLength };
         var vaultPath = new TextBox { Text = app.VaultPath, MaxLength = 32760, TextWrapping = TextWrapping.Wrap,
             MaxHeight = 96, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         var profileDirectory = new TextBox { Text = app.ProfileSaveDirectory, MaxLength = 32760, TextWrapping = TextWrapping.Wrap,
@@ -724,10 +711,9 @@ internal sealed partial class MainWindow : Window
             }),
             ("SettingsLogNaming", () =>
             {
-                form.AddField("LogNameIncludeDate", logDate);
-                form.AddField("LogNameIncludeTime", logTime);
-                form.AddField("LogNameIncludeMicroseconds", logMicroseconds);
-                form.AddField("LogNameIncludeSequence", logSequence, descriptionKey: "LogNameIncludeSequenceDescription");
+                form.AddField("DefaultLogDirectory", logDirectory, descriptionKey: "DefaultLogDirectoryDescription");
+                form.AddField("DefaultLogFilenameTemplate", logTemplate, descriptionKey: "LogFilenameTemplateDescription");
+                form.AddField("DefaultMacroLogFilenameTemplate", macroLogTemplate, descriptionKey: "MacroLogFilenameTemplateDescription");
             }),
             ("SettingsVault", () =>
             {
@@ -760,8 +746,7 @@ internal sealed partial class MainWindow : Window
                 fontFamily.Text, size, rows, autoClose.IsChecked == true, vaultPath.Text, revision,
                 broadcastScope.IsChecked == true, maxPasteBytes,
                 profileDirectory.Text == app.ProfileSaveDirectory ? null : profileDirectory.Text,
-                new RecordingNameOptions(logDate.IsChecked == true, logTime.IsChecked == true,
-                    logSequence.IsChecked == true, logMicroseconds.IsChecked == true));
+                new RecordingDefaults(logDirectory.Text, logTemplate.Text, macroLogTemplate.Text));
             revision = app.SettingsRevision;
             vaultPath.Text = app.VaultPath;
             profileDirectory.Text = app.ProfileSaveDirectory;

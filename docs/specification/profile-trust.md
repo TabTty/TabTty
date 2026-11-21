@@ -66,15 +66,18 @@ manually still presents the registration choice.
 Scope a trusted version to the current Windows user on this PC, the normalized
 opened location, SHA-256 of the exact file bytes and the version of the rules
 that interpret security-relevant settings. Use the existing Windows location
-comparison rules and profile-relative log base. Keep trust outside the profile
+comparison rules. Keep trust outside the profile
 and vault. Trusting a new version replaces the location's previous approval.
 A copy at a different location requires its own decision.
 [Profile location rules](persistence-and-windows.md)
 
+After upgrade, a prior approval that included the resolved recording
+destination is reviewed once using the file-only trust check. Recording
+preparation establishes its own drive mapping history.
+
 Before asking, show the file location, protocol, destination and port or serial
 port, SSH account and authentication methods, any credential references, and
-enabled recording formats and resolved log destination. Identify network shares
-and highlight changed settings when previous details are available. Escape
+enabled recording formats. Highlight changed settings when previous details are available. Escape
 display controls and keep secret values out of the review. For a macro request,
 also identify the macro. Reading an externally supplied network file can itself
 contact a share. Obtain permission to read that source before making such a
@@ -88,9 +91,11 @@ credential causes a method fallback.
 Use the approved snapshot for recording, macro profile-password selection and
 the transport. Wait for the connection decision before accessing the log
 destination, resolving the terminal host, opening a port or using a credential.
-Check the effective log destination when admitting the connection. If a mapping
-later redirects recording elsewhere, hold recording for that destination.
-Recording operations cannot grant or renew profile trust. Keep SSH host-key
+Resolve and check the effective log destination during recording preparation.
+Ask before using a changed drive mapping, and record that approval separately
+from profile trust. Use the captured mapping throughout the recording session.
+See [the recording contract](../drafts/receive-logging-issue.md#log-filename-template-redesign).
+Keep SSH host-key
 checks and vault unlock in their normal order. Other sessions continue to accept input during review.
 The existing modeless destination-change notice after a successful reconnect
 has no effect on these decisions or on broadcast selection.

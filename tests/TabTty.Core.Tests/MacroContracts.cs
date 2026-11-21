@@ -29,8 +29,8 @@ internal static partial class MacroContracts
         Console.WriteLine("PASS MacroDeadlineCutoffAndRetainedOutputAtEof");
         await PasswordAndTransmissionAsync();
         Console.WriteLine("PASS MacroPasswordReloadAndPartialTransmission");
-        await RecordingRetryAsync();
-        Console.WriteLine("PASS MacroRecordingRetryBeforeTransport");
+        await RecordingStartAsync();
+        Console.WriteLine("PASS MacroRecordingStartsBeforeTransport");
         await PausedConnectionAndAlternateScreenAsync();
         Console.WriteLine("PASS MacroPausedConnectionAndAlternateScreen");
         await PathAndSendPreflightAsync();
@@ -265,14 +265,14 @@ internal static partial class MacroContracts
         await partial.CloseAsync();
     }
 
-    internal static async Task RecordingRetryAsync()
+    internal static async Task RecordingStartAsync()
     {
         using var directory = new TemporaryDirectory();
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(12));
         listener.Start();
         string root = directory.Path;
-        string profilePath = Path.Combine(root, "profile.ttty");
+        string profilePath = Path.Combine(root, "profiles", "profile.ttty");
         string logs = Path.Combine(root, "logs");
         await File.WriteAllTextAsync(logs, "", deadline.Token);
         int port = ((IPEndPoint)listener.LocalEndpoint).Port;
@@ -280,26 +280,26 @@ internal static partial class MacroContracts
         var profileJson = System.Text.Json.Nodes.JsonNode.Parse(profile.ToEditorJson())!;
         profileJson["logging"]!["directory"] = "logs";
         await profile.Edit(profileJson.ToJsonString()).SaveNewAsync(profilePath, deadline.Token);
+        var program = MacroProgram.Parse(Path.Combine(root, "example.tttym"),
+            "#tttym 1\nConnect(\"profiles/profile.ttty\", \"logs\", \"<macroname>-<cpname>_<serial:0,4>\", false); Write(\"ready\");");
+        var rejectedHost = new Host { OpenRealProfile = true };
+        using (var rejected = new MacroRun(program, [], rejectedHost))
+        {
+            rejected.Start();
+            await rejected.Completion.WaitAsync(deadline.Token);
+            Check(rejected.Status.Result == "ConnectionFailed" && !listener.Pending(),
+                "Failed recording start did not fail Connect before transport.");
+        }
+        File.Delete(logs);
         var host = new Host { OpenRealProfile = true };
-        var program = MacroProgram.Parse(Path.Combine(root, "example.tttym"), "#tttym 1\nConnect(\"profile.ttty\"); Write(\"ready\");");
         using var run = new MacroRun(program, [], host);
         try
         {
             run.Start();
             Task<TcpClient> accepted = listener.AcceptTcpClientAsync(deadline.Token).AsTask();
-            await UntilAsync(() => run.Status.Holds.HasFlag(MacroHold.RecordingFailure));
-            Check(!accepted.IsCompleted, "The transport started before recording preparation.");
-            File.Delete(logs);
-            Directory.CreateDirectory(logs);
-            run.RequestRecordingRetry();
-            await UntilAsync(() => run.Status.Holds.HasFlag(MacroHold.RecordingReady));
-            Check(!accepted.IsCompleted, "Retry implicitly resumed the connection.");
-            string part = Directory.GetFiles(logs).Single();
-            Check(Path.GetFileName(part).StartsWith("example_", StringComparison.Ordinal) &&
-                part.EndsWith("_0000.raw.tttylog", StringComparison.Ordinal),
-                "The first successful open did not use the first daily sequence.");
-            run.Resume();
             using var peer = await accepted;
+            Check(File.Exists(Path.Combine(logs, "example-接続_テスト_0000.raw.tttylog")),
+                "Connect did not use the captured macro's logging overrides before transport.");
             byte[] message = new byte[20]; // Initial Telnet negotiation and the five macro bytes.
             await peer.GetStream().ReadExactlyAsync(message, deadline.Token);
             Check(message.AsSpan(15).SequenceEqual("ready"u8), "Resume did not complete the pending connection.");
@@ -457,11 +457,11 @@ internal static partial class MacroContracts
         public TaskCompletionSource FinishConnect { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int passwordReads;
         public TerminalSession? Session;
-        public async Task<TerminalSession> ConnectAsync(MacroRun run, string profilePath, CancellationToken token)
+        public async Task<TerminalSession> ConnectAsync(MacroRun run, string profilePath, RecordingOverrides recording, CancellationToken token)
         {
             if (OpenRealProfile)
                 return Session = await TerminalSession.ConnectMacroAsync(profilePath, run, token, Ssh,
-                    viewport: _ => Task.FromResult((120, 40)));
+                    viewport: _ => Task.FromResult((120, 40)), overrides: recording);
             ConnectedPath = profilePath;
             var profile = ConnectionProfile.CreateTelnet("Macro", "localhost", transmitEncoding: TransmitEncoding);
             run.ProfileLoaded(profile);

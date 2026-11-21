@@ -357,13 +357,9 @@ On failure disconnect and retain the tab. Do not automatically probe Telnet/seri
   turn standalone CR into LF, and remove other terminal controls. Logging is
   independent of tab visibility and scrollback browsing.
 
-Select the logging destination folder in the profile, using an absolute path or
-a path relative to the directory containing that profile file. Default to relative
-`Logs`; create the selected folder if necessary when starting enabled recording,
-after profile validation and before transport startup. Profile-based file names
-default to `<sanitized-profile-name>_yyyy-MM-dd_<sequence>` as the shared stem.
-Application settings control the date, time, and sequence suffixes. See
-`receive-logging-issue.md` for the naming and overwrite rules. Use `<stem>.log`
+The profile can specify the log folder, filename template, and overwrite
+permission. The [recording contract](receive-logging-issue.md#log-filename-template-redesign)
+defines application defaults, macro overrides, and startup failures. Use `<stem>.log`
 for Text, `<stem>.raw.tttylog` for Raw,
 and `<stem>.term.tttylog` for Terminal. Q95 is accepted with the user's Terminal
 name and provisional `.tttylog` extension; the follow-up shortens the filename
@@ -399,10 +395,10 @@ Do not automatically delete recordings. An action to open the log folder in
 Explorer is not required and is excluded; a dedicated log viewer/search UI is
 also outside the initial scope.
 
-If any configured recording file cannot be opened initially, fail the connection
-attempt before starting its transport. A write failure during a session stops
+Any [recording start failure](receive-logging-issue.md#log-filename-template-redesign)
+fails the connection, including on resume or retry. A later write failure stops
 all selected recordings, reports a persistent error, and keeps the connection
-usable. Explicit retry uses new parts for all selected formats without backfill.
+usable. Explicit retry opens new parts for all selected formats.
 Accepted Q147-Q148 require bounded background writes, a roughly one-second
 normal buffering target, and explicit durable flush requests at eligible pause,
 EOF, disconnect, and orderly-close boundaries. Neither queue admission nor that

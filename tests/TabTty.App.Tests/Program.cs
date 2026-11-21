@@ -1507,6 +1507,7 @@ internal static partial class Program
 
     private static async Task DisconnectedTabsRespectSettingsAndBulkClose(App app, string settingsPath)
     {
+        RecordingDefaults originalLogDefaults = app.LogDefaults;
         var host = new MainWindow(app);
         var finalHost = new MainWindow(app) { ShowActivated = false, ShowInTaskbar = false };
         var terminals = new List<TerminalTab>();
@@ -1538,33 +1539,25 @@ internal static partial class Program
             var navigation = FindControls<ListBox>(form).Single();
             var save = FindControls<Button>(form).Single(button => Equals(button.Content, App.Text("Save")));
             navigation.SelectedItem = navigation.Items.OfType<ListBoxItem>().Single(item => Equals(item.Tag, "SettingsLogNaming"));
-            CheckBox NamingCheck(string key) => FindControls<CheckBox>(form).Single(check =>
-                AutomationProperties.GetLabeledBy(check) is Label { Content: TextBlock label } && label.Text == App.Text(key));
-            var logDate = NamingCheck("LogNameIncludeDate");
-            var logTime = NamingCheck("LogNameIncludeTime");
-            var logMicroseconds = NamingCheck("LogNameIncludeMicroseconds");
-            var logSequence = NamingCheck("LogNameIncludeSequence");
-            if (logDate.IsChecked != true || logTime.IsChecked != false || !logTime.IsEnabled || logSequence.IsChecked != true ||
-                logMicroseconds.IsChecked != false || logMicroseconds.IsEnabled ||
-                AutomationProperties.GetHelpText(logSequence) != App.Text("LogNameIncludeSequenceDescription"))
-                throw new InvalidOperationException("The log name defaults or overwrite description were missing.");
-            logTime.IsChecked = true;
-            if (!logMicroseconds.IsEnabled)
-                throw new InvalidOperationException("Turning on the time did not enable the microsecond option.");
-            logMicroseconds.IsChecked = true;
-            logDate.IsChecked = false;
-            if (logTime.IsEnabled || logTime.IsChecked != false || logMicroseconds.IsEnabled || logMicroseconds.IsChecked != false)
-                throw new InvalidOperationException("Turning off the date did not clear and disable time and microseconds.");
-            logSequence.IsChecked = false;
+            TextBox LogField(string key) => FindControls<TextBox>(form).Single(field =>
+                AutomationProperties.GetLabeledBy(field) is Label { Content: TextBlock label } && label.Text == App.Text(key));
+            var logDirectory = LogField("DefaultLogDirectory");
+            var logTemplate = LogField("DefaultLogFilenameTemplate");
+            var macroTemplate = LogField("DefaultMacroLogFilenameTemplate");
+            if (new RecordingDefaults(logDirectory.Text, logTemplate.Text, macroTemplate.Text) != RecordingDefaults.BuiltIn)
+                throw new InvalidOperationException("The separate log filename defaults were missing.");
+            logDirectory.Text = "Archive";
+            logTemplate.Text = "<cpname>_<uuid>";
+            macroTemplate.Text = "<macroname>-<cpname>_<serial:1,3>";
             navigation.SelectedIndex = 2;
             autoClose.IsChecked = false;
             save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, save));
             while (form.IsBusy) await Task.Delay(15, deadline.Token);
             using (var saved = System.Text.Json.JsonDocument.Parse(File.ReadAllBytes(settingsPath)))
                 if (app.AutoCloseDisconnectedTabs || saved.RootElement.GetProperty("autoCloseDisconnectedTabs").GetBoolean() ||
-                    app.RecordingNames != new RecordingNameOptions(false, false, false) ||
-                    new[] { "logNameIncludeDate", "logNameIncludeTime", "logNameIncludeMicroseconds", "logNameIncludeSequence" }
-                        .Any(key => saved.RootElement.GetProperty(key).GetBoolean()) ||
+                    app.LogDefaults != new RecordingDefaults(logDirectory.Text, logTemplate.Text, macroTemplate.Text) ||
+                    saved.RootElement.GetProperty("defaultLogDirectory").GetString() != "Archive" ||
+                    saved.RootElement.GetProperty("defaultMacroLogFilenameTemplate").GetString() != macroTemplate.Text ||
                     saved.RootElement.GetProperty("language").GetString() != "system")
                     throw new InvalidOperationException("Saving settings did not preserve the disabled override and system language choice.");
 
@@ -1584,9 +1577,7 @@ internal static partial class Program
             TerminalTab active = terminals[^1];
             navigation.SelectedIndex = 2;
             autoClose.IsChecked = true;
-            logDate.IsChecked = true;
-            logTime.IsChecked = true;
-            logMicroseconds.IsChecked = true;
+            logTemplate.Text = "<cpname>_<datetime:yyyy-MM-dd_HH-mm-ss-ffffff>";
             navigation.SelectedIndex = 0;
             var themeChoice = FindControls<ComboBox>(form).Single(choice => choice.Items.Contains(App.Text("Dark")));
             themeChoice.SelectedItem = App.Text("Dark");
@@ -1594,7 +1585,8 @@ internal static partial class Program
             while (form.IsBusy) await Task.Delay(15, deadline.Token);
             using (var saved = System.Text.Json.JsonDocument.Parse(File.ReadAllBytes(settingsPath)))
                 if (!app.AutoCloseDisconnectedTabs || !saved.RootElement.GetProperty("autoCloseDisconnectedTabs").GetBoolean() ||
-                    !app.RecordingNames.IncludeMicroseconds || !saved.RootElement.GetProperty("logNameIncludeMicroseconds").GetBoolean() ||
+                    app.LogDefaults.ProfileTemplate != logTemplate.Text ||
+                    saved.RootElement.GetProperty("defaultLogFilenameTemplate").GetString() != logTemplate.Text ||
                     app.ThemeChoice != "dark" ||
                     tabs.Items.Count != 4 || form.HasUnsavedChanges)
                     throw new InvalidOperationException("Saving auto-close did not persist the preference or removed existing tabs.");
@@ -1681,6 +1673,10 @@ internal static partial class Program
             await Task.WhenAll(terminals.Select(terminal => terminal.Completion)).WaitAsync(TimeSpan.FromSeconds(5));
             host.Close();
             if (!finalHost.IsClosing) finalHost.Close();
+            if (app.LogDefaults != originalLogDefaults)
+                await app.SaveSettingsAsync(app.LanguageChoice, app.ThemeChoice, app.BellChoice, app.TerminalFontFamily,
+                    app.TerminalFontSize, app.RetainedRows, app.AutoCloseDisconnectedTabs, app.VaultPath, app.SettingsRevision,
+                    logDefaults: originalLogDefaults);
         }
 
         static void CheckTabHeader(TabItem tab, bool disconnected, string caption = "Close test")

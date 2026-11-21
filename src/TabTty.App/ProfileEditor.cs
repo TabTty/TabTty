@@ -151,7 +151,18 @@ internal sealed class ProfileEditor
                 Boolean(logging, "text", "RecordText");
                 Boolean(logging, "terminal", "RecordTerminal");
             });
-            String(logging, "directory", "LogDirectory", "NetworkLogDestinationNotice");
+            String(logging, "directory", "LogDirectory", "NetworkLogDestinationNotice", optional: true);
+            String(logging, "filenameTemplate", "LogFilenameTemplate", "LogFilenameTemplateDescription", optional: true)
+                .MaxLength = RecordingNameTemplate.MaximumLength;
+            bool overwritePresent = logging.ContainsKey("allowOverwrite");
+            var overwrite = new CheckBox { IsChecked = logging["allowOverwrite"]?.GetValue<bool>() ?? false };
+            Add("AllowLogOverwrite", overwrite, descriptionKey: "AllowLogOverwriteDescription");
+            apply.Add(() =>
+            {
+                if (overwritePresent || overwrite.IsChecked == true)
+                    logging["allowOverwrite"] = overwrite.IsChecked == true;
+                else logging.Remove("allowOverwrite");
+            });
         }
         var validation = new TextBox { IsReadOnly = true, TextWrapping = System.Windows.TextWrapping.Wrap,
             Visibility = System.Windows.Visibility.Collapsed, MaxHeight = 120,
@@ -415,11 +426,16 @@ internal sealed class ProfileEditor
         });
     }
 
-    private TextBox String(JsonObject node, string property, string key, string? descriptionKey = null)
+    private TextBox String(JsonObject node, string property, string key, string? descriptionKey = null, bool optional = false)
     {
-        var box = new TextBox { Text = node[property]!.GetValue<string>(), MaxLength = 32760 };
+        bool present = node.ContainsKey(property);
+        var box = new TextBox { Text = optional ? node[property]?.GetValue<string>() ?? "" : node[property]!.GetValue<string>(), MaxLength = 32760 };
         Add(key, box, descriptionKey: descriptionKey);
-        apply.Add(() => node[property] = box.Text);
+        apply.Add(() =>
+        {
+            if (!optional || present || box.Text.Length != 0) node[property] = box.Text;
+            else node.Remove(property);
+        });
         return box;
     }
 

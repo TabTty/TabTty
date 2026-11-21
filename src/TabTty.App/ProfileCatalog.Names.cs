@@ -86,7 +86,7 @@ internal sealed partial class ProfileCatalog
                 }
             }
         }
-        return new(name, destination, trust, fromExplorer ? null : VersionFor(path, original, null));
+        return new(name, destination, trust, fromExplorer ? null : original.TrustVersion);
     }
 
     private async Task<string> FinishEditAsync(string path, ConnectionProfile saved, ProfileEdit edit)
@@ -99,7 +99,7 @@ internal sealed partial class ProfileCatalog
         {
             TrustState current = ReadTrust(path);
             string? version = edit.PreviousVersion is not null && edit.Trust.Version == edit.PreviousVersion && current == edit.Trust
-                ? VersionFor(destination, saved, null) : null;
+                ? saved.TrustVersion : null;
             JsonObject snapshot = LocalState.ReadForProfileTrust();
             JsonObject? existing = FindRegistration(snapshot, path);
             bool updateRegistration = existing is not null && (edit.Name is not null ||

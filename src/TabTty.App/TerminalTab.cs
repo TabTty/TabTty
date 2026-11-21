@@ -219,7 +219,7 @@ internal sealed partial class TerminalTab : UserControl
     }
 
     private async Task ConnectAsync(Action<ConnectionProfile>? opened, TaskCompletionSource<TerminalSession>? ready = null,
-        CancellationToken attempt = default)
+        CancellationToken attempt = default, RecordingOverrides recordingOverrides = default)
     {
         var generation = stop;
         lastRecordingStatus = null;
@@ -249,7 +249,7 @@ internal sealed partial class TerminalTab : UserControl
             string fontFamily = app.TerminalFontFamily;
             double fontSize = app.TerminalFontSize;
             int retention = app.RetainedRows;
-            RecordingNameOptions recordingNames = app.RecordingNames;
+            RecordingDefaults logDefaults = app.LogDefaults;
             int sessionRetention = retention;
             void Opened(ConnectionProfile profile) => Dispatcher.BeginInvoke(() =>
                 {
@@ -270,9 +270,21 @@ internal sealed partial class TerminalTab : UserControl
             {
                 Window? owner = MacroWindow ?? Window.GetWindow(this);
                 string attemptPath = path;
-                var (profile, recordingDestination) = await app.Profiles.AdmitAsync(owner, attemptPath, Macro?.BaseName, startup.Token);
+                var profile = await app.Profiles.AdmitAsync(owner, attemptPath, Macro?.BaseName, startup.Token);
+                RecordingSettings? logging = null;
+                if (profile.RecordsOutput)
+                {
+                    try
+                    {
+                        logging = RecordingSettings.Resolve(attemptPath, profile, Macro?.BaseName, logDefaults, recordingOverrides);
+                        await app.Profiles.ApproveRecordingDestinationAsync(MacroWindow ?? Window.GetWindow(this), logging.Destination, startup.Token);
+                    }
+                    catch (Exception failure) when (failure is not RecordingStartException &&
+                        failure is (IOException or ArgumentException or UnauthorizedAccessException or InvalidDataException or NotSupportedException))
+                    { throw new RecordingStartException(failure.Message, failure); }
+                }
                 session = await TerminalSession.ConnectReviewedAsync(attemptPath, profile, Macro, startup.Token, interaction,
-                    Opened, retention, Viewport, recordingDestination, recordingNames);
+                    Opened, retention, Viewport, logging);
             }
             session.Bell += () =>
             {
@@ -308,7 +320,8 @@ internal sealed partial class TerminalTab : UserControl
             ready?.TrySetResult(session);
             await ReceiveOutputAsync(session);
             await session.WaitForTerminalPeerCloseAsync(stop.Token);
-            SetStatus("Disconnected");
+            if (session.RecordingStartFailure is { } logFailure) SetStatus("Failed", LogStartError(logFailure));
+            else SetStatus("Disconnected");
         }
         catch (OperationCanceledException exception) when (stop.IsCancellationRequested || exception is SshInteractionCancelledException)
         {
@@ -331,8 +344,9 @@ internal sealed partial class TerminalTab : UserControl
                     CredentialLookupException { Code: MacroErrorCode.CredentialUnavailable } => Text("SshCredentialMissing"),
                     _ => null,
                 };
-                SetStatus("Failed", credentialError ?? (exception switch
+                SetStatus("Failed", session?.RecordingStartFailure is { } failure ? LogStartError(failure) : credentialError ?? (exception switch
                 {
+                    RecordingStartException recording => LogStartError(recording.Message),
                     OperationCanceledException => Text("TimedOut"),
                     DllNotFoundException or EntryPointNotFoundException => Text("VaultCryptoUnavailable"),
                     _ => Macro is null ? exception.Message : Text("MacroErrorConnectionFailed"),
@@ -371,7 +385,8 @@ internal sealed partial class TerminalTab : UserControl
                     catch (Exception exception) when (exception is IOException or InvalidOperationException)
                     { if (!removed) SetStatus("Failed", exception.Message); }
                 }
-                if (closing.RecordingError is { } problem) SetStatus(statusKey, problem);
+                if (closing.RecordingStartFailure is { } failure) SetStatus("Failed", LogStartError(failure));
+                else if (closing.RecordingError is { } problem) SetStatus(statusKey, problem);
             }
             resizeTimer.Stop();
             foreach (var pane in panes.Keys) pane.SetConnected(false);
@@ -404,7 +419,8 @@ internal sealed partial class TerminalTab : UserControl
                 {
                     if (!ReferenceEquals(session, active) || removed) return;
                     ScheduleFrame();
-                    if (active.RecordingError is { } problem) SetStatus("Connected", problem);
+                    if (active.RecordingStartFailure is { } failure) SetStatus("Failed", LogStartError(failure));
+                    else if (active.RecordingError is { } problem) SetStatus("Connected", problem);
                 }));
         }
     }
@@ -707,9 +723,13 @@ internal sealed partial class TerminalTab : UserControl
         {
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
-            or InvalidDataException or InvalidOperationException or OperationCanceledException)
+            or InvalidDataException or InvalidOperationException or OperationCanceledException or ArgumentException or NotSupportedException)
         {
-            if (IsRunning) SetStatus("Connected", exception.Message);
+            if (IsRunning && ReferenceEquals(session, active))
+            {
+                if (active.RecordingStartFailure is { } failure) SetStatus("Failed", LogStartError(failure));
+                else SetStatus("Connected", exception.Message);
+            }
         }
     }
 
@@ -791,6 +811,9 @@ internal sealed partial class TerminalTab : UserControl
         UpdateStatusText();
         if (changed) CaptionChanged?.Invoke();
     }
+
+    private static string LogStartError(string message) => string.Format(Text("RecordingStartFailed"),
+        message == RecordingDestinationChangedException.Description ? Text("RecordingDestinationChanged") : message);
 
     private void UpdateStatusText()
     {

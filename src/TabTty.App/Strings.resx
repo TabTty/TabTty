@@ -28,11 +28,20 @@
   <data name="SettingsTerminalDefaults" xml:space="preserve"><value>Terminal defaults</value></data>
   <data name="SettingsTabBehavior" xml:space="preserve"><value>Tab behavior</value></data>
   <data name="SettingsLogNaming" xml:space="preserve"><value>Log file names</value></data>
-  <data name="LogNameIncludeDate" xml:space="preserve"><value>Add the date to log file names</value></data>
-  <data name="LogNameIncludeTime" xml:space="preserve"><value>Add the time to log file names</value></data>
-  <data name="LogNameIncludeMicroseconds" xml:space="preserve"><value>Add microseconds to log file names</value></data>
-  <data name="LogNameIncludeSequence" xml:space="preserve"><value>Add a sequence number to log file names</value></data>
-  <data name="LogNameIncludeSequenceDescription" xml:space="preserve"><value>If disabled, a new log overwrites an existing file with the same name.</value></data>
+  <data name="DefaultLogDirectory" xml:space="preserve"><value>Default log folder</value></data>
+  <data name="DefaultLogDirectoryDescription" xml:space="preserve"><value>A blank field uses the Logs folder next to the connection profile. Relative paths start in the profile’s folder.</value></data>
+  <data name="DefaultLogFilenameTemplate" xml:space="preserve"><value>Default log filename template</value></data>
+  <data name="DefaultMacroLogFilenameTemplate" xml:space="preserve"><value>Default macro log filename template</value></data>
+  <data name="LogFilenameTemplate" xml:space="preserve"><value>Log filename template</value></data>
+  <data name="LogFilenameTemplateDescription" xml:space="preserve"><value>Enter the base name. TabTty adds the suffix for each recording format. For example, &lt;cpname&gt;_&lt;datetime:yyyy-MM-dd&gt;_&lt;serial:0,4&gt;. Leave blank to use the default.</value></data>
+  <data name="MacroLogFilenameTemplateDescription" xml:space="preserve"><value>Enter the base name, for example &lt;macroname&gt;-&lt;cpname&gt;_&lt;uuid&gt;. Leave blank to use the default.</value></data>
+  <data name="AllowLogOverwrite" xml:space="preserve"><value>Allow existing logs to be overwritten</value></data>
+  <data name="AllowLogOverwriteDescription" xml:space="preserve"><value>With overwrite disabled, a same-name collision prevents recording and causes the connection to fail.</value></data>
+  <data name="LogDestinationReview" xml:space="preserve"><value>Confirm log destination</value></data>
+  <data name="LogDestinationReviewNotice" xml:space="preserve"><value>The drive now points to a different location. Confirm the new destination to start recording there.</value></data>
+  <data name="ApproveLogDestination" xml:space="preserve"><value>Use this log destination</value></data>
+  <data name="LogDestinationRejected" xml:space="preserve"><value>The new log destination was declined.</value></data>
+  <data name="RecordingStartFailed" xml:space="preserve"><value>Recording could not start. {0}</value></data>
   <data name="SettingsVault" xml:space="preserve"><value>Save paths</value></data>
   <data name="SettingsMaintenance" xml:space="preserve"><value>Maintenance</value></data>
   <data name="Connecting" xml:space="preserve"><value>Connecting…</value></data>
@@ -342,7 +351,7 @@
   <data name="Inherit" xml:space="preserve"><value>Use application setting</value></data>
   <data name="Override" xml:space="preserve"><value>Override for this profile</value></data>
   <data name="LogDirectory" xml:space="preserve"><value>Log directory (relative to profile or absolute)</value></data>
-  <data name="NetworkLogDestinationNotice" xml:space="preserve"><value>With recording enabled, TabTty opens the log folder before connecting. If the folder is on a network share, Windows may authenticate to that share and the share can receive the session logs. Relative paths start in the profile’s folder.</value></data>
+  <data name="NetworkLogDestinationNotice" xml:space="preserve"><value>Leave blank to use the default log folder. Relative paths start in the profile’s folder. Recording to a network share can send the session logs to that share.</value></data>
   <data name="ClearPrivateKey" xml:space="preserve"><value>Clear selected private key</value></data>
   <data name="MissingHighlightSet" xml:space="preserve"><value>Unavailable highlight set</value></data>
   <data name="RecycleProfile" xml:space="preserve"><value>Delete file</value></data>

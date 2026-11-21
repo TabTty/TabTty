@@ -167,27 +167,13 @@ assumptions in later tests. This implements the accepted Q74 contract.
 
 ## Log names and file preparation
 
-Use the captured macro basename as the filename prefix. Replace Windows-invalid filename
-characters and C0 controls with `_`, trim leading and trailing spaces and dots,
-and use `TabTty` if empty. Limit the basename to 64 Unicode scalars before trimming.
-Reject malformed Unicode at the source path boundary. Preserve source
-FileName/BaseName properties unmodified; sanitization affects log names only.
-
-Use the same application-wide log-name choices as
-[profile-based recording](receive-logging-issue.md#confirmed-profile-and-file-organization).
-The default stem is `<prefix>_yyyy-MM-dd_<sequence>`. The optional time component
-uses `HH-mm-ss`, with `-ffffff` when microseconds are enabled. Format markers are `.log`,
-`.raw.tttylog` and `.term.tttylog` as in the main contract.
-
-With Sequence On, use create-new semantics and skip sequences occupied by
-existing files or a concurrent allocation. With Sequence Off, the same-name
-replacement rule applies. An open failure follows the explicit retry policy.
-Retry opens files under the same settings snapshot. Close successful
-handles and retain files created by a partial group open operation, even when
-empty, consistent with the recording
-contract. Invalid/too-long combined paths are visible preparation errors; do not
-silently redirect to another directory or truncate the configured destination.
-No persistent log cleanup/rotation/name override is added.
+Apply the shared [recording contract](receive-logging-issue.md#log-filename-template-redesign)
+to macro `Connect`. Verify that an invalid override, an unavailable path, and
+a same-name collision with overwrite Off fail the macro connection before
+transport. Verify that the profile selects the formats and that the macro's
+relative directory uses its captured working directory. Exercise the start
+failure rule on both resume and retry. Preserve the source `FileName` and
+`BaseName` values when sanitizing substitutions in the filename template.
 
 ## Acceptance matrix for later authorized implementation
 

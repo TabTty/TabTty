@@ -309,12 +309,13 @@ startup complete, Telnet TCP ready, or serial open/configuration complete.
 Telnet readiness does not prove account login. The macro cannot send terminal
 input until readiness, but startup history is available to its first wait.
 
-Initial recording preparation must succeed before transport starts. Failure
-adds the recording pause described below. Explicit retry uses the same captured
-profile/settings and new part numbers; it does not reread edited profile files.
-To change destination/formats/credential selection, stop and start a new run.
-Keep empty files created by a partially successful open, following the recording
-contract. Successful retry still requires a separate macro Resume.
+The optional positional arguments `logDirectory`, `logFilenameTemplate`, and
+`allowLogOverwrite` follow `profilePath`. See the [recording contract](receive-logging-issue.md#log-filename-template-redesign)
+for resolution and overwrite rules. All selected files open before transport
+startup. A preparation error fails `Connect` immediately. A recording start
+failure detected on the connected terminal disconnects the session, including
+on resume or retry. An explicit retry after a later write error uses the
+captured settings. A successful retry still requires a separate macro Resume.
 
 A caught pre-connection failure does not create a usable session or authorize a
 second attempt. Local dialog cancellation is reported without automatic repeat.
@@ -593,16 +594,15 @@ ordinary connection/SFTP cleanup. Moving a tab requires no close confirmation
 
 ## Recording and other features
 
-Use existing profile-selected recording formats and destination. Begin each name
-with the captured macro basename. Apply the same application log-name choices
-as for ordinary connections. Use `<stem>.log`, `<stem>.raw.tttylog`, and
-`<stem>.term.tttylog` for Text/Raw/Terminal. Apply filename sanitization and
-the shared collision and overwrite policy described in validation.
-Do not use arbitrary invocation arguments or credential data in names. No name
-override, in-session rename or macro recording-control API is added.
+Use profile-selected recording formats. The macro default base name begins with
+the captured macro basename and profile display name joined by a hyphen. Use
+the shared [recording contract](receive-logging-issue.md#log-filename-template-redesign)
+for destinations, template expansion, suffixes, and start failures. Templates
+expand explicit naming data such as the macro basename and connection profile
+name.
 
-A user's deliberate recording Pause does not pause the macro. Resume creates
-new parts without backfill. Unexpected recording failure pauses the macro;
+A user's deliberate recording Pause leaves the macro running. Resume creates
+new parts without backfill. A later write failure in an active part pauses the macro;
 successful explicit Retry is necessary, followed by separate explicit macro
 Resume. Show the gap and failed/new-part status. Normal Text's mixed-line skip,
 Raw/Terminal eligibility and incomplete I/O handling retain the recording

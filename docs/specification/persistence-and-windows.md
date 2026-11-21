@@ -132,12 +132,12 @@ as below. Candidate 6's final Q23 review was accepted on 2026-11-18; this
 documentation change implements no file migration.
 
 Language/theme/bell and saved rule content apply live after successful save.
-The application log-name settings are optional booleans in `settings.json`.
-`logNameIncludeDate` and `logNameIncludeSequence` default to `true`.
-`logNameIncludeTime` defaults to `false` and requires the date.
-`logNameIncludeMicroseconds` defaults to `false` and requires the time. The settings
-apply to subsequent connection attempts and are shared by ordinary and macro
-connections. See the [recording naming policy](../drafts/receive-logging-issue.md#confirmed-profile-and-file-organization).
+Application logging defaults are stored as the optional strings
+`defaultLogDirectory`, `defaultLogFilenameTemplate`, and
+`defaultMacroLogFilenameTemplate` in `settings.json`. Legacy filename component
+booleans migrate to text templates on save. The profile's `logging` object can
+use `directory`, `filenameTemplate`, and `allowOverwrite`. See the
+[recording naming policy](../drafts/receive-logging-issue.md#log-filename-template-redesign).
 
 The auto-close preference applies to subsequent disconnections after saving.
 Broadcast scope is captured at Start under Q181, while Q187's broadened

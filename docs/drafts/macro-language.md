@@ -363,7 +363,7 @@ Arguments below are positional; names shown in signatures explain their roles.
 
 | Signature | Behavior |
 | --- | --- |
-| `void Connect(string profilePath)` | One explicit attempt; contract readiness/history/logging rules |
+| `void Connect(string profilePath)` and overloads with `string logDirectory`, `string logFilenameTemplate`, and `bool allowLogOverwrite` in that order | One explicit attempt. Blank strings inherit the corresponding setting. The recording contract defines defaults, readiness, and logging errors. |
 | `void SetBaseDirectory(string path)` | Replace this run's relative-path base |
 | `void ResetBaseDirectory()` | Restore captured source directory |
 | `string BaseDirectory()` | Current absolute run-local base |

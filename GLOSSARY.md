@@ -172,6 +172,11 @@ than returned by the connected peer.
 A recording of terminal output whose sources and representation depend on the
 selected recording mode, distinct from a record of every transmission or keystroke.
 
+**Log filename template**:
+A text pattern for the base name shared by a recording part's files, using
+literal text and optional placeholders such as the connection profile name.
+Each recording format supplies its filename suffix.
+
 **Host key**:
 A public key used by an SSH server to authenticate its identity to the client.
 It is distinct from a user's public key used to log in to that server.

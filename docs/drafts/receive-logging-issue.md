@@ -292,37 +292,9 @@ does not guarantee immediate OS cancellation or deletion of already-created file
 - Enabled recording starts with the session. None cannot start recording midway.
   Profile logging edits apply on the next connection. Enabled recording permits
   pause/resume and exposes its current status.
-- Choose the destination folder in the profile. Support absolute paths and
-  relative paths resolved against the directory containing the `.ttty` file,
-  never the application's current working directory.
-- Default that folder to relative `Logs` (Q67 accepted). After profile validation,
-  create the chosen folder when starting configured recording if it does not
-  exist. If creation/opening fails, report the failure before transport startup.
-- Derive the filename stem from the sanitized profile name, or the sanitized
-  captured macro basename for a macro-launched connection. Application settings
-  control the optional components in order: `_yyyy-MM-dd`, `_HH-mm-ss`,
-  `-ffffff`, and `_<sequence>`. Date and sequence default to On. Time and
-  microseconds default to Off. Time requires Date, and microseconds require
-  Time. Turning off a prerequisite clears its dependent options. Capture these
-  settings at connection start, including for reconnects, and reuse them for
-  pause/resume and retry. Use the local date and time at each part's open. A
-  part that remains open across midnight keeps its filename.
-- Allocate the sequence per destination directory and sanitized filename prefix
-  (using Windows filename comparison). With Date On, the sequence is scoped to
-  the local date across files with no time, whole seconds, or microseconds.
-  With Date Off, use one
-  sequence for the undated filenames across days. Start at `0` if no
-  matching files exist. Otherwise use one greater than the highest sequence
-  found among matching Text, Raw, or Terminal files, regardless of which
-  formats are selected now. Format the sequence in decimal with leading zeros
-  through `9999`, giving `0000` through `9999`, followed by `10000`, `10001`, and
-  so on. Use the same sequence for every format in a recording part. Concurrent
-  allocations must use distinct stems, including when their format selections
-  are disjoint. Use create-new file opens to prevent overwriting.
-- With Sequence Off, overwrite an existing file with the same complete name.
-  Explain this behavior on the setting. Acquire all selected files for writing
-  before truncating any existing content. A concurrent attempt to open a file
-  that an active recording owns reports an open failure.
+- Use the [filename template and destination rules](#log-filename-template-redesign).
+  Create a missing log directory during recording preparation. A part that
+  remains open across midnight retains its filename.
 - Text uses `<stem>.log`; Raw uses
   `<stem>.raw.tttylog`; Terminal uses `<stem>.term.tttylog`. The final extension
   is provisionally `.tttylog` for both Raw and Terminal, while `.raw`/`.term`
@@ -357,11 +329,6 @@ does not guarantee immediate OS cancellation or deletion of already-created file
   the naming context needed by the current policy explicitly; do not assemble
   profile-derived filenames independently in transports, terminal rendering,
   activation handlers, or a future macro caller.
-- Allow the name-selection/composition logic to evolve without changing the
-  recording lifecycle. Future choices may include a user-specified name or
-  template, the macro name, or an explicitly supplied startup/invocation naming
-  argument. Those input mechanisms and their precedence are deferred decisions,
-  not initial UI, command-line, or macro-runtime requirements.
 - Keep destination resolution, filename validation, creation and replacement,
   collision handling, grouping of selected formats, and resume/retry part
   management in the logging module regardless of how a name is selected. A future naming input
@@ -369,15 +336,133 @@ does not guarantee immediate OS cancellation or deletion of already-created file
 - Pass only explicit naming data; do not derive names by serializing all macro
   or process arguments or credential values. This preserves the existing secret
   handling rules without defining a future macro argument format.
-- A localized name-composition function is sufficient for the initial single
-  policy. Do not build a plugin framework, template engine, speculative adapters,
-  or macro runtime solely for possible later naming options. See
-  `future-macro-design.md` for the shared deferred-feature constraints.
+
+## Log filename template redesign
+
+Contract for destination defaults, filename templates, and recording startup.
+
+- Replace the application-wide filename component checkboxes with text templates.
+  Application settings supply fallback values for the log filename template and
+  destination. Resolve each field independently from the macro connection's
+  nonblank value, the connection profile's nonblank value, then the application
+  default. Ordinary connections start at the profile.
+- The default macro filename begins with the captured macro basename, a hyphen,
+  and the connection profile name. The default for ordinary connections begins
+  with the connection profile name. Application settings have separate fallback
+  template fields for ordinary and macro connections. Their built-in defaults
+  are `<cpname>_<datetime:yyyy-MM-dd>_<serial:0,4>` and
+  `<macroname>-<cpname>_<datetime:yyyy-MM-dd>_<serial:0,4>`, respectively.
+- Anchor a relative destination supplied by a macro to that run's base directory
+  at `Connect`. Anchor a relative destination supplied by the profile or the
+  application default to the directory containing the opened profile. When all
+  destination fields are blank, use `Logs` relative to the profile.
+- Use one template for the shared base name. Append `.log` for Text,
+  `.raw.tttylog` for Raw, and `.term.tttylog` for Terminal. Treat a suffix entered
+  in the template as literal text. For example, `backup.log` produces
+  `backup.log.log` for Text. Share all placeholder values across formats.
+- Require explicit overwrite permission at profile or macro-connection scope.
+  Overwrite defaults to Off. If any selected filename already exists with
+  overwrite Off, treat the collision as a recording start failure. A file owned
+  by an active writer also causes a start failure, even with overwrite On. Open
+  every selected file for writing before truncating existing content.
+- Required recordings must start successfully on ordinary connect, reconnect,
+  macro `Connect`, resume, and recording retry. A failure to start any selected
+  format fails the connection. This includes template expansion, invalid or
+  unavailable paths, destination confirmation, name collisions, permissions,
+  timeouts, cancellation, file opens, and the first data write to a new file
+  failing because of a full disk or another I/O error.
+- Open every selected file before starting transport. If a start failure is
+  detected after transport has started, close the session through the normal
+  disconnect path and report the recording failure. An intentionally paused
+  recording leaves the session connected until a later start is requested.
+- If a macro supplies a destination or filename template, it must also explicitly
+  allow overwrite for that connection to replace existing logs. If it inherits
+  both fields, it also inherits the profile's overwrite setting unless the macro
+  explicitly overrides it. Application defaults confer no overwrite permission.
+- Keep `Connect(profilePath)` and allow additional positional arguments in this
+  order: `logDirectory`, `logFilenameTemplate`, `allowLogOverwrite`. The first
+  two are strings and may be blank to inherit. The last is a Boolean and may
+  be omitted to use the overwrite rule above. The profile still selects Text,
+  Raw, and Terminal and controls whether recording is enabled. These are
+  session logs for the macro's connection.
+- Report an initial recording preparation failure directly through macro
+  `Connect`. A recording start failure detected after macro connection
+  establishment follows the ordinary disconnect behavior for a macro. Later
+  failures writing to a format that has already accepted its first data write
+  in the current part follow the existing in-progress recording failure policy.
+- Support `<cpname>`, `<macroname>`, `<datetime:format>`, `<uuid>`, and
+  `<serial:start,width>`. Reject unknown placeholders, a directory in the
+  template, a second serial placeholder, and `<macroname>` in an ordinary
+  connection. Replace Windows-invalid characters in profile and macro name
+  substitutions with `_`. Reject invalid literal text and an invalid final
+  filename. Generate a fresh lowercase, hyphenated UUID per part and share it
+  across the part's formats.
+- Pass the contents of `<datetime:format>` directly as the format argument to
+  `DateTime.ToString(format, CultureInfo.InvariantCulture)` on the local time
+  captured when opening the part. Accept .NET standard and custom formats whose
+  expansion is valid in the filename.
+  [DateTime formatting](https://learn.microsoft.com/en-us/dotnet/api/system.datetime.tostring)
+- Allocate a serial number in the destination directory among filenames with the
+  same fully expanded text except for the serial. Start at the supplied number;
+  if matching numbers at or above that starting value already exist, advance
+  from the highest. Pad to the minimum width and allow more digits when needed.
+  Use Windows filename comparison and include matching files of every recording
+  format. Concurrent allocations use distinct base names.
+  The built-in templates count per date. An included time or UUID that changes
+  starts a distinct sequence.
+- Migrate the existing date, time, microsecond, and sequence settings into the
+  two application fallback templates. Use the new macro base name and keep
+  overwrite disabled. Preserve any nonblank destination saved in a profile,
+  including `Logs`. Users can clear it to inherit the application default.
+- Freeze the effective logging settings at connection start. Resume and retry
+  use that snapshot and evaluate placeholders for the new part. With overwrite
+  Off, a fixed name that collides with even the same session's closed previous
+  part causes a recording start failure and disconnect. With overwrite On, an
+  eligible closed file may be replaced.
+- Scope profile trust to the normalized profile file location and the SHA-256
+  of its exact bytes. Logging fields saved in a profile are part of those bytes.
+  Resolve and verify the effective log destination and drive mapping separately
+  during recording preparation. Changes to effective values from application
+  settings or macro arguments leave the profile trust decision valid. See
+  [ADR 0011](../adr/0011-separate-log-destination-confirmation-from-profile-trust.md).
+- If a mapped log path such as `Z:\Logs` resolves to a different location from
+  its previously confirmed mapping, show the new effective destination and ask
+  for approval before accessing it. Maintain that confirmation separately from
+  profile trust. Treat declining or cancelling as a recording start failure.
+  Recheck the captured mapping when opening files and stop recording if a
+  changed mapping would redirect writes.
+
+### Acceptance cases for the redesign
+
+- Resolve destination and template independently across macro, profile, and
+  application settings. Check blank inheritance and the source directory used
+  to resolve each relative path. Verify migration preserves explicit profile
+  paths and transfers the old filename choices into the fallback templates.
+- Check that ordinary and macro defaults use the expected base names, and that
+  all selected formats share the expanded name plus their own suffix. Check
+  invariant .NET date formats, a format that yields an invalid Windows name,
+  correct serial padding and rollover, a fresh UUID on reopening, and concurrent
+  serial allocation.
+- Exercise recording start failures on ordinary connect, reconnect, macro
+  `Connect`, resume, and retry. Include collisions with overwrite Off, an active
+  writer with overwrite On, an invalid expansion, an unavailable folder, and a
+  full disk when opening or first writing a file in a multi-format recording.
+  Verify that preparation faults leave transport unopened and that faults first
+  detected after transport startup disconnect it. An initial macro preparation
+  failure returns the `Connect` error immediately.
+- Map the same requested log path to another share without changing the `.ttty`
+  bytes. Verify that profile trust still matches and log preparation asks about
+  the new destination before using it. Decline and verify no transport startup.
+  Accept and verify the selected logs open at the approved destination. Change
+  the mapping while preparation is pending and verify that no write is redirected.
+- Fail a later write to a file that has already started receiving data. Verify
+  that the established connection remains usable under the existing recording
+  error policy and that a successful retry records only new eligible data.
 
 ## Confirmed pause, tail flushing, and retry
 
 - Pausing stops recording, not reception, terminal-state updates, or display.
-  Close the current files; resuming creates new numbered parts for that session.
+  Close the current files. Resume opens a part with a newly expanded base name.
 - Do not retrospectively record data received while paused. Under the new Text
   definition, a row can contain both paused and active-period content. On
   normal-screen Text resume/retry, skip that in-progress logical line and begin
@@ -406,12 +491,10 @@ does not guarantee immediate OS cancellation or deletion of already-created file
   a line excluded by the resume/retry rule.
 - Preserve decoder/parser state while paused. Do not insert diagnostic pause
   markers into raw/text content.
-- If configured files cannot be opened initially, report the failure and stop
-  the connection attempt before transport startup. Do not silently connect
-  without its configured recording.
-- A write failure during a session stops recording, reports a persistent error,
-  and keeps the connection/terminal usable. Stop all selected formats together
-  under Q96; retry starts new parts for that selected set.
+- Apply the [recording start failure policy](#log-filename-template-redesign)
+  when starting, resuming, or retrying. A later write failure in an active part
+  stops all selected formats together under Q96 and reports a persistent error
+  while the terminal remains usable.
 - Bound pending writes; do not accumulate unlimited log data while disk output
   is unavailable. This is a write-queue requirement, not permission to finalize
   still-editable Text contents at an arbitrary byte threshold.

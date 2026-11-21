@@ -12,7 +12,7 @@ internal sealed record MacroRunStatus(MacroRunState State, MacroHold Holds, stri
 
 internal interface IMacroHost
 {
-    Task<TerminalSession> ConnectAsync(MacroRun run, string profilePath, CancellationToken token);
+    Task<TerminalSession> ConnectAsync(MacroRun run, string profilePath, RecordingOverrides recording, CancellationToken token);
     Task<VaultSecret?> ReadPasswordAsync(CredentialReference reference, CancellationToken token);
     Task<MacroDialogResult> DialogAsync(MacroDialogRequest request, CancellationToken token);
     Task SetMinimizedAsync(bool minimized, CancellationToken token);
@@ -32,7 +32,7 @@ internal sealed partial class MacroRun : IDisposable
     private readonly ConditionalWeakTable<MacroPattern, ResourceReservation> patternAllocations = new();
     private readonly ResourceReservation initialMemory;
     private readonly MacroReceiveHistory history = new();
-    private TaskCompletionSource changed = Signal(), recordingRetry = Signal();
+    private TaskCompletionSource changed = Signal();
     private MacroHold holds;
     private MacroRunState state = MacroRunState.Running;
     private string operation = "", reason = "Stopped";
@@ -180,30 +180,16 @@ internal sealed partial class MacroRun : IDisposable
         lock (gate)
         {
             if (!IsActive || state == MacroRunState.Stopping) return;
-            if ((holds & MacroHold.RecordingFailure) != 0 && !recordingRetry.Task.IsCompleted) return;
-            recordingRetry = Signal();
+            if ((holds & MacroHold.RecordingFailure) != 0) return;
             ChangeHolds((holds & ~MacroHold.RecordingReady) | MacroHold.RecordingFailure);
         }
         Notify();
     }
-    public void RequestRecordingRetry() { lock (gate) recordingRetry.TrySetResult(); }
-    public Task WaitForRecordingRetryAsync(CancellationToken token)
-    { lock (gate) return recordingRetry.Task.WaitAsync(token); }
     public void RecordingRecovered()
     {
         lock (gate) ChangeHolds((holds & ~MacroHold.RecordingFailure) | MacroHold.RecordingReady);
         Notify();
     }
-    internal void RecordingAwaitingRecovery()
-    {
-        lock (gate)
-        {
-            inFlight = false;
-            if (state == MacroRunState.PauseRequested) state = MacroRunState.Paused;
-        }
-        Notify();
-    }
-
     private void SetHold(MacroHold hold, bool enabled)
     {
         lock (gate) { if (!IsActive) return; CaptureDeadline(); ChangeHolds(enabled ? holds | hold : holds & ~hold); }

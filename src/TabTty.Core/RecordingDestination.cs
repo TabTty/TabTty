@@ -6,9 +6,11 @@ namespace TabTty.Core;
 internal sealed record RecordingDestination(string Path, string EffectivePath, string? DriveTarget)
 {
     internal static RecordingDestination Capture(string profilePath, ConnectionProfile profile)
+        => Capture(OrdinaryWindowsPath.Resolve(string.IsNullOrWhiteSpace(profile.LogDirectory) ? "Logs" : profile.LogDirectory,
+            System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(profilePath))!));
+
+    internal static RecordingDestination Capture(string path)
     {
-        string path = OrdinaryWindowsPath.Resolve(profile.LogDirectory,
-            System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(profilePath))!);
         if (!OperatingSystem.IsWindows() || path.StartsWith(@"\\", StringComparison.Ordinal))
             return new(path, path, null);
         return ReadDrive(path);

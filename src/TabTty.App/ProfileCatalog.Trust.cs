@@ -13,8 +13,10 @@ namespace TabTty.App;
 internal sealed partial class ProfileCatalog
 {
     private const string TrustKey = "profileTrust";
+    private const string RecordingMappingsKey = "recordingMappings";
     private long trustReset;
     private readonly Dictionary<string, long> removals = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> temporaryRecordingMappings = new(StringComparer.Ordinal);
 
     private enum ProfileAnswer { Cancel, Once, Remember }
     private readonly record struct TrustState(Guid? Registration, string? Version, long Reset, long Removal);
@@ -35,15 +37,6 @@ internal sealed partial class ProfileCatalog
         if (state[TrustKey] is not JsonObject trust)
             state[TrustKey] = trust = new JsonObject();
         trust[location] = version;
-    }
-
-    private static string VersionFor(string location, ConnectionProfile profile, RecordingDestination? destination)
-    {
-        string version = profile.TrustVersion;
-        if (!profile.RecordsOutput) return version;
-        destination ??= RecordingDestination.Capture(location, profile);
-        return version[..2] + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
-            version + "\0" + destination.EffectivePath + "\0" + destination.DriveTarget)));
     }
 
     private void CommitRegistration(string location, string path, ConnectionProfile profile, bool used, string version,
@@ -78,7 +71,7 @@ internal sealed partial class ProfileCatalog
         string location = await NormalizeLocationAsync(path, timeout.Token);
         bool allowNameSuffix = !createdInApp && !await IsInProfileDirectoryAsync(location, timeout.Token);
         if (reset != trustReset) throw new IOException(Text("ProfileTrustWriteFailed"));
-        CommitRegistration(location, path, profile, used: false, VersionFor(location, profile, null), allowNameSuffix);
+        CommitRegistration(location, path, profile, used: false, profile.TrustVersion, allowNameSuffix);
         if (selectNewProfile) lastCreatedProfile = (lastCreatedProfile.Sequence + 1, location);
         ProfileSaved?.Invoke();
         return location;
@@ -98,7 +91,7 @@ internal sealed partial class ProfileCatalog
         { MainWindow.ShowError(owner, new IOException(Text("ProfileTrustWriteFailed"), error)); }
     }
 
-    internal async Task<(ConnectionProfile Profile, RecordingDestination? Destination)> AdmitAsync(
+    internal async Task<ConnectionProfile> AdmitAsync(
         Window? owner, string path, string? macroName, CancellationToken token)
     {
         ConnectionProfile profile = await LoadForUseAsync(owner, path, token);
@@ -109,8 +102,7 @@ internal sealed partial class ProfileCatalog
             location = await NormalizeLocationAsync(path, timeout.Token);
         }
 
-        var destination = profile.RecordsOutput ? RecordingDestination.Capture(location, profile) : null;
-        string version = VersionFor(location, profile, destination);
+        string version = profile.TrustVersion;
         while (true)
         {
             token.ThrowIfCancellationRequested();
@@ -119,7 +111,7 @@ internal sealed partial class ProfileCatalog
             if (register || before.Version != version)
             {
                 var choice = await AskAsync(owner, "ProfileTrustReview",
-                    Describe(location, profile, destination, macroName, before.Version is not null),
+                    Describe(location, profile, macroName, before.Version is not null),
                     "ProfileConnectOnce", register ? "ProfileRegisterAndConnect" : "ProfileTrustAndConnect", token);
                 if (choice == ProfileAnswer.Cancel) throw new SshInteractionCancelledException();
                 token.ThrowIfCancellationRequested();
@@ -142,8 +134,42 @@ internal sealed partial class ProfileCatalog
                     else LocalState.Change(state => StoreVersion(state, location, version));
                 }
             }
-            return (profile, destination);
+            return profile;
         }
+    }
+
+    internal async Task ApproveRecordingDestinationAsync(Window? owner, RecordingDestination destination, CancellationToken token)
+    {
+        if (destination.DriveTarget is null) return;
+        string key = Digest(Path.TrimEndingDirectorySeparator(destination.Path).ToUpperInvariant());
+        string version = Digest(destination.EffectivePath.ToUpperInvariant() + "\0" + destination.DriveTarget.ToUpperInvariant());
+        while (true)
+        {
+            token.ThrowIfCancellationRequested();
+            destination.Verify();
+            string? previous = RememberedMapping();
+            if (previous == version) return;
+            if (previous is not null && await AskAsync(owner, "LogDestinationReview",
+                Text("LogDestinationReviewNotice") + "\n\n" + PermissionDisplay.Literal(destination.Path) + "\n" +
+                PermissionDisplay.Literal(destination.EffectivePath), "ApproveLogDestination", null, token) == ProfileAnswer.Cancel)
+                throw new RecordingStartException(Text("LogDestinationRejected"));
+
+            token.ThrowIfCancellationRequested();
+            destination.Verify();
+            if (RememberedMapping() != previous) continue;
+            if (LocalState.IsTemporary) temporaryRecordingMappings[key] = version;
+            else LocalState.Change(state =>
+            {
+                if (state[RecordingMappingsKey] is not JsonObject mappings)
+                    state[RecordingMappingsKey] = mappings = new JsonObject();
+                mappings[key] = version;
+            });
+            return;
+        }
+
+        string? RememberedMapping() => LocalState.IsTemporary ? temporaryRecordingMappings.GetValueOrDefault(key) :
+            LocalState.ReadForProfileTrust()[RecordingMappingsKey]?[key]?.GetValue<string>();
+        static string Digest(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     }
 
     private async Task<ConnectionProfile> LoadForUseAsync(Window? owner, string path, CancellationToken token)
@@ -159,8 +185,7 @@ internal sealed partial class ProfileCatalog
         return await ConnectionProfile.LoadAsync(path, timeout.Token);
     }
 
-    private static string Describe(string path, ConnectionProfile profile, RecordingDestination? destination,
-        string? macro, bool changed)
+    private static string Describe(string path, ConnectionProfile profile, string? macro, bool changed)
     {
         var lines = new List<string> { PermissionDisplay.Literal(path) };
         if (changed) lines.Add(Text("ProfileTrustVersionChanged"));
@@ -178,13 +203,10 @@ internal sealed partial class ProfileCatalog
                 methods.Contains("publicKey") ? profile.SshPrivateKey : null })
                 if (reference is not null) lines.Add(PermissionDisplay.Literal(reference.ToString()));
         }
-        if (destination is not null)
+        if (profile.RecordsOutput)
         {
-            var formats = new[] { (profile.RecordRaw, "Raw"), (profile.RecordText, "UTF-8"), (profile.RecordTerminal, "JSONL") };
-            lines.Add(string.Join(", ", formats.Where(format => format.Item1).Select(format => format.Item2)) +
-                "  " + PermissionDisplay.Literal(destination.EffectivePath));
-            if (destination.EffectivePath.StartsWith(@"\\", StringComparison.Ordinal))
-                lines.Add(Text("ProfileLogNetworkShare"));
+            var formats = new[] { (profile.RecordRaw, "Raw"), (profile.RecordText, "Text"), (profile.RecordTerminal, "Terminal") };
+            lines.Add(string.Join(", ", formats.Where(format => format.Item1).Select(format => format.Item2)));
         }
         return string.Join("\n", lines);
     }

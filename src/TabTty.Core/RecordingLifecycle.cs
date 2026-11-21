@@ -7,7 +7,8 @@ internal readonly record struct RecordingOperationResult(RecordingStatus Status,
 
 /// <summary>Owns the recording intervals and outstanding file work for one terminal generation.</summary>
 internal sealed class RecordingLifecycle(TerminalOutput terminal, SemaphoreSlim terminalOrder,
-    Func<bool> canActivate, Action finalizeReceive, MacroRun? macro, SessionRecording? initial, int initialPart)
+    Func<bool> canActivate, Action finalizeReceive, Action<string> failConnection,
+    MacroRun? macro, SessionRecording? initial, int initialPart)
 {
     private readonly SemaphoreSlim changes = new(1);
     private readonly object gate = new();
@@ -139,15 +140,17 @@ internal sealed class RecordingLifecycle(TerminalOutput terminal, SemaphoreSlim 
         if (!await changes.WaitAsync(0, activation).ConfigureAwait(false))
             throw new IOException("A recording operation is still pending.");
         SessionRecording? candidate = null;
+        bool starting = false;
         try
         {
             var previous = part ?? throw new InvalidOperationException("Recording is disabled in the profile.");
             if (previous.Failure is null && (active || retry)) return new(Status, Changed: false);
             if (retry && !previous.ActualRelease.IsCompleted)
                 throw new IOException("The previous recording part still owns its files.");
+            starting = true;
             await previous.ActualRelease.WaitAsync(activation).ConfigureAwait(false);
             int next = checked(++number);
-            candidate = await PreparePartAsync(() => previous.OpenPart(next), activation).ConfigureAwait(false);
+            candidate = await PreparePartAsync(token => previous.OpenPart(next, token), activation).ConfigureAwait(false);
             await terminalOrder.WaitAsync(activation).ConfigureAwait(false);
             try
             {
@@ -166,6 +169,13 @@ internal sealed class RecordingLifecycle(TerminalOutput terminal, SemaphoreSlim 
                 return new(Status, Changed: true);
             }
             finally { terminalOrder.Release(); }
+        }
+        catch (Exception error) when (starting && canActivate() && error is
+            (IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException or
+             NotSupportedException or OperationCanceledException or FormatException))
+        {
+            failConnection(error.Message);
+            throw;
         }
         finally
         {
@@ -209,14 +219,17 @@ internal sealed class RecordingLifecycle(TerminalOutput terminal, SemaphoreSlim 
     {
         await Task.WhenAny(owner.Incomplete, owner.ActualRelease).ConfigureAwait(false);
         if (owner.Failure is null) return;
+        string? fatal = null;
         await terminalOrder.WaitAsync().ConfigureAwait(false);
         try
         {
             if (!ReferenceEquals(part, owner)) return;
             if (active) StopFailedPart();
-            macro?.RecordingFailed();
+            if (owner.StartFailure) fatal = owner.Failure;
+            else macro?.RecordingFailed();
         }
         finally { terminalOrder.Release(); }
+        if (fatal is not null) failConnection(fatal);
     }
 
     private void StopFailedPart()
@@ -228,44 +241,17 @@ internal sealed class RecordingLifecycle(TerminalOutput terminal, SemaphoreSlim 
 
     internal static async Task<(SessionRecording? Recording, int Part)> PrepareInitialAsync(
         string path, ConnectionProfile profile, MacroRun? macro, CancellationToken token,
-        RecordingDestination? destination = null, RecordingNameOptions? recordingNames = null)
+        RecordingSettings? settings = null, RecordingOverrides overrides = default)
     {
         int number = 1;
         if (!profile.RecordsOutput) return (null, number);
-        while (true)
-        {
-            SessionRecording? prepared = null;
-            try
-            {
-                int next = number;
-                prepared = await PreparePartAsync(() => SessionRecording.Open(path, profile, macro?.BaseName,
-                    next, destination, nameOptions: recordingNames), token).ConfigureAwait(false);
-                if (number > 1 && macro is not null)
-                {
-                    macro.RecordingRecovered();
-                    await macro.WaitForContinuationAsync(token).ConfigureAwait(false);
-                }
-                token.ThrowIfCancellationRequested();
-                return (prepared, number);
-            }
-            catch (Exception error) when (macro is not null && !token.IsCancellationRequested &&
-                error is IOException or UnauthorizedAccessException or ArgumentException or InvalidDataException or OperationCanceledException)
-            {
-                if (prepared is not null) await prepared.FinishAsync().ConfigureAwait(false);
-                macro.RecordingFailed();
-                macro.RecordingAwaitingRecovery();
-                await macro.WaitForRecordingRetryAsync(token).ConfigureAwait(false);
-                number = checked(number + 1);
-            }
-            catch
-            {
-                if (prepared is not null) await prepared.FinishAsync().ConfigureAwait(false);
-                throw;
-            }
-        }
+        var prepared = await PreparePartAsync(activation => SessionRecording.Open(path, profile, macro?.BaseName,
+            settings: settings ?? RecordingSettings.Resolve(path, profile, macro?.BaseName, overrides: overrides), token: activation), token)
+            .ConfigureAwait(false);
+        return (prepared, number);
     }
 
-    internal static async Task<SessionRecording> PreparePartAsync(Func<SessionRecording> open, CancellationToken activation)
+    internal static async Task<SessionRecording> PreparePartAsync(Func<CancellationToken, SessionRecording> open, CancellationToken activation)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(activation);
         deadline.CancelAfter(TimeSpan.FromSeconds(30));
@@ -278,7 +264,7 @@ internal sealed class RecordingLifecycle(TerminalOutput terminal, SemaphoreSlim 
             try
             {
                 token.ThrowIfCancellationRequested();
-                var prepared = open();
+                var prepared = open(token);
                 result.SetResult(prepared);
                 if (!await adoption.Task.ConfigureAwait(false))
                     await prepared.FinishAsync().ConfigureAwait(false);

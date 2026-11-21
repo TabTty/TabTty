@@ -93,11 +93,15 @@ internal sealed partial class TerminalTab
 
     private async Task RetryMacroRecordingAsync()
     {
-        if (session is not { } active) { Macro?.RequestRecordingRetry(); return; }
+        if (session is not { } active) return;
         try { await active.RetryRecordingAsync(stop.Token); }
         catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException)
-        { SetStatus(statusKey, Text("MacroRecordingFailed")); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or
+            ArgumentException or InvalidDataException or NotSupportedException or OperationCanceledException)
+        {
+            if (active.RecordingStartFailure is { } failure) SetStatus("Failed", LogStartError(failure));
+            else SetStatus(statusKey, Text("MacroRecordingFailed"));
+        }
     }
 
     internal static string MacroErrorLabel(string code) =>
@@ -115,7 +119,7 @@ internal sealed partial class TerminalTab
 
     private sealed class MacroHost(TerminalTab tab) : IMacroHost
     {
-        public async Task<TerminalSession> ConnectAsync(MacroRun run, string profilePath, CancellationToken token)
+        public async Task<TerminalSession> ConnectAsync(MacroRun run, string profilePath, RecordingOverrides recording, CancellationToken token)
         {
             var ready = new TaskCompletionSource<TerminalSession>(TaskCreationOptions.RunContinuationsAsynchronously);
             await tab.Dispatcher.InvokeAsync(() =>
@@ -125,7 +129,7 @@ internal sealed partial class TerminalTab
                 tab.IsRunning = true;
                 tab.status.Visibility = Visibility.Visible;
                 tab.SetStatus("Connecting");
-                tab.connectionCompletion = tab.ConnectAsync(null, ready, token);
+                tab.connectionCompletion = tab.ConnectAsync(null, ready, token, recording);
             }, DispatcherPriority.Normal, token);
             return await ready.Task.ConfigureAwait(false);
         }

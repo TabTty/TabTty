@@ -249,15 +249,17 @@ command acceptance.
 ## Recording state and boundaries
 
 The group states are Disabled, Opening, Recording, Pausing, Paused, Failed,
-Finalizing, and Closed. Formats and application log-name choices are fixed by the connection snapshot. Any
-format's admission or I/O failure makes the whole group Failed. Connections
-continue unless a separate transport/terminal resource error requires closure.
+Finalizing, and Closed. The connection snapshot fixes the selected formats and
+effective recording settings. Failure to open a part or make its first data
+write for any selected format fails the connection. A later write failure
+marks the whole group Failed and leaves transport available for explicit retry.
+See the [recording rules](../drafts/receive-logging-issue.md#log-filename-template-redesign).
 
 | Boundary | Required ordering |
 | --- | --- |
 | Initial connection | Open all selected files successfully before starting transport; no files for Disabled |
 | Pause | Place a reducer cutoff, flush eligible Text tails without LF, finish accepted work, durable-flush and close parts; new output still updates models |
-| Resume/retry | Create the whole new part set, then establish a new interval at a reducer event; no backfill if opening takes time |
+| Resume/retry | Open the whole new part set, then establish a new interval at a reducer event. A start failure disconnects the session. Admit new eligible data from the new interval. |
 | Normal Text resume | Mark every retained logical line containing pre-interval content ineligible, including its future continuation; the first received LF ending the current mixed line is omitted, and its next new line is eligible |
 | Alternate Text resume | Admit only new complete eligible received units immediately; no screen dump |
 | Terminal resume | Admit new complete eligible operations immediately, including independent local echo; no restore-state prefix |

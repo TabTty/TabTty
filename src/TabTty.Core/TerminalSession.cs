@@ -25,6 +25,7 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
     private volatile bool remoteEcho;
     private readonly object closeGate = new();
     private Task? transportClose;
+    private string? recordingStartFailure;
     private readonly ResourceQuota inputBytes = new(2 * 1024 * 1024, message: "The terminal input budget reached its limit.");
     private readonly ResourceQuota inputUnits = new(256, message: "The terminal input queue reached its limit.");
 
@@ -42,12 +43,12 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
         transmitter = new TerminalEncoding(profile.TransmitEncoding);
 
         recordings = new RecordingLifecycle(terminal, state, () => !ended && !disconnected, FinalizeReceive,
-            macro, recording, initialRecordingPart);
+            RecordingStartFailed, macro, recording, initialRecordingPart);
         try
         {
-            recordings.Bind(profile, RetainedRows, grid);
             transport = new SessionTransport(wire, profile, grid, ConsumeTransportPayloadAsync, ApplyRemoteEchoAsync,
                 ConsumeTransportEofAsync);
+            recordings.Bind(profile, RetainedRows, grid);
         }
         catch
         {
@@ -73,6 +74,7 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
     }
     public Guid? HighlightSetId => profile.HighlightSetId;
     public string? RecordingError => recordings.Failure;
+    internal string? RecordingStartFailure => Volatile.Read(ref recordingStartFailure);
     internal RecordingStatus RecordingStatus => recordings.Status;
     internal Task RecordingActualRelease => recordings.ActualRelease;
     internal TransportStatus TransportStatus => transport.Status;
@@ -106,19 +108,18 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
 
     internal static Task<TerminalSession> ConnectMacroAsync(string path, MacroRun macro, CancellationToken token,
         SshInteraction? ssh = null, Action<ConnectionProfile>? opened = null, int defaultRetainedRows = 5000,
-        Func<CancellationToken, Task<(int Columns, int Rows)>>? viewport = null) =>
-        ConnectCoreAsync(path, token, ssh, opened, defaultRetainedRows, viewport, macro);
+        Func<CancellationToken, Task<(int Columns, int Rows)>>? viewport = null, RecordingOverrides overrides = default) =>
+        ConnectCoreAsync(path, token, ssh, opened, defaultRetainedRows, viewport, macro, overrides: overrides);
 
     internal static Task<TerminalSession> ConnectReviewedAsync(string path, ConnectionProfile profile, MacroRun? macro,
         CancellationToken token, SshInteraction ssh, Action<ConnectionProfile> opened, int defaultRetainedRows,
-        Func<CancellationToken, Task<(int Columns, int Rows)>> viewport, RecordingDestination? destination,
-        RecordingNameOptions recordingNames) =>
-        ConnectCoreAsync(path, token, ssh, opened, defaultRetainedRows, viewport, macro, profile, destination, recordingNames);
+        Func<CancellationToken, Task<(int Columns, int Rows)>> viewport, RecordingSettings? recording) =>
+        ConnectCoreAsync(path, token, ssh, opened, defaultRetainedRows, viewport, macro, profile, recording);
 
     private static async Task<TerminalSession> ConnectCoreAsync(string path, CancellationToken cancellationToken,
         SshInteraction? ssh, Action<ConnectionProfile>? opened, int defaultRetainedRows,
         Func<CancellationToken, Task<(int Columns, int Rows)>>? viewport, MacroRun? macro,
-        ConnectionProfile? reviewed = null, RecordingDestination? destination = null, RecordingNameOptions? recordingNames = null)
+        ConnectionProfile? reviewed = null, RecordingSettings? recordingSettings = null, RecordingOverrides overrides = default)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(defaultRetainedRows, 100);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(defaultRetainedRows, 100_000);
@@ -134,8 +135,17 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
         opened?.Invoke(profile);
         if (profile.Type == "ssh" && ssh is null)
             throw new InvalidOperationException("SSH requires host verification and authentication interaction.");
-        var (recording, recordingPart) = await RecordingLifecycle.PrepareInitialAsync(path, profile, macro, cancellationToken,
-            destination, recordingNames).ConfigureAwait(false);
+        SessionRecording? recording;
+        int recordingPart;
+        try
+        {
+            (recording, recordingPart) = await RecordingLifecycle.PrepareInitialAsync(path, profile, macro, cancellationToken,
+                recordingSettings, overrides).ConfigureAwait(false);
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is
+            (IOException or UnauthorizedAccessException or ArgumentException or InvalidDataException or NotSupportedException or
+             OperationCanceledException or FormatException))
+        { throw new RecordingStartException(error.Message, error); }
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(profile.WaitSeconds));
@@ -162,6 +172,7 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
                 }
                 await session.SendRepliesAsync(replyDeadline.Token).ConfigureAwait(false);
             }
+            if (session.RecordingStartFailure is { } failure) throw new RecordingStartException(failure);
             return session;
         }
         catch (Exception exception)
@@ -173,6 +184,8 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
                 finally { await session.ReleaseRetainedOutputAsync().ConfigureAwait(false); }
             }
             else if (recording is not null) await recording.FinishAsync().ConfigureAwait(false);
+            if (session?.RecordingStartFailure is { } failure && exception is not RecordingStartException)
+                throw new RecordingStartException(failure, exception);
             throw;
         }
 
@@ -875,6 +888,11 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
 
     internal Task<RecordingOperationResult> ChangeRecordingAsync(bool resume, CancellationToken token) =>
         !resume ? recordings.PauseAsync(token) : recordings.Failure is null ? recordings.ResumeAsync(token) : recordings.RetryAsync(token);
+
+    private void RecordingStartFailed(string message)
+    {
+        if (Interlocked.CompareExchange(ref recordingStartFailure, message, null) is null) Disconnect();
+    }
 
     public void Disconnect()
     {

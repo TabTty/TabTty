@@ -40,7 +40,7 @@ internal static partial class Program
             string originalVersion = original.TrustVersion;
             var admission = app.Profiles.AdmitAsync(owner, path, null, token);
             await AnswerAsync("ProfileRegisterAndConnect", "ProfileConnectOnce");
-            CheckMacroLaunch((await admission).Profile.TrustVersion == originalVersion &&
+            CheckMacroLaunch((await admission).TrustVersion == originalVersion &&
                 app.Profiles.ReadRegistrations().Count == 0, "Connect once registered a file.");
 
             admission = app.Profiles.AdmitAsync(owner, path, "Fixture macro", token);
@@ -53,11 +53,11 @@ internal static partial class Program
             Window review = await ReviewAsync();
             File.AppendAllText(path, "\n");
             Click(review, "ProfileRegisterAndConnect");
-            CheckMacroLaunch((await admission).Profile.TrustVersion == originalVersion &&
+            CheckMacroLaunch((await admission).TrustVersion == originalVersion &&
                 app.Profiles.ReadRegistrations().Count == 1, "Registration did not use the reviewed file revision.");
             admission = app.Profiles.AdmitAsync(owner, path, null, token);
             await AnswerAsync("ProfileTrustAndConnect", "ProfileTrustAndConnect");
-            var modified = (await admission).Profile;
+            var modified = await admission;
             CheckMacroLaunch(modified.TrustVersion != originalVersion, "A file-only byte change reused trust.");
             await app.Profiles.AdmitAsync(owner, path, null, token);
 
@@ -101,7 +101,7 @@ internal static partial class Program
             await AnswerAsync("ProfileTrustAndConnect", "ProfileTrustAndConnect");
             await forCopy;
 
-            await CheckRecordingDestinationAsync(directory, token);
+            await CheckRecordingDestinationAsync(app, owner, directory, token);
 
             File.AppendAllText(path, "\n");
             admission = app.Profiles.AdmitAsync(owner, path, null, token);
@@ -212,7 +212,7 @@ internal static partial class Program
                 .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
     }
 
-    private static async Task CheckRecordingDestinationAsync(string directory, CancellationToken token)
+    private static async Task CheckRecordingDestinationAsync(App app, Window owner, string directory, CancellationToken token)
     {
         var inUse = DriveInfo.GetDrives().Select(drive => char.ToUpperInvariant(drive.Name[0])).ToHashSet();
         char letter = Enumerable.Range('P', 11).Select(value => (char)value).LastOrDefault(value => !inUse.Contains(value));
@@ -225,9 +225,16 @@ internal static partial class Program
         {
             Map(original);
             mapped = true;
-            string profilePath = drive + "\\recording.ttty";
+            string profilePath = Path.Combine(directory, "recording.ttty");
             var profile = ConnectionProfile.CreateTelnet("Recording destination", "localhost", recordRaw: true);
+            var draft = System.Text.Json.Nodes.JsonNode.Parse(profile.ToEditorJson())!;
+            draft["logging"]!["directory"] = drive + "\\Logs";
+            await profile.Edit(draft.ToJsonString()).SaveNewAsync(profilePath, token);
+            var admission = app.Profiles.AdmitAsync(owner, profilePath, "Mapping fixture", token);
+            await AnswerAsync("ProfileTrustReview", "ProfileTrustAndConnect");
+            profile = await admission;
             var destination = RecordingDestination.Capture(profilePath, profile);
+            await app.Profiles.ApproveRecordingDestinationAsync(owner, destination, token);
             var recording = SessionRecording.Open(profilePath, profile, destination: destination);
             try
             {
@@ -248,6 +255,21 @@ internal static partial class Program
                 catch (RecordingDestinationChangedException) { }
                 CheckMacroLaunch(!Directory.EnumerateFileSystemEntries(replacement).Any(),
                     "Recording created a file or directory under a different mapping.");
+                var trusted = await app.Profiles.AdmitAsync(owner, profilePath, "Mapping fixture", token)
+                    .WaitAsync(TimeSpan.FromSeconds(2), token);
+                CheckMacroLaunch(trusted.TrustVersion == profile.TrustVersion, "The new mapping invalidated profile trust.");
+                var changed = RecordingDestination.Capture(profilePath, profile);
+                var rejected = app.Profiles.ApproveRecordingDestinationAsync(owner, changed, token);
+                await AnswerAsync("LogDestinationReview", "Cancel");
+                try { await rejected; throw new InvalidOperationException("A declined mapping was accepted."); }
+                catch (RecordingStartException) { }
+                CheckMacroLaunch(!Directory.EnumerateFileSystemEntries(replacement).Any(), "Declining the mapping touched it.");
+                var accepted = app.Profiles.ApproveRecordingDestinationAsync(owner, changed, token);
+                await AnswerAsync("LogDestinationReview", "ApproveLogDestination");
+                await accepted;
+                await SessionRecording.Open(profilePath, profile, destination: changed).FinishAsync();
+                CheckMacroLaunch(Directory.GetFiles(Path.Combine(replacement, "Logs"), "*.raw.tttylog").Length == 1,
+                    "An approved mapping did not receive the log.");
             }
             finally { await recording.FinishAsync(); }
             Map("/D");
@@ -259,6 +281,15 @@ internal static partial class Program
             Console.WriteLine("PASS ReviewedRecordingDestinationRejectsChangedDriveMapping");
         }
         finally { if (mapped) Map("/D"); }
+
+        async Task AnswerAsync(string title, string action)
+        {
+            Window? dialog;
+            while ((dialog = app.Windows.OfType<Window>().FirstOrDefault(window => window.Title == App.Text(title))) is null)
+                await Task.Delay(10, token);
+            FindControls<Button>(dialog).Single(button => Equals(button.Content, App.Text(action)))
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        }
 
         void Map(string target)
         {

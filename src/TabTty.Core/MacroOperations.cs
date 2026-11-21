@@ -18,11 +18,13 @@ internal sealed partial class MacroRun
                 if (connectAttempted) throw new MacroError(MacroErrorCode.ConnectionAlreadyAttempted);
                 connectAttempted = true;
                 string path = ResolvePath(S(0));
+                var recording = new RecordingOverrides(args.Length > 1 ? S(1) : null, args.Length > 2 ? S(2) : null,
+                    args.Length > 3 ? (bool)args[3] : null, baseDirectory);
                 await HostOperationAsync("Connect", async () =>
                 {
                     try
                     {
-                        TerminalSession connected = await host.ConnectAsync(this, path, attemptStop.Token).ConfigureAwait(false);
+                        TerminalSession connected = await host.ConnectAsync(this, path, recording, attemptStop.Token).ConfigureAwait(false);
                         lock (gate) { session = connected; ready = true; }
                         return true;
                     }

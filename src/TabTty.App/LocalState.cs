@@ -40,6 +40,8 @@ internal static class LocalState
 
     public static JsonObject Read() => ReadSnapshot().State;
 
+    internal static bool IsTemporary => temporaryDefaults;
+
     public static JsonObject ReadForProfileTrust()
     {
         if (VerifiedFilePublication.HasPendingPublication(StatePath))
@@ -123,6 +125,15 @@ internal static class LocalState
                     version is not JsonValue value || !value.TryGetValue<string>(out string? stamp) ||
                     stamp is not { Length: 66 } || stamp[1] != ':' ||
                     !stamp.Skip(2).All(char.IsAsciiHexDigit))
+                    throw new InvalidDataException(App.Text("LocalStateInvalid"));
+        }
+        if (state.ContainsKey("recordingMappings"))
+        {
+            if (state["recordingMappings"] is not JsonObject mappings)
+                throw new InvalidDataException(App.Text("LocalStateInvalid"));
+            foreach (var (key, value) in mappings)
+                if (key.Length != 64 || !key.All(char.IsAsciiHexDigit) || value is not JsonValue entry ||
+                    !entry.TryGetValue<string>(out string? hash) || hash is not { Length: 64 } || !hash.All(char.IsAsciiHexDigit))
                     throw new InvalidDataException(App.Text("LocalStateInvalid"));
         }
         return (state, bytes);

@@ -70,7 +70,9 @@ public sealed class ConnectionProfile
     public bool RecordText => Logging.GetProperty("text").GetBoolean();
     public bool RecordTerminal => Logging.GetProperty("terminal").GetBoolean();
     public bool RecordsOutput => RecordRaw || RecordText || RecordTerminal;
-    public string LogDirectory => Logging.GetProperty("directory").GetString()!;
+    public string LogDirectory => Logging.TryGetProperty("directory", out var value) ? value.GetString()! : "";
+    public string LogFilenameTemplate => Logging.TryGetProperty("filenameTemplate", out var value) ? value.GetString()! : "";
+    public bool AllowLogOverwrite => Logging.TryGetProperty("allowOverwrite", out var value) && value.GetBoolean();
     public Guid? HighlightSetId => Terminal.GetProperty("highlightSetId").Deserialize<Guid?>();
     public string? FontFamily => Terminal.GetProperty("font").GetProperty("family").Deserialize<string?>();
     public double? FontSizePoints => Terminal.GetProperty("font").GetProperty("sizePoints").Deserialize<double?>();
@@ -78,7 +80,9 @@ public sealed class ConnectionProfile
 
     public void ValidateEditorSettings()
     {
-        _ = OrdinaryWindowsPath.Resolve(LogDirectory, sourcePath is null ? Environment.CurrentDirectory : Path.GetDirectoryName(sourcePath)!);
+        if (!string.IsNullOrWhiteSpace(LogDirectory))
+            _ = OrdinaryWindowsPath.Resolve(LogDirectory, sourcePath is null ? Environment.CurrentDirectory : Path.GetDirectoryName(sourcePath)!);
+        if (!string.IsNullOrWhiteSpace(LogFilenameTemplate)) RecordingNameTemplate.Parse(LogFilenameTemplate, macro: true);
     }
 
     public ConnectionProfile Edit(string json)
@@ -158,7 +162,7 @@ public sealed class ConnectionProfile
                 retainedRows = new { mode = "inherit", value = (int?)null },
                 highlightSetId,
             },
-            logging = new { raw = recordRaw, text = recordText, terminal = recordTerminal, directory = "Logs" },
+            logging = new { raw = recordRaw, text = recordText, terminal = recordTerminal, directory = "" },
         }));
 
     public static async Task<ConnectionProfile> LoadAsync(string path, CancellationToken cancellationToken = default)
@@ -439,8 +443,18 @@ public sealed class ConnectionProfile
         Boolean(logging, "raw");
         Boolean(logging, "text");
         Boolean(logging, "terminal");
-        Text(logging, "directory", 32760);
+        OptionalLogText("directory", 32760);
+        OptionalLogText("filenameTemplate", RecordingNameTemplate.MaximumLength);
+        if (logging.TryGetProperty("allowOverwrite", out _)) Boolean(logging, "allowOverwrite");
         return new ConnectionProfile(root, groupName);
+
+        void OptionalLogText(string key, int maximum)
+        {
+            if (logging.TryGetProperty(key, out var entry) &&
+                (entry.ValueKind != JsonValueKind.String || entry.GetString() is not { } value ||
+                 value.Length > maximum || value.Contains('\0')))
+                throw new InvalidDataException($"Invalid profile field: {key}.");
+        }
     }
 
     internal static string? NormalizeGroupName(string? value)
