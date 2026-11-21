@@ -61,11 +61,12 @@ The group tabs meet the top edge of one rectangular frame containing the
 search field and the details list.
 The list shows the registered name, connection protocol, destination and file
 path and fills the available space below the search field. Double-click a row
-to edit its profile. The row context menu provides Connect, Edit, Duplicate,
+to edit its profile. The single-row context menu provides Connect, Edit, Duplicate,
 favorite, Unregister and Delete file actions. The star in the first column
 toggles favorite status. Clicking a column header sorts the displayed rows
 and clicking the same header again reverses the order. The new-tab menu shows
-named groups as submenus and ungrouped profiles at the root.
+named groups as submenus and ungrouped profiles at the root. Both the menu
+and the list support [connecting multiple profiles](#connecting-multiple-profiles).
 
 The selected vault's rename dialog can update reviewed registered profiles. The update uses the ordinary verified edit path and changes the matching name field. Connection trust is evaluated for the resulting file revision. See [Vault format and operations](vault-format.md).
 
@@ -95,6 +96,48 @@ Encoding IDs: `utf-8`, `cp932`, `euc-jp`, `jis`, `cp949`, `cp936`, `cp950`,
 `koi8-r`, lowercase `cp` plus the accepted OEM/Windows number, or `iso-8859-`
 plus one of 1-11, 13-15. These are the 47 supported identities.
 Profile IDs are content identifiers, distinct from local registration identity.
+
+## Connecting multiple profiles
+
+Implementation is tracked in [issue #83](https://github.com/TabTty/TabTty/issues/83).
+
+In the **[+]** menu, show the number of profiles beside each named group,
+for example **Production (5) ▸**. Clicking the group name or pressing Enter
+on it opens every profile in the group immediately, without a separate group
+confirmation. Hovering over the group, clicking its arrow or pressing Right
+Arrow opens the submenu. Choosing a profile there opens that profile alone.
+
+In the profile list, Ctrl+click toggles individual rows, Shift+click selects a
+range and Ctrl+A selects every visible row while the list has focus. The
+**All** tab allows selection across profile groups. When a search or group
+filter changes, keep selected rows that remain visible and drop hidden rows.
+Right-clicking a selected row preserves the selection. With multiple rows
+selected, the context menu offers only the connection action and shows its
+count, for example **Connect to 3 selected profiles**. Right-clicking an
+unselected row selects that row alone and opens its single-row menu.
+Double-clicking a row edits that profile.
+
+When either command runs, capture the targets in their current submenu or
+list order, including any column sort. Append one new terminal tab per target
+to the tab group containing the **[+]** button or the profile list. Select
+the first new tab. Opening a profile that already has a tab starts a separate
+session. Completion order cannot reorder the tabs or change the selection.
+
+Each attempt follows the ordinary [manual connection decision](profile-trust.md)
+and authentication workflow. While one attempt waits for user input, the
+others can proceed. If an attempt fails or the user cancels it, continue the
+unrelated attempts. Report failures in the affected tabs. Attempts waiting
+for the same vault unlock share its result under the
+[existing unlock rules](#windows-activation-and-modal-order).
+
+### Acceptance cases
+
+| Action | Expected result |
+| --- | --- |
+| Hover over **Production (5)**, then choose one profile. Repeat using the arrow and the keyboard. | Each navigation gesture opens the submenu. Choosing a child starts one connection. Clicking the group name or pressing Enter on it starts five. |
+| In **All**, select rows from two groups, sort the list, then filter out one selected row. | The selected rows still visible remain selected. Right-clicking one shows their current count. The command opens them in the displayed sort order. |
+| Select A and B, then right-click unselected C. | The single-row menu applies to C alone. Double-clicking C opens its editor. |
+| From one split, open A, B and C in that order while B already has a tab. Leave A's host-key prompt open until C connects, then cancel A. | Three new tabs appear in that split in A, B, C order, with A initially selected. C can connect while A waits. B's original tab stays open, and cancelling A ends only A's attempt. |
 
 ## Application stores
 

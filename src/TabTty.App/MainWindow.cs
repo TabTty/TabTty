@@ -58,22 +58,44 @@ internal sealed partial class MainWindow : Window
         UpdateLabels();
     }
 
-    internal void OpenProfile(string path)
+    internal void OpenProfile(string path) => OpenProfiles([path], activeGroup);
+
+    internal void OpenProfiles(IReadOnlyList<string> paths, FormView source)
     {
-        if (closing) return;
-        var terminal = new TerminalTab(path);
-        AddTerminalTab(terminal);
-        terminal.Start(profile => _ = app.Profiles.RememberAsync(terminal.ProfilePath, profile, used: true));
+        var group = Groups.FirstOrDefault(group =>
+            group.Items.OfType<WindowTab>().Any(tab => ReferenceEquals(tab.Content, source)));
+        if (group is not null) OpenProfiles(paths, group);
     }
 
-    internal void AddTerminalTab(TerminalTab terminal)
+    private void OpenProfiles(IReadOnlyList<string> paths, TabControl group)
+    {
+        if (closing || paths.Count == 0 || !Groups.Contains(group)) return;
+        ActivateGroup(group);
+        var terminals = paths.Select(path => new TerminalTab(path)).ToArray();
+        WindowTab? first = null;
+        foreach (var terminal in terminals)
+        {
+            var item = CreateTerminalTab(terminal);
+            group.Items.Add(item);
+            first ??= item;
+        }
+        group.SelectedItem = first;
+        UpdateWelcomePanel();
+        app.Broadcast.Refresh();
+        foreach (var terminal in terminals)
+            terminal.Start(profile => _ = app.Profiles.RememberAsync(terminal.ProfilePath, profile, used: true));
+    }
+
+    internal void AddTerminalTab(TerminalTab terminal) => SelectNewTab(CreateTerminalTab(terminal));
+
+    private WindowTab CreateTerminalTab(TerminalTab terminal)
     {
         terminal.MacroWindow = this;
-        var item = new WindowTab(terminal);
+        var item = new WindowTab(terminal) { Host = this };
         item.UpdateTerminalCaption(terminal);
         terminal.CaptionChanged += () => { item.UpdateTerminalCaption(terminal); app.Broadcast.Refresh(); };
         terminal.Disconnected += () => item.Host?.OnTerminalDisconnected(item);
-        SelectNewTab(item);
+        return item;
     }
 
     private void OnTerminalDisconnected(WindowTab item)
@@ -579,7 +601,8 @@ internal sealed partial class MainWindow : Window
     private async void OpenNewTabMenu(object sender, RoutedEventArgs args)
     {
         var button = (Button)sender;
-        if (Ancestor<TabControl>(button) is { } group) ActivateGroup(group);
+        var group = Ancestor<TabControl>(button) ?? activeGroup;
+        ActivateGroup(group);
         var menu = new ContextMenu { PlacementTarget = button, Placement = PlacementMode.Bottom };
         IReadOnlyList<ProfileCatalog.Registration> profiles;
         try { profiles = app.Profiles.ReadRegistrations(); }
@@ -590,14 +613,42 @@ internal sealed partial class MainWindow : Window
             ItemsControl parent = menu;
             if (profileGroup.Key is { } groupName)
             {
-                var submenu = new MenuItem();
-                SetMenuItemName(submenu, PermissionDisplay.Literal(groupName));
+                string[] paths = profileGroup.Select(profile => profile.Path).ToArray();
+                string label = string.Format(Text("ProfileGroupCount"), PermissionDisplay.Literal(groupName), paths.Length);
+                var header = new TextBlock { Text = label, Background = Brushes.Transparent };
+                var submenu = new MenuItem { Header = header };
+                AutomationProperties.SetName(submenu, label);
+                void ConnectGroup()
+                {
+                    menu.IsOpen = false;
+                    OpenProfiles(paths, group);
+                }
+                bool pressedName = false;
+                submenu.PreviewMouseDown += (_, input) =>
+                {
+                    if (input.ChangedButton != MouseButton.Left) return;
+                    pressedName = header.IsMouseOver;
+                    input.Handled = pressedName;
+                };
+                submenu.PreviewMouseUp += (_, input) =>
+                {
+                    if (input.ChangedButton != MouseButton.Left || !pressedName) return;
+                    pressedName = false;
+                    input.Handled = true;
+                    if (header.IsMouseOver) ConnectGroup();
+                };
+                submenu.PreviewKeyDown += (_, input) =>
+                {
+                    if (input.Key != Key.Enter || !submenu.IsKeyboardFocused) return;
+                    input.Handled = true;
+                    ConnectGroup();
+                };
                 menu.Items.Add(submenu);
                 parent = submenu;
             }
             foreach (var profile in profileGroup)
             {
-                var item = CreateProfileMenuItem(profile.Name, profile.Path, OpenProfile);
+                var item = CreateProfileMenuItem(profile.Name, profile.Path, path => OpenProfiles([path], group));
                 entries.Add((profile.Path, item));
                 parent.Items.Add(item);
             }

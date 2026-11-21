@@ -268,6 +268,8 @@
   <data name="EditNamedProfile" xml:space="preserve"><value>"{0}" の編集…</value></data>
   <data name="DuplicateProfile" xml:space="preserve"><value>複製…</value></data>
   <data name="ConnectProfile" xml:space="preserve"><value>接続</value></data>
+  <data name="ConnectSelectedProfiles" xml:space="preserve"><value>選択した{0}件に接続</value></data>
+  <data name="ProfileGroupCount" xml:space="preserve"><value>{0}（{1}件）</value></data>
   <data name="ProfileUnavailable" xml:space="preserve"><value>プロファイルファイルを利用できないか、形式が無効です。</value></data>
   <data name="ProfileSettingsJson" xml:space="preserve"><value>プロファイル設定（JSON）</value></data>
   <data name="ProfileSaveLocation" xml:space="preserve"><value>プロファイルの保存先を利用できません。設定の「保存パス」を確認してください。</value></data>

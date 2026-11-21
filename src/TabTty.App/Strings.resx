@@ -268,6 +268,8 @@
   <data name="EditNamedProfile" xml:space="preserve"><value>Edit "{0}"…</value></data>
   <data name="DuplicateProfile" xml:space="preserve"><value>Duplicate…</value></data>
   <data name="ConnectProfile" xml:space="preserve"><value>Connect</value></data>
+  <data name="ConnectSelectedProfiles" xml:space="preserve"><value>Connect to {0} selected profiles</value></data>
+  <data name="ProfileGroupCount" xml:space="preserve"><value>{0} ({1})</value></data>
   <data name="ProfileUnavailable" xml:space="preserve"><value>The profile file is unavailable or invalid.</value></data>
   <data name="ProfileSettingsJson" xml:space="preserve"><value>Profile settings (JSON)</value></data>
   <data name="ProfileSaveLocation" xml:space="preserve"><value>The profile save folder is unavailable. Check Save paths in Settings.</value></data>

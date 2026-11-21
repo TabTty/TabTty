@@ -216,7 +216,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
             groupTabs.SetResourceReference(FrameworkElement.StyleProperty, "DetailsTabs");
             var allGroups = CreateGroupTab(null);
             var ungrouped = CreateGroupTab("");
-            var list = new ListView();
+            var list = new ListView { SelectionMode = SelectionMode.Extended };
             var columns = new DetailsColumns(list);
             var favoriteCell = new FrameworkElementFactory(typeof(Button));
             favoriteCell.SetValue(Control.PaddingProperty, new Thickness(0));
@@ -252,11 +252,10 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
             var menu = new ContextMenu();
             list.ContextMenu = menu;
             Guid? menuRegistration = null;
-            AddMenuAction("ConnectProfile", item =>
-            {
-                form.TabOwner?.OpenProfile(item.Path);
-                return Task.CompletedTask;
-            });
+            string[] menuPaths = [];
+            var connect = new MenuItem();
+            connect.Click += (_, _) => form.TabOwner?.OpenProfiles(menuPaths, form);
+            menu.Items.Add(connect);
             AddMenuAction("EditProfile", item => EditItemAsync(item, duplicate: false));
             AddMenuAction("DuplicateProfile", item => EditItemAsync(item, duplicate: true));
             var favoriteMenuItem = AddMenuAction("ProfileListFavorite", item => ChangeSelectedAsync(remove: false, item));
@@ -276,25 +275,33 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 searchLabel.Content = Text("SearchProfiles");
                 AutomationProperties.SetName(list, Text("ProfileCatalog"));
                 columns.UpdateHeaders();
-                if (list.ItemsSource is not null) RefreshList((list.SelectedItem as Registration)?.Id);
+                if (list.ItemsSource is not null) RefreshList();
             });
             list.ContextMenuOpening += (_, args) =>
             {
-                var item = args.CursorLeft == -1 ? list.SelectedItem as Registration
-                    : columns.RowAt(args.OriginalSource)?.Content as Registration;
+                var origin = args.CursorLeft == -1 ? Keyboard.FocusedElement : args.OriginalSource;
+                var row = origin is null ? null : columns.RowAt(origin);
+                var item = row?.Content as Registration;
+                if (args.CursorLeft == -1) item ??= list.SelectedItem as Registration;
                 if (item is null)
                 {
                     args.Handled = true;
                     return;
                 }
-                list.SelectedItem = item;
-                (list.ItemContainerGenerator.ContainerFromItem(item) as ListViewItem)?.Focus();
-            };
-            menu.Opened += (_, _) =>
-            {
-                var item = list.SelectedItem as Registration;
-                menuRegistration = item?.Id;
-                favoriteMenuItem.Header = item?.FavoriteAction ?? Text("ProfileListFavorite");
+                if (!list.SelectedItems.Contains(item))
+                {
+                    list.UnselectAll();
+                    list.SelectedItem = item;
+                }
+                row?.Focus();
+                var selected = list.SelectedItems.Cast<Registration>().ToHashSet();
+                menuPaths = list.Items.Cast<Registration>().Where(selected.Contains).Select(entry => entry.Path).ToArray();
+                bool multiple = menuPaths.Length > 1;
+                menuRegistration = multiple ? null : item.Id;
+                connect.Header = multiple ? string.Format(Text("ConnectSelectedProfiles"), menuPaths.Length) : Text("ConnectProfile");
+                foreach (Control entry in menu.Items.Cast<Control>().Skip(1))
+                    entry.Visibility = multiple ? Visibility.Collapsed : Visibility.Visible;
+                favoriteMenuItem.Header = item.FavoriteAction;
             };
             list.PreviewMouseLeftButtonDown += async (_, args) =>
             {
@@ -312,11 +319,11 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
             }));
             search.TextChanged += (_, _) =>
             {
-                if (!reloading) RefreshList((list.SelectedItem as Registration)?.Id);
+                if (!reloading) RefreshList();
             };
             groupTabs.SelectionChanged += (_, args) =>
             {
-                if (args.Source == groupTabs && !reloading) RefreshList((list.SelectedItem as Registration)?.Id);
+                if (args.Source == groupTabs && !reloading) RefreshList();
             };
             form.Loaded += (_, _) => { ProfileSaved += Reload; Reload(); _ = LoadDetailsAsync(); };
             form.Unloaded += (_, _) => { ProfileSaved -= Reload; detailsLoad?.Cancel(); };
@@ -432,11 +439,12 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                     Guid? selectedId = (list.SelectedItem as Registration)?.Id;
                     Registration? selected = created ?? registrations.FirstOrDefault(item => item.Id == selectedId);
                     string? group = (groupTabs.SelectedItem as TabItem)?.Tag as string;
-                    if (group is not null && selected is not null) group = selected.GroupName ?? "";
+                    if (group is not null && selected is not null && (created is not null || list.SelectedItems.Count == 1))
+                        group = selected.GroupName ?? "";
                     reloading = true;
                     if (created is not null && !MatchesSearch(created, search.Text)) search.Clear();
                     RefreshGroupTabs(group);
-                    RefreshList(selected?.Id);
+                    RefreshList(created?.Id);
                     if (created is not null && list.SelectedItem is { } item) list.ScrollIntoView(item);
                 }
                 catch (Exception exception) when (IsFileProblem(exception))
@@ -477,8 +485,10 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                     StringComparer.OrdinalIgnoreCase.Equals(item.Tag as string, selected)) ?? allGroups;
             }
 
-            void RefreshList(Guid? selected)
+            void RefreshList(Guid? selectOnly = null)
             {
+                HashSet<Guid> selected = selectOnly is Guid id ? [id] : list.SelectedItems.Cast<Registration>()
+                    .Select(item => item.Id).ToHashSet();
                 var tab = groupTabs.SelectedItem as TabItem;
                 if (tab != contentTab)
                 {
@@ -493,7 +503,8 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                     MatchesSearch(item, query)).ToArray();
                 list.ItemsSource = items;
                 columns.ApplySort();
-                list.SelectedItem = items.FirstOrDefault(item => item.Id == selected);
+                foreach (var item in items)
+                    if (selected.Contains(item.Id)) list.SelectedItems.Add(item);
             }
 
             static bool MatchesSearch(Registration item, string query) =>
