@@ -82,9 +82,21 @@ Use the xterm-style 16-entry palette in order:
 `7F7F7F FF0000 00FF00 FFFF00 5C5CFF FF00FF 00FFFF FFFFFF`.
 Indices 16-231 use the six-level RGB cube 0/95/135/175/215/255, and 232-255
 use gray 8+10n. Default white is FFFFFF, independent of index 7. Retain true RGB.
-Selection is white on 0050A0; search is black on FFD54F, current match outlined
-white. Cursor uses a black or white contrasting fill/outline and opposite glyph
-foreground as needed; focus loss gives an outline, and peer hiding still wins.
+Selection is white on 0050A0 and search is black on FFD54F, with a white outline
+for the current match. For each visible cursor shape (block, bar, underline or
+unfocused outline), choose whichever of black and white has the higher contrast
+ratio against the cell's displayed background after terminal rendition,
+highlighting, search and selection. Use the sRGB relative luminance and
+[contrast ratio defined by W3C](https://www.w3.org/TR/WCAG22/#dfn-contrast-ratio).
+Focus loss gives an outline. A cursor hidden by the peer stays hidden.
+
+A filled block redraws a visible glyph in the color opposite its fill using
+the cell's effective bold and underline, including attributes added or cleared
+by the winning highlight rule. A concealed glyph stays concealed under the
+cursor. Verify rendered colors as a cell changes from a white highlight to
+search yellow (black cursor in both cases) and then selection blue (white
+cursor). On an FF0000 background the cursor is black. Verify the outline after
+focus loss and the effective glyph decorations and concealment under a block.
 
 Pin Unicode 17.0.0, UAX29 revision 47, UAX11 revision 44, Emoji 17/UTS51 revision
 29 for segmentation/width data. Do not derive cell width from fonts or whichever
@@ -218,6 +230,23 @@ Reserve snapshot memory before copying; if unavailable, return an explicit
 provider failure, never implicit truncation or invented pagination. Coalesce
 text events, no default live
 announcement of every incoming line, and no output-triggered focus change.
+
+UIA range movement and expansion use row positions and the terminal snapshot's
+stored character spans. A one-character move must work even when copying the
+entire document would exceed the 64 MiB UIA snapshot budget. For `TextUnit.Line`,
+each displayed terminal row is a line, including a row ending in a soft wrap.
+A soft wrap introduces a navigation position without adding a character to the
+text returned by UIA, copied to the clipboard, or searched. See
+[Microsoft's UI Automation text units](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-uiautomationtextunits#line).
+
+`FindText` searches within the requested range without copying that whole
+range into a string. Preserve forward and backward searches, the caller's
+case choice, matches spanning a soft wrap, and matches containing an explicit
+line break. For a command that wraps across three terminal rows, verify that
+line movement visits each row, search finds text across a wrap in either
+direction, and `GetText` returns the original command. With a document whose
+full text exceeds the copy budget, verify a one-character move and a search
+for a short phrase alongside the explicit failure of a full-document read.
 
 ## Keyboard and mouse
 

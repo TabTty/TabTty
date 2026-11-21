@@ -117,6 +117,22 @@ count, for example **Connect to 3 selected profiles**. Right-clicking an
 unselected row selects that row alone and opens its single-row menu.
 Double-clicking a row edits that profile.
 
+When a connection updates a registration's group or last-used time, refresh
+open profile lists in every window. Use the same registration data when
+populating a list or a new-tab menu, including details loaded asynchronously.
+Keep each list's search text, current group filter and chosen sort. Restore
+selection by registration ID for rows that are still visible. If a selected
+row leaves the displayed group, drop it from the selection and keep the list
+on that group.
+
+An open **[+]** menu keeps the displayed connection targets, group counts
+and order until it closes. Registrations that join a group while it is open
+appear the next time the menu opens. On a group command, check that every
+displayed target is still registered under the same registration ID in that
+group. If a displayed target has been unregistered or moved out, refresh the
+menu with the current groups and counts and let the user choose again before
+starting any connection. Additions alone do not invalidate the command.
+
 When either command runs, capture the targets in their current submenu or
 list order, including any column sort. Append one new terminal tab per target
 to the tab group containing the **[+]** button or the profile list. Select
@@ -134,6 +150,8 @@ for the same vault unlock share its result under the
 
 | Action | Expected result |
 | --- | --- |
+| Select A and B in a group and connect from another window. Change the last-used time of B, then move B out of the displayed group through a connection update. | Usage sorting reflects the new time and a name sort keeps its chosen order. A reordering preserves both selections. Once B leaves the group, only A remains selected. The filter and search text stay in place. |
+| Open **Production (3)**. In one run add a fourth member, and in another replace one of the three with a different registration so the count stays three. | In the first run the command opens the displayed three in order. Reopening shows four. In the second run the obsolete command opens no tabs and the updated menu lets the user choose from the current members. |
 | Hover over **Production (5)**, then choose one profile. Repeat using the arrow and the keyboard. | Each navigation gesture opens the submenu. Choosing a child starts one connection. Clicking the group name or pressing Enter on it starts five. |
 | In **All**, select rows from two groups, sort the list, then filter out one selected row. | The selected rows still visible remain selected. Right-clicking one shows their current count. The command opens them in the displayed sort order. |
 | Select A and B, then right-click unselected C. | The single-row menu applies to C alone. Double-clicking C opens its editor. |
@@ -302,6 +320,24 @@ highlighting, and local-state stores. A missing, corrupt, or unsupported profile
 cannot start or reconnect a session; restore or explicitly save a valid profile
 first. Host-store failures follow explicit recovery and must not silently turn
 known hosts into unrecognized hosts eligible for fresh first-use approval.
+
+### Completing a profile save after reopening the editor
+
+When the profile file is verified but its requested registration or rename is
+unfinished, report both outcomes. For this application run, retain the saved
+location, verified revision and outstanding part of the original request.
+Closing a quiescent editor leaves that information available to an editor
+reopened for the same file. Reopening alone performs no registration or rename.
+
+When the user selects **Recheck previous save**, check the file against that
+location and revision and recheck the applicable registration and rename
+conditions. If they still hold, finish only the outstanding work. Recognize a
+step that already completed and leave the verified file contents intact.
+If the file has been replaced or edited externally, report the difference
+and leave the new revision untouched. Rechecking preserves any later edits in
+the form as an unsaved draft. The original request's trust rules still apply,
+including invalidation by a subsequent trust reset or unregistration.
+Pending completion information expires when the application exits.
 
 ### Verified file operations
 
@@ -651,6 +687,7 @@ final-exit rules. No hidden lifetime or session-recording timeout is introduced.
 | Select two `.ttty` files and choose Open or press Enter | Evaluate each file independently. Connecting or registering one file does not decide the other. Use distinct tabs for permitted connections. |
 | Select two `.ttty` files and choose Edit | Two editable windows and independent saves. With no running TabTty, the first launch shows only editors. Editing creates neither a registration nor a connection. |
 | Reopen a profile under edit from the other entry point | Restore and activate the existing editor with its draft. A copy at a different location opens separately. |
+| Reopen a verified profile whose registration failed, then choose **Recheck previous save** | Opening alone leaves registration pending. Rechecking completes registration once for the verified revision and preserves later draft edits. Rechecking after external replacement reports the changed file. A trust reset cannot be undone by the old request. |
 | One profile in a multi-selection fails to load | Report that path's error. The other admitted file actions proceed. |
 | Open or edit one `.tttykey`, or select multiple vault files | Single-file verbs open one editor. A vault invocation carrying multiple paths is rejected before opening or unlocking a file. |
 | Choose **Manage vault** with a missing or zero-byte target | Cancelling setup keeps the current view. Verified initialization opens the management tab. The backup restore command remains available in the vault menu before setup. |

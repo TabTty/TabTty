@@ -64,6 +64,15 @@ alone never proves remote execution or exactly-once command effects.
 | A18: future macro owner, Q16/Q29 | At the existing input-owner boundary represent an executing or paused macro owner. AI control is rejected in both states; permitted read-only sharing still works. Do not implement a macro runtime to perform this ownership check. |
 | A19: help and secrets, Q18/Q27 | Return control with an inert reason for a synthetic password/OTP prompt; later work requires a fresh grant. No TabTty question dialog or foreground activation occurs. A remote echo can contain the synthetic secret: do not misreport complete redaction or universal prompt detection. |
 
+For A03, compare all seven published input schemas across both protocol versions
+before and after sharing a session. Check their English field descriptions and
+exercise the documented argument alternatives, defaults, and bounds through the
+GUI with an authorized session. For A06, search for U+1F600 repeated 512 and
+513 times. Expect the first request to be valid and the second to exceed the
+UTF-16 limit stated in discovery. Check CR and LF individually and together
+against both the schema and GUI. In retained text containing U+0085, U+2028,
+or U+2029, verify that a query can match that literal character.
+
 A07 also covers 100, 5000, and 100000 retained rows, a single long wrapped logical
 line, edits spanning page boundaries, no-match search exhaustion, and continuations
 after eviction. Test exact limit, one below, and one above for every contract

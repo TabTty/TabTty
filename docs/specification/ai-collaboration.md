@@ -241,6 +241,16 @@ counts logical lines on each side of a match (default two, maximum ten per side)
 Text, paste, and search-query strings must be nonempty; modifiers default to an
 empty array. Empty text is an invalid argument and does not consume a sequence.
 
+All seven tools share one definition of their arguments between the bridge's
+`tools/list` response and the GUI's argument reader. It defines names, types,
+required and optional fields, alternatives, defaults, and bounds. Discovery
+publishes the applicable standard JSON Schema constraints and a fixed English
+description for each field. When a schema keyword uses a different unit, the
+description gives the exact rule and the GUI checks it. These definitions are
+static across sharing states and both supported protocol versions. The GUI
+continues to check current sharing, control, and handle validity and to resolve
+duplicate input in the order specified for each operation.
+
 Tool results contain `structuredContent`, `content: [{type: "text", text: ...}]`,
 and `isError`. The text is the same structured object serialized as JSON, not a
 second unbounded prose transcript. Operational errors set `isError: true` and
@@ -377,9 +387,14 @@ ordinary soft reflow; retirement of any requested prefix is explicit loss. No
 unbounded tombstones are needed: if metadata is no longer retained, return
 `cursor_expired`/unavailable rather than falsely claiming exact loss history.
 
-Search is literal OrdinalIgnoreCase by default, or Ordinal when requested; maximum
-query length is 1024 UTF-16 units, no embedded line breaks, no normalization or
-width/kana folding. Join soft wraps but do not match across hard logical lines.
+Search is literal OrdinalIgnoreCase by default, or Ordinal when requested.
+The `query` field description states its limit of 1024 UTF-16 code units.
+JSON Schema's `maxLength` counts Unicode code points. A query of 512 copies of
+U+1F600 fits exactly, and 513 exceeds the GUI's limit. The schema and GUI reject
+CR (U+000D) and LF (U+000A) anywhere in the query. Other Unicode line separators,
+including U+0085, U+2028, and U+2029, match literally when present in retained
+text. Search uses no normalization or width/kana folding. Join soft wraps but
+do not match across hard logical lines.
 Use independent AI search cursors; do not change a human pane's query or selection.
 Search oldest to newest up to a fixed end anchor captured at the initial request;
 later appends beyond it are outside that scan. Capture immutable scan windows

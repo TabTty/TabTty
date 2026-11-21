@@ -411,6 +411,25 @@ no macro runtime to the initial release. Shared codec use by SFTP must retain
 its existing filename rules and strictness without adding a managed codec
 callback to terminal processing.
 
+## Windows x64 terminal distribution
+
+Keep one list of required terminal files in the repository. The native build
+uses it to determine when its output is complete. MSBuild uses it for incremental
+outputs, copying files to build and publish directories, and checking the bundle
+before publication. The release script uses the same list to check the actual
+files in the publish directory before creating the ZIP. The bundle requires six files.
+
+- `tabtty_terminal.dll` and its build record, `terminal-build.json`
+- `Rust-LICENSE-MIT.txt`, `Rust-LICENSE-APACHE.txt`, and `Rust-COPYRIGHT.txt`
+- `Unicode-Data-LICENSE.txt`
+
+For the Windows x64 Release ZIP, read `terminal-build.json` from the publish
+directory. Require `target` to equal `x86_64-pc-windows-msvc`, `configuration`
+to equal `Release`, and `librarySha256` to match the SHA-256 computed from the
+DLL in that directory. Report a missing file by name and stop ZIP creation.
+An unreadable record, absent required field, or mismatch also stops ZIP creation. Debug builds
+remain available for development.
+
 ## Verification and replacement readiness
 
 Use the production terminal interface with the real Rust implementation, plus
@@ -421,6 +440,7 @@ independent specified expected output also remains required.
 
 | Verification group | Required observations |
 | --- | --- |
+| Windows x64 terminal distribution | Remove each required file in turn from a prepared bundle and verify the publish precheck names it. Repeat in the publish directory before archiving. A complete Release bundle passes. A Debug DLL with its matching Debug record, a record for a different target, and a DLL hash mismatch each prevent ZIP creation. |
 | Native-only execution | Every supported creation/operation/encoding remains Rust; zero managed starts, handoffs, fallback calls or mutable managed replicas, including fault and pressure paths |
 | Encoding and input | All 47 identities, chunk splits/malformed input, independent sources, Windows/ICU mappings, strict rejected sends, terminal keys/mouse, paste closure and accepted local echo |
 | Shared interpretation | Independent expected state/replies/recording bytes; full command spelling, partial and EOF behavior, embedded controls once, parser limits and numeric overflow; no authoritative native state/effect change on admission rejection |

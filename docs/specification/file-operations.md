@@ -132,6 +132,13 @@ existing entry/path/memory bounds. Report capacity or omitted detail explicitly
 rather than maintaining an unbounded event history. Display retention never
 determines when outstanding-I/O ownership can be released.
 
+For the latest accepted operation, retain unresolved outcomes and their known
+paths ahead of ordinary result details. Omit ordinary entries such as successes
+first and indicate the omission. Before creating a destination temporary file,
+ensure its path can be retained within the existing limits if cleanup cannot
+be confirmed. If capacity is still insufficient, report the capacity failure
+before starting the write for that file. Keep earlier unresolved details.
+
 ## Connection, window, and resource lifetime
 
 Bind each operation context to its terminal session's current connection.
@@ -143,6 +150,12 @@ After the existing close confirmation, invalidate questions and stop work.
 Use the existing bounded close policy and expose known unresolved paths or
 outcomes before dismissal. Closing a view releases its presentation bindings,
 not the ownership of I/O that still exists.
+
+The close report shows the count for each kind of unresolved outcome and
+initially displays the first ten unresolved entries in total. The user can
+inspect every remaining entry and its known path in the same report before
+dismissing the window. Use the latest operation's unresolved outcomes for
+both direct window closure and closure with the terminal tab.
 
 Application-wide management retains that I/O's original connection/operation,
 completion tracking, provider reservations, and required mutation serialization
@@ -187,6 +200,8 @@ named operations, observation, answers, and cancellation used by the window.
 | Target changes during confirmation | Recheck detects it and obtains the required fresh decision. |
 | Cancellation/disconnect wins before an answer is used | A late approval causes no new mutation. |
 | A mutation may succeed but its reply is lost | Unknown outcome is retained; no automatic replay or final-path cleanup occurs. |
+| Ordinary results fill the display before a later temporary file's cleanup is unconfirmed | The close report still gives the temporary path. If space for another temporary path cannot be retained, that file's write never starts and the capacity failure is visible. |
+| One transfer batch reports twelve unconfirmed temporary-file cleanups and one unknown final rename | Closing by either route shows counts of twelve and one, ten entries initially, and access to all thirteen results before dismissal. |
 | Provider finishes after cancellation | Q8 admission remains blocked and resources remain owned until actual retirement. |
 | View closes/reopens during outstanding work | Results are discarded, but I/O ownership and same-connection admission restrictions survive. |
 | Reconnect occurs before old completion | A new owner is used; old results/answers cannot affect it and old resources are not released early. |

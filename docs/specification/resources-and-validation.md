@@ -160,14 +160,49 @@ One queued revision per line/set is sufficient; supersede old unstarted work, di
 by session/content/set revision, and retain no history of superseded matches.
 Keep accepted 100 rules, 4096 pattern units, 65536 line units, 4096 enumerated
 matches, 50 ms search timeout, and approximately 20 ms cooperative work slice.
-Overlong/dense lines receive no partial overlay. Timeout suspension is rule/tab
-specific; ordinary unrelated saves do not reactivate it.
+Overlong/dense lines receive no partial overlay.
+
+The terminal tab owns the active highlight rule set revision and the rules
+suspended in its current session. A timeout in any pane suspends that rule
+in every pane of the tab, including panes opened later. Notify once per
+suspension. Other tabs using the same set continue with their own suspension
+state. Each pane evaluates its visible rows and owns its drawing results.
+Discard late results if the rule set or suspension state has changed since
+the evaluation began.
+
+When a rule is suspended, remove its styling from all panes immediately.
+If the remaining rules already establish the correct style for a range, draw it
+at once. Where the style is uncertain, show the terminal's underlying attributes,
+including received ANSI colors, until reevaluation determines the style.
+Reception and drawing continue during reevaluation.
+
+**Resume highlight rules** in any pane resumes all suspended rules in that
+tab. Saving a change to a suspended rule's pattern or Ignore case setting
+clears the suspension for that rule. Changes to its name, style, position or
+enabled flag alone preserve the suspension, as do edits to other rules.
+Only enabled rules are evaluated. A fresh terminal session starts with no
+suspended rules.
 
 Search remains literal, ordinal case-insensitive by default, normal retained
 content only, query <=1024 UTF-16 units. Cache at most 10000 matches but continue
 bounded navigation through uncached content; reaching the cache cap is not the
 end of search. Bound work by the same revision/cancellation and worker policy.
 Terminal content, selection/copy, logging, and transport never wait for a match.
+
+For a pane's Next or Previous command, use the same bounded scan to find the
+navigation target and collect matches for highlighting. As soon as the nearest
+match in the requested direction is certain, reveal and outline it in the
+invoking pane. For a wrapped result, first rule out any match between the
+navigation anchor and the end in that direction. Continue collecting highlights
+and updating the count without moving any pane again. Show a searching or partial
+state while the count is undetermined. Discard results superseded by a query or
+content revision.
+
+Within the tab's shared cache of 10,000 match ranges, give matches visible in
+its panes priority over offscreen matches. A pane can navigate to and outline
+its current match even when that range is outside the cache. Report an exact
+10,000 when that is the final count, and show `10,000+` once an additional match
+is confirmed.
 
 The [SFTP contract](file-transfer.md#file-management-deadlines-and-limits)
 defines separate bounds for transfer batches, channel buffers, requests,
@@ -250,7 +285,10 @@ The [desktop and device acceptance inventory](desktop-acceptance-inventory.md) t
 | --- | --- |
 | Deployment | Clean supported Windows 11 x64 with no additional runtime installation; bundled native dependencies; absence of optional fonts/device drivers handled as specified |
 | Localization/theme | English/Japanese/system language including fallback; live saved theme changes and OS app-preference changes; terminal fixed defaults and ANSI/highlight composition |
+| Highlight suspension in split panes | Time out a rule in one pane while another pane is evaluating it. Check both panes, a newly opened pane and a separate tab using the same rule set. Verify one notification, removal of the stopped style, and correct underlying colors while the replacement is pending. Resume two suspended rules from the other pane. In a separate case, save a style edit and then a pattern correction to verify that only the correction resumes the affected rule. |
 | Profiles/settings | All transport fields/defaults; basic activation versus editor validation; unknown optional preservation; version/corruption recovery; copied/moved/missing profiles; relative/UNC/case-sensitive/long paths; no secret fields |
+| Search navigation before the count is known | Invoke Next with a nearby match and a long unsearched tail. The invoking pane reveals the nearest match while the count is pending. Finishing the scan preserves both panes' positions and current matches. Repeat with Previous, including a case where wrapping is necessary. |
+| Search highlights in split panes | Show early and late output in separate panes with more than 10,000 matches across the tab and only a few visible in each pane. Both visible sets receive highlights within the shared cap. Navigate to an uncached match and verify its outline. Compare exactly 10,000 matches with 10,001 to check the count indicator. |
 | Windows | Double-click ordering, modal queue/cancel, shared unlock, last-tab detach/merge, closure racing activation, per-monitor DPI/removal, disconnected retained output |
 | Terminal/encoding | Every supported control family and reset; Tera Term reference vectors and declared differences; every codec identity; all relevant byte splits; malformed prefixes; JIS/kana/extensions; combining/emoji/right-edge edits/reflow |
 | Input | All key/mouse modes, Shift ownership, IME once-only commit, strict whole-unit rejects, preview/control filtering, pacing bounds/remember lifetime, Stop/rekey/disconnect, replies after paste |

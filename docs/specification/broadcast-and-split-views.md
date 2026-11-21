@@ -425,6 +425,11 @@ snapshot across visible panes. Search/highlight/UIA work retains application
 limits. Reject a layout mutation before commit if allocation cannot be admitted;
 keep the existing layout usable. See [resource limits](resources-and-validation.md).
 
+For both tab groups and terminal panes, the layout holds one reservation for
+each live split. A single undivided view has no split reservation. When a split
+collapses, its reservation is immediately available for another split, whichever
+side survives. A surviving subtree keeps the reservations for its own splits.
+
 ## Acceptance cases
 
 | Case | Required observation |
@@ -445,6 +450,7 @@ keep the existing layout usable. See [resource limits](resources-and-validation.
 | Mouse identity | No release to a non-press recipient; overlapping buttons, press-only/wheel modes, generation changes, classic limits, capture failure/loss, and Stop have explicit outcomes. |
 | Mouse host transfer | Capture success and one physical release verified across same/different window moves, source closure, DPI changes, and drag-and-drop; no reliance on unreliable GetPosition. |
 | Split creation/removal | Both axes and both levels work recursively. An outer split creates an empty group and an inner split shares the session. An empty group can be removed immediately. For a group with tabs, removal moves them directly to the sole destination or prompts for a choice among several. Tabs keep their order, sessions, and checks. Focus moves to the destination or the first remaining group. The final group stays open. |
+| Split budget after removal | At each level, split A into A and B. Close A in one run and B in another. In each run the split charge returns to baseline and can fund an immediate new split. In a nested layout with A alongside a C/D split, closing A leaves exactly one split charge. Use the current per-split charge (8 KiB today) when checking the budget. |
 | Grid versus view | Inner split/focus/scroll leaves grid unchanged; outer resize/shared zoom can resize; per-pane offsets/selections/current matches remain independent. |
 | IME | Same-tab cross-pane focus cancels uncommitted text; commit once, later Enter normal; menus/dialogs retain Windows semantics. |
 | Empty lifetime | Manual, automatic, and bulk closure leave the window and its groups open when the last tab closes. The empty groups accept new tabs. |

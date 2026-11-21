@@ -328,6 +328,32 @@ Opening a multi-format part is not a filesystem transaction. On a partial open
 failure, close successful handles, report failure, and leave any created empty
 files in place. Do not start transport or silently record only a subset.
 
+### Allocating a serial for a recording part
+
+At the verified destination, match existing filenames using the same expanded
+log filename template that generates the new name. Count a serial only if
+formatting its numeric value with the template reproduces the digits in the
+filename. Apply Windows filename comparison to the rest of the name and check
+all three recording suffixes, even when opening only one format. Start at the
+configured value or one above the highest matching serial, whichever is greater.
+Claim the base name for the part, recheck for competing files, and use that
+claim to open all selected formats. Competing starts must obtain distinct base
+names even when their selected formats do not overlap.
+
+During both the initial directory scan and the recheck, observe cancellation
+or preparation deadline expiry whenever directory enumeration returns control
+and before claiming a name or opening a file. Once cancellation or expiry is
+observed, stop scanning and issuing new file operations for that part, apart
+from cleanup. If a directory read is pending, the UI can report cancellation
+while the worker still holds its preparation slot. Release the slot when the
+underlying work and its cleanup finish.
+
+| Acceptance case | Expected result |
+| --- | --- |
+| Start a Text recording with `Run_<serial:0,4>` in a directory containing `Run_0007.raw.tttylog` and `Run_00042.log`. Then add `Run_9999.term.tttylog` and start another part. | The two new files are `Run_0008.log` and `Run_10000.log`. The template renders 42 as `0042`, so `00042` does not advance the sequence. All existing files retain their contents. |
+| Start Raw-only and Text-only recordings concurrently with the same template in an empty directory. | Each gets its own base name. Opening Raw and Text together in a single part uses one base name for both files. |
+| Cancel initial preparation during a directory read with more entries still to scan. Hold the read pending, then let it return. Repeat during the recheck after a name is claimed. | While the read is pending the preparation slot remains occupied. When control returns, the worker stops before reading another entry or opening a log. Cleanup releases any claim and the slot. Existing logs retain their contents and the cancelled attempt never starts transport. |
+
 ## Clipboard paste
 
 Accepted whole-codebase architecture Q24-Q27, clarified on 2026-11-18, combine
@@ -440,6 +466,25 @@ resources stay charged until actual release. Resulting local-echo state and
 later terminal mutations still require their existing terminal-state admission.
 
 ## Input ordering and future callers
+
+For ordinary keys and committed text, including IME commits, the terminal
+session owns encoding, ordered submission and local echo of definitely
+submitted complete units. Direct keyboard input, broadcast input and AI
+control share this behavior. Broadcast still captures and validates its targets.
+AI control still requires a valid grant and observation at submission. Mouse
+gestures and paced paste keep their existing state and lifetimes.
+
+The desktop keyboard path waits for submission and the applicable local echo.
+It requests the screen through the normal rendering path. A later failure to
+capture the screen is a display failure and does not change the send outcome
+or cause input to be replayed. Existing public send methods that return rows
+continue to return the post-send screen, including applicable local echo.
+
+Verify that one desktop key sends once and triggers no snapshot export as part
+of submission. In a separate case, refuse snapshot capacity after a confirmed
+send. Verify that the send succeeds, the subsequent capture reports its own
+failure, and the peer receives the key once. With capacity available, verify
+the returned rows through the existing send-and-observe methods.
 
 Preflight a whole input unit using a cloned encoder state; unencodable input
 does not mutate the live state or send a prefix. Serialize user input, paste,

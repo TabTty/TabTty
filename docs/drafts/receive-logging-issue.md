@@ -410,7 +410,9 @@ Contract for destination defaults, filename templates, and recording startup.
   Use Windows filename comparison and include matching files of every recording
   format. Concurrent allocations use distinct base names.
   The built-in templates count per date. An included time or UUID that changes
-  starts a distinct sequence.
+  starts a distinct sequence. The [recording part allocation contract](../specification/session-and-recording.md#allocating-a-serial-for-a-recording-part)
+  specifies how to match existing serial spellings and when to stop a cancelled
+  directory scan.
 - Migrate the existing date, time, microsecond, and sequence settings into the
   two application fallback templates. Use the new macro base name and keep
   overwrite disabled. Preserve any nonblank destination saved in a profile,
