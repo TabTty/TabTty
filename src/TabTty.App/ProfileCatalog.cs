@@ -24,6 +24,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
         ProfileEdit? Edit, long Reset, long Removal)
     {
         internal FileObjectIdentity? Identity { get; set; }
+        internal string? CompletedPath { get; set; }
     }
     private event Action? ProfileSaved;
     private event Action? RegistrationUsed;
@@ -687,38 +688,13 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
         {
             ConnectionProfile saved = pendingCommit!;
             var completion = outstanding!;
-            string? previous = completion.Original;
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            string location = completion.Edit?.Destination is { } destination && saved.IsSavedAt(destination)
-                ? destination : completion.Attempted;
-            string normalized = await NormalizeLocationAsync(location, timeout.Token);
-            var identity = await saved.CheckSavedRevisionAsync(normalized, timeout.Token);
-            if (identity is null || completion.Identity is { } expected && identity != expected)
-                throw new IOException(Text("ProfileTrustVersionChanged"));
-            completion.Identity = identity;
-            var authority = ReadTrust(completion.Attempted);
-            if (authority.Reset != completion.Reset || authority.Removal != completion.Removal)
-                throw new IOException(Text("ProfileTrustWriteFailed"));
-            if (previous is null)
-            {
-                if (authority.Registration is not null && authority.Version != saved.TrustVersion)
-                    throw new IOException(Text("ProfileFileInUse"));
-                path = authority.Registration is not null ? normalized :
-                    await RegisterSavedAsync(completion.Attempted, saved, completion.Reset, selectNewProfile: true, createdInApp: true);
-            }
-            else
-            {
-                path = completion.Edit is { } edit ? await FinishEditAsync(previous, saved, edit) : normalized;
-            }
-            editor.UseSavedRevision(saved);
-            onSaved?.Invoke(path, saved.DisplayName);
-            if (previous is not null) ProfileSaved?.Invoke();
+            path = await CompleteVerifiedSaveAsync(completion);
             profile = saved;
             pendingEdit = null;
             pendingCommit = null;
-            var completed = verifiedSaves.Where(pair => ReferenceEquals(pair.Value, completion)).Select(pair => pair.Key).ToArray();
-            foreach (string key in completed) verifiedSaves.Remove(key);
             outstanding = null;
+            editor.UseSavedRevision(saved);
+            onSaved?.Invoke(path, saved.DisplayName);
             if (BackupCleanupWarning(saved) is { } warning)
                 app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow, warning, Text("EditProfile"),
                     icon: MessageBoxImage.Warning));
@@ -747,6 +723,44 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 throw;
             }
         }
+    }
+
+    // Runs under registrationChanges. Several editors can observe the same pending save.
+    private async Task<string> CompleteVerifiedSaveAsync(PendingProfileSave completion)
+    {
+        ConnectionProfile saved = completion.Saved;
+        string? previous = completion.Original;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        string location = completion.CompletedPath ?? (completion.Edit?.Destination is { } destination && saved.IsSavedAt(destination)
+            ? destination : completion.Attempted);
+        string normalized = await NormalizeLocationAsync(location, timeout.Token);
+        var identity = await saved.CheckSavedRevisionAsync(normalized, timeout.Token);
+        if (identity is null || completion.Identity is { } expected && identity != expected)
+            throw new IOException(Text("ProfileTrustVersionChanged"));
+        if (completion.CompletedPath is { } completedPath) return completedPath;
+        completion.Identity = identity;
+        var authority = ReadTrust(completion.Attempted);
+        if (authority.Reset != completion.Reset || authority.Removal != completion.Removal)
+            throw new IOException(Text("ProfileTrustWriteFailed"));
+
+        string path;
+        if (previous is null)
+        {
+            if (authority.Registration is not null && authority.Version != saved.TrustVersion)
+                throw new IOException(Text("ProfileFileInUse"));
+            path = authority.Registration is not null ? normalized :
+                await RegisterSavedAsync(completion.Attempted, saved, completion.Reset, selectNewProfile: true, createdInApp: true);
+        }
+        else
+        {
+            path = completion.Edit is { } edit ? await FinishEditAsync(previous, saved, edit) : normalized;
+        }
+
+        completion.CompletedPath = path;
+        var completed = verifiedSaves.Where(pair => ReferenceEquals(pair.Value, completion)).Select(pair => pair.Key).ToArray();
+        foreach (string key in completed) verifiedSaves.Remove(key);
+        if (previous is not null) ProfileSaved?.Invoke();
+        return path;
     }
 
     private static string? BackupCleanupWarning(ConnectionProfile profile) => profile.RetainedSaveBackup is { } path

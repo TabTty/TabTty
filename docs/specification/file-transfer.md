@@ -24,12 +24,14 @@ tab is retained. When the user explicitly opens transfer after reconnect,
 replace the old disconnected view with the new generation. No outstanding work
 or prior selection is replayed.
 
-Accepted architecture Q10, amended on 2026-11-16, makes automatic disconnected-
-tab removal and the user-invoked Close disconnected tabs command close the
-transfer windows associated with their targeted tabs, just as explicit
-tab/window closure does. Already disconnected targets have no connection
-warning. Existing necessary cleanup, reporting, and wait/loss choices still
-apply; final exit follows the existing rule. The
+Under architecture Q10, **Close all disconnected tabs** and automatic
+disconnected-tab removal close the transfer windows associated with the tabs
+they remove, as explicit tab/window closure does. Under the [window contract](persistence-and-windows.md),
+the bulk command includes tabs marked with an exclamation mark on yellow after
+a failed or timed-out attempt or a communication error that ended an established
+connection. These tabs stay open for the user to read the reason. The targets
+need no connection-ending warning. Existing cleanup, reporting, and
+wait/loss choices still apply. Final exit follows the existing rule. The
 [closure design](tab-and-window-closure.md) records these not-yet-implemented
 changes and the unchanged actual-cleanup ownership.
 

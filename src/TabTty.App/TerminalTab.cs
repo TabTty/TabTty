@@ -168,9 +168,21 @@ internal sealed partial class TerminalTab : UserControl
     public event Action? CaptionChanged;
     public event Action? Disconnected;
     public bool IsRunning { get; private set; } = true;
-    public bool IsDisconnected => !IsRunning && (statusKey == "Disconnected" || connectedName is not null);
+    private enum ConnectionEnd { Pending, Normal, InitialCancelled, FailedBeforeConnect, FailedAfterConnect }
+    private ConnectionEnd connectionEnd;
+    public bool IsDisconnected => !IsRunning && (Macro is null
+        ? connectionEnd != ConnectionEnd.Pending : statusKey == "Disconnected" || connectedName is not null);
+    internal bool CloseAfterInitialCancellation => connectionEnd == ConnectionEnd.InitialCancelled;
+    internal bool CanAutoCloseOnDisconnect => connectionEnd == ConnectionEnd.Normal;
     internal string ConnectionStatus => status.Text;
-    public bool ShowDisconnectedIndicator => statusKey == "Disconnected" || IsDisconnected;
+    public bool ShowDisconnectedIndicator => Macro is null ? !IsRunning && connectionEnd == ConnectionEnd.Normal
+        : statusKey == "Disconnected" || IsDisconnected;
+    internal string? ConnectionWarning => Macro is not null || IsRunning ? null : connectionEnd switch
+    {
+        ConnectionEnd.FailedBeforeConnect => "ConnectionAttemptFailed",
+        ConnectionEnd.FailedAfterConnect => "ConnectionLost",
+        _ => null,
+    };
     public string TabCaption => connectedName ?? Path.GetFileNameWithoutExtension(path);
     public string ProfilePath => path;
     internal void UpdateProfilePath(string previous, string destination)
@@ -212,7 +224,8 @@ internal sealed partial class TerminalTab : UserControl
     {
         if (removed || ClosePending || Macro is not null || !Completion.IsCompleted) return;
         AiCollaboration.EndSharing(this);
-        if (!IsRunning)
+        bool reconnect = !IsRunning;
+        if (reconnect)
         {
             stop = new CancellationTokenSource();
             mouseInput = Channel.CreateBounded<TerminalMouseInput>(256);
@@ -224,15 +237,17 @@ internal sealed partial class TerminalTab : UserControl
             IsRunning = true;
             appliedGrid = (80, 24);
             sshMessages.Clear();
+            connectionEnd = ConnectionEnd.Pending;
             SetStatus("Connecting");
         }
-        connectionCompletion = ConnectAsync(opened);
+        connectionCompletion = ConnectAsync(opened, reconnect: reconnect);
     }
 
     private async Task ConnectAsync(Action<ConnectionProfile>? opened, TaskCompletionSource<TerminalSession>? ready = null,
-        CancellationToken attempt = default, RecordingOverrides recordingOverrides = default)
+        CancellationToken attempt = default, RecordingOverrides recordingOverrides = default, bool reconnect = false)
     {
         var generation = stop;
+        bool established = false;
         lastRecordingStatus = null;
         try
         {
@@ -319,6 +334,7 @@ internal sealed partial class TerminalTab : UserControl
                 NotifyDestinationChange(session, previousDestination, destination, generation.Token);
             lastDestination = destination;
             connectedName = session.DisplayName;
+            established = true;
             SetStatus("Connected");
             Connected?.Invoke(connectedName);
             highlightState.Resume();
@@ -332,12 +348,14 @@ internal sealed partial class TerminalTab : UserControl
             ready?.TrySetResult(session);
             await ReceiveOutputAsync(session);
             await session.WaitForTerminalPeerCloseAsync(stop.Token);
+            connectionEnd = session.RecordingStartFailure is null ? ConnectionEnd.Normal : ConnectionEnd.FailedAfterConnect;
             if (session.RecordingStartFailure is { } logFailure) SetStatus("Failed", LogStartError(logFailure));
             else SetStatus("Disconnected");
         }
         catch (OperationCanceledException exception) when (stop.IsCancellationRequested || exception is SshInteractionCancelledException)
         {
             ready?.TrySetException(exception);
+            connectionEnd = established || reconnect ? ConnectionEnd.Normal : ConnectionEnd.InitialCancelled;
             SetStatus("Disconnected");
         }
         catch (Exception exception) when (exception is IOException or SocketException or NotSupportedException
@@ -346,9 +364,14 @@ internal sealed partial class TerminalTab : UserControl
             or FormatException or System.Text.Json.JsonException or KeyNotFoundException or MacroError)
         {
             ready?.TrySetException(exception);
-            if (stop.IsCancellationRequested) SetStatus("Disconnected");
+            if (stop.IsCancellationRequested && session?.RecordingStartFailure is null)
+            {
+                connectionEnd = established || reconnect ? ConnectionEnd.Normal : ConnectionEnd.InitialCancelled;
+                SetStatus("Disconnected");
+            }
             else
             {
+                connectionEnd = established ? ConnectionEnd.FailedAfterConnect : ConnectionEnd.FailedBeforeConnect;
                 string? credentialError = exception switch
                 {
                     SshCredentialFailureException => exception.Message,
@@ -397,7 +420,11 @@ internal sealed partial class TerminalTab : UserControl
                     catch (Exception exception) when (exception is IOException or InvalidOperationException)
                     { if (!removed) SetStatus("Failed", exception.Message); }
                 }
-                if (closing.RecordingStartFailure is { } failure) SetStatus("Failed", LogStartError(failure));
+                if (closing.RecordingStartFailure is { } failure)
+                {
+                    connectionEnd = established ? ConnectionEnd.FailedAfterConnect : ConnectionEnd.FailedBeforeConnect;
+                    SetStatus("Failed", LogStartError(failure));
+                }
                 else if (closing.RecordingError is { } problem) SetStatus(statusKey, problem);
             }
             resizeTimer.Stop();
@@ -415,6 +442,8 @@ internal sealed partial class TerminalTab : UserControl
         frameTimer.Stop();
         searchRefreshTimer.Stop();
         searchWork?.Cancel();
+        searchMatches = [];
+        searchMemory.Dispose();
         paneLayout?.ReleaseReservations();
         foreach (var pane in panes.Values) pane.Highlight.Detach();
         pendingFrame = null;
@@ -1034,7 +1063,7 @@ internal sealed partial class TerminalTab : UserControl
 
     private void ScheduleSearchRefresh()
     {
-        if (searchBar.Visibility != Visibility.Visible || searchQuery.Text.Length == 0) return;
+        if (removed || searchBar.Visibility != Visibility.Visible || searchQuery.Text.Length == 0) return;
         searchRefreshTimer.Stop();
         searchRefreshTimer.Start();
     }
@@ -1042,7 +1071,7 @@ internal sealed partial class TerminalTab : UserControl
     private async Task SearchAsync(bool backwards, bool navigate = true)
     {
         searchRefreshTimer.Stop();
-        if (searchBar.Visibility != Visibility.Visible) return;
+        if (removed || searchBar.Visibility != Visibility.Visible) return;
         searchWork?.Cancel();
         if (snapshot is not { IsAlternateScreen: false } captured || searchQuery.Text.Length == 0)
         {
@@ -1055,6 +1084,13 @@ internal sealed partial class TerminalTab : UserControl
         bool caseSensitive = matchCase.IsChecked == true;
         TerminalSurface operated = output;
         TerminalMatch? anchor = panes[operated].CurrentMatch;
+        if (navigate && anchor is null && captured.Count != 0)
+        {
+            var (first, end) = operated.VisibleRows();
+            int row = Math.Min(backwards ? Math.Max(first, end - 1) : first, captured.Count - 1);
+            int offset = backwards ? int.MaxValue : -1;
+            anchor = new TerminalMatch(row, offset, row, offset);
+        }
         SetSearchStatus("Searching");
         try
         {
@@ -1087,7 +1123,7 @@ internal sealed partial class TerminalTab : UserControl
         {
             if (searchWork == work) searchWork = null;
         }
-        bool IsCurrent() => !work.IsCancellationRequested && ReferenceEquals(searchWork, work) &&
+        bool IsCurrent() => !removed && !work.IsCancellationRequested && ReferenceEquals(searchWork, work) &&
             snapshot is { IsAlternateScreen: false } current && current.HasSameHighlightText(captured);
 
         void Navigate(TerminalMatch? found)
@@ -1100,6 +1136,7 @@ internal sealed partial class TerminalTab : UserControl
 
     private void SetSearchMatches(TerminalMatch[] matches)
     {
+        if (removed) return;
         try { searchMemory.Resize(matches.LongLength * 128); }
         catch (ResourceLimitException) { matches = []; searchMemory.Resize(0); }
         searchMatches = matches;

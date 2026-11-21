@@ -41,6 +41,25 @@ internal static class McpArguments
     internal static JsonElement Shape(JsonElement schema, int index) =>
         schema.TryGetProperty("oneOf", out var variants) ? variants[index] : schema;
 
+    internal static bool TrySelectInputForm(JsonElement schema, string kind, string? action, out JsonElement form)
+    {
+        foreach (var candidate in schema.GetProperty("oneOf").EnumerateArray())
+        {
+            var fields = candidate.GetProperty("properties");
+            if (Includes(fields.GetProperty("kind"), kind) &&
+                (action is null || fields.TryGetProperty("action", out var actions) && Includes(actions, action)))
+            {
+                form = candidate;
+                return true;
+            }
+        }
+        form = default;
+        return false;
+
+        static bool Includes(JsonElement field, string value) =>
+            field.GetProperty("enum").EnumerateArray().Any(choice => choice.GetString() == value);
+    }
+
     private static object WithCursor(object initial) =>
         Either(initial, Object([("session", Session), ("cursor", Cursor)], ["session", "cursor"]));
 

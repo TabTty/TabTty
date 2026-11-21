@@ -251,6 +251,12 @@ static across sharing states and both supported protocol versions. The GUI
 continues to check current sharing, control, and handle validity and to resolve
 duplicate input in the order specified for each operation.
 
+For `tabtty_send_input.input`, the shared definition selects a form by
+`kind` and, for mouse input, by `action`. The six forms are text, paste,
+key, mouse press/release, mouse wheel and mouse move. The GUI reads the
+selected form's fields, defaults and bounds directly. The order of the
+forms in the published `oneOf` has no effect on input interpretation.
+
 Tool results contain `structuredContent`, `content: [{type: "text", text: ...}]`,
 and `isError`. The text is the same structured object serialized as JSON, not a
 second unbounded prose transcript. Operational errors set `isError: true` and

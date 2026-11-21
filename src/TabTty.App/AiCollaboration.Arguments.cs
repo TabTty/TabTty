@@ -22,6 +22,13 @@ internal sealed partial class AiCollaboration
         internal Arguments Object(string name) => value.TryGetProperty(name, out var property)
             ? new Arguments(property, Field(name)) : throw new ToolException("invalid_request");
 
+        internal Arguments SelectInputForm(string kind, string? action)
+        {
+            if (!McpArguments.TrySelectInputForm(schema, kind, action, out var form))
+                throw new ToolException(action is null ? "unsupported_action" : "invalid_request");
+            return new Arguments(value, form);
+        }
+
         private JsonElement Field(string name)
         {
             if (!schema.TryGetProperty("oneOf", out var variants))
@@ -33,7 +40,8 @@ internal sealed partial class AiCollaboration
 
         internal void Only(int variant = 0)
         {
-            var fields = McpArguments.Shape(schema, variant).GetProperty("properties");
+            var shape = McpArguments.Shape(schema, variant);
+            var fields = shape.GetProperty("properties");
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var property in value.EnumerateObject())
                 if (!fields.TryGetProperty(property.Name, out _) || !seen.Add(property.Name))
@@ -114,11 +122,13 @@ internal sealed partial class AiCollaboration
         internal static InputAction Parse(Arguments args)
         {
             string kind = args.String("kind", 5);
+            string? mouseAction = kind == "mouse" ? args.String("action", 7) : null;
+            args = args.SelectInputForm(kind, mouseAction);
+            args.Only();
             switch (kind)
             {
                 case "text":
                 case "paste":
-                    args.Only(kind == "text" ? 0 : 1);
                     string text = args.String("text");
                     if (TerminalPaste.Encoding.GetByteCount(text) > 256 * 1024)
                         throw new ToolException("resource_limit");
@@ -127,16 +137,14 @@ internal sealed partial class AiCollaboration
                         CharacterDelay: kind == "paste" ? args.Integer("character_delay_ms") : 0,
                         LineDelay: kind == "paste" ? args.Integer("line_delay_ms") : 0);
                 case "key":
-                    args.Only(2);
                     return new InputAction(kind, ParseKey(args.String("key"), args.Modifiers()));
                 case "mouse":
-                    string action = args.String("action", 7);
+                    string action = mouseAction!;
                     int button;
                     switch (action)
                     {
                         case "press":
                         case "release":
-                            args.Only(3);
                             button = args.String("button", 6) switch
                             {
                                 "left" => 0, "middle" => 1, "right" => 2,
@@ -144,14 +152,12 @@ internal sealed partial class AiCollaboration
                             };
                             break;
                         case "wheel":
-                            args.Only(4);
                             button = args.String("wheel", 4) switch
                             {
                                 "up" => 4, "down" => 5, _ => throw new ToolException("invalid_request"),
                             };
                             break;
                         case "move":
-                            args.Only(5);
                             button = 3;
                             break;
                         default: throw new ToolException("invalid_request");

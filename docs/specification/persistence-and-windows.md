@@ -203,24 +203,70 @@ former `logging.allowOverwrite` Boolean has no effect. A macro can override
 the policy for its connection through `logCollision`.
 [Recording naming policy](../drafts/receive-logging-issue.md#log-filename-template-redesign)
 
-The auto-close preference applies to subsequent disconnections after saving.
+The auto-close preference applies to subsequent ordinary disconnections and
+cancelled reconnects after saving. Label it **Automatically close tabs on
+normal disconnection**. Use this help text: “This also applies when you
+cancel a reconnect. If a connection fails, times out, or ends with a
+communication error, its tab stays open so you can see the cause.” Persist the
+selection under the existing `autoCloseDisconnectedTabs` key.
 Broadcast scope is captured at Start under Q181, while Q187's broadened
 ordinary Stop command follows the saved global preference immediately. Q197
 resets selection to all-selected when the scope mode changes; its next-Start
 timing is confirmed in Q199. Never persist active
 broadcast modes, target checks, per-window first-use/pending-reset state, or
 split layouts. See [broadcast and split views](broadcast-and-split-views.md).
-Retained disconnected tabs show a broken-link icon before the connection name.
-The tooltip and accessible tab name include the localized disconnected status.
-Close disconnected tabs in the current window from the tab bar context menu.
+The terminal tab owns the outcome of its current connection attempt. Opening a
+new tab starts an initial connection. Choosing Reconnect in an existing tab
+starts a reconnect, including after a failed initial attempt. A disconnected
+tab has neither a live connection nor an ongoing attempt. Its attempt ended
+in an ordinary disconnection, cancellation, or failure. Use the recorded
+outcome and whether the attempt reached [Connected](session-and-recording.md#ownership-and-lifecycle)
+to select the displayed reason and automatic-close behavior.
+Starting a reconnect clears the previous attempt's icon.
+A previous connection name can supply the tab caption. A late notification from
+an earlier attempt cannot mark or close the tab for the new attempt.
+
+| Outcome | With automatic closure on | With automatic closure off |
+| --- | --- | --- |
+| Initial connection or reconnect fails or times out before Connected | Keep the tab with a yellow warning icon | Keep the tab with a yellow warning icon |
+| A communication error ends an established connection | Keep the tab with a yellow warning icon | Keep the tab with a yellow warning icon |
+| An established connection ends normally, locally or through an orderly peer close | Close the tab | Keep the tab with a broken-link icon |
+| The user cancels a reconnect before Connected | Close the tab | Keep the tab with a broken-link icon |
+| The user cancels an initial connection before Connected | Close the tab | Close the tab |
+
+For either failure, retain the available output and the specific failure
+reason. Show a dark exclamation mark on yellow in the header's connection
+indicator position before the tab name, legible in light and dark themes.
+The tooltip and accessible tab name distinguish a failed connection attempt
+from an established connection lost to an error, in the selected language.
+An error that leaves the connection live does not qualify the tab for closure.
+
+Cancellation ends the affected attempt without a second connection-ending
+confirmation. An individual cancellation leaves other attempts running. If
+the user cancels a shared vault-unlock prompt, apply the initial or reconnect
+rule separately to each affected tab. Tab removal follows the
+[tab closure procedure](tab-and-window-closure.md).
+
+Tabs retained after an ordinary disconnection or a cancelled reconnect show
+the broken-link icon before the name. Their tooltip and accessible tab name
+include the localized disconnected status.
+The tab bar context menu's **Close all disconnected tabs** command
+applies across every tab group in the current window, with either value of
+the automatic-close preference. A terminal tab qualifies once its attempt
+has ended in failure (including timeout), cancellation, or disconnection and
+it has no live connection. This includes tabs with a yellow warning icon
+after failure or communication loss and retained tabs with a broken-link icon.
+A live connection or an ongoing
+attempt, including one waiting for authentication or other user input, stays
+open. Settings tabs, editors, and other windows stay open. With no eligible
+tabs the command is disabled.
 Accepted architecture Q10, amended on 2026-11-16, makes both this user-invoked
 bulk command and automatic disconnected-tab removal close the affected tabs'
 associated transfer windows under the same cleanup/reporting policy as explicit
 tab/window closure. Already disconnected targets have no connection warning;
 existing necessary cleanup, reporting, and wait/loss choices still apply.
 Disconnect or peer loss retains transfer results while the terminal tab is
-retained. See the [closure design](tab-and-window-closure.md); these bulk and
-automatic-removal behavior changes are not yet implemented.
+retained. See the [closure design](tab-and-window-closure.md).
 Closing the last terminal or settings/editor tab leaves its window open. This
 applies to manual closure, automatic closure on disconnect, and the bulk close
 command. A single-group window returns to its welcome screen. A window with
@@ -325,6 +371,18 @@ first. Host-store failures follow explicit recovery and must not silently turn
 known hosts into unrecognized hosts eligible for fresh first-use approval.
 
 ### Completing a profile save after reopening the editor
+
+The profile catalog coordinates both **Save** and **Recheck previous save**
+for all profile editors. It uses the existing file operation to write the
+profile or recheck an uncertain file outcome. Once the saved revision is
+verified, the catalog owns completion of the original registration or rename
+request. The editor owns the current draft and displays the file and
+registration outcomes separately.
+
+Save and recheck requests share the catalog's existing serialization across
+profiles. A request for profile B waits while the catalog is processing one
+for profile A. If A returns with registration pending, B can proceed while
+A awaits the user's explicit recheck.
 
 When the profile file is verified but its requested registration or rename is
 unfinished, report both outcomes. For this application run, retain the saved
@@ -613,6 +671,13 @@ open at the same path and refresh its state.
 
 ### Vault selection and operation hosting
 
+For Restore and Archive, the main menu, management tab and standalone editor
+each call the same file-bound operation for the requested action. The menu
+and management tab target the selected vault at invocation. A standalone
+editor targets its opened file. The target's owner admits the request once,
+checks for conflicting work and reports the verified outcome to the initiating
+view. That view hosts the prompts and presents the result.
+
 Management tabs and standalone editors use the vault module's named complete
 operations on a non-secret file-bound context. UI owners provide localized
 forms, input, file pickers, required confirmation/impact display and window
@@ -691,6 +756,7 @@ final-exit rules. No hidden lifetime or session-recording timeout is introduced.
 | Select two `.ttty` files and choose Edit | Two editable windows and independent saves. With no running TabTty, the first launch shows only editors. Editing creates neither a registration nor a connection. |
 | Reopen a profile under edit from the other entry point | Restore and activate the existing editor with its draft. A copy at a different location opens separately. |
 | Reopen a verified profile whose registration failed, then choose **Recheck previous save** | Opening alone leaves registration pending. Rechecking completes registration once for the verified revision and preserves later draft edits. Rechecking after external replacement reports the changed file. A trust reset cannot be undone by the old request. |
+| Start a save for B while the catalog is processing a save for A, then let A's registration update fail after its file is verified | B waits for A's catalog operation to return. B can then save independently while A's verified revision awaits explicit recheck. |
 | One profile in a multi-selection fails to load | Report that path's error. The other admitted file actions proceed. |
 | Open or edit one `.tttykey`, or select multiple vault files | Single-file verbs open one editor. A vault invocation carrying multiple paths is rejected before opening or unlocking a file. |
 | Choose **Manage vault** with a missing or zero-byte target | Cancelling setup keeps the current view. Verified initialization opens the management tab. The backup restore command remains available in the vault menu before setup. |
@@ -702,6 +768,7 @@ final-exit rules. No hidden lifetime or session-recording timeout is introduced.
 | Switch the selected vault from A to B while both are open | A and B keep their targets. The tab and subsequent connections use B's existing unlock. |
 | Close the last terminal window with a profile editor open | Preserve the editor and its draft. A later normal launch opens profile selection. Exiting after the last editor closes ends the shared unlock. |
 | Open an empty or missing vault via Explorer, or archive a valid vault in its editor | The empty or missing target produces an error. Successful archive shows the new location and closes its editor after acknowledgment. |
+| With vault A selected, restore vault B in its standalone editor, then archive B from that editor | Restore refreshes the editor at B's path. Archive displays B's verified destination and closes that editor after acknowledgment. A stays selected and its file is untouched. |
 
 Verify later: all save/recovery outcomes, unknown fields, duplicate IDs/keys,
 same-ID copies, missing/removable profiles, relative paths through links, case-

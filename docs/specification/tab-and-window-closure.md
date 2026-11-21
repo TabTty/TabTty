@@ -18,8 +18,8 @@ identify and review affected targets, obtain the existing confirmation decision,
 validate target/generation ownership, coordinate termination through the existing
 owners, handle waiting/failures and permitted cleanup adoption, and request
 visual removal through existing layout/application coordination. User-invoked
-bulk closure and automatic closure of disconnected tabs use this workflow with
-Q10's target scope. Automatic lifecycle notifications enter the same complete
+bulk closure and automatic tab closure use this workflow with the scopes
+specified below. Automatic lifecycle notifications enter the same complete
 closure coordination; they do not directly remove the view and bypass cleanup.
 The UI supplies intent, presents required decisions, and observes an outcome;
 it does not combine Disconnect, Completion, transfer close, abandonment, and
@@ -48,17 +48,31 @@ settings-save, or macro-runtime policy.
 | --- | --- |
 | Explicit single terminal-tab closure | Close windows associated with the targeted tab using the existing cleanup/reporting policy |
 | Explicit terminal-window closure | Close transfer windows associated with its targeted terminal tabs; combine required connection/file-work confirmation |
-| User-invoked Close disconnected tabs in the current window (Q10) | Close windows associated with the eligible disconnected tabs being closed, matching explicit closure |
+| User-invoked **Close all disconnected tabs** in the current window | Close the transfer windows of each targeted terminal tab under the explicit-closure policy |
 | Automatic disconnected-tab closure under the saved setting (amended Q10) | Close windows associated with the removed tab using the same cleanup/reporting policy as explicit closure |
 | Disconnect/peer loss while the terminal tab remains open | Preserve disconnected transfer-result windows while the application remains running |
 | Tab move, pane removal, or layout-only group change | Preserve the existing session/transfer lifetime; use the accepted move/layout contract |
 | Final application exit | Apply the existing exit rule; transfer-result windows do not keep a background-only run alive |
 
-Q10 changes the current bulk and automatic paths, which only remove tabs and
-leave their transfer windows. Bulk remains scoped to eligible disconnected
-tabs in the current window; automatic closure remains scoped to its affected
-tab. Neither targets live/connecting tabs, other windows, or unrelated result
-windows. Disconnected targets need no connection-ending
+**Close all disconnected tabs** acts across all tab groups in the invoking window.
+It includes retained tabs with a broken-link icon (an orderly disconnect or
+a user-cancelled reconnect) and retained tabs with a warning icon (a failed or
+timed-out connection attempt, or a communication error that ended an established
+connection). Either group alone enables the command, regardless of the saved
+automatic-close setting. Connected tabs, active attempts including authentication
+and other user-input waits, settings and editors stay open. A recording error
+that leaves a connection running does not make its tab eligible.
+
+An orderly end of an established connection and a user-cancelled reconnect
+follow the automatic-close setting. A user-cancelled initial connection
+closes its tab with either setting. A failed or timed-out attempt and an
+established connection ended by a communication error retain their tabs
+even with automatic closure enabled. The reason and retained output remain
+available until the user chooses a manual closure. See the
+[tab outcome contract](persistence-and-windows.md).
+
+Bulk and automatic closure follow Q10's transfer cleanup for each target.
+Closed connections and completed attempts need no connection-ending
 warning. Existing active-file-work confirmation and known-unresolved-cleanup
 reporting still apply where required; no cancellation starts before its
 required approval. Automatic closure is not permission to skip a required
@@ -249,6 +263,13 @@ do not establish these target guarantees and have not been rerun by this review.
 
 | Complete-operation case | Required observable outcome |
 | --- | --- |
+| With automatic closure on, fail an initial connection, time out a reconnect before Connected, and interrupt an established connection with a communication error. Use a window with only those three tabs. Inspect it in light and dark themes and in English and Japanese, then run **Close all disconnected tabs**. | All three stay open until the command. Each shows the reason and available output. Its only connection-status icon is a dark exclamation mark on yellow before the name, including a previous connection name. The tooltip and accessible tab name convey failure in the selected language. The command closes all three, leaves the window open and becomes disabled. |
+| Cancel the initial connection in a new tab before Connected, with close-on-disconnect off and on. | Both times the affected tab closes without another disconnect confirmation. Other sessions continue. Closing the last tab leaves the window open. |
+| In an existing tab, cancel a reconnect before Connected. Repeat with close-on-disconnect off and on, including a tab whose first attempt failed. | Off retains the tab and available output with the broken-link icon. On closes the tab through the usual procedure. |
+| With automatic closure off, place an orderly disconnect, a user-cancelled reconnect and a failed attempt in different tab groups of one window. Also open settings, an editor, a tab waiting for authentication, and a connected tab whose recording alone has failed. Leave a disconnected tab in another window. Run **Close all disconnected tabs**. | The command closes the three completed targets in its own window with the usual transfer cleanup. All other tabs remain. The authentication attempt can continue and the connected tab still accepts input. The command is now disabled in this window. |
+| End an established connection by local disconnect or orderly peer closure. Exercise the saved automatic-close setting both ways. | With automatic closure on, the affected tab enters the usual close procedure. With it off, the retained tab shows the broken-link icon and is eligible for bulk closure in its own window. |
+| The bulk command selects a failed tab. Start a reconnect in that tab before closure commits, and hold it at authentication. | Revalidation detects the new attempt. The command cannot remove the tab or cancel its reconnect, and reports the changed target under Q14. |
+| Reconnect from a failed or disconnected tab, then deliver a delayed completion from the previous attempt. | Starting the attempt clears the old icon. The delayed result cannot restore it or close the tab. |
 | A reviewed transfer finishes before the answer | The same answer closes the same targets without restarting confirmation |
 | Close A, then close its A/B window while A is draining | A's existing execution is joined; B receives applicable confirmation; window closure needs no second click |
 | Decline that later window confirmation | No new close-induced effects on B; A's independently accepted close continues and remains visible in the outcome |

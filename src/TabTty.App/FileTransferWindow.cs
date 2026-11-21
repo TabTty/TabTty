@@ -40,8 +40,6 @@ internal sealed class FileTransferWindow : Window
     private bool disconnected, closing, closed;
     private bool dismissalApproved;
     private Task<TransferWindowCloseResult>? closeRequest;
-    private bool omittedResults;
-    private int resultCharacters;
     private long lastProgress;
     private Point dragStart;
     private Row? dragRow;
@@ -70,6 +68,9 @@ internal sealed class FileTransferWindow : Window
         footer.Children.Add(status);
         footer.Children.Add(progress);
         AutomationProperties.SetName(results, Text("TransferResults"));
+        var row = new FrameworkElementFactory(typeof(TextBlock));
+        row.SetBinding(TextBlock.TextProperty, new Binding { Converter = new ResultTextConverter() });
+        results.ItemTemplate = new DataTemplate { VisualTree = row };
         footer.Children.Add(results);
         var commands = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
         footer.Children.Add(commands);
@@ -112,6 +113,7 @@ internal sealed class FileTransferWindow : Window
         AutomationProperties.SetName(remote.Path, Text("TransferPath"));
         foreach (var (control, key) in labels) control.Content = Text(key);
         foreach (var (column, key) in columns) column.Header = Text(key);
+        if (results.ItemsSource is not null) results.Items.Refresh();
     }
 
     private async Task InitializeAsync()
@@ -125,6 +127,7 @@ internal sealed class FileTransferWindow : Window
             files = new TransferFiles(client, session.FileTransferWait, ownership,
                 new System.Windows.Interop.WindowInteropHelper(this).Handle);
             operations = new FileOperations(files, ownership, connection.Token);
+            results.ItemsSource = operations.Results;
             operations.Changed += OperationChanged;
             status.Text = "";
             string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
@@ -359,20 +362,13 @@ internal sealed class FileTransferWindow : Window
 
     private void OperationChanged(FileOperationUpdate update)
     {
-        if (closed) return;
-        if (closing && update is not FileOperationUpdate.Entry) return;
+        if (closed || closing) return;
         switch (update)
         {
             case FileOperationUpdate.Started:
-                results.Items.Clear();
-                resultCharacters = 0;
-                omittedResults = false;
                 status.Text = Text("TransferWorking");
                 progress.IsIndeterminate = true;
                 UpdateActions();
-                break;
-            case FileOperationUpdate.Entry entry:
-                AddResult(entry.Path, entry.Reason);
                 break;
             case FileOperationUpdate.Progress report:
                 ReportProgress(report.Path, report.Bytes, report.Total);
@@ -426,18 +422,15 @@ internal sealed class FileTransferWindow : Window
         remote.List.IsEnabled = remote.IsListed;
     }
 
-    private void AddResult(string path, string key)
+    private sealed class ResultTextConverter : IValueConverter
     {
-        if (omittedResults) return;
-        string line = $"{Text(key)}  {path}";
-        if (results.Items.Count >= SftpClient.MaxEntries || line.Length > 2_000_000 - resultCharacters)
-        {
-            omittedResults = true;
-            results.Items.Add(Text("TransferResultsLimit"));
-            return;
-        }
-        resultCharacters += line.Length;
-        results.Items.Add(line);
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture) =>
+            value is FileOperationUpdate.Entry entry
+                ? entry.Path.Length == 0 ? Text(entry.Reason) : $"{Text(entry.Reason)}  {entry.Path}"
+                : "";
+
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) =>
+            Binding.DoNothing;
     }
 
     private void ReportProgress(string label, long bytes, long? total)

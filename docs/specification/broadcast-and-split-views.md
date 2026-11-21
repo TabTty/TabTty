@@ -318,12 +318,19 @@ reports recording cleanup under [session and recording](session-and-recording.md
 Preserve associated [SFTP close/transfer rules](file-transfer.md). Split removal
 alone has none of these disconnect effects.
 
-Architecture Q10, amended on 2026-11-16, applies the same transfer-window closure
-and cleanup/reporting policy to the user-invoked bulk Close disconnected tabs
-command and automatic disconnected-tab removal as to explicit tab/window
-closure. Already disconnected targets have no connection warning; existing
-necessary cleanup, reporting, and wait/loss choices still apply. Disconnect or
-peer loss preserves transfer results when the terminal tab is retained. The
+**Close all disconnected tabs** covers every tab group in the current window.
+An exclamation mark on yellow marks an abnormal disconnection, such as a failed
+or timed-out attempt or a communication error that ended an established
+connection. These tabs stay open for the user to read the reason and are
+eligible for the bulk command. An ongoing attempt, including one waiting for
+authentication, stays open. Normal disconnections follow the automatic-close
+preference in the [window contract](persistence-and-windows.md).
+
+Under architecture Q10, the bulk command and automatic disconnected-tab removal
+close the affected transfer windows as
+explicit tab/window closure does. The targets need no connection-ending
+warning. Existing cleanup, reporting, and wait/loss choices still apply.
+Disconnect or peer loss preserves transfer results when the terminal tab is retained. The
 [closure design](tab-and-window-closure.md) records these pending implementation
 changes.
 

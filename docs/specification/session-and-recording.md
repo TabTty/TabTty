@@ -263,6 +263,16 @@ each retain their usual encoding and add no separator between intervals. Open
 all selected files before truncating or writing any. A file still held by a
 writer causes a start failure under every policy.
 
+The recording lifecycle requests each part through the same preparation
+operation on initial start, resume and retry. Using the connection's recording
+settings, this operation expands the name for the new part, rechecks the
+destination, claims a serial when needed and opens the complete set of selected
+files. On failure or cancellation before handoff, preparation closes the
+handles it acquired and releases its name claim. The writer takes ownership of
+the prepared files for that part only. The recording lifecycle chooses the
+part number and when to activate the recording interval. If it has accepted a
+prepared part but can no longer activate it, it closes that part.
+
 | Boundary | Required ordering |
 | --- | --- |
 | Initial connection | Open all selected files successfully before starting transport; no files for Disabled |
@@ -360,6 +370,7 @@ underlying work and its cleanup finish.
 
 | Acceptance case | Expected result |
 | --- | --- |
+| With Raw and Text selected for overwrite, hold the existing Text file open for writing. Try an initial start, then repeat on resume of a separate session. | Both attempts close any handles they acquired and preserve the existing Raw bytes. The first attempt stops before transport starts. The failed resume closes the established connection. |
 | Start a Text recording with `Run_<serial:0,4>` in a directory containing `Run_0007.raw.tttylog` and `Run_00042.log`. Then add `Run_9999.term.tttylog` and start another part. | The two new files are `Run_0008.log` and `Run_10000.log`. The template renders 42 as `0042`, so `00042` does not advance the sequence. All existing files retain their contents. |
 | Start Raw-only and Text-only recordings concurrently with the same template in an empty directory. | Each gets its own base name. Opening Raw and Text together in a single part uses one base name for both files. |
 | Cancel initial preparation during a directory read with more entries still to scan. Hold the read pending, then let it return. Repeat during the recheck after a name is claimed. | While the read is pending the preparation slot remains occupied. When control returns, the worker stops before reading another entry or opening a log. Cleanup releases any claim and the slot. Existing logs retain their contents and the cancelled attempt never starts transport. |

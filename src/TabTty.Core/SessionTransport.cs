@@ -75,6 +75,7 @@ internal sealed class SessionTransport
     internal bool IsSerial => profile.Type == "serial" || wire is SerialSessionWire;
     internal bool CanSendAfterEof => wire is SshSessionWire { PeerClosed.IsCompleted: false };
     internal Task PeerClosed => wire is SshSessionWire ssh ? ssh.PeerClosed : Task.CompletedTask;
+    internal Exception? PeerCloseFailure => (wire as SshSessionWire)?.PeerCloseFailure;
     internal string? SshDetails => (wire as SshSessionWire)?.Details;
     internal bool CanSetDtr => wire is SerialSessionWire { CanSetDtr: true };
     internal bool CanSetRts => wire is SerialSessionWire { CanSetRts: true };

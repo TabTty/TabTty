@@ -148,7 +148,7 @@ internal sealed class VaultController(App app) : IDisposable
 
     public Task UnlockFromMenuAsync(MainWindow owner) => Selected.UnlockFromMenuAsync(owner);
     public Task ManageAsync(MainWindow owner) => Selected.ManageAsync(owner);
-    public Task RestoreFromMenuAsync(MainWindow owner) => Selected.RestoreFromMenuAsync(owner);
+    public Task RestoreFromMenuAsync(MainWindow owner) => Selected.RestoreAsync(owner);
     public Task ArchiveAsync(MainWindow owner) => Selected.ArchiveAsync(owner);
 
     public Task ChoosePasswordAsync(Window owner, Action<string> choose) =>
@@ -252,15 +252,14 @@ internal sealed class VaultController(App app) : IDisposable
             form.AddActionRow(() =>
             {
                 requiresVault.Add(Add("BackupVault", static (file, window) => file.BackupAsync(window)));
-                Add("RestoreVault", static (file, window) => file.RestoreAsync(window));
+                form.AddAsyncAction("RestoreVault", () => target().RestoreAsync(form.OwnerWindow));
                 requiresVault.Add(Add("ChangeMaster", static (file, window) => file.ChangeMasterAsync(window)));
                 Add("RecheckFilePublication", static (file, window) => file.ReconcilePublicationAsync(window));
                 form.AddAsyncAction("ArchiveVault", async () =>
                 {
                     Window window = form.OwnerWindow;
                     VaultFileController file = target();
-                    bool archived = false;
-                    await file.RunAsync(window, async () => archived = await file.ArchiveFileAsync(window));
+                    bool archived = await file.ArchiveAsync(window);
                     if (archived && window is VaultEditorWindow editor) editor.CloseAfterArchive();
                 });
             });
