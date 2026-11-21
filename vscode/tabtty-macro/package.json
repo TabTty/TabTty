@@ -1,0 +1,22 @@
+{
+  "name": "tabtty-macro",
+  "displayName": "TabTty Macro",
+  "description": "Editing support for TabTty macros and shared constants.",
+  "publisher": "tabtty",
+  "version": "0.1.0",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Programming Languages"],
+  "main": "./extension.js",
+  "capabilities": { "untrustedWorkspaces": { "supported": true } },
+  "activationEvents": ["onLanguage:tabtty-macro", "onLanguage:tabtty-constants"],
+  "contributes": {
+    "languages": [
+      { "id": "tabtty-macro", "aliases": ["TabTty Macro"], "extensions": [".tttym"], "configuration": "./language-configuration.json" },
+      { "id": "tabtty-constants", "aliases": ["TabTty Shared Constants"], "extensions": [".tttyc"], "configuration": "./language-configuration.json" }
+    ],
+    "grammars": [
+      { "language": "tabtty-macro", "scopeName": "source.tabtty", "path": "./grammar.json" },
+      { "language": "tabtty-constants", "scopeName": "source.tabtty", "path": "./grammar.json" }
+    ]
+  }
+}

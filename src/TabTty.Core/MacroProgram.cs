@@ -118,6 +118,41 @@ internal sealed class MacroProgram : IDisposable
         return program;
     }
 
+    internal static MacroProgram ParseForEditor(string path, string source,
+        IReadOnlyDictionary<string, string> constants)
+    {
+        var program = ParseSource(Path.GetFullPath(path), source, NewQuota(), null, out var declarations);
+        try
+        {
+            var bindings = new List<MacroConstantsBinding>();
+            int remaining = MacroConstantsFile.MaxMembers;
+            foreach (var declaration in declarations)
+            {
+                if (!constants.TryGetValue(declaration.Alias, out var text))
+                    throw new MacroSourceException("ConstantsRead", declaration.Position, path);
+                MacroConstantsFile file;
+                try
+                {
+                    file = MacroConstantsFile.Parse(declaration.Path, "", text, remaining, () => { });
+                }
+                catch (MacroSourceException)
+                {
+                    throw new MacroSourceException("ConstantsInvalid", declaration.Position, path);
+                }
+                remaining -= file.Values.Count;
+                bindings.Add(new(declaration.Alias, file));
+            }
+            program.Constants = bindings.AsReadOnly();
+            new MacroChecker(program).Check();
+            return program;
+        }
+        catch
+        {
+            program.Dispose();
+            throw;
+        }
+    }
+
     private static MacroProgram ParseSource(string path, string source, ResourceQuota quota,
         ResourceReservation? retained, out IReadOnlyList<MacroConstantsDeclaration> declarations)
     {
@@ -182,7 +217,7 @@ internal sealed class MacroProgram : IDisposable
         catch (DecoderFallbackException) { throw new MacroSourceException("SourceEncoding", new(1, 1), path); }
     }
 
-    private static (Encoding Encoding, int Skip) DetectEncoding(ReadOnlySpan<byte> bytes)
+    internal static (Encoding Encoding, int Skip) DetectEncoding(ReadOnlySpan<byte> bytes)
     {
         if (bytes.StartsWith(new byte[] { 0xff, 0xfe, 0, 0 })) return (new UTF32Encoding(false, true, true), 4);
         if (bytes.StartsWith(new byte[] { 0, 0, 0xfe, 0xff })) return (new UTF32Encoding(true, true, true), 4);

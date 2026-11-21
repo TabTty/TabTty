@@ -2,6 +2,7 @@
   <Project Path="src/TabTty.Core/TabTty.Core.csproj" />
   <Project Path="src/TabTty.App/TabTty.App.csproj" />
   <Project Path="src/TabTty.McpBridge/TabTty.McpBridge.csproj" />
+  <Project Path="src/TabTty.MacroEditor/TabTty.MacroEditor.csproj" />
   <Project Path="tests/TabTty.Core.Tests/TabTty.Core.Tests.csproj" />
   <Project Path="tests/TabTty.App.Tests/TabTty.App.Tests.csproj" />
   <Project Path="tests/TabTty.McpBridge.Tests/TabTty.McpBridge.Tests.csproj" />
