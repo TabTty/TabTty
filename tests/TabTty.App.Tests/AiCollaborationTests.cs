@@ -184,6 +184,16 @@ internal static partial class Program
             window.UpdateLayout();
             Check(tab.TerminalArea.RenderSize == areaBeforeSharing, "The takeover button changed the terminal area.");
             var takeover = AiAction("AiTakeControl");
+            tab.ShowSearch();
+            window.UpdateLayout();
+            var closeSearch = FindControls<Button>(tab).Single(button => Equals(button.Content, App.Text("CloseSearch")));
+            var actions = (FrameworkElement)takeover.Parent;
+            var searchBar = (FrameworkElement)closeSearch.Parent;
+            var actionBounds = new Rect(actions.TranslatePoint(new Point(), tab.TerminalArea), actions.RenderSize);
+            var searchBounds = new Rect(searchBar.TranslatePoint(new Point(), tab.TerminalArea), searchBar.RenderSize);
+            Check(!actionBounds.IntersectsWith(searchBounds) && tab.TerminalArea.RenderSize == areaBeforeSharing,
+                "The search overlay obstructed the floating AI controls or resized the terminal.");
+            closeSearch.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             string control = tab.AiSharing.Control!.Id;
             string observation = await Observe();
             var first = new { session, control, action_seq = 1, observation, input = new { kind = "key", key = "ArrowUp" } };

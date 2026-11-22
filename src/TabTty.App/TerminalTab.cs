@@ -29,13 +29,18 @@ internal sealed partial class TerminalTab : UserControl
     private readonly TextBlock highlightStatus = new() { Visibility = Visibility.Collapsed };
     private readonly TextBlock broadcastTabStatus = new() { Visibility = Visibility.Collapsed };
     private readonly DockPanel statusBar = new() { Height = 30, ClipToBounds = true };
-    private readonly StackPanel searchBar = new() { Orientation = Orientation.Horizontal, Visibility = Visibility.Collapsed };
+    private const double SearchInset = 4;
+    private readonly Canvas terminalOverlays = new();
+    private readonly WrapPanel searchBar = new() { Visibility = Visibility.Collapsed };
     private readonly TextBox searchQuery = new() { Width = 220, MaxLength = 1024, Margin = new Thickness(3) };
     private readonly CheckBox matchCase = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(3) };
     private readonly Button previousMatch = new() { Margin = new Thickness(3) };
     private readonly Button nextMatch = new() { Margin = new Thickness(3) };
     private readonly Button closeSearch = new() { Margin = new Thickness(3) };
-    private readonly TextBlock searchStatus = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(3) };
+    private readonly TextBlock searchStatus = new()
+    {
+        VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(3), TextWrapping = TextWrapping.Wrap,
+    };
     private TerminalSurface output = new();
     private Guid? highlightSetId;
     private readonly TerminalHighlightState highlightState = new();
@@ -147,8 +152,13 @@ internal sealed partial class TerminalTab : UserControl
         searchBar.Children.Add(nextMatch);
         searchBar.Children.Add(closeSearch);
         searchBar.Children.Add(searchStatus);
+        searchBar.SetResourceReference(Panel.BackgroundProperty, "WindowBackground");
+        Canvas.SetLeft(searchBar, SearchInset);
+        terminalOverlays.Children.Add(searchBar);
+        terminalArea.SizeChanged += (_, _) => PositionSearchBar();
         ConfigureStatusIndicator(status);
         terminalArea.Children.Add(output.Scroller);
+        terminalArea.Children.Add(terminalOverlays);
         InitializeAiControls();
         ConfigureStatusIndicator(highlightStatus);
         ConfigureStatusIndicator(broadcastTabStatus);
@@ -164,12 +174,9 @@ internal sealed partial class TerminalTab : UserControl
             aiStatus.MaxWidth = broadcastTabStatus.MaxWidth = e.NewSize.Width * 0.28;
         };
         var body = new Grid();
-        body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         body.RowDefinitions.Add(new RowDefinition());
         body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        Grid.SetRow(terminalArea, 1);
-        Grid.SetRow(statusBar, 2);
-        body.Children.Add(searchBar);
+        Grid.SetRow(statusBar, 1);
         body.Children.Add(terminalArea);
         body.Children.Add(statusBar);
         panel.Children.Add(body);
@@ -1064,10 +1071,19 @@ internal sealed partial class TerminalTab : UserControl
     private void OpenSearch()
     {
         searchBar.Visibility = Visibility.Visible;
+        PositionSearchBar();
         SetSearchStatus(snapshot?.IsAlternateScreen == true ? "SearchNormalScreen" : null);
         UpdateSearchButtons();
         searchQuery.Focus();
         searchQuery.SelectAll();
+    }
+
+    private void PositionSearchBar()
+    {
+        if (searchBar.Visibility != Visibility.Visible) return;
+        searchBar.MaxWidth = Math.Max(0, terminalArea.ActualWidth - 2 * SearchInset);
+        double occupiedTop = aiActions.Visibility == Visibility.Visible ? Canvas.GetTop(aiActions) + aiActions.ActualHeight : 0;
+        Canvas.SetTop(searchBar, occupiedTop + SearchInset);
     }
 
     private void CloseSearch()

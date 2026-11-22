@@ -44,11 +44,10 @@ internal sealed partial class TerminalTab
         aiActions.Children.Add(aiTakeover);
         aiActions.Children.Add(aiEndSharing);
         aiActions.SetResourceReference(Panel.BackgroundProperty, "WindowBackground");
-        var actionLayer = new Canvas();
         Canvas.SetTop(aiActions, 2);
         Canvas.SetRight(aiActions, 2);
-        actionLayer.Children.Add(aiActions);
-        terminalArea.Children.Add(actionLayer);
+        terminalOverlays.Children.Add(aiActions);
+        aiActions.SizeChanged += (_, _) => PositionSearchBar();
         AutomationProperties.SetLiveSetting(aiStatus, AutomationLiveSetting.Polite);
         aiTakeover.Click += (_, _) => AiCollaboration.EndControl(this);
         aiEndSharing.Click += (_, _) => AiCollaboration.EndSharing(this);
@@ -62,6 +61,7 @@ internal sealed partial class TerminalTab
         Canvas.SetRight(aiActions, terminalArea.ActualWidth - anchor.Right + 2);
         Canvas.SetTop(aiActions, anchor.Top + 2);
         aiActions.MaxWidth = Math.Max(0, anchor.Width - 4);
+        PositionSearchBar();
     }
 
     internal void AiAuthorityChanged()
@@ -91,7 +91,11 @@ internal sealed partial class TerminalTab
                 terminalArea.LayoutUpdated += PositionAiActions;
                 PositionAiActions(null, EventArgs.Empty);
             }
-            else terminalArea.LayoutUpdated -= PositionAiActions;
+            else
+            {
+                terminalArea.LayoutUpdated -= PositionAiActions;
+                PositionSearchBar();
+            }
         }
         string detail = AiSharing is { } share ? "  " + share.Peer.Label : "";
         if (AiCleanupDelayed) detail += "  " + Text("AiCleanupPending");

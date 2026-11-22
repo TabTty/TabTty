@@ -390,6 +390,8 @@ Use existing stable content anchors through edits/reflow; eviction clamps each
 affected anchor to surviving content. Never create a per-pane retained buffer
 or change saved retention to preserve an old view. The tab's search controls
 operate on its active pane and do not move another pane's current result.
+The search bar overlays the top of the terminal area. Opening or closing it
+preserves the terminal grid and each pane's viewport size.
 
 Provide vertical/horizontal scrollbars when needed; they affect only the local
 pane. Accepted keyboard/paste input reveals the cursor in the operated pane;

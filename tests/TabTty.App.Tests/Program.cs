@@ -2524,6 +2524,7 @@ internal static partial class Program
         SwitchingTerminalTabsRestoresInputFocus();
         TerminalCompositionIgnoresRemoteCursorVisibility();
         TerminalStatusBarKeepsItsHeight();
+        TerminalSearchFloatsOverThePanes();
         TerminalTailFollowDrawsTheLatestRowsFirst();
         foreach (var (background, expected) in new (uint, uint)[]
         {
@@ -2878,6 +2879,61 @@ internal static partial class Program
             if (Math.Abs(top * 2 + label.ActualHeight - footer.ActualHeight) > 0.01)
                 throw new InvalidOperationException("The status text was not centered vertically.");
         }
+    }
+
+    private static void TerminalSearchFloatsOverThePanes()
+    {
+        var tab = new TerminalTab("search-overlay-fixture.ttty");
+        var host = new Window { Content = tab, Width = 640, Height = 350, ShowInTaskbar = false };
+        try
+        {
+            host.Show();
+            host.Activate();
+            host.UpdateLayout();
+            var query = FindControls<TextBox>(tab).Single(field => field.MaxLength == 1024);
+            var close = FindControls<Button>(tab).Single(button => Equals(button.Content, App.Text("CloseSearch")));
+            CheckSearch(1, useEscape: true);
+
+            host.Width = 270;
+            host.UpdateLayout();
+            CheckSearch(1, useEscape: false);
+            host.Width = 640;
+            host.UpdateLayout();
+            var panes = new MenuItem();
+            tab.FillPaneCommands(panes);
+            var split = panes.Items.OfType<MenuItem>().Single(item => Equals(item.Header, App.Text("SplitPanesSide")));
+            split.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            host.UpdateLayout();
+            CheckSearch(2, useEscape: false);
+
+            void CheckSearch(int paneCount, bool useEscape)
+            {
+                var views = FindControls<TerminalSurface>(tab).ToArray();
+                if (views.Length != paneCount)
+                    throw new InvalidOperationException("The search layout fixture has the wrong number of panes.");
+                var areas = views.Select(Bounds).ToArray();
+                tab.ShowSearch();
+                host.UpdateLayout();
+                var terminalBounds = new Rect(tab.TerminalArea.TranslatePoint(new Point(), tab), tab.TerminalArea.RenderSize);
+                if (!areas.SequenceEqual(views.Select(Bounds)) ||
+                    !terminalBounds.Contains(new Rect(query.TranslatePoint(new Point(), tab), query.RenderSize)) ||
+                    !terminalBounds.Contains(new Rect(close.TranslatePoint(new Point(), tab), close.RenderSize)))
+                    throw new InvalidOperationException("Opening search moved or resized the terminal instead of overlaying it.");
+                if (!query.IsKeyboardFocused)
+                    throw new InvalidOperationException("Opening the search overlay did not focus the search field.");
+
+                if (useEscape)
+                    query.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(host),
+                        Environment.TickCount, Key.Escape) { RoutedEvent = Keyboard.PreviewKeyDownEvent });
+                else close.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                host.UpdateLayout();
+                if (query.IsVisible || !areas.SequenceEqual(views.Select(Bounds)) || !views.Any(pane => pane.IsKeyboardFocusWithin))
+                    throw new InvalidOperationException("Closing search did not restore terminal input at the same size.");
+            }
+
+            Rect Bounds(TerminalSurface pane) => new(pane.Scroller.TranslatePoint(new Point(), tab), pane.Scroller.RenderSize);
+        }
+        finally { host.Close(); }
     }
 
     private static async Task TerminalBellFlashesTheWholeStatusBar(string directory)
