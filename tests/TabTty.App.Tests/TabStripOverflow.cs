@@ -13,8 +13,13 @@ internal static partial class Program
         RequireDesktopInput();
 #pragma warning disable WPF0001 // WPF Fluent theme integration.
         var previous = app.ThemeMode;
-        var window = new MainWindow(app) { Width = 1100, Height = 650, ShowInTaskbar = false, Topmost = true };
-        var peer = new MainWindow(app) { ShowInTaskbar = false };
+        var window = app.CreateWindow(restorePlacement: false);
+        window.Width = 1100;
+        window.Height = 650;
+        window.ShowInTaskbar = false;
+        window.Topmost = true;
+        var peer = app.CreateWindow(restorePlacement: false);
+        peer.ShowInTaskbar = false;
         try
         {
             app.ThemeMode = ThemeMode.Dark;
@@ -31,7 +36,9 @@ internal static partial class Program
 
             Activate(window);
             window.SetActiveHeaderAccent(exampleAccent);
+            Layout();
             Color darkShade = CheckBand(tabBar, 0);
+            var activeBrush = tabBar.Background;
             int darkDifference = Brightness(((SolidColorBrush)window.Background).Color) - Brightness(darkShade);
             if (darkShade.R <= darkShade.G || darkShade.G <= darkShade.B)
                 throw new InvalidOperationException("The dark header did not pick up the Windows accent.");
@@ -62,10 +69,20 @@ internal static partial class Program
             if (HasShade(titleBar) || HasShade(tabBar) || HasShade(secondTabBar) || !HasShade(peerTabBar))
                 throw new InvalidOperationException("Changing the active window did not move the header shading.");
             Activate(window);
+            if (titleBar.Background != activeBrush || tabBar.Background != activeBrush || secondTabBar.Background != activeBrush)
+                throw new InvalidOperationException("Reactivating the window did not reuse its prepared header brush.");
+
+            Activate(peer);
+            window.SetActiveHeaderAccent(null);
+            if (HasShade(titleBar) || HasShade(tabBar) || HasShade(secondTabBar))
+                throw new InvalidOperationException("Updating the accent shaded an inactive window.");
+            Activate(window);
+            if (CheckBand(titleBar, 0) == darkShade)
+                throw new InvalidOperationException("Reactivating the window did not pick up the updated accent.");
 
             app.ThemeMode = ThemeMode.Light;
-            Layout();
             window.SetActiveHeaderAccent(exampleAccent);
+            Layout();
             CheckBand(tabBar, host.Margin.Top);
             CheckBand(secondTabBar, second.TranslatePoint(new Point(), root).Y);
             CheckLightBackground(titleBar);
@@ -94,9 +111,9 @@ internal static partial class Program
                     header.Background is not SolidColorBrush { Color: var shade })
                     throw new InvalidOperationException("The active shade did not follow the intended header row.");
                 var background = ((SolidColorBrush)window.Background).Color;
-                if (Brightness(shade) >= Brightness(background) ||
-                    SampleAt(top + header.ActualHeight - 2) != shade)
-                    throw new InvalidOperationException("The active shade did not produce a darker header.");
+                var pixel = SampleAt(top + header.ActualHeight - 2);
+                if (Brightness(shade) >= Brightness(background) || pixel != shade)
+                    throw new InvalidOperationException($"Expected the {shade} header over {background}, sampled {pixel}.");
                 return shade;
             }
 

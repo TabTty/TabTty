@@ -21,6 +21,7 @@ internal sealed partial class WindowFrameAccent
     private static readonly ConditionalWeakTable<HwndSource, WindowFrameAccent> Frames = new();
     private readonly Window window;
     private readonly HwndSource source;
+    private uint accentColor = DefaultColor;
     private uint appliedColor = DefaultColor;
     private bool refreshPending;
 
@@ -44,10 +45,10 @@ internal sealed partial class WindowFrameAccent
         window.Deactivated += OnWindowStateChanged;
         window.StateChanged += OnWindowStateChanged;
         source.AddHook(Observe);
-        Apply();
+        RefreshAccentColor();
     }
 
-    private void OnWindowStateChanged(object? sender, EventArgs args) => Apply();
+    private void OnWindowStateChanged(object? sender, EventArgs args) => ApplyBorderColor();
 
     private nint Observe(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
     {
@@ -57,22 +58,26 @@ internal sealed partial class WindowFrameAccent
             _ = source.Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
             {
                 refreshPending = false;
-                Apply();
+                RefreshAccentColor();
             }));
         }
         return 0;
     }
 
-    private void Apply()
+    private void RefreshAccentColor()
     {
         if (source.IsDisposed) return;
-        uint accent = window.IsActive && !SystemParameters.HighContrast &&
-            (window.WindowState == WindowState.Normal || window is MainWindow)
-            ? ReadAccentColor() : DefaultColor;
+        accentColor = SystemParameters.HighContrast ? DefaultColor : ReadAccentColor();
         if (window is MainWindow main)
-            main.SetActiveHeaderAccent(accent == DefaultColor ? null :
-                Color.FromRgb((byte)accent, (byte)(accent >> 8), (byte)(accent >> 16)));
-        uint color = window.WindowState == WindowState.Normal ? accent : DefaultColor;
+            main.SetActiveHeaderAccent(accentColor == DefaultColor ? null :
+                Color.FromRgb((byte)accentColor, (byte)(accentColor >> 8), (byte)(accentColor >> 16)));
+        ApplyBorderColor();
+    }
+
+    private void ApplyBorderColor()
+    {
+        if (source.IsDisposed) return;
+        uint color = window.IsActive && window.WindowState == WindowState.Normal ? accentColor : DefaultColor;
         if (color != appliedColor && DwmSetWindowAttribute(source.Handle, BorderColorAttribute, in color, sizeof(uint)) >= 0)
             appliedColor = color;
     }

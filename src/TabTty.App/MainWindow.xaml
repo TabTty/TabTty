@@ -12,6 +12,15 @@
     </shell:WindowChrome.WindowChrome>
     <Window.Resources>
         <SolidColorBrush x:Key="ActiveHeaderBackground" Color="Transparent" />
+        <Style x:Key="WindowHeaderBand" TargetType="Border">
+            <Setter Property="IsHitTestVisible" Value="False" />
+            <Setter Property="Background" Value="Transparent" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsActive, RelativeSource={RelativeSource AncestorType=local:MainWindow}}" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource ActiveHeaderBackground}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
         <Style x:Key="WindowButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
             <Setter Property="Width" Value="44" />
             <Setter Property="Height" Value="34" />
@@ -74,8 +83,7 @@
                             <RowDefinition Height="Auto" MinHeight="43" />
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
-                        <Border x:Name="tabBarBackground" IsHitTestVisible="False"
-                                Background="{DynamicResource ActiveHeaderBackground}" />
+                        <Border x:Name="tabBarBackground" Style="{StaticResource WindowHeaderBand}" />
                         <Border x:Name="tabStripRow" Margin="{TemplateBinding Padding}" Background="Transparent">
                             <Border.ContextMenu>
                                 <ContextMenu Opened="OnTabStripMenuOpened">
@@ -162,7 +170,7 @@
     </Window.Resources>
     <Grid x:Name="windowRoot">
         <Border x:Name="titleBarBackground" Height="43" VerticalAlignment="Top" Visibility="Collapsed"
-                IsHitTestVisible="False" Background="{DynamicResource ActiveHeaderBackground}" />
+                Style="{StaticResource WindowHeaderBand}" />
         <Border x:Name="groupHost">
             <TabControl x:Name="tabs" Template="{StaticResource TabGroupTemplate}" />
         </Border>
@@ -196,7 +204,23 @@
             <Button x:Name="maximizeButton" Style="{StaticResource CaptionButton}">
                 <TextBlock x:Name="maximizeGlyph" Style="{StaticResource CaptionGlyph}" Text="&#xE922;" />
             </Button>
-            <Button x:Name="closeButton" Style="{StaticResource CaptionButton}">
+            <Button x:Name="closeButton">
+                <Button.Style>
+                    <Style TargetType="Button" BasedOn="{StaticResource CaptionButton}">
+                        <Style.Triggers>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="IsEnabled" Value="True" />
+                                    <Condition Property="IsMouseOver" Value="True" />
+                                </MultiTrigger.Conditions>
+                                <Setter Property="Foreground" Value="White" />
+                            </MultiTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+                <Button.Resources>
+                    <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#C42B1C" />
+                </Button.Resources>
                 <TextBlock Style="{StaticResource CaptionGlyph}" Text="&#xE8BB;" />
             </Button>
         </StackPanel>

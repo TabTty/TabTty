@@ -61,13 +61,13 @@ internal sealed partial class MainWindow : Window
     protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
     {
         base.OnPropertyChanged(e);
-        if ((e.Property == BackgroundProperty || e.Property == IsActiveProperty) && titleBarBackground is not null)
+        if (e.Property == BackgroundProperty && titleBarBackground is not null)
             UpdateActiveHeaderShade();
     }
 
     private void UpdateActiveHeaderShade()
     {
-        if (!IsActive || SystemParameters.HighContrast || Background is not SolidColorBrush { Color: var background })
+        if (SystemParameters.HighContrast || Background is not SolidColorBrush { Color: var background })
         {
             Resources["ActiveHeaderBackground"] = Brushes.Transparent;
             return;
