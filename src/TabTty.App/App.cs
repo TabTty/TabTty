@@ -91,6 +91,7 @@ public sealed class App : Application
         VaultFileHooks? vaultFiles = null, Action<string, string, string?>? issueOtherStores = null,
         Action<string>? validateProfileStage = null)
     {
+        WindowFrameAccent.Register();
         Resources.MergedDictionaries.Add(new ResourceDictionary
         {
             Source = new Uri("/TabTty;component/DetailsTabs.xaml", UriKind.Relative),

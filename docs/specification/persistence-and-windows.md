@@ -228,15 +228,16 @@ an earlier attempt cannot mark or close the tab for the new attempt.
 
 | Outcome | With automatic closure on | With automatic closure off |
 | --- | --- | --- |
-| Initial connection or reconnect fails or times out before Connected | Keep the tab with a yellow warning icon | Keep the tab with a yellow warning icon |
-| A communication error ends an established connection | Keep the tab with a yellow warning icon | Keep the tab with a yellow warning icon |
+| Initial connection or reconnect fails or times out before Connected | Keep the tab with a warning icon | Keep the tab with a warning icon |
+| A communication error ends an established connection | Keep the tab with a warning icon | Keep the tab with a warning icon |
 | An established connection ends normally, locally or through an orderly peer close | Close the tab | Keep the tab with a broken-link icon |
 | The user cancels a reconnect before Connected | Close the tab | Keep the tab with a broken-link icon |
 | The user cancels an initial connection before Connected | Close the tab | Close the tab |
 
 For either failure, retain the available output and the specific failure
-reason. Show a dark exclamation mark on yellow in the header's connection
-indicator position before the tab name, legible in light and dark themes.
+reason. Show an exclamation mark in the header's connection indicator position
+before the tab name. In the light theme, use a dark background and a light mark.
+In the dark theme, use a light background and a dark mark.
 The tooltip and accessible tab name distinguish a failed connection attempt
 from an established connection lost to an error, in the selected language.
 An error that leaves the connection live does not qualify the tab for closure.
@@ -254,7 +255,7 @@ The tab bar context menu's **Close all disconnected tabs** command
 applies across every tab group in the current window, with either value of
 the automatic-close preference. A terminal tab qualifies once its attempt
 has ended in failure (including timeout), cancellation, or disconnection and
-it has no live connection. This includes tabs with a yellow warning icon
+it has no live connection. This includes tabs with a warning icon
 after failure or communication loss and retained tabs with a broken-link icon.
 A live connection or an ongoing
 attempt, including one waiting for authentication or other user input, stays
@@ -278,6 +279,8 @@ contents out of all persistent stores. Translations are locale resources with
 stable identifiers, initially English/Japanese; system language uses Windows
 display-language preference order with English fallback. Theme follows the
 Windows app preference live and affects only surrounding UI.
+Active window borders follow the Windows setting for accent colors on title
+bars and window borders.
 
 Limits: profile 1 MiB; settings 64 KiB; highlighting/state/host records 16 MiB
 each; JSON depth 16; display names 256 scalars, host 253 ASCII bytes after IDNA,

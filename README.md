@@ -96,8 +96,8 @@ Tabs can move between windows or detach by dragging outside a window. Closing an
 active connection asks for confirmation. **Automatically close tabs on normal
 disconnection** is enabled by default and also applies when you cancel a
 reconnect. Turn it off to keep those tabs with a broken-link icon. Failed
-connections, timeouts, and communication errors leave a yellow warning icon
-and keep the tab open so you can read the cause. Right-click the tab bar and
+connections, timeouts, and communication errors keep the tab open with a
+theme-aware `!` warning icon so you can read the cause. Right-click the tab bar and
 choose **Close all disconnected tabs** to close completed disconnected tabs
 of either kind in the current window. Closing the last tab leaves the window
 open for new tabs.

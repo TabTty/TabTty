@@ -1014,12 +1014,9 @@ internal sealed partial class MainWindow : Window
         };
         private readonly Border warningIcon = new()
         {
-            Background = Brushes.Gold, CornerRadius = new CornerRadius(2),
+            CornerRadius = new CornerRadius(2),
             Width = 14, Height = 14, Margin = new Thickness(0, 0, 5, 0),
             VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed,
-            Child = new TextBlock { Text = "!", FontSize = 11, FontWeight = FontWeights.Bold,
-                Foreground = Brushes.Black, HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center },
         };
         private readonly System.Windows.Shapes.Path aiIcon = new()
         {
@@ -1045,6 +1042,11 @@ internal sealed partial class MainWindow : Window
             var header = new DockPanel();
             disconnectedIcon.SetBinding(System.Windows.Shapes.Shape.StrokeProperty,
                 new System.Windows.Data.Binding(nameof(Foreground)) { Source = this });
+            var warningGlyph = new TextBlock { Text = "!", FontSize = 11, FontWeight = FontWeights.Bold,
+                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            warningIcon.SetResourceReference(Border.BackgroundProperty, "WindowForeground");
+            warningGlyph.SetResourceReference(TextBlock.ForegroundProperty, "WindowBackground");
+            warningIcon.Child = warningGlyph;
             aiIcon.SetBinding(System.Windows.Shapes.Shape.StrokeProperty,
                 new System.Windows.Data.Binding(nameof(Foreground)) { Source = this });
             DockPanel.SetDock(dismiss, Dock.Right);
