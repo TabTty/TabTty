@@ -114,8 +114,9 @@
             <TabControl x:Name="tabs" AllowDrop="True" Template="{StaticResource TabGroupTemplate}"
                         Padding="0,0,176,0" />
         </Border>
-        <Canvas>
-            <Border x:Name="broadcastBand" Visibility="Collapsed" Background="{DynamicResource WindowBackground}">
+        <Canvas ClipToBounds="True">
+            <Border x:Name="broadcastBand" Canvas.Left="2" Canvas.Bottom="2"
+                    MaxWidth="500" Visibility="Collapsed" Background="{DynamicResource WindowBackground}">
                 <TextBlock x:Name="broadcastStatus" Foreground="{DynamicResource WindowForeground}"
                            TextTrimming="CharacterEllipsis" Padding="6,2" Focusable="True"
                            ToolTipService.ShowsToolTipOnKeyboardFocus="True" />

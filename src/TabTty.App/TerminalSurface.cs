@@ -51,7 +51,7 @@ internal sealed class TerminalSurface : FrameworkElement
     private bool presentationEnabled = true;
     private bool cursorOn = true;
     private double fontSize = 16;
-    private const double Inset = 4;
+    private const double HorizontalInset = 4;
     private double? outputScrollOffset;
     private readonly TranslateTransform viewportTranslation = new();
     private readonly RectangleGeometry viewportClip = new();
@@ -341,16 +341,16 @@ internal sealed class TerminalSurface : FrameworkElement
             foreach (TerminalCell cell in snapshot.GetCells(row).Span)
             {
                 if (!Covers(range, row, cell)) continue;
-                left = Math.Min(left, cell.Column * cellWidth + Inset);
-                right = Math.Max(right, (cell.Column + cell.Width) * cellWidth + Inset);
+                left = Math.Min(left, cell.Column * cellWidth + HorizontalInset);
+                right = Math.Max(right, (cell.Column + cell.Width) * cellWidth + HorizontalInset);
             }
             if (!double.IsFinite(left)) continue;
             Rect visible = viewportClip.Rect;
             left = Math.Max(left, visible.Left);
             right = Math.Min(right, visible.Right);
             if (left >= right) continue;
-            var a = PointToScreen(new Point(left, row * rowHeight + Inset));
-            var b = PointToScreen(new Point(right, (row + 1) * rowHeight + Inset));
+            var a = PointToScreen(new Point(left, row * rowHeight));
+            var b = PointToScreen(new Point(right, Math.Min((row + 1) * rowHeight, visible.Bottom)));
             result.AddRange([a.X, a.Y, b.X - a.X, b.Y - a.Y]);
         }
         return result.ToArray();
@@ -391,10 +391,10 @@ internal sealed class TerminalSurface : FrameworkElement
         if (scroll && value is { } current)
         {
             UpdateMetrics();
-            var (first, end) = VisibleRows();
+            var (first, _) = VisibleRows();
             if (current.StartRow < first || current.EndRow - current.StartRow + 1 > VisibleRowCount)
                 Scroller.ScrollToVerticalOffset(current.StartRow * rowHeight);
-            else if (current.EndRow >= end)
+            else if (current.EndRow >= first + VisibleRowCount)
                 Scroller.ScrollToVerticalOffset((current.EndRow + 1 - VisibleRowCount) * rowHeight);
         }
         InvalidateVisual();
@@ -411,7 +411,7 @@ internal sealed class TerminalSurface : FrameworkElement
         UpdateMetrics();
         int count = snapshot?.Count ?? 0;
         int first = Math.Clamp((int)Math.Round(VerticalOffset / rowHeight), 0, count);
-        int end = Math.Min(count, first + VisibleRowCount);
+        int end = Math.Min(count, first + (int)Math.Ceiling(VisibleGridHeight / rowHeight - 1e-8));
         return (first, end);
     }
 
@@ -424,20 +424,21 @@ internal sealed class TerminalSurface : FrameworkElement
     }
 
     private static int FittedCells(double available, double cellSize) =>
-        (int)Math.Max(0, Math.Floor((available - 2 * Inset) / cellSize + 1e-8));
+        (int)Math.Max(0, Math.Floor(available / cellSize + 1e-8));
 
     private int VisibleRowCount => FittedCells(ViewportHeight, rowHeight);
+    // Leave the fractional height black at the end. In history it can show part of the next row.
+    private double VisibleGridHeight => FollowsEnd ? VisibleRowCount * rowHeight : ViewportHeight;
     private static bool AtEnd(double offset, double limit) => offset >= limit - 0.01;
 
     private void UpdateViewport()
     {
-        int rows = VisibleRowCount;
-        int columns = FittedCells(Scroller.ViewportWidth, cellWidth);
+        int columns = FittedCells(Scroller.ViewportWidth - 2 * HorizontalInset, cellWidth);
         double y = FittedOffset(Scroller.VerticalOffset, Scroller.ScrollableHeight, rowHeight);
         double x = FittedOffset(Scroller.HorizontalOffset, Scroller.ScrollableWidth, cellWidth);
         viewportTranslation.X = Scroller.HorizontalOffset - x;
         viewportTranslation.Y = Scroller.VerticalOffset - y;
-        viewportClip.Rect = new Rect(Inset + x, Inset + y, columns * cellWidth, rows * rowHeight);
+        viewportClip.Rect = new Rect(HorizontalInset + x, y, columns * cellWidth, VisibleGridHeight);
         Clip = viewportClip;
 
         static double FittedOffset(double offset, double limit, double cellSize)
@@ -450,27 +451,27 @@ internal sealed class TerminalSurface : FrameworkElement
     public (int Columns, int Rows) ViewportGrid(double width, double height)
     {
         UpdateMetrics();
-        return (Math.Clamp(FittedCells(width, cellWidth), 2, 1024),
+        return (Math.Clamp(FittedCells(width - 2 * HorizontalInset, cellWidth), 2, 1024),
             Math.Clamp(FittedCells(height, rowHeight), 1, 512));
     }
 
     public Size PaneMinimum()
     {
         UpdateMetrics();
-        return new Size(Math.Max(160, cellWidth * 2 + Inset * 2) + SystemParameters.VerticalScrollBarWidth,
-            Math.Max(96, rowHeight + Inset * 2) + SystemParameters.HorizontalScrollBarHeight);
+        return new Size(Math.Max(160, cellWidth * 2 + HorizontalInset * 2) + SystemParameters.VerticalScrollBarWidth,
+            Math.Max(96, rowHeight) + SystemParameters.HorizontalScrollBarHeight);
     }
 
     public void RevealCursor()
     {
         if (snapshot is not { } view) return;
         UpdateMetrics();
-        var (first, end) = VisibleRows();
+        var (first, _) = VisibleRows();
         if (view.CursorRow < first) Scroller.ScrollToVerticalOffset(view.CursorRow * rowHeight);
-        else if (view.CursorRow >= end)
+        else if (view.CursorRow >= first + VisibleRowCount)
             Scroller.ScrollToVerticalOffset((view.CursorRow + 1 - VisibleRowCount) * rowHeight);
         int firstColumn = (int)Math.Round((Scroller.HorizontalOffset - viewportTranslation.X) / cellWidth);
-        int columns = FittedCells(Scroller.ViewportWidth, cellWidth);
+        int columns = FittedCells(Scroller.ViewportWidth - 2 * HorizontalInset, cellWidth);
         if (view.CursorColumn < firstColumn) Scroller.ScrollToHorizontalOffset(view.CursorColumn * cellWidth);
         else if (view.CursorColumn >= firstColumn + columns)
             Scroller.ScrollToHorizontalOffset((view.CursorColumn + 1 - columns) * cellWidth);
@@ -505,7 +506,7 @@ internal sealed class TerminalSurface : FrameworkElement
         UpdateMetrics();
         imeInput.Measure(new Size(cellWidth, rowHeight));
         int count = Math.Max(1, Math.Max(snapshot?.Count ?? 0, (snapshot?.CursorRow ?? 0) + 1));
-        return new Size((snapshot?.Columns ?? 80) * cellWidth + Inset * 2, count * rowHeight + Inset * 2);
+        return new Size((snapshot?.Columns ?? 80) * cellWidth + HorizontalInset * 2, count * rowHeight);
     }
 
     protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
@@ -523,6 +524,9 @@ internal sealed class TerminalSurface : FrameworkElement
         drawing.DrawRectangle(Brushes.Black, null, new Rect(RenderSize));
         if (snapshot is null) return;
         var (first, end) = VisibleRows();
+        // ScrollViewer applies a bottom request after laying out the new extent.
+        // Wait for ScrollChanged instead of expanding and drawing the old range.
+        if (outputScrollOffset == double.PositiveInfinity && (!FollowsEnd || end < snapshot.Count)) return;
         var matches = new Dictionary<int, List<TerminalMatch>>();
         foreach (TerminalMatch match in searchMatches)
         {
@@ -697,14 +701,14 @@ internal sealed class TerminalSurface : FrameworkElement
             VisibleRows().First >= view.ScreenStartRow);
 
     private bool IsActiveScreenPoint(Point point) => snapshot is { } view && viewportClip.Rect.Contains(point) &&
-        point.Y >= Inset + view.ScreenStartRow * rowHeight;
+        point.Y >= view.ScreenStartRow * rowHeight;
 
     private void ReportMouse(Point point, int button, bool release, bool motion)
     {
         if (snapshot is not { } view) return;
         UpdateMetrics();
-        int column = (int)Math.Floor((point.X - Inset) / cellWidth);
-        int row = (int)Math.Floor((point.Y - Inset) / rowHeight) - view.ScreenStartRow;
+        int column = (int)Math.Floor((point.X - HorizontalInset) / cellWidth);
+        int row = (int)Math.Floor(point.Y / rowHeight) - view.ScreenStartRow;
         if (UnclampedMouse?.Invoke() != true)
         {
             column = Math.Clamp(column, 0, view.Columns - 1);
@@ -727,8 +731,8 @@ internal sealed class TerminalSurface : FrameworkElement
 
     private (int Row, int Offset) Boundary(Point point)
     {
-        int row = Math.Clamp((int)Math.Floor((point.Y - Inset) / rowHeight), 0, snapshot!.Count - 1);
-        double column = (point.X - Inset) / cellWidth;
+        int row = Math.Clamp((int)Math.Floor(point.Y / rowHeight), 0, snapshot!.Count - 1);
+        double column = (point.X - HorizontalInset) / cellWidth;
         foreach (TerminalCell cell in snapshot.GetCells(row).Span)
         {
             if (column < cell.Column + cell.Width / 2.0) return (row, cell.TextOffset);
@@ -750,7 +754,7 @@ internal sealed class TerminalSurface : FrameworkElement
     }
 
     private Rect CellRect(int row, int column, int width) =>
-        new(Inset + column * cellWidth, Inset + row * rowHeight, width * cellWidth, rowHeight);
+        new(HorizontalInset + column * cellWidth, row * rowHeight, width * cellWidth, rowHeight);
 
     private void DrawGlyph(DrawingContext drawing, Rect cell, string text, uint foreground, TerminalStyleFlags flags)
     {

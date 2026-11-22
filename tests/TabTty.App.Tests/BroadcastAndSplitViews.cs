@@ -238,8 +238,10 @@ internal static partial class Program
             Size paneSize = target.TerminalArea.RenderSize;
             Click(Child(broadcast, "BroadcastStart"));
             host.UpdateLayout();
-            if (target.TerminalArea.RenderSize != paneSize)
-                throw new InvalidOperationException($"Broadcast status changed the terminal area from {paneSize} to {target.TerminalArea.RenderSize}.");
+            var broadcastStatus = FindControls<TextBlock>(target).Single(label => label.Text == app.Broadcast.Status(host));
+            if (target.TerminalArea.RenderSize != paneSize || !broadcastStatus.IsVisible ||
+                broadcastStatus.TranslatePoint(new Point(), target.TerminalArea).Y < paneSize.Height)
+                throw new InvalidOperationException("Broadcast status must fit in the fixed row below the terminal.");
             var otherBroadcast = FindMenu(other, "ConnectionMenu", "BroadcastInput");
             if (!source.BroadcastChecked || !target.BroadcastChecked || !outside.BroadcastChecked || app.Broadcast.IsActive(other))
                 throw new InvalidOperationException("New tabs must be checked by default and respect the active window scope.");
@@ -420,8 +422,8 @@ internal static partial class Program
             Task<bool> Mouse(long capture, int button, bool release = false) => app.Broadcast.RouteMouseAsync(
                 host, sourceView, capture, new(button, 1, 1, release, false, TerminalModifiers.None, 0));
 
-            var status = (TextBlock)host.FindName("broadcastStatus");
-            if (!status.Text.Contains(App.Text("BroadcastFailed"), StringComparison.Ordinal))
+            if (!host.TerminalTabs.SelectMany(FindControls<TextBlock>).Any(label => label.IsVisible &&
+                label.Text.Contains(App.Text("BroadcastFailed"), StringComparison.Ordinal)))
                 throw new InvalidOperationException("The broadcast failure was not visible.");
         }
         finally

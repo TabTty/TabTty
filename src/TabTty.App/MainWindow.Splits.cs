@@ -13,6 +13,7 @@ internal sealed partial class MainWindow
     private static readonly Size GroupMinimum = new(240, 160 + 43);
     private SplitLayout groups = null!;
     private TabControl activeGroup = null!;
+    private TerminalTab? broadcastStatusTab;
     private IEnumerable<TabControl> Groups => groups.Views.Cast<TabControl>();
     private IEnumerable<WindowTab> AllTabs => Groups.SelectMany(group => group.Items.OfType<WindowTab>());
     internal IEnumerable<TerminalTab> TerminalTabs => AllTabs.Select(tab => tab.Content).OfType<TerminalTab>();
@@ -87,6 +88,7 @@ internal sealed partial class MainWindow
     {
         foreach (var group in Groups)
             AutomationProperties.SetName(group, GroupName(group));
+        PlaceBroadcastStatus();
     }
 
     private string GroupName(TabControl group)
@@ -248,28 +250,21 @@ internal sealed partial class MainWindow
         broadcastStatus.Text = status;
         broadcastStatus.ToolTip = status;
         AutomationProperties.SetName(broadcastStatus, status);
-        var visibility = status.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
-        if (visibility == broadcastBand.Visibility) return;
-        broadcastBand.Visibility = visibility;
-        if (visibility == Visibility.Visible)
-        {
-            windowRoot.LayoutUpdated += PositionBroadcastIndicator;
-            PositionBroadcastIndicator(null, EventArgs.Empty);
-        }
-        else windowRoot.LayoutUpdated -= PositionBroadcastIndicator;
+        PlaceBroadcastStatus();
     }
 
-    private void PositionBroadcastIndicator(object? sender, EventArgs e)
+    private void PlaceBroadcastStatus()
     {
-        FrameworkElement? area = SelectedTab?.TerminalArea ??
-            activeGroup.Template?.FindName("PART_SelectedContentHost", activeGroup) as FrameworkElement;
-        if (area is null || !area.IsVisible || area.ActualWidth <= 0) return;
-        Rect anchor = SelectedTab?.StatusOverlayBounds(right: false) ?? new Rect(area.RenderSize);
-        Point origin = area.TranslatePoint(anchor.TopLeft, windowRoot);
-        Canvas.SetLeft(broadcastBand, Math.Max(2, origin.X + 2));
-        Canvas.SetTop(broadcastBand, Math.Max(45, origin.Y + 2));
-        broadcastBand.MaxWidth = Math.Max(0, Math.Min(Math.Min(area.ActualWidth * 0.34, anchor.Width) - 4,
-            windowRoot.ActualWidth - Canvas.GetLeft(broadcastBand)));
+        string text = broadcastStatus.Text;
+        TerminalTab? terminal = text.Length == 0 ? null : SelectedTab ?? Groups
+            .Select(group => (group.SelectedItem as WindowTab)?.Content).OfType<TerminalTab>().FirstOrDefault();
+        if (broadcastStatusTab != terminal)
+        {
+            broadcastStatusTab?.SetBroadcastStatus("");
+            broadcastStatusTab = terminal;
+        }
+        terminal?.SetBroadcastStatus(text);
+        broadcastBand.Visibility = terminal is null && text.Length != 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private TabControl? GroupOf(TabItem item) => Groups.FirstOrDefault(group => group.Items.Contains(item));

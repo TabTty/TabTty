@@ -15,8 +15,27 @@ internal static class NativeTerminalContracts
         CommonShellControlsKeepTheNativePath();
         NormalScreenEditingPreservesSourceAndCursorState();
         HeldSnapshotsAndSearchAnchorsSurviveNativeMutation();
+        PlainAsciiSnapshotsPreserveOwnedCellFacts();
         ObserversSeeOnlyNewInput();
         LegacyEncodingsUseNativeModels();
+    }
+
+    private static void PlainAsciiSnapshotsPreserveOwnedCellFacts()
+    {
+        var terminal = new TerminalOutput(8, screenRows: 4);
+        Feed(terminal, "A B\r\n\u001b[7mA B\u001b[0m\r\n\u001b[2GQ");
+        TerminalSnapshot snapshot = terminal.GetRows();
+        terminal.ReleaseNativeState();
+        var plain = snapshot.GetCells(0).Span;
+        var inverse = snapshot.GetCells(1).Span;
+        var padded = snapshot.GetCells(2).Span;
+        if (snapshot[0] != "A B" || plain.Length != 3 ||
+            plain[0] != new TerminalCell(0, 1, 0, "A", default) ||
+            plain[1] != new TerminalCell(1, 1, 1, " ", default) ||
+            plain[2] != new TerminalCell(2, 1, 2, "B", default) ||
+            inverse[1].Style.Flags != TerminalStyleFlags.Inverse || inverse[1].IsErased ||
+            !padded[0].IsErased || padded[1].Column != 1 || padded[1].Text != "Q")
+            throw new InvalidOperationException("The owned ASCII snapshot lost its cells, rendition, or erased positions.");
     }
 
     private static void RefusedCreationDoesNotStartAManagedTerminal()

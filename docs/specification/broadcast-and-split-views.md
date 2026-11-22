@@ -110,7 +110,9 @@ and Clear All under Broadcast Input (`同時送信`). Checkboxes appear only on
 terminal tabs in participating windows while a mode is active. Bulk selection
 uses the effective scope, includes hidden tabs, and cannot bypass an operation's
 selection lock. Count ready-selected/total-selected targets, such as `3/4`,
-in the status indication in every participating window. Distinguish zero
+in the single bottom status row of a visible terminal tab in each participating
+window. If the window shows no terminal, float the count over the window
+content. Status changes preserve the allocated terminal layout. Distinguish zero
 selection from selected targets that are all unready. Disconnected status and
 target checks are separate indications.
 
@@ -377,6 +379,10 @@ pane focus, and pane scrolling do not change that grid. Outer group/window
 resizing and shared font/zoom changes may resize it through the existing
 normal-screen reflow/alternate-screen clipping contract. Do not count individual
 pane scrollbars as reductions to this hypothetical unsplit rectangle.
+Each pane aligns its rows to the top of its viewport. At the bottom of its
+scrollback, any fractional row height below the last complete row uses the
+terminal background. While browsing, this space can show part of the next row.
+A terminal tab split into multiple panes shares one fixed-height status bar.
 
 Each pane has its own horizontal/vertical position, text selection, and current
 search result/navigation anchor. Query/case and temporary zoom are tab-shared.

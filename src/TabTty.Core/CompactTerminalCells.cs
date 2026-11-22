@@ -14,6 +14,31 @@ internal sealed class CompactTerminalCells
     private int expandedCount;
     private readonly record struct Cell(uint Offset, ushort Length, short Width, uint Foreground, uint Background, uint Flags);
 
+    private CompactTerminalCells(string displayText, ResourceReservation admittedCopies)
+    {
+        // For default-style one-column ASCII, the owned row text also encodes the cells.
+        arena = displayText;
+        expandedCharge = displayText.Length * 64L;
+        memory = admittedCopies.Separate(80L + expandedCharge);
+        Interlocked.Increment(ref NativeTerminalCoreDiagnostics.CompactSnapshotRows);
+    }
+
+    internal static CompactTerminalCells? TryCreatePlainAscii(ReadOnlySpan<NativeTerminalCore.CellView> cells,
+        ReadOnlySpan<char> text, string displayText, ResourceReservation admittedCopies)
+    {
+        if (cells.IsEmpty || displayText.Length != cells.Length || !text.StartsWith(displayText.AsSpan()) ||
+            displayText.AsSpan().ContainsAnyExceptInRange('\0', '\u007F'))
+            return null;
+        for (int column = 0; column < cells.Length; column++)
+        {
+            ref readonly var cell = ref cells[column];
+            if (cell.Offset != (uint)column || cell.Length != 1 || cell.Width != 1 ||
+                (cell.Foreground | cell.Background | cell.Flags) != 0)
+                return null;
+        }
+        return new(displayText, admittedCopies);
+    }
+
     internal CompactTerminalCells(ReadOnlySpan<NativeTerminalCore.CellView> cells,
         ReadOnlySpan<char> text, ResourceReservation admittedCopies)
     {
@@ -57,27 +82,37 @@ internal sealed class CompactTerminalCells
         lock (this)
         {
             if (expanded is not null) return expanded.AsMemory(0, expandedCount);
-            Cell[] source = compact!;
+            Cell[]? source = compact;
             string text = arena!;
-            var result = new TerminalCell[source.Length];
-            int destination = 0, textOffset = 0;
-            for (int column = 0; column < source.Length; column++)
+            var result = new TerminalCell[source?.Length ?? text.Length];
+            int destination = 0;
+            if (source is null)
             {
-                Cell cell = source[column];
-                if (cell.Width < 0) continue;
-                string value;
-                if (cell.Length == ushort.MaxValue) value = " ";
-                else
+                for (int column = 0; column < text.Length; column++)
+                    result[column] = new TerminalCell(column, 1, column, TerminalText.Scalar(new Rune(text[column])), default);
+                destination = text.Length;
+            }
+            else
+            {
+                int textOffset = 0;
+                for (int column = 0; column < source.Length; column++)
                 {
-                    ReadOnlySpan<char> characters = text.AsSpan(checked((int)cell.Offset), cell.Length);
-                    value = characters.Length == 1 && characters[0] < 128
-                        ? TerminalText.Scalar(new Rune(characters[0])) : new string(characters);
+                    Cell cell = source[column];
+                    if (cell.Width < 0) continue;
+                    string value;
+                    if (cell.Length == ushort.MaxValue) value = " ";
+                    else
+                    {
+                        ReadOnlySpan<char> characters = text.AsSpan(checked((int)cell.Offset), cell.Length);
+                        value = characters.Length == 1 && characters[0] < 128
+                            ? TerminalText.Scalar(new Rune(characters[0])) : new string(characters);
+                    }
+                    var style = new TerminalStyle(NativeTerminalCore.Color(cell.Foreground),
+                        NativeTerminalCore.Color(cell.Background), (TerminalStyleFlags)cell.Flags);
+                    result[destination++] = new TerminalCell(column, Math.Max(1, (int)cell.Width),
+                        textOffset, value, style, cell.Width == 0);
+                    textOffset += value.Length;
                 }
-                var style = new TerminalStyle(NativeTerminalCore.Color(cell.Foreground),
-                    NativeTerminalCore.Color(cell.Background), (TerminalStyleFlags)cell.Flags);
-                result[destination++] = new TerminalCell(column, Math.Max(1, (int)cell.Width),
-                    textOffset, value, style, cell.Width == 0);
-                textOffset += value.Length;
             }
             expandedCount = destination;
             Volatile.Write(ref expanded, result);

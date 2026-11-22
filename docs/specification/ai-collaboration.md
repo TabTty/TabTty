@@ -43,7 +43,7 @@ The ordinary workflow is: manually register the bridge in the AI host, match its
 pairing code in TabTty, share an existing tab, and give the task in external
 chat. The person then grants control; the AI reads the screen, submits one action,
 and reads again until it returns control. The person can take over from the tab
-menu/status bar at any time; reading continues until End AI sharing is selected.
+menu or the floating takeover button. Reading continues until they select End AI sharing.
 
 ```mermaid
 flowchart LR
@@ -603,8 +603,14 @@ counterpart, sharing and control generations and ordinary eligibility.
 Both dialogs explain that locking Windows, switching users or disconnecting
 Remote Desktop preserves existing permissions so unattended AI work can continue.
 The usual terminal and counterpart loss rules still apply.
-Keep End AI sharing available directly in the selected shared tab's status bar,
-including during control and takeover. Taking control back preserves reading.
+Keep End AI sharing available as a floating button over the selected shared
+tab's terminal, including during control and takeover. Show the floating
+takeover button while the AI has control. Place these compact, opaque actions
+at the upper right without reserving terminal space, moving keyboard focus,
+or covering a tab or split divider. Taking control back preserves reading.
+Display connection and AI collaboration status in the tab's single-row bottom
+status bar, fixed at 30 DIP, with the text centered vertically. Status changes
+and floating actions preserve the terminal viewport dimensions.
 
 Tab order: broadcast checkbox when applicable, existing connection indicator,
 AI state icon, unchanged profile name, existing attention/close elements. Read-only
@@ -619,13 +625,14 @@ English/Japanese resource labels include `AI sharing (read only)` / `AI共有中
 `Share output with AI` / `AIと出力を共有`, `Give control to AI` / `AIに操作を任せる`,
 `Take control from AI` / `AI操作を中断して引き継ぐ`, and
 `End AI sharing` / `AIとの共有を終了`. Keep resource identifiers independent of
-labels. The status displays the bounded handoff reason on a separate line
-labelled as a message from the AI integration. Remove display-control characters
+labels. The bottom status bar displays the AI state. Its hover and keyboard
+focus details display the bounded handoff reason on a separate line labelled
+as a message from the AI integration. Remove display-control characters
 from the optional client name and reason. When handing off password or one-time
 code entry, the host directs the person to end sharing before typing. Do not
 change stored terminal text.
 
-Context-menu and status actions expose UI Automation names/states and keyboard
+Context-menu and floating actions expose UI Automation names/states and keyboard
 access. Do not reserve a terminal key as a global takeover shortcut. Announce
 sharing/control transitions, not every incoming character. Ineligible commands
 explain their reason. Help requests stay in the external conversation; no modal

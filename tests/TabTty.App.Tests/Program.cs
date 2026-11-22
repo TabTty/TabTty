@@ -2454,6 +2454,9 @@ internal static partial class Program
     private static void TerminalSurfaceRendersItsCellSnapshot()
     {
         TerminalBackgroundAndViewportUseWholeCells();
+        TerminalTabStartsAtItsHeader();
+        TerminalStatusBarKeepsItsHeight();
+        TerminalTailFollowDrawsTheLatestRowsFirst();
         foreach (var (background, expected) in new (uint, uint)[]
         {
             (0xFFFFFF, 0), (0xFFD54F, 0), (0x0050A0, 0xFFFFFF), (0xFF0000, 0),
@@ -2489,6 +2492,34 @@ internal static partial class Program
         }
     }
 
+    private static void TerminalTailFollowDrawsTheLatestRowsFirst()
+    {
+        var output = new TerminalOutput(columns: 80, screenRows: 24);
+        var surface = new TerminalSurface();
+        var frame = surface.Scroller;
+        var size = new Size(900, 230);
+        surface.SetSnapshot(output.GetRows());
+        frame.Measure(size);
+        frame.Arrange(new Rect(size));
+        frame.UpdateLayout();
+
+        for (int row = 0; row < 100; row++)
+            output.Receive(TerminalReceiveSource.Data, "one more line\r\n"u8);
+        var snapshot = output.GetRows();
+        bool rendered = false;
+        surface.ViewportRendered += () =>
+        {
+            if (!ReferenceEquals(surface.Snapshot, snapshot)) return;
+            if (surface.VisibleRows().End != snapshot.Count)
+                throw new InvalidOperationException("The live-following viewport drew the old history range.");
+            rendered = true;
+        };
+        surface.UpdateSnapshotPosition(snapshot);
+        frame.UpdateLayout();
+        if (!rendered) throw new InvalidOperationException("The live-following viewport never drew the new output.");
+        output.ReleaseNativeState();
+    }
+
     private static void TerminalBackgroundAndViewportUseWholeCells()
     {
         var glyph = new FormattedText("M", System.Globalization.CultureInfo.InvariantCulture,
@@ -2512,7 +2543,7 @@ internal static partial class Program
             frame.HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden;
             foreach (double heightInRows in new[] { 23.99, 24, 24.4 })
             {
-                var size = new Size(8 + cellWidth * 76.4, 8 + rowHeight * heightInRows);
+                var size = new Size(8 + cellWidth * 76.4, rowHeight * heightInRows);
                 frame.Measure(size);
                 frame.Arrange(new Rect(size));
                 frame.UpdateLayout();
@@ -2525,7 +2556,11 @@ internal static partial class Program
                 var clip = ((RectangleGeometry)surface.Clip).Rect;
                 if (Math.Abs(clip.Width - 76 * cellWidth) > 0.01 || Math.Abs(clip.Height - visible * rowHeight) > 0.01)
                     throw new InvalidOperationException("The viewport did not fit complete cells.");
+                double top = surface.TranslatePoint(clip.TopLeft, frame).Y;
+                if (Math.Abs(top) > 0.01)
+                    throw new InvalidOperationException("The latest output moved away from the top of the terminal.");
             }
+            double firstRowTop = surface.TranslatePoint(((RectangleGeometry)surface.Clip).Rect.TopLeft, frame).Y;
             foreach (double scale in new[] { 1.0, 1.25 })
             {
                 var bitmap = new RenderTargetBitmap((int)Math.Ceiling(frame.ActualWidth * scale),
@@ -2533,7 +2568,7 @@ internal static partial class Program
                 bitmap.Render(frame);
                 int start = (int)Math.Ceiling(4 * scale) + 1;
                 int end = (int)Math.Floor((4 + 72 * cellWidth) * scale) - 1;
-                int sampleY = (int)((4 + rowHeight / 2) * scale);
+                int sampleY = (int)((firstRowTop + rowHeight / 2) * scale);
                 var pixels = new byte[(end - start) * 4];
                 bitmap.CopyPixels(new Int32Rect(start, sampleY, end - start, 1), pixels, pixels.Length, 0);
                 if (pixels.Any(channel => channel < 250))
@@ -2542,7 +2577,105 @@ internal static partial class Program
                 if (pixels[0] < 250 || pixels[2] > 5)
                     throw new InvalidOperationException("The next background color did not start at its cell.");
             }
+            frame.ScrollToTop();
+            frame.UpdateLayout();
+            var historyClip = ((RectangleGeometry)surface.Clip).Rect;
+            double historyTop = surface.TranslatePoint(historyClip.TopLeft, frame).Y;
+            if (surface.VisibleRows() != (0, 25) || Math.Abs(historyTop) > 0.01 ||
+                Math.Abs(historyClip.Height - frame.ViewportHeight) > 0.01)
+                throw new InvalidOperationException("The history viewport did not show the next row in its fractional space.");
+            var historyBitmap = new RenderTargetBitmap((int)Math.Ceiling(frame.ActualWidth),
+                (int)Math.Ceiling(frame.ActualHeight), 96, 96, PixelFormats.Pbgra32);
+            historyBitmap.Render(frame);
+            var historyPixel = new byte[4];
+            historyBitmap.CopyPixels(new Int32Rect(8, (int)(24 * rowHeight + 2), 1, 1), historyPixel, 4, 0);
+            if (historyPixel.Any(channel => channel < 250))
+                throw new InvalidOperationException("The next history row was not drawn into the fractional space.");
             output.ReleaseNativeState();
+        }
+    }
+
+    private static void TerminalTabStartsAtItsHeader()
+    {
+        var window = new MainWindow((App)Application.Current) { ShowActivated = false, ShowInTaskbar = false };
+        var tab = new TerminalTab("layout-fixture.ttty");
+        var group = (TabControl)window.FindName("tabs");
+        try
+        {
+            window.AddTerminalTab(tab);
+            window.Show();
+            window.UpdateLayout();
+            var item = (TabItem)group.SelectedItem;
+            var surface = FindControls<TerminalSurface>(tab).Single();
+            double headerBottom = item.TranslatePoint(new Point(0, item.ActualHeight), group).Y;
+            double gridTop = surface.TranslatePoint(((RectangleGeometry)surface.Clip).Rect.TopLeft, group).Y;
+            if (Math.Abs(gridTop - headerBottom) > 1)
+                throw new InvalidOperationException($"The terminal rows start {gridTop - headerBottom:F2} DIP below the tab.");
+        }
+        finally
+        {
+            group.Items.Clear();
+            window.Close();
+        }
+    }
+
+    private static void TerminalStatusBarKeepsItsHeight()
+    {
+        const double statusBarHeight = 30;
+        var tab = new TerminalTab("layout-fixture.ttty");
+        var surface = FindControls<TerminalSurface>(tab).Single();
+        var footer = ((DockPanel)tab.Content).Children.OfType<DockPanel>().Single();
+        var output = new TerminalOutput(columns: 80, screenRows: 32);
+        for (int row = 0; row < 48; row++)
+            output.Receive(TerminalReceiveSource.Data, "terminal output\r\n"u8);
+        surface.SetSnapshot(output.GetRows());
+        surface.Scroller.VerticalScrollBarVisibility = ScrollBarVisibility.Hidden;
+        double rowHeight = RowHeight(12);
+        foreach (var scrollbar in new[] { ScrollBarVisibility.Hidden, ScrollBarVisibility.Visible })
+        {
+            surface.Scroller.HorizontalScrollBarVisibility = scrollbar;
+            foreach (double heightInRows in new[] { 23.99, 24, 24.4 })
+                CheckLayout(new Size(640, statusBarHeight + rowHeight * heightInRows), rowHeight);
+        }
+        tab.Zoom(4);
+        CheckLayout(new Size(640, statusBarHeight + rowHeight * 24.4), RowHeight(16));
+        output.ReleaseNativeState();
+
+        static double RowHeight(double fontSizePoints) => Math.Ceiling(new FormattedText("M",
+            System.Globalization.CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+            new Typeface("Consolas"), fontSizePoints * 96 / 72, Brushes.White, 1).Height);
+
+        void CheckLayout(Size size, double cellHeight)
+        {
+            tab.Measure(size);
+            tab.Arrange(new Rect(size));
+            tab.UpdateLayout();
+            surface.ScrollToEnd();
+            tab.UpdateLayout();
+            double chrome = surface.Scroller.ActualHeight - surface.Scroller.ViewportHeight;
+            int rows = (int)Math.Floor((size.Height - statusBarHeight - chrome) / cellHeight + 1e-8);
+            if (Math.Abs(footer.ActualHeight - statusBarHeight) > 0.01 ||
+                Math.Abs(surface.ViewportHeight - (size.Height - statusBarHeight - chrome)) > 0.01)
+                throw new InvalidOperationException($"The status bar did not keep its fixed height. Actual {footer.ActualHeight} DIP.");
+            var clip = ((RectangleGeometry)surface.Clip).Rect;
+            double bottom = surface.TranslatePoint(clip.BottomLeft, surface.Scroller).Y;
+            if (Math.Abs(bottom - rows * cellHeight) > 0.01 || surface.VisibleRows().End != output.GetRows().Count)
+                throw new InvalidOperationException("The final complete row was not followed by the viewport remainder.");
+            if (surface.ViewportHeight - bottom >= 3)
+            {
+                var bitmap = new RenderTargetBitmap((int)Math.Ceiling(size.Width), (int)Math.Ceiling(size.Height),
+                    96, 96, PixelFormats.Pbgra32);
+                bitmap.Render(tab);
+                var pixel = new byte[4];
+                double viewportTop = surface.Scroller.TranslatePoint(new Point(), tab).Y;
+                bitmap.CopyPixels(new Int32Rect(8, (int)Math.Ceiling(viewportTop + bottom + 1), 1, 1), pixel, 4, 0);
+                if (!pixel.SequenceEqual(new byte[] { 0, 0, 0, 255 }))
+                    throw new InvalidOperationException("The bottom remainder did not use the terminal background.");
+            }
+            var label = footer.Children.OfType<TextBlock>().Single(item => item.Visibility == Visibility.Visible);
+            double top = label.TranslatePoint(new Point(), footer).Y;
+            if (Math.Abs(top * 2 + label.ActualHeight - footer.ActualHeight) > 0.01)
+                throw new InvalidOperationException("The status text was not centered vertically.");
         }
     }
 

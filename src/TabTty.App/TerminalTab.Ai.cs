@@ -9,9 +9,10 @@ namespace TabTty.App;
 
 internal sealed partial class TerminalTab
 {
-    private readonly TextBlock aiStatus = new() { VerticalAlignment = VerticalAlignment.Center, Padding = new Thickness(6, 2, 6, 2) };
+    private readonly TextBlock aiStatus = new();
     private readonly Button aiTakeover = new() { Margin = new Thickness(2) };
     private readonly Button aiEndSharing = new() { Margin = new Thickness(2) };
+    private readonly WrapPanel aiActions = new() { Visibility = Visibility.Collapsed };
     private TerminalSession? retainedAiSession;
     private long aiAuthorityRevision;
     internal AiCollaboration.Sharing? AiSharing { get; set; }
@@ -38,13 +39,29 @@ internal sealed partial class TerminalTab
     private void InitializeAiControls()
     {
         ConfigureStatusIndicator(aiStatus);
-        statusIndicators.Children.Add(aiStatus);
-        statusIndicators.Children.Add(aiTakeover);
-        statusIndicators.Children.Add(aiEndSharing);
+        DockPanel.SetDock(aiStatus, Dock.Right);
+        statusBar.Children.Add(aiStatus);
+        aiActions.Children.Add(aiTakeover);
+        aiActions.Children.Add(aiEndSharing);
+        aiActions.SetResourceReference(Panel.BackgroundProperty, "WindowBackground");
+        var actionLayer = new Canvas();
+        Canvas.SetTop(aiActions, 2);
+        Canvas.SetRight(aiActions, 2);
+        actionLayer.Children.Add(aiActions);
+        terminalArea.Children.Add(actionLayer);
         AutomationProperties.SetLiveSetting(aiStatus, AutomationLiveSetting.Polite);
         aiTakeover.Click += (_, _) => AiCollaboration.EndControl(this);
         aiEndSharing.Click += (_, _) => AiCollaboration.EndSharing(this);
         UpdateAiControls();
+    }
+
+    private void PositionAiActions(object? sender, EventArgs args)
+    {
+        if (!aiActions.IsVisible) return;
+        Rect anchor = AiActionOverlayBounds();
+        Canvas.SetRight(aiActions, terminalArea.ActualWidth - anchor.Right + 2);
+        Canvas.SetTop(aiActions, anchor.Top + 2);
+        aiActions.MaxWidth = Math.Max(0, anchor.Width - 4);
     }
 
     internal void AiAuthorityChanged()
@@ -65,6 +82,17 @@ internal sealed partial class TerminalTab
         aiEndSharing.Visibility = IsAiShared ? Visibility.Visible : Visibility.Collapsed;
         aiEndSharing.Content = Text("AiEndSharing");
         AutomationProperties.SetName(aiEndSharing, Text("AiEndSharing"));
+        var visibility = IsAiShared ? Visibility.Visible : Visibility.Collapsed;
+        if (aiActions.Visibility != visibility)
+        {
+            aiActions.Visibility = visibility;
+            if (IsAiShared)
+            {
+                terminalArea.LayoutUpdated += PositionAiActions;
+                PositionAiActions(null, EventArgs.Empty);
+            }
+            else terminalArea.LayoutUpdated -= PositionAiActions;
+        }
         string detail = AiSharing is { } share ? "  " + share.Peer.Label : "";
         if (AiCleanupDelayed) detail += "  " + Text("AiCleanupPending");
         if (AiSharing?.Reason is { Length: > 0 } reason)

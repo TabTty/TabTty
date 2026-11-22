@@ -83,13 +83,33 @@ internal static partial class Program
                 "The integration cannot be distinguished by its pairing code.");
             app.Broadcast.Start(window);
             Check(ai.Share(tab, owner) == "AiBroadcastTarget", "An active checked broadcast target was shared.");
+            var group = (TabControl)window.FindName("tabs");
+            var terminalItem = group.SelectedItem;
+            window.OpenForm("Settings", _ => { });
+            window.UpdateLayout();
+            var broadcastBand = (FrameworkElement)window.FindName("broadcastBand");
+            Check(broadcastBand.IsVisible, "Broadcast status must stay visible while a settings tab is selected.");
+            group.SelectedItem = terminalItem;
+            window.UpdateLayout();
+            Check(!broadcastBand.IsVisible, "A visible terminal must provide the broadcast status in its own bottom row.");
             app.Broadcast.Stop(window);
             await Decide(owner, grant: false, approve: false);
             Check(!tab.IsAiShared, "Cancel disclosed output.");
+            window.UpdateLayout();
             var areaBeforeSharing = tab.TerminalArea.RenderSize;
             await Decide(owner, grant: false, approve: true);
             window.UpdateLayout();
             Check(tab.TerminalArea.RenderSize == areaBeforeSharing, "AI status changed the terminal area.");
+            var connectionStatus = FindControls<TextBlock>(tab).Single(label =>
+                label.Text.Contains(App.Text("TelnetUnencrypted"), StringComparison.Ordinal));
+            var aiStatus = FindControls<TextBlock>(tab).Single(label => label.Text == App.Text("AiReadOnly"));
+            Check(connectionStatus.TranslatePoint(new Point(), tab.TerminalArea).Y >= areaBeforeSharing.Height &&
+                aiStatus.TranslatePoint(new Point(), tab.TerminalArea).Y >= areaBeforeSharing.Height &&
+                connectionStatus.Parent is DockPanel { Height: 30 } footer &&
+                connectionStatus.VerticalAlignment == VerticalAlignment.Center && aiStatus.VerticalAlignment == VerticalAlignment.Center &&
+                ReferenceEquals(footer, aiStatus.Parent),
+                "Connection and AI status must share one compact row below the terminal.");
+            AiAction("AiEndSharing");
             Check(tab.AiSharing?.Peer == owner && !tab.IsAiControlling && !tab.BroadcastChecked,
                 "Confirmed sharing changed input ownership or retained a broadcast check.");
             await Decide(stranger, grant: false, approve: false);
@@ -161,6 +181,9 @@ internal static partial class Program
             Check(!tab.IsAiControlling, "Cancelling input consent granted control.");
             await Decide(owner, grant: true, approve: true);
             Check(tab.IsAiControlling && tab.InputSession is null, "Grant failed to exclude manual input.");
+            window.UpdateLayout();
+            Check(tab.TerminalArea.RenderSize == areaBeforeSharing, "The takeover button changed the terminal area.");
+            var takeover = AiAction("AiTakeControl");
             string control = tab.AiSharing.Control!.Id;
             string observation = await Observe();
             var first = new { session, control, action_seq = 1, observation, input = new { kind = "key", key = "ArrowUp" } };
@@ -184,7 +207,7 @@ internal static partial class Program
             Task<JsonElement> paste = Call(owner, "send_input", new { session, control, action_seq = 2, observation,
                 input = new { kind = "paste", text = "AB\nC", character_delay_ms = 10000 } });
             await Bytes("\u001b[200~A");
-            ai.EndControl(tab);
+            takeover.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Check(tab.IsAiShared && !tab.IsAiControlling, "Takeover ended reading or retained the grant.");
             await Bytes("\u001b[201~");
             var interrupted = await paste;
@@ -206,6 +229,8 @@ internal static partial class Program
             const string handoff = "Review the result";
             await Call(owner, "return_control", new { session, control = currentControl, reason = handoff });
             string attributed = string.Format(App.Text("AiHandoffMessage"), handoff);
+            window.UpdateLayout();
+            Check(tab.TerminalArea.RenderSize == areaBeforeSharing, "Handoff details changed the terminal area.");
             Check(tab.IsAiShared && !tab.IsAiControlling &&
                 FindControls<TextBlock>(tab).Any(label => label.ToolTip is string details &&
                     details.EndsWith("\n" + attributed, StringComparison.Ordinal) && label.Focusable),
@@ -213,8 +238,8 @@ internal static partial class Program
             AiCollaboration.Reply read = await ai.CallAsync(owner, "tabtty_read_state",
                 JsonSerializer.SerializeToElement(new { session }), token);
             Check(ai.CanDeliver(owner, read), "The authorized result could not be committed.");
-            var endSharing = FindControls<Button>(tab).Single(button =>
-                Equals(button.Content, App.Text("AiEndSharing")) && button.IsVisible);
+            window.UpdateLayout();
+            var endSharing = AiAction("AiEndSharing");
             endSharing.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Check(!ai.CanDeliver(owner, read) && !tab.BroadcastChecked, "Sharing end permitted disclosure or restored a broadcast check.");
             Check(Code(await Call(owner, "read_history", new { session })) == "not_shared", "The ended share remained readable.");
@@ -247,6 +272,18 @@ internal static partial class Program
                 Console.WriteLine("PASS McpIntegrationGrantsAreIsolatedAndExpireOnDetach");
             }
             finally { ai.Detach(reattached); }
+
+            Button AiAction(string key)
+            {
+                var button = FindControls<Button>(tab).Single(candidate =>
+                    Equals(candidate.Content, App.Text(key)) && candidate.IsVisible);
+                Point position = button.TranslatePoint(new Point(), tab.TerminalArea);
+                Check(position.X >= 0 && position.Y >= 0 && position.Y < tab.TerminalArea.ActualHeight / 2 &&
+                    position.X + button.ActualWidth <= tab.TerminalArea.ActualWidth + 0.01 &&
+                    button.Focusable && System.Windows.Automation.AutomationProperties.GetName(button) == App.Text(key),
+                    "The AI action must be a keyboard-accessible overlay inside the terminal.");
+                return button;
+            }
 
             async Task Decide(AiCollaboration.Counterpart recipient, bool grant, bool approve, Action? beforeDecision = null)
             {

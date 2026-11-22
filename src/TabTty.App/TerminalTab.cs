@@ -24,9 +24,10 @@ internal sealed partial class TerminalTab : UserControl
     private readonly Func<Window, long, CancellationToken, Task<TerminalPaste?>> captureClipboard;
     private readonly (int Columns, int Rows)? fixedViewport;
     private CancellationTokenSource stop = new();
-    private readonly TextBlock status = new() { Padding = new Thickness(6, 2, 6, 2) };
-    private readonly TextBlock highlightStatus = new() { Padding = new Thickness(6, 2, 6, 2), Visibility = Visibility.Collapsed };
-    private readonly WrapPanel statusIndicators = new() { HorizontalAlignment = HorizontalAlignment.Right };
+    private readonly TextBlock status = new();
+    private readonly TextBlock highlightStatus = new() { Visibility = Visibility.Collapsed };
+    private readonly TextBlock broadcastTabStatus = new() { Visibility = Visibility.Collapsed };
+    private readonly DockPanel statusBar = new() { Height = 30, ClipToBounds = true };
     private readonly StackPanel searchBar = new() { Orientation = Orientation.Horizontal, Visibility = Visibility.Collapsed };
     private readonly TextBox searchQuery = new() { Width = 220, MaxLength = 1024, Margin = new Thickness(3) };
     private readonly CheckBox matchCase = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(3) };
@@ -149,28 +150,23 @@ internal sealed partial class TerminalTab : UserControl
         searchBar.Children.Add(searchStatus);
         panel.Children.Add(searchBar);
         ConfigureStatusIndicator(status);
-        statusIndicators.Children.Add(status);
+        terminalArea.Children.Add(output.Scroller);
         InitializeAiControls();
         ConfigureStatusIndicator(highlightStatus);
-        statusIndicators.Children.Add(highlightStatus);
-        statusIndicators.SetResourceReference(Panel.BackgroundProperty, "WindowBackground");
-        var statusLayer = new Canvas();
-        Canvas.SetTop(statusIndicators, 2);
-        Canvas.SetRight(statusIndicators, 2);
-        statusLayer.Children.Add(statusIndicators);
-        terminalArea.LayoutUpdated += (_, _) =>
+        ConfigureStatusIndicator(broadcastTabStatus);
+        DockPanel.SetDock(highlightStatus, Dock.Right);
+        DockPanel.SetDock(broadcastTabStatus, Dock.Right);
+        statusBar.Children.Add(highlightStatus);
+        statusBar.Children.Add(broadcastTabStatus);
+        statusBar.Children.Add(status);
+        statusBar.SetResourceReference(Panel.BackgroundProperty, "WindowBackground");
+        statusBar.SizeChanged += (_, e) =>
         {
-            if (!terminalArea.IsVisible) return;
-            Rect anchor = StatusOverlayBounds(right: true);
-            // Truncate within one pane so the indicator never straddles a divider.
-            double width = Math.Max(0, Math.Min(terminalArea.ActualWidth * 0.66,
-                anchor.Right - Math.Max(anchor.Left, terminalArea.ActualWidth * 0.34)) - 4);
-            Canvas.SetRight(statusIndicators, terminalArea.ActualWidth - anchor.Right + 2);
-            Canvas.SetTop(statusIndicators, anchor.Top + 2);
-            statusIndicators.MaxWidth = status.MaxWidth = highlightStatus.MaxWidth = width;
+            highlightStatus.MaxWidth = e.NewSize.Width / 4;
+            aiStatus.MaxWidth = broadcastTabStatus.MaxWidth = e.NewSize.Width * 0.28;
         };
-        terminalArea.Children.Add(output.Scroller);
-        terminalArea.Children.Add(statusLayer);
+        DockPanel.SetDock(statusBar, Dock.Bottom);
+        panel.Children.Add(statusBar);
         panel.Children.Add(terminalArea);
         Content = panel;
         searchBar.PreviewKeyDown += OnSearchKeyDown;
@@ -903,13 +899,25 @@ internal sealed partial class TerminalTab : UserControl
             text += $"   {Text("LocalEcho")} {Text(active.LocalEchoEnabled ? "On" : "Off")}";
         }
         if (output.UsesFontFallback) text += "   " + string.Format(Text("FontFallback"), output.AutomationFontFamily);
-        status.Text = text;
+        if (Equals(status.ToolTip, text)) return;
+        status.Text = text.ReplaceLineEndings(" ");
         status.ToolTip = text;
         AutomationProperties.SetName(status, text);
     }
 
+    internal void SetBroadcastStatus(string text)
+    {
+        broadcastTabStatus.Visibility = text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+        if (broadcastTabStatus.Text == text) return;
+        broadcastTabStatus.Text = text;
+        broadcastTabStatus.ToolTip = text;
+        AutomationProperties.SetName(broadcastTabStatus, text);
+    }
+
     private static void ConfigureStatusIndicator(TextBlock indicator)
     {
+        indicator.Padding = new Thickness(6, 0, 6, 0);
+        indicator.VerticalAlignment = VerticalAlignment.Center;
         indicator.TextTrimming = TextTrimming.CharacterEllipsis;
         indicator.Focusable = true;
         indicator.SetResourceReference(TextBlock.ForegroundProperty, "WindowForeground");

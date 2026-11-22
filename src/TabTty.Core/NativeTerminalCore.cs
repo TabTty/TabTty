@@ -608,8 +608,14 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
                 }
                 if (offset != textLength) throw new InvalidDataException("Invalid native text span bounds.");
             }
-            CompactTerminalCells? cells = row.CellCount == 0 ? null : new(nativeCells,
-                new ReadOnlySpan<char>(row.CellText, checked((int)row.CellTextLength)), admittedCopies);
+            CompactTerminalCells? cells = null;
+            if (!nativeCells.IsEmpty)
+            {
+                var cellText = new ReadOnlySpan<char>(row.CellText, checked((int)row.CellTextLength));
+                if (formats.IsEmpty)
+                    cells = CompactTerminalCells.TryCreatePlainAscii(nativeCells, cellText, displayText, admittedCopies);
+                cells ??= new CompactTerminalCells(nativeCells, cellText, admittedCopies);
+            }
             return new TerminalSnapshot.Row(row.Id, row.LogicalId, row.LogicalOffset, displayText,
                 row.SoftWrap != 0, default, textMemory, null, row.DisplayRevision, cells, spanEnds, spanCount);
         }

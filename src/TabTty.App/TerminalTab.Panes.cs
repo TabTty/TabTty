@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using TabTty.Core;
 using static TabTty.App.App;
 
@@ -10,7 +11,7 @@ namespace TabTty.App;
 internal sealed partial class TerminalTab
 {
     private readonly DockPanel panel = new();
-    private readonly Grid terminalArea = new() { ClipToBounds = true };
+    private readonly Grid terminalArea = new() { Background = Brushes.Black, ClipToBounds = true };
     internal FrameworkElement TerminalArea => terminalArea;
     private readonly Dictionary<TerminalSurface, PaneState> panes = [];
     private SplitLayout? paneLayout;
@@ -18,7 +19,7 @@ internal sealed partial class TerminalTab
     private bool presentationEnabled;
     private FrameworkElement GridHost => (FrameworkElement?)paneViewport ?? output.Scroller;
 
-    internal Rect StatusOverlayBounds(bool right)
+    private Rect AiActionOverlayBounds()
     {
         var area = new Rect(terminalArea.RenderSize);
         if (paneLayout is null) return area;
@@ -29,7 +30,7 @@ internal sealed partial class TerminalTab
                 pane.Scroller.RenderSize));
             if (visible.IsEmpty || visible.Width <= 0 || visible.Height <= 0) continue;
             if (anchor.IsEmpty || visible.Top < anchor.Top ||
-                visible.Top == anchor.Top && (right ? visible.Right > anchor.Right : visible.Left < anchor.Left))
+                visible.Top == anchor.Top && visible.Right > anchor.Right)
                 anchor = visible;
         }
         return anchor.IsEmpty ? area : anchor;
