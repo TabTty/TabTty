@@ -1,6 +1,12 @@
 # Testing TabTty serial sessions in Hyper-V
 
-Research and proposed acceptance procedure, 2026-11-19. One Windows 11 x64 guest and a small byte-recording process on the same Hyper-V host can exercise the application's serial path if the guest exposes a working COM device. The operator provides the VM and OS. The validation agent configures the virtual port, prepares the peer, operates TabTty and records the results. This procedure is awaiting a run on the supplied VM. [Desktop acceptance inventory](../specification/desktop-acceptance-inventory.md)
+Research and acceptance procedure, 2026-11-19. One Windows 11 x64 guest and a small byte-recording process on the same Hyper-V host can exercise the application's serial path if the guest exposes a working COM device. The operator provides the VM and OS. The validation agent configures the virtual port, prepares the peer, operates TabTty and records the results. [Desktop acceptance inventory](../specification/desktop-acceptance-inventory.md)
+
+On 2026-11-22, the supplied generation 2 guest exposed COM1 and COM2 after a cold boot with Secure Boot enabled and the Hyper-V COM1 `DebuggerMode` set to Off. A host process running elevated connected to `TabTty-QA-COM1`. The normal host token returned Access Denied. Release `13cb898` opened COM1 at 9600 8N1 without flow control, displayed the peer marker and UTF-8 `£`, and sent the expected ASCII marker followed by CR to the host. A second TabTty open was rejected until the first tab released the port. The reopened tab stayed connected when the peer disconnected during observation.
+
+The follow-up with XON/XOFF enabled matched the full 27-byte received Raw file, including NUL, UTF-8 `£`, and CRLF. The host saw no transmitted bytes during the XOFF hold and saw transmission after XON. The long hold lost the first two bytes of the queued marker, and a fresh marker after XON matched in full. This run did not measure byte retention on a hold shorter than the configured 5-second write timeout. Physical signals still require physical observations.
+
+The next run used a 600 ms XOFF hold. The elevated pipe peer received zero bytes during the hold and the complete marker once after XON. The Windows guest disconnected and the host pipe peer reconnected. After a profile review cancellation and an explicit approval, the terminal reopened COM1 and the peer received the new marker without replay. The closed Raw log contained the peer acknowledgment. The virtual run leaves the earlier long-hold behavior and physical signaling unverified.
 
 ## VM and port setup
 
