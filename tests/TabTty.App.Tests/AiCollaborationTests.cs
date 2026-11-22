@@ -86,7 +86,10 @@ internal static partial class Program
             app.Broadcast.Stop(window);
             await Decide(owner, grant: false, approve: false);
             Check(!tab.IsAiShared, "Cancel disclosed output.");
+            var areaBeforeSharing = tab.TerminalArea.RenderSize;
             await Decide(owner, grant: false, approve: true);
+            window.UpdateLayout();
+            Check(tab.TerminalArea.RenderSize == areaBeforeSharing, "AI status changed the terminal area.");
             Check(tab.AiSharing?.Peer == owner && !tab.IsAiControlling && !tab.BroadcastChecked,
                 "Confirmed sharing changed input ownership or retained a broadcast check.");
             await Decide(stranger, grant: false, approve: false);
@@ -204,7 +207,8 @@ internal static partial class Program
             await Call(owner, "return_control", new { session, control = currentControl, reason = handoff });
             string attributed = string.Format(App.Text("AiHandoffMessage"), handoff);
             Check(tab.IsAiShared && !tab.IsAiControlling &&
-                FindControls<TextBlock>(tab).Any(label => label.Text.EndsWith("\n" + attributed, StringComparison.Ordinal)),
+                FindControls<TextBlock>(tab).Any(label => label.ToolTip is string details &&
+                    details.EndsWith("\n" + attributed, StringComparison.Ordinal) && label.Focusable),
                 "The AI's handoff message must be distinct from TabTty status while reading continues.");
             AiCollaboration.Reply read = await ai.CallAsync(owner, "tabtty_read_state",
                 JsonSerializer.SerializeToElement(new { session }), token);

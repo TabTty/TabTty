@@ -10,11 +10,30 @@ namespace TabTty.App;
 internal sealed partial class TerminalTab
 {
     private readonly DockPanel panel = new();
+    private readonly Grid terminalArea = new() { ClipToBounds = true };
+    internal FrameworkElement TerminalArea => terminalArea;
     private readonly Dictionary<TerminalSurface, PaneState> panes = [];
     private SplitLayout? paneLayout;
     private SplitViewport? paneViewport;
     private bool presentationEnabled;
     private FrameworkElement GridHost => (FrameworkElement?)paneViewport ?? output.Scroller;
+
+    internal Rect StatusOverlayBounds(bool right)
+    {
+        var area = new Rect(terminalArea.RenderSize);
+        if (paneLayout is null) return area;
+        Rect anchor = Rect.Empty;
+        foreach (TerminalSurface pane in OrderedPanes)
+        {
+            var visible = Rect.Intersect(area, new Rect(pane.Scroller.TranslatePoint(new Point(), terminalArea),
+                pane.Scroller.RenderSize));
+            if (visible.IsEmpty || visible.Width <= 0 || visible.Height <= 0) continue;
+            if (anchor.IsEmpty || visible.Top < anchor.Top ||
+                visible.Top == anchor.Top && (right ? visible.Right > anchor.Right : visible.Left < anchor.Left))
+                anchor = visible;
+        }
+        return anchor.IsEmpty ? area : anchor;
+    }
 
     private sealed class PaneState(TerminalHighlightView highlight)
     {
@@ -91,6 +110,10 @@ internal sealed partial class TerminalTab
         pane.ViewportChanged += _ => { if (searchWork is null) ScheduleSearchRefresh(); };
         pane.PreviewTextInput += OnTextInput;
         pane.PreviewKeyDown += OnKeyDown;
+        pane.Scroller.PreviewMouseDown += (_, _) =>
+        {
+            if (pane != output) output.CancelComposition();
+        };
         pane.GotKeyboardFocus += (_, _) => ActivatePane(pane);
         pane.Scroller.SizeChanged += (_, _) => { if (paneLayout is null) ScheduleResize(); };
         pane.PresentationChanged += () =>
@@ -204,7 +227,7 @@ internal sealed partial class TerminalTab
         bool createdLayout = paneLayout is null;
         if (paneLayout is null)
         {
-            panel.Children.Remove(source.Scroller);
+            terminalArea.Children.Remove(source.Scroller);
             SetPaneMinimum(source);
             paneLayout = new SplitLayout(source.Scroller);
             paneViewport = new SplitViewport(paneLayout)
@@ -213,7 +236,7 @@ internal sealed partial class TerminalTab
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             };
             paneViewport.SizeChanged += (_, _) => ScheduleResize();
-            panel.Children.Add(paneViewport);
+            terminalArea.Children.Insert(0, paneViewport);
         }
         added.ConfigureFont(baseFontFamily, zoomFontSize);
         SetPaneMinimum(added);
@@ -250,10 +273,10 @@ internal sealed partial class TerminalTab
     private void RestoreSinglePane(TerminalSurface pane)
     {
         paneLayout!.Children.Remove(pane.Scroller);
-        panel.Children.Remove(paneViewport!);
+        terminalArea.Children.Remove(paneViewport!);
         paneViewport = null;
         paneLayout = null;
         pane.Scroller.MinWidth = pane.Scroller.MinHeight = 0;
-        panel.Children.Add(pane.Scroller);
+        terminalArea.Children.Insert(0, pane.Scroller);
     }
 }

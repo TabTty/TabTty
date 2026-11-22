@@ -9,10 +9,9 @@ namespace TabTty.App;
 
 internal sealed partial class TerminalTab
 {
-    private readonly TextBlock aiStatus = new() { VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap };
-    private readonly Button aiTakeover = new() { Margin = new Thickness(8, 0, 0, 0) };
-    private readonly Button aiEndSharing = new() { Margin = new Thickness(8, 0, 0, 0) };
-    private readonly DockPanel aiStatusBar = new() { Margin = new Thickness(8, 2, 8, 2) };
+    private readonly TextBlock aiStatus = new() { VerticalAlignment = VerticalAlignment.Center, Padding = new Thickness(6, 2, 6, 2) };
+    private readonly Button aiTakeover = new() { Margin = new Thickness(2) };
+    private readonly Button aiEndSharing = new() { Margin = new Thickness(2) };
     private TerminalSession? retainedAiSession;
     private long aiAuthorityRevision;
     internal AiCollaboration.Sharing? AiSharing { get; set; }
@@ -38,13 +37,10 @@ internal sealed partial class TerminalTab
 
     private void InitializeAiControls()
     {
-        DockPanel.SetDock(aiStatusBar, Dock.Bottom);
-        DockPanel.SetDock(aiEndSharing, Dock.Right);
-        aiStatusBar.Children.Add(aiEndSharing);
-        DockPanel.SetDock(aiTakeover, Dock.Right);
-        aiStatusBar.Children.Add(aiTakeover);
-        aiStatusBar.Children.Add(aiStatus);
-        panel.Children.Add(aiStatusBar);
+        ConfigureStatusIndicator(aiStatus);
+        statusIndicators.Children.Add(aiStatus);
+        statusIndicators.Children.Add(aiTakeover);
+        statusIndicators.Children.Add(aiEndSharing);
         AutomationProperties.SetLiveSetting(aiStatus, AutomationLiveSetting.Polite);
         aiTakeover.Click += (_, _) => AiCollaboration.EndControl(this);
         aiEndSharing.Click += (_, _) => AiCollaboration.EndSharing(this);
@@ -62,7 +58,7 @@ internal sealed partial class TerminalTab
     private void UpdateAiControls()
     {
         string? state = IsAiTakingControl ? Text("AiTakingControl") : AiStateLabel;
-        aiStatusBar.Visibility = state is null ? Visibility.Collapsed : Visibility.Visible;
+        aiStatus.Visibility = state is null ? Visibility.Collapsed : Visibility.Visible;
         aiTakeover.Visibility = IsAiControlling ? Visibility.Visible : Visibility.Collapsed;
         aiTakeover.Content = Text("AiTakeControl");
         AutomationProperties.SetName(aiTakeover, Text("AiTakeControl"));
@@ -74,8 +70,10 @@ internal sealed partial class TerminalTab
         if (AiSharing?.Reason is { Length: > 0 } reason)
             detail += "\n" + string.Format(Text("AiHandoffMessage"), reason);
         string updated = state + detail;
-        if (aiStatus.Text == updated) return;
-        aiStatus.Text = updated;
+        if (Equals(aiStatus.ToolTip, updated)) return;
+        aiStatus.Text = state ?? "";
+        aiStatus.ToolTip = updated;
+        AutomationProperties.SetName(aiStatus, updated);
         if (System.Windows.Automation.Peers.UIElementAutomationPeer.FromElement(aiStatus) is { } peer)
             peer.RaiseAutomationEvent(System.Windows.Automation.Peers.AutomationEvents.LiveRegionChanged);
     }

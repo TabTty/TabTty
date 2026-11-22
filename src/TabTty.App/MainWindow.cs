@@ -995,6 +995,7 @@ internal sealed partial class MainWindow : Window
         private readonly CheckBox targetCheck = new()
         {
             Visibility = Visibility.Collapsed, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 5, 0),
+            MinHeight = 0, Height = 24, Padding = new Thickness(0),
         };
         private readonly TextBlock label = new() { VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis };

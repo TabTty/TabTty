@@ -28,8 +28,6 @@ internal sealed partial class MainWindow
             Content = groups, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
         };
-        broadcastBand.SetResourceReference(Control.BackgroundProperty, "WindowBackground");
-        broadcastBand.SizeChanged += (_, _) => UpdateGroupChrome();
         windowRoot.SizeChanged += (_, _) => UpdateGroupChrome();
         app.Broadcast.Register(this);
         RefreshBroadcast();
@@ -38,8 +36,7 @@ internal sealed partial class MainWindow
     private void UpdateGroupChrome()
     {
         bool separateCaption = Groups.Skip(1).Any() || windowRoot.ActualWidth is > 0 and < 616;
-        groupHost.Margin = new Thickness(0, separateCaption ? 43 : 0, 0,
-            broadcastBand.Visibility == Visibility.Visible ? broadcastBand.ActualHeight : 0);
+        groupHost.Margin = new Thickness(0, separateCaption ? 43 : 0, 0, 0);
         foreach (var group in Groups)
         {
             group.Padding = new Thickness(0, 0, separateCaption ? 0 : 176, 0);
@@ -249,10 +246,30 @@ internal sealed partial class MainWindow
         foreach (var tab in AllTabs) tab.UpdateBroadcast(visible, editable);
         string status = app.Broadcast.Status(this);
         broadcastStatus.Text = status;
+        broadcastStatus.ToolTip = status;
+        AutomationProperties.SetName(broadcastStatus, status);
         var visibility = status.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         if (visibility == broadcastBand.Visibility) return;
         broadcastBand.Visibility = visibility;
-        UpdateGroupChrome();
+        if (visibility == Visibility.Visible)
+        {
+            windowRoot.LayoutUpdated += PositionBroadcastIndicator;
+            PositionBroadcastIndicator(null, EventArgs.Empty);
+        }
+        else windowRoot.LayoutUpdated -= PositionBroadcastIndicator;
+    }
+
+    private void PositionBroadcastIndicator(object? sender, EventArgs e)
+    {
+        FrameworkElement? area = SelectedTab?.TerminalArea ??
+            activeGroup.Template?.FindName("PART_SelectedContentHost", activeGroup) as FrameworkElement;
+        if (area is null || !area.IsVisible || area.ActualWidth <= 0) return;
+        Rect anchor = SelectedTab?.StatusOverlayBounds(right: false) ?? new Rect(area.RenderSize);
+        Point origin = area.TranslatePoint(anchor.TopLeft, windowRoot);
+        Canvas.SetLeft(broadcastBand, Math.Max(2, origin.X + 2));
+        Canvas.SetTop(broadcastBand, Math.Max(45, origin.Y + 2));
+        broadcastBand.MaxWidth = Math.Max(0, Math.Min(Math.Min(area.ActualWidth * 0.34, anchor.Width) - 4,
+            windowRoot.ActualWidth - Canvas.GetLeft(broadcastBand)));
     }
 
     private TabControl? GroupOf(TabItem item) => Groups.FirstOrDefault(group => group.Items.Contains(item));

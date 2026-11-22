@@ -42,6 +42,9 @@ internal sealed class TerminalSurface : FrameworkElement
     private TextComposition? activeComposition;
     internal bool HasComposition => activeComposition is not null;
     private TextComposition? discardedComposition;
+    // The default WPF text store is shared by the UI thread. Its result can
+    // arrive as a new, result-only composition on the pane taking focus.
+    [ThreadStatic] private static TextComposition? terminatingComposition;
     private readonly TextBox imeInput;
     private readonly VisualCollection visuals;
     private readonly DispatcherTimer blink;
@@ -50,6 +53,8 @@ internal sealed class TerminalSurface : FrameworkElement
     private double fontSize = 16;
     private const double Inset = 4;
     private double? outputScrollOffset;
+    private readonly TranslateTransform viewportTranslation = new();
+    private readonly RectangleGeometry viewportClip = new();
 
     public ScrollViewer Scroller { get; }
     internal TerminalSnapshot? Snapshot => snapshot;
@@ -70,9 +75,10 @@ internal sealed class TerminalSurface : FrameworkElement
     public event Action<long>? RemoteCaptureLost;
     public event Action? RemoteCaptureFailed;
     public Func<bool>? UnclampedMouse { get; set; }
-    public double VerticalOffset => Scroller.VerticalOffset;
+    public double VerticalOffset => Scroller.VerticalOffset - viewportTranslation.Y;
     public double ExtentHeight => Scroller.ExtentHeight;
     public double ViewportHeight => Scroller.ViewportHeight;
+    private bool FollowsEnd => AtEnd(Scroller.VerticalOffset, Scroller.ScrollableHeight);
 
     public TerminalSurface()
     {
@@ -171,8 +177,19 @@ internal sealed class TerminalSurface : FrameworkElement
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
             Focusable = false,
         };
+        RenderTransform = viewportTranslation;
         Scroller.ScrollChanged += (_, change) =>
         {
+            bool wasFollowing = AtEnd(change.VerticalOffset - change.VerticalChange,
+                Math.Max(0, change.ExtentHeight - change.ExtentHeightChange -
+                    (change.ViewportHeight - change.ViewportHeightChange)));
+            if (wasFollowing && (change.ExtentHeightChange != 0 || change.ViewportHeightChange != 0) &&
+                !FollowsEnd && outputScrollOffset is null)
+            {
+                outputScrollOffset = double.PositiveInfinity;
+                Scroller.ScrollToBottom();
+            }
+            UpdateViewport();
             InvalidateVisual();
             if (change.VerticalChange != 0)
             {
@@ -181,18 +198,19 @@ internal sealed class TerminalSurface : FrameworkElement
                 outputScrollOffset = null;
                 ViewportChanged?.Invoke(automatic);
             }
+            else if (change.ViewportHeightChange != 0)
+                ViewportChanged?.Invoke(false);
         };
         TextCompositionManager.AddPreviewTextInputStartHandler(this, (_, e) =>
         {
-            discardedComposition = null;
-            ShowComposition(e);
+            if (e.TextComposition.AutoComplete == TextCompositionAutoComplete.Off) ShowComposition(e);
         });
         TextCompositionManager.AddPreviewTextInputUpdateHandler(this, (_, e) => ShowComposition(e));
         TextCompositionManager.AddPreviewTextInputHandler(this, (_, e) =>
         {
-            if (ReferenceEquals(discardedComposition, e.TextComposition))
+            if (ReferenceEquals(discardedComposition, e.TextComposition) ||
+                terminatingComposition is { } terminating && terminating.GetType() == e.TextComposition.GetType())
             {
-                discardedComposition = null;
                 e.Handled = true;
             }
             ClearComposition();
@@ -242,20 +260,19 @@ internal sealed class TerminalSurface : FrameworkElement
     public void UpdateSnapshotPosition(TerminalSnapshot value)
     {
         int previousCount = snapshot?.Count ?? 0;
-        bool follow = VerticalOffset >= ExtentHeight - ViewportHeight - 1;
+        bool follow = FollowsEnd;
         UpdateMetrics();
-        double position = Math.Max(0, (VerticalOffset - Inset) / rowHeight);
-        int row = (int)position;
+        int row = (int)Math.Round(VerticalOffset / rowHeight);
         int? anchor = !follow && snapshot is { } previous ? value.MapViewportRowFrom(previous, row) : null;
         SetSnapshot(value);
-        if (follow && (value.Count != previousCount || VerticalOffset < ExtentHeight - ViewportHeight))
+        if (follow && value.Count != previousCount)
         {
             outputScrollOffset = double.PositiveInfinity;
             Scroller.ScrollToBottom();
         }
         else if (anchor is { } mapped && mapped != row)
         {
-            double offset = mapped == 0 ? 0 : Inset + (mapped + position - row) * rowHeight;
+            double offset = mapped * rowHeight;
             outputScrollOffset = offset;
             Scroller.ScrollToVerticalOffset(offset);
         }
@@ -310,7 +327,7 @@ internal sealed class TerminalSurface : FrameworkElement
     {
         UpdateMetrics();
         int row = top ? range.StartRow : range.EndRow + 1;
-        Scroller.ScrollToVerticalOffset(top ? row * rowHeight + Inset : row * rowHeight + Inset - ViewportHeight);
+        Scroller.ScrollToVerticalOffset((top ? row : row - VisibleRowCount) * rowHeight);
     }
 
     internal double[] TextRectangles(TerminalMatch range)
@@ -328,8 +345,12 @@ internal sealed class TerminalSurface : FrameworkElement
                 right = Math.Max(right, (cell.Column + cell.Width) * cellWidth + Inset);
             }
             if (!double.IsFinite(left)) continue;
-            var a = PointToScreen(new Point(left, Math.Max(VerticalOffset, row * rowHeight + Inset)));
-            var b = PointToScreen(new Point(right, Math.Min(VerticalOffset + ViewportHeight, (row + 1) * rowHeight + Inset)));
+            Rect visible = viewportClip.Rect;
+            left = Math.Max(left, visible.Left);
+            right = Math.Min(right, visible.Right);
+            if (left >= right) continue;
+            var a = PointToScreen(new Point(left, row * rowHeight + Inset));
+            var b = PointToScreen(new Point(right, (row + 1) * rowHeight + Inset));
             result.AddRange([a.X, a.Y, b.X - a.X, b.Y - a.Y]);
         }
         return result.ToArray();
@@ -370,12 +391,11 @@ internal sealed class TerminalSurface : FrameworkElement
         if (scroll && value is { } current)
         {
             UpdateMetrics();
-            double top = current.StartRow * rowHeight + Inset;
-            double bottom = (current.EndRow + 1) * rowHeight + Inset;
-            if (top < VerticalOffset || bottom - top > ViewportHeight)
-                Scroller.ScrollToVerticalOffset(top);
-            else if (bottom > VerticalOffset + ViewportHeight)
-                Scroller.ScrollToVerticalOffset(bottom - ViewportHeight);
+            var (first, end) = VisibleRows();
+            if (current.StartRow < first || current.EndRow - current.StartRow + 1 > VisibleRowCount)
+                Scroller.ScrollToVerticalOffset(current.StartRow * rowHeight);
+            else if (current.EndRow >= end)
+                Scroller.ScrollToVerticalOffset((current.EndRow + 1 - VisibleRowCount) * rowHeight);
         }
         InvalidateVisual();
     }
@@ -390,8 +410,8 @@ internal sealed class TerminalSurface : FrameworkElement
     {
         UpdateMetrics();
         int count = snapshot?.Count ?? 0;
-        int first = Math.Clamp((int)((VerticalOffset - Inset) / rowHeight), 0, count);
-        int end = Math.Clamp((int)Math.Ceiling((VerticalOffset + ViewportHeight) / rowHeight) + 1, first, count);
+        int first = Math.Clamp((int)Math.Round(VerticalOffset / rowHeight), 0, count);
+        int end = Math.Min(count, first + VisibleRowCount);
         return (first, end);
     }
 
@@ -399,14 +419,39 @@ internal sealed class TerminalSurface : FrameworkElement
     {
         UpdateMetrics();
         imeInput.Arrange(CellRect(snapshot?.CursorRow ?? 0, snapshot?.CursorColumn ?? 0, 1));
+        UpdateViewport();
         return finalSize;
+    }
+
+    private static int FittedCells(double available, double cellSize) =>
+        (int)Math.Max(0, Math.Floor((available - 2 * Inset) / cellSize + 1e-8));
+
+    private int VisibleRowCount => FittedCells(ViewportHeight, rowHeight);
+    private static bool AtEnd(double offset, double limit) => offset >= limit - 0.01;
+
+    private void UpdateViewport()
+    {
+        int rows = VisibleRowCount;
+        int columns = FittedCells(Scroller.ViewportWidth, cellWidth);
+        double y = FittedOffset(Scroller.VerticalOffset, Scroller.ScrollableHeight, rowHeight);
+        double x = FittedOffset(Scroller.HorizontalOffset, Scroller.ScrollableWidth, cellWidth);
+        viewportTranslation.X = Scroller.HorizontalOffset - x;
+        viewportTranslation.Y = Scroller.VerticalOffset - y;
+        viewportClip.Rect = new Rect(Inset + x, Inset + y, columns * cellWidth, rows * rowHeight);
+        Clip = viewportClip;
+
+        static double FittedOffset(double offset, double limit, double cellSize)
+        {
+            double units = offset / cellSize;
+            return (AtEnd(offset, limit) ? Math.Ceiling(units - 1e-8) : Math.Floor(units + 1e-8)) * cellSize;
+        }
     }
 
     public (int Columns, int Rows) ViewportGrid(double width, double height)
     {
         UpdateMetrics();
-        return (Math.Clamp((int)((width - Inset * 2) / cellWidth), 2, 1024),
-            Math.Clamp((int)((height - Inset * 2) / rowHeight), 1, 512));
+        return (Math.Clamp(FittedCells(width, cellWidth), 2, 1024),
+            Math.Clamp(FittedCells(height, rowHeight), 1, 512));
     }
 
     public Size PaneMinimum()
@@ -420,15 +465,15 @@ internal sealed class TerminalSurface : FrameworkElement
     {
         if (snapshot is not { } view) return;
         UpdateMetrics();
-        double top = Inset + view.CursorRow * rowHeight;
-        if (top < VerticalOffset) Scroller.ScrollToVerticalOffset(top);
-        else if (top + rowHeight > VerticalOffset + ViewportHeight)
-            Scroller.ScrollToVerticalOffset(top + rowHeight - ViewportHeight);
-        double left = Inset + view.CursorColumn * cellWidth;
-        double offset = Scroller.HorizontalOffset;
-        if (left < offset) Scroller.ScrollToHorizontalOffset(left);
-        else if (left + cellWidth > offset + Scroller.ViewportWidth)
-            Scroller.ScrollToHorizontalOffset(left + cellWidth - Scroller.ViewportWidth);
+        var (first, end) = VisibleRows();
+        if (view.CursorRow < first) Scroller.ScrollToVerticalOffset(view.CursorRow * rowHeight);
+        else if (view.CursorRow >= end)
+            Scroller.ScrollToVerticalOffset((view.CursorRow + 1 - VisibleRowCount) * rowHeight);
+        int firstColumn = (int)Math.Round((Scroller.HorizontalOffset - viewportTranslation.X) / cellWidth);
+        int columns = FittedCells(Scroller.ViewportWidth, cellWidth);
+        if (view.CursorColumn < firstColumn) Scroller.ScrollToHorizontalOffset(view.CursorColumn * cellWidth);
+        else if (view.CursorColumn >= firstColumn + columns)
+            Scroller.ScrollToHorizontalOffset((view.CursorColumn + 1 - columns) * cellWidth);
     }
 
     public void ScrollToEnd()
@@ -490,6 +535,7 @@ internal sealed class TerminalSurface : FrameworkElement
         TerminalCell? cursorCell = null;
         TerminalStyleFlags cursorFlags = default;
         uint cursorBackground = 0;
+        var styledCells = new List<(TerminalCell Cell, uint Foreground, TerminalStyleFlags Flags, bool Current)>();
         for (int row = first; row < end; row++)
         {
             // Share horizontal cell translations across rows, including on the first view of a long scrollback.
@@ -498,6 +544,9 @@ internal sealed class TerminalSurface : FrameworkElement
             drawing.PushTransform(rowPosition);
             highlights.TryGetValue(row, out var rules);
             matches.TryGetValue(row, out var found);
+            int backgroundStart = 0, backgroundEnd = 0;
+            uint runBackground = 0;
+            styledCells.Clear();
             foreach (TerminalCell cell in snapshot.GetCells(row).Span)
             {
                 TerminalStyle style = cell.Style;
@@ -530,14 +579,32 @@ internal sealed class TerminalSurface : FrameworkElement
                     cursorFlags = flags;
                     cursorBackground = background;
                 }
+                if (background != runBackground || cell.Column != backgroundEnd)
+                {
+                    PaintBackground();
+                    backgroundStart = cell.Column;
+                    runBackground = background;
+                }
+                backgroundEnd = cell.Column + cell.Width;
+                styledCells.Add((cell, foreground, flags, current));
+            }
+            PaintBackground();
+            foreach (var (cell, foreground, flags, current) in styledCells)
+            {
                 Rect rect = CellRect(0, cell.Column, cell.Width);
-                if (background != 0) drawing.DrawRectangle(BrushFor(background), null, rect);
                 if (!flags.HasFlag(TerminalStyleFlags.Conceal)) DrawGlyph(drawing, rect, cell.Text, foreground, flags);
                 if (current) drawing.DrawRectangle(null, new Pen(Brushes.White, 1), rect);
             }
             drawing.Pop();
+
+            void PaintBackground()
+            {
+                if (runBackground != 0)
+                    drawing.DrawRectangle(BrushFor(runBackground), null,
+                        CellRect(0, backgroundStart, backgroundEnd - backgroundStart));
+            }
         }
-        if (connected && snapshot.CursorVisible && cursorOn && snapshot.CursorRow >= first && snapshot.CursorRow <= end)
+        if (connected && snapshot.CursorVisible && cursorOn && snapshot.CursorRow >= first && snapshot.CursorRow < end)
         {
             Rect caret = CellRect(snapshot.CursorRow, cursorCell?.Column ?? snapshot.CursorColumn, cursorCell?.Width ?? 1);
             uint cursor = ContrastCursor(cursorBackground);
@@ -626,10 +693,11 @@ internal sealed class TerminalSurface : FrameworkElement
     }
 
     private bool CanReportMouse() => connected && snapshot is { Mouse.Tracking: > 0 } view &&
-        (remoteGesture || view.IsAlternateScreen || VerticalOffset >= ExtentHeight - ViewportHeight - 1 ||
+        (remoteGesture || view.IsAlternateScreen || FollowsEnd ||
             VisibleRows().First >= view.ScreenStartRow);
 
-    private bool IsActiveScreenPoint(Point point) => snapshot is { } view && point.Y >= Inset + view.ScreenStartRow * rowHeight;
+    private bool IsActiveScreenPoint(Point point) => snapshot is { } view && viewportClip.Rect.Contains(point) &&
+        point.Y >= Inset + view.ScreenStartRow * rowHeight;
 
     private void ReportMouse(Point point, int button, bool release, bool motion)
     {
@@ -816,6 +884,7 @@ internal sealed class TerminalSurface : FrameworkElement
     private void ShowComposition(TextCompositionEventArgs e)
     {
         if (ReferenceEquals(discardedComposition, e.TextComposition)) return;
+        terminatingComposition = null;
         activeComposition = e.TextComposition;
         composition = e.TextComposition.CompositionText;
         InvalidateVisual();
@@ -826,6 +895,11 @@ internal sealed class TerminalSurface : FrameworkElement
         if (activeComposition is not { } composing) return;
         // WPF can deliver a composition result after the focus change has finished.
         discardedComposition = composing;
+        terminatingComposition = composing;
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+        {
+            if (ReferenceEquals(terminatingComposition, composing)) terminatingComposition = null;
+        }));
         try { composing.Complete(); }
         catch (ArgumentException) when (ReferenceEquals(activeComposition, composing)) { }
         finally { ClearComposition(); }

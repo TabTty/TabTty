@@ -114,10 +114,13 @@
             <TabControl x:Name="tabs" AllowDrop="True" Template="{StaticResource TabGroupTemplate}"
                         Padding="0,0,176,0" />
         </Border>
-        <ScrollViewer x:Name="broadcastBand" VerticalAlignment="Bottom" MaxHeight="104"
-                      VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-            <TextBlock x:Name="broadcastStatus" TextWrapping="Wrap" Padding="8,2" />
-        </ScrollViewer>
+        <Canvas>
+            <Border x:Name="broadcastBand" Visibility="Collapsed" Background="{DynamicResource WindowBackground}">
+                <TextBlock x:Name="broadcastStatus" Foreground="{DynamicResource WindowForeground}"
+                           TextTrimming="CharacterEllipsis" Padding="6,2" Focusable="True"
+                           ToolTipService.ShowsToolTipOnKeyboardFocus="True" />
+            </Border>
+        </Canvas>
         <DockPanel x:Name="welcomePanel" Margin="18,58,18,18" VerticalAlignment="Top">
             <Image x:Name="welcomeIcon" DockPanel.Dock="Left" Width="96" Height="96"
                    Margin="0,0,20,0" VerticalAlignment="Top"

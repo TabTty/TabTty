@@ -225,11 +225,21 @@ internal static partial class Program
             Click(Child(panes, "FocusPane").Items.OfType<MenuItem>().First());
             views[1].RaiseEvent(new TextCompositionEventArgs(Keyboard.PrimaryDevice, composition)
                 { RoutedEvent = TextCompositionManager.PreviewTextInputEvent });
+            var lateResult = new DeferredComposition(views[0], TextCompositionAutoComplete.On);
+            views[0].RaiseEvent(new TextCompositionEventArgs(Keyboard.PrimaryDevice, lateResult)
+                { RoutedEvent = TextCompositionManager.PreviewTextInputStartEvent });
+            views[0].RaiseEvent(new TextCompositionEventArgs(Keyboard.PrimaryDevice, lateResult)
+                { RoutedEvent = TextCompositionManager.PreviewTextInputEvent });
             await host.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle, deadline.Token);
             if (second.Available != 0) throw new InvalidOperationException("A discarded composition was sent after pane focus moved.");
 
             var broadcast = FindMenu(host, "ConnectionMenu", "BroadcastInput");
+            host.UpdateLayout();
+            Size paneSize = target.TerminalArea.RenderSize;
             Click(Child(broadcast, "BroadcastStart"));
+            host.UpdateLayout();
+            if (target.TerminalArea.RenderSize != paneSize)
+                throw new InvalidOperationException($"Broadcast status changed the terminal area from {paneSize} to {target.TerminalArea.RenderSize}.");
             var otherBroadcast = FindMenu(other, "ConnectionMenu", "BroadcastInput");
             if (!source.BroadcastChecked || !target.BroadcastChecked || !outside.BroadcastChecked || app.Broadcast.IsActive(other))
                 throw new InvalidOperationException("New tabs must be checked by default and respect the active window scope.");
@@ -545,8 +555,9 @@ internal static partial class Program
         static void OpenSubmenu(MenuItem menu) => menu.RaiseEvent(new RoutedEventArgs(MenuItem.SubmenuOpenedEvent, menu));
     }
 
-    private sealed class DeferredComposition(TerminalSurface source) :
-        TextComposition(InputManager.Current, source, "discarded", TextCompositionAutoComplete.Off)
+    private sealed class DeferredComposition(TerminalSurface source,
+        TextCompositionAutoComplete completion = TextCompositionAutoComplete.Off) :
+        TextComposition(InputManager.Current, source, "discarded", completion)
     {
         // The integration test explicitly delivers the late completion event after focus moves.
         public override void Complete() { }

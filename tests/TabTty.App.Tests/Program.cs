@@ -1772,7 +1772,7 @@ internal static partial class Program
         tabs.Items.Add(sessionTab);
         tabs.Items.Add(otherTab);
         var host = new Window { Content = tabs, Width = 640, Height = 360, ShowActivated = false, ShowInTaskbar = false };
-        var surface = (TerminalSurface)((ScrollViewer)((DockPanel)terminal.Content).Children[^1]).Content;
+        var surface = FindControls<TerminalSurface>(terminal).Single();
         using var received = new MemoryStream();
 
         try
@@ -1972,9 +1972,8 @@ internal static partial class Program
                 await connected.Task.WaitAsync(deadline.Token);
                 Equal(caption, "Input test");
 
-                var panel = (System.Windows.Controls.DockPanel)tab.Content;
-                var scroller = (System.Windows.Controls.ScrollViewer)panel.Children[^1];
-                var surface = (TerminalSurface)scroller.Content;
+                var surface = FindControls<TerminalSurface>(tab).Single();
+                var scroller = surface.Scroller;
                 using var window = new HwndSource(new HwndSourceParameters("TabTty keyboard test")
                 {
                     WindowStyle = unchecked((int)0x90000000), // WS_POPUP | WS_VISIBLE
@@ -2454,6 +2453,7 @@ internal static partial class Program
 
     private static void TerminalSurfaceRendersItsCellSnapshot()
     {
+        TerminalBackgroundAndViewportUseWholeCells();
         foreach (var (background, expected) in new (uint, uint)[]
         {
             (0xFFFFFF, 0), (0xFFD54F, 0), (0x0050A0, 0xFFFFFF), (0xFF0000, 0),
@@ -2486,6 +2486,63 @@ internal static partial class Program
             encoder.Frames.Add(BitmapFrame.Create(bitmap));
             using var file = new FileStream(artifact, FileMode.Create, FileAccess.Write);
             encoder.Save(file);
+        }
+    }
+
+    private static void TerminalBackgroundAndViewportUseWholeCells()
+    {
+        var glyph = new FormattedText("M", System.Globalization.CultureInfo.InvariantCulture,
+            FlowDirection.LeftToRight, new Typeface("Consolas"), 16, Brushes.White, 1);
+        double rowHeight = Math.Ceiling(glyph.Height);
+        double cellWidth = glyph.WidthIncludingTrailingWhitespace;
+        foreach (bool alternate in new[] { false, true })
+        {
+            var output = new TerminalOutput(columns: 80, screenRows: 32);
+            string band = new(' ', 72);
+            string text = (alternate ? "\u001b[?1049h" : "") +
+                string.Join("\r\n", Enumerable.Range(0, 32).Select(row =>
+                    (row % 2 == 0 ? "\u001b[7m" : "\u001b[48;2;255;255;255m") + band +
+                    "\u001b[0;48;2;0;128;255m    \u001b[0m"));
+            output.Receive(TerminalReceiveSource.Data, System.Text.Encoding.ASCII.GetBytes(text));
+            var snapshot = output.GetRows();
+            var surface = new TerminalSurface();
+            surface.SetSnapshot(snapshot);
+            var frame = surface.Scroller;
+            frame.VerticalScrollBarVisibility = ScrollBarVisibility.Hidden;
+            frame.HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden;
+            foreach (double heightInRows in new[] { 23.99, 24, 24.4 })
+            {
+                var size = new Size(8 + cellWidth * 76.4, 8 + rowHeight * heightInRows);
+                frame.Measure(size);
+                frame.Arrange(new Rect(size));
+                frame.UpdateLayout();
+                surface.ScrollToEnd();
+                frame.UpdateLayout();
+                int visible = (int)Math.Floor(heightInRows);
+                if (surface.VisibleRows() != (snapshot.Count - visible, snapshot.Count))
+                    throw new InvalidOperationException($"The bottom viewport clips a row at {heightInRows} row heights. " +
+                        $"Actual {surface.VisibleRows()}, viewport {frame.ViewportHeight}, offset {surface.VerticalOffset}.");
+                var clip = ((RectangleGeometry)surface.Clip).Rect;
+                if (Math.Abs(clip.Width - 76 * cellWidth) > 0.01 || Math.Abs(clip.Height - visible * rowHeight) > 0.01)
+                    throw new InvalidOperationException("The viewport did not fit complete cells.");
+            }
+            foreach (double scale in new[] { 1.0, 1.25 })
+            {
+                var bitmap = new RenderTargetBitmap((int)Math.Ceiling(frame.ActualWidth * scale),
+                    (int)Math.Ceiling(frame.ActualHeight * scale), 96 * scale, 96 * scale, PixelFormats.Pbgra32);
+                bitmap.Render(frame);
+                int start = (int)Math.Ceiling(4 * scale) + 1;
+                int end = (int)Math.Floor((4 + 72 * cellWidth) * scale) - 1;
+                int sampleY = (int)((4 + rowHeight / 2) * scale);
+                var pixels = new byte[(end - start) * 4];
+                bitmap.CopyPixels(new Int32Rect(start, sampleY, end - start, 1), pixels, pixels.Length, 0);
+                if (pixels.Any(channel => channel < 250))
+                    throw new InvalidOperationException($"A continuous background has an interior seam at scale {scale}.");
+                bitmap.CopyPixels(new Int32Rect(end + (int)(cellWidth * scale), sampleY, 1, 1), pixels, 4, 0);
+                if (pixels[0] < 250 || pixels[2] > 5)
+                    throw new InvalidOperationException("The next background color did not start at its cell.");
+            }
+            output.ReleaseNativeState();
         }
     }
 

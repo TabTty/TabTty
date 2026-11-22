@@ -74,6 +74,11 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
     }
     public Guid? HighlightSetId => profile.HighlightSetId;
     public string? RecordingError => recordings.Failure;
+    internal event Action? RecordingPartFailed
+    {
+        add => recordings.PartFailed += value;
+        remove => recordings.PartFailed -= value;
+    }
     internal string? RecordingStartFailure => Volatile.Read(ref recordingStartFailure);
     internal RecordingStatus RecordingStatus => recordings.Status;
     internal Task RecordingActualRelease => recordings.ActualRelease;

@@ -20,6 +20,7 @@ internal sealed class RecordingLifecycle(TerminalOutput terminal, SemaphoreSlim 
     private Task<RecordingOperationResult>? pause, close;
 
     internal string? Failure => Volatile.Read(ref part)?.Failure;
+    internal event Action? PartFailed;
 
     internal RecordingStatus Status
     {
@@ -231,6 +232,7 @@ internal sealed class RecordingLifecycle(TerminalOutput terminal, SemaphoreSlim 
         }
         finally { terminalOrder.Release(); }
         if (fatal is not null) failConnection(fatal);
+        else PartFailed?.Invoke();
     }
 
     private void StopFailedPart()

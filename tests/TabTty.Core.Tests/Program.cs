@@ -1692,7 +1692,12 @@ static async Task FailedRecordingCannotStopTheSessionOrItsReplacementPart()
     await using var session = new TerminalSession(wire, profile, first, 100);
     wire.Next = "before\r\n"u8.ToArray();
     await session.ReadOutputAsync(deadline.Token);
+    var failureObserved = new TaskCompletionSource<RecordingStatus>(TaskCreationOptions.RunContinuationsAsynchronously);
+    session.RecordingPartFailed += () => failureObserved.TrySetResult(session.RecordingStatus);
     first.MarkIncomplete(failure);
+    if (await failureObserved.Task.WaitAsync(deadline.Token) is not
+        { Disposition: RecordingDisposition.Incomplete, Error: failure })
+        throw new InvalidOperationException("The idle session did not publish the recording failure.");
     wire.Next = "visible only\r\n"u8.ToArray();
     if (!(await session.ReadOutputAsync(deadline.Token))!.Contains("visible only"))
         throw new InvalidOperationException("A failed recording stopped the healthy terminal.");

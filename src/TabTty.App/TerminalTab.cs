@@ -24,8 +24,9 @@ internal sealed partial class TerminalTab : UserControl
     private readonly Func<Window, long, CancellationToken, Task<TerminalPaste?>> captureClipboard;
     private readonly (int Columns, int Rows)? fixedViewport;
     private CancellationTokenSource stop = new();
-    private readonly TextBlock status = new() { Padding = new Thickness(8) };
-    private readonly TextBlock highlightStatus = new() { Padding = new Thickness(8), Visibility = Visibility.Collapsed };
+    private readonly TextBlock status = new() { Padding = new Thickness(6, 2, 6, 2) };
+    private readonly TextBlock highlightStatus = new() { Padding = new Thickness(6, 2, 6, 2), Visibility = Visibility.Collapsed };
+    private readonly WrapPanel statusIndicators = new() { HorizontalAlignment = HorizontalAlignment.Right };
     private readonly StackPanel searchBar = new() { Orientation = Orientation.Horizontal, Visibility = Visibility.Collapsed };
     private readonly TextBox searchQuery = new() { Width = 220, MaxLength = 1024, Margin = new Thickness(3) };
     private readonly CheckBox matchCase = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(3) };
@@ -147,12 +148,30 @@ internal sealed partial class TerminalTab : UserControl
         searchBar.Children.Add(closeSearch);
         searchBar.Children.Add(searchStatus);
         panel.Children.Add(searchBar);
-        DockPanel.SetDock(status, Dock.Bottom);
-        panel.Children.Add(status);
+        ConfigureStatusIndicator(status);
+        statusIndicators.Children.Add(status);
         InitializeAiControls();
-        DockPanel.SetDock(highlightStatus, Dock.Bottom);
-        panel.Children.Add(highlightStatus);
-        panel.Children.Add(output.Scroller);
+        ConfigureStatusIndicator(highlightStatus);
+        statusIndicators.Children.Add(highlightStatus);
+        statusIndicators.SetResourceReference(Panel.BackgroundProperty, "WindowBackground");
+        var statusLayer = new Canvas();
+        Canvas.SetTop(statusIndicators, 2);
+        Canvas.SetRight(statusIndicators, 2);
+        statusLayer.Children.Add(statusIndicators);
+        terminalArea.LayoutUpdated += (_, _) =>
+        {
+            if (!terminalArea.IsVisible) return;
+            Rect anchor = StatusOverlayBounds(right: true);
+            // Truncate within one pane so the indicator never straddles a divider.
+            double width = Math.Max(0, Math.Min(terminalArea.ActualWidth * 0.66,
+                anchor.Right - Math.Max(anchor.Left, terminalArea.ActualWidth * 0.34)) - 4);
+            Canvas.SetRight(statusIndicators, terminalArea.ActualWidth - anchor.Right + 2);
+            Canvas.SetTop(statusIndicators, anchor.Top + 2);
+            statusIndicators.MaxWidth = status.MaxWidth = highlightStatus.MaxWidth = width;
+        };
+        terminalArea.Children.Add(output.Scroller);
+        terminalArea.Children.Add(statusLayer);
+        panel.Children.Add(terminalArea);
         Content = panel;
         searchBar.PreviewKeyDown += OnSearchKeyDown;
         searchQuery.TextChanged += async (_, _) => await RefreshSearchAsync();
@@ -336,6 +355,9 @@ internal sealed partial class TerminalTab : UserControl
             connectedName = session.DisplayName;
             established = true;
             SetStatus("Connected");
+            var recordingOwner = session;
+            recordingOwner.RecordingPartFailed += ShowRecordingFailure;
+            ShowRecordingFailure();
             Connected?.Invoke(connectedName);
             highlightState.Resume();
             highlightSetId = session.HighlightSetId;
@@ -346,11 +368,22 @@ internal sealed partial class TerminalTab : UserControl
             ScheduleFrame(immediately: true);
             ScheduleResize();
             ready?.TrySetResult(session);
-            await ReceiveOutputAsync(session);
-            await session.WaitForTerminalPeerCloseAsync(stop.Token);
+            try
+            {
+                await ReceiveOutputAsync(recordingOwner);
+                await recordingOwner.WaitForTerminalPeerCloseAsync(stop.Token);
+            }
+            finally { recordingOwner.RecordingPartFailed -= ShowRecordingFailure; }
             connectionEnd = session.RecordingStartFailure is null ? ConnectionEnd.Normal : ConnectionEnd.FailedAfterConnect;
             if (session.RecordingStartFailure is { } logFailure) SetStatus("Failed", LogStartError(logFailure));
             else SetStatus("Disconnected");
+
+            void ShowRecordingFailure() => _ = Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+            {
+                if (!removed && ReferenceEquals(session, recordingOwner) &&
+                    recordingOwner.RecordingStatus is { Disposition: RecordingDisposition.Incomplete, Error: { } problem })
+                    SetStatus(statusKey, problem);
+            }));
         }
         catch (OperationCanceledException exception) when (stop.IsCancellationRequested || exception is SshInteractionCancelledException)
         {
@@ -465,7 +498,6 @@ internal sealed partial class TerminalTab : UserControl
                     if (!ReferenceEquals(session, active) || removed) return;
                     ScheduleFrame();
                     if (active.RecordingStartFailure is { } failure) SetStatus("Failed", LogStartError(failure));
-                    else if (active.RecordingError is { } problem) SetStatus("Connected", problem);
                 }));
         }
     }
@@ -872,6 +904,16 @@ internal sealed partial class TerminalTab : UserControl
         }
         if (output.UsesFontFallback) text += "   " + string.Format(Text("FontFallback"), output.AutomationFontFamily);
         status.Text = text;
+        status.ToolTip = text;
+        AutomationProperties.SetName(status, text);
+    }
+
+    private static void ConfigureStatusIndicator(TextBlock indicator)
+    {
+        indicator.TextTrimming = TextTrimming.CharacterEllipsis;
+        indicator.Focusable = true;
+        indicator.SetResourceReference(TextBlock.ForegroundProperty, "WindowForeground");
+        ToolTipService.SetShowsToolTipOnKeyboardFocus(indicator, true);
     }
 
     private void NotifyDestinationChange(TerminalSession connected, ConnectionDestination previous,
@@ -905,6 +947,8 @@ internal sealed partial class TerminalTab : UserControl
         bool missing = highlightSetId is not null && ((App)Application.Current).Highlights.Find(highlightSetId) is null;
         highlightStatus.Visibility = highlightSuspended || missing ? Visibility.Visible : Visibility.Collapsed;
         highlightStatus.Text = Text(missing ? "HighlightSetMissing" : "HighlightRuleSuspended");
+        highlightStatus.ToolTip = highlightStatus.Text;
+        AutomationProperties.SetName(highlightStatus, highlightStatus.Text);
     }
 
     private void Display(IReadOnlyList<string> rows)
