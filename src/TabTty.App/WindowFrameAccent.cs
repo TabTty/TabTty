@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Security;
 using System.Windows;
 using System.Windows.Interop;
+using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Win32;
 
@@ -65,8 +66,13 @@ internal sealed partial class WindowFrameAccent
     private void Apply()
     {
         if (source.IsDisposed) return;
-        uint color = window.IsActive && window.WindowState == WindowState.Normal && !SystemParameters.HighContrast
+        uint accent = window.IsActive && !SystemParameters.HighContrast &&
+            (window.WindowState == WindowState.Normal || window is MainWindow)
             ? ReadAccentColor() : DefaultColor;
+        if (window is MainWindow main)
+            main.SetActiveHeaderAccent(accent == DefaultColor ? null :
+                Color.FromRgb((byte)accent, (byte)(accent >> 8), (byte)(accent >> 16)));
+        uint color = window.WindowState == WindowState.Normal ? accent : DefaultColor;
         if (color != appliedColor && DwmSetWindowAttribute(source.Handle, BorderColorAttribute, in color, sizeof(uint)) >= 0)
             appliedColor = color;
     }

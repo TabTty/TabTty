@@ -45,9 +45,11 @@ internal sealed partial class MainWindow
     {
         // Leave room for one full tab even when both scroll arrows are visible.
         double captionWidth = menuButton.Width + minimizeButton.Width + maximizeButton.Width + closeButton.Width;
-        bool separateCaption = Groups.Skip(1).Any() ||
+        bool hasSplitGroups = Groups.Skip(1).Any();
+        bool separateCaption = hasSplitGroups ||
             windowRoot.ActualWidth > 0 && windowRoot.ActualWidth < MinimumSharedTabBarWidth + captionWidth;
         groupHost.Margin = new Thickness(0, separateCaption ? 43 : 0, 0, 0);
+        titleBarBackground.Visibility = hasSplitGroups ? Visibility.Visible : Visibility.Collapsed;
         foreach (var group in Groups)
         {
             group.Padding = new Thickness(0, 0, separateCaption ? 0 : captionWidth, 0);

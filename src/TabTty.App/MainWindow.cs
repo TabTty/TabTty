@@ -22,6 +22,7 @@ internal sealed partial class MainWindow : Window
     private bool readyToClose;
     private bool closed;
     private int tabWheelDelta;
+    private Color? headerAccent;
 
     public MainWindow(App app)
     {
@@ -38,6 +39,7 @@ internal sealed partial class MainWindow : Window
             System.Windows.Interop.HwndSource.FromHwnd(new System.Windows.Interop.WindowInteropHelper(this).Handle)
                 ?.AddHook(HandleWindowMessage);
         InitializeComponent();
+        UpdateActiveHeaderShade();
         Icon = WindowIcons.App;
         welcomeIcon.Source = WindowIcons.Welcome;
         MinWidth = WindowPlacement.MinimumWidth;
@@ -54,6 +56,46 @@ internal sealed partial class MainWindow : Window
         InitializeGroups();
         ConfigureTabDrag();
         UpdateLabels();
+    }
+
+    protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
+    {
+        base.OnPropertyChanged(e);
+        if ((e.Property == BackgroundProperty || e.Property == IsActiveProperty) && titleBarBackground is not null)
+            UpdateActiveHeaderShade();
+    }
+
+    private void UpdateActiveHeaderShade()
+    {
+        if (!IsActive || SystemParameters.HighContrast || Background is not SolidColorBrush { Color: var background })
+        {
+            Resources["ActiveHeaderBackground"] = Brushes.Transparent;
+            return;
+        }
+
+        bool dark = background.R < 128;
+        double brightness = dark ? 0.62 : 0.975;
+        double tint = 0;
+        Color accent = headerAccent.GetValueOrDefault();
+        if (headerAccent.HasValue)
+        {
+            brightness = dark ? 0.32 : 0.985;
+            tint = dark ? 0.075 : 0.025;
+        }
+        double baseWeight = brightness * (1 - tint);
+        var brush = new SolidColorBrush(Color.FromRgb(
+            Blend(background.R, accent.R), Blend(background.G, accent.G), Blend(background.B, accent.B)));
+        brush.Freeze();
+        Resources["ActiveHeaderBackground"] = brush;
+
+        byte Blend(byte component, byte accentComponent) =>
+            (byte)Math.Round(component * baseWeight + accentComponent * tint);
+    }
+
+    internal void SetActiveHeaderAccent(Color? accent)
+    {
+        headerAccent = accent;
+        UpdateActiveHeaderShade();
     }
 
     internal void OpenProfile(string path) => OpenProfiles([path], activeGroup);

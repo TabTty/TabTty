@@ -2,10 +2,154 @@ using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using TabTty.App;
 
 internal static partial class Program
 {
+    private static void CheckActiveWindowHeader(App app)
+    {
+        RequireDesktopInput();
+#pragma warning disable WPF0001 // WPF Fluent theme integration.
+        var previous = app.ThemeMode;
+        var window = new MainWindow(app) { Width = 1100, Height = 650, ShowInTaskbar = false, Topmost = true };
+        var peer = new MainWindow(app) { ShowInTaskbar = false };
+        try
+        {
+            app.ThemeMode = ThemeMode.Dark;
+            window.OpenForm("Settings", _ => { });
+            window.Show();
+            peer.Show();
+            var root = (FrameworkElement)window.Content;
+            var host = (Border)window.FindName("groupHost");
+            var titleBar = (Border)window.FindName("titleBarBackground");
+            var group = (TabControl)window.FindName("tabs");
+            var tabBar = TabBar(group);
+            var peerTabBar = TabBar((TabControl)peer.FindName("tabs"));
+            var exampleAccent = Color.FromRgb(0xA6, 0x38, 0x0C);
+
+            Activate(window);
+            window.SetActiveHeaderAccent(exampleAccent);
+            Color darkShade = CheckBand(tabBar, 0);
+            int darkDifference = Brightness(((SolidColorBrush)window.Background).Color) - Brightness(darkShade);
+            if (darkShade.R <= darkShade.G || darkShade.G <= darkShade.B)
+                throw new InvalidOperationException("The dark header did not pick up the Windows accent.");
+            if (titleBar.IsVisible || HasShade(peerTabBar))
+                throw new InvalidOperationException("The single tab bar shade was not confined to the active window.");
+
+            window.Width = 600;
+            Layout();
+            if (host.Margin.Top <= 0) throw new InvalidOperationException("The narrow window did not separate its caption.");
+            CheckBand(tabBar, host.Margin.Top);
+            if (titleBar.IsVisible)
+                throw new InvalidOperationException("The narrow window shaded its separate caption without a split.");
+
+            window.Width = 1100;
+            Layout();
+            var split = (Button)group.Template.FindName("splitGroupsStackButton", group);
+            split.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, split));
+            Layout();
+            var second = FindControls<TabControl>(root).Single(candidate => candidate != group);
+            var secondTabBar = TabBar(second);
+            CheckBand(titleBar, 0);
+            CheckBand(tabBar, host.Margin.Top);
+            CheckBand(secondTabBar, second.TranslatePoint(new Point(), root).Y);
+            if (host.Margin.Top < titleBar.ActualHeight)
+                throw new InvalidOperationException("The split tab bars overlapped the shaded title bar.");
+
+            Activate(peer);
+            if (HasShade(titleBar) || HasShade(tabBar) || HasShade(secondTabBar) || !HasShade(peerTabBar))
+                throw new InvalidOperationException("Changing the active window did not move the header shading.");
+            Activate(window);
+
+            app.ThemeMode = ThemeMode.Light;
+            Layout();
+            window.SetActiveHeaderAccent(exampleAccent);
+            CheckBand(tabBar, host.Margin.Top);
+            CheckBand(secondTabBar, second.TranslatePoint(new Point(), root).Y);
+            CheckLightBackground(titleBar);
+
+            var remove = (Button)second.Template.FindName("removeTabGroupButton", second);
+            remove.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, remove));
+            Layout();
+            if (host.Margin.Top != 0 || titleBar.IsVisible)
+                throw new InvalidOperationException("Removing the split did not restore the shared tab bar.");
+            CheckLightBackground(tabBar);
+
+            app.ThemeMode = ThemeMode.Dark;
+            Layout();
+            CheckBand(tabBar, 0);
+
+            void Layout()
+            {
+                window.UpdateLayout();
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            }
+
+            Color CheckBand(Border header, double top)
+            {
+                if (!header.IsVisible || header.IsHitTestVisible ||
+                    Math.Abs(header.TranslatePoint(new Point(), root).Y - top) > 0.5 ||
+                    header.Background is not SolidColorBrush { Color: var shade })
+                    throw new InvalidOperationException("The active shade did not follow the intended header row.");
+                var background = ((SolidColorBrush)window.Background).Color;
+                if (Brightness(shade) >= Brightness(background) ||
+                    SampleAt(top + header.ActualHeight - 2) != shade)
+                    throw new InvalidOperationException("The active shade did not produce a darker header.");
+                return shade;
+            }
+
+            void CheckLightBackground(Border header)
+            {
+                Color active = CheckBand(header, 0);
+                Activate(peer);
+                int difference = Brightness(SampleAt(header.ActualHeight - 2)) - Brightness(active);
+                if (difference <= 0 || difference >= darkDifference)
+                    throw new InvalidOperationException("Activation did not produce a subtler shade in the light theme.");
+                Activate(window);
+            }
+
+            static int Brightness(Color color) => color.R + color.G + color.B;
+            static bool HasShade(Border header) => header.Background is SolidColorBrush { Color.A: > 0 };
+            static Border TabBar(TabControl tabs) => (Border)tabs.Template.FindName("tabBarBackground", tabs);
+
+            Color SampleAt(double y)
+            {
+                var visual = new DrawingVisual();
+                var pixel = new Rect(0, 0, 1, 1);
+                using (DrawingContext drawing = visual.RenderOpen())
+                {
+                    drawing.DrawRectangle(window.Background, null, pixel);
+                    drawing.DrawRectangle(new VisualBrush(root)
+                    {
+                        ViewboxUnits = BrushMappingMode.Absolute,
+                        Viewbox = new Rect(Math.Floor(root.ActualWidth / 2), y, 1, 1),
+                    }, null, pixel);
+                }
+                var bitmap = new RenderTargetBitmap(1, 1, 96, 96, PixelFormats.Pbgra32);
+                bitmap.Render(visual);
+                byte[] bytes = new byte[4];
+                bitmap.CopyPixels(bytes, 4, 0);
+                return Color.FromArgb(bytes[3], bytes[2], bytes[1], bytes[0]);
+            }
+        }
+        finally
+        {
+            window.Close();
+            peer.Close();
+            app.ThemeMode = previous;
+        }
+#pragma warning restore WPF0001
+
+        static void Activate(MainWindow target)
+        {
+            target.Activate();
+            target.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            if (!target.IsActive) throw new InvalidOperationException("The test could not activate the target window.");
+        }
+    }
+
     private static void TabStripOverflowButtons(App app)
     {
         var window = new MainWindow(app);

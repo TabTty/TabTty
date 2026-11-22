@@ -11,6 +11,7 @@
                             GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False" />
     </shell:WindowChrome.WindowChrome>
     <Window.Resources>
+        <SolidColorBrush x:Key="ActiveHeaderBackground" Color="Transparent" />
         <Style x:Key="WindowButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
             <Setter Property="Width" Value="44" />
             <Setter Property="Height" Value="34" />
@@ -73,6 +74,8 @@
                             <RowDefinition Height="Auto" MinHeight="43" />
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
+                        <Border x:Name="tabBarBackground" IsHitTestVisible="False"
+                                Background="{DynamicResource ActiveHeaderBackground}" />
                         <Border x:Name="tabStripRow" Margin="{TemplateBinding Padding}" Background="Transparent">
                             <Border.ContextMenu>
                                 <ContextMenu Opened="OnTabStripMenuOpened">
@@ -158,6 +161,8 @@
                 </ControlTemplate>
     </Window.Resources>
     <Grid x:Name="windowRoot">
+        <Border x:Name="titleBarBackground" Height="43" VerticalAlignment="Top" Visibility="Collapsed"
+                IsHitTestVisible="False" Background="{DynamicResource ActiveHeaderBackground}" />
         <Border x:Name="groupHost">
             <TabControl x:Name="tabs" Template="{StaticResource TabGroupTemplate}" />
         </Border>
