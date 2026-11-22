@@ -47,6 +47,7 @@ public sealed class App : Application
     internal long MaxPasteTextBytes => settings["maxPasteTextBytes"]?.GetValue<long>() ??
         TabTty.Core.TerminalPaste.DefaultMaxSourceBytes;
     internal bool BroadcastAcrossWindows => settings["broadcastAcrossWindows"]?.GetValue<bool>() ?? false;
+    internal KeyboardShortcuts Shortcuts { get; private set; } = KeyboardShortcuts.Defaults;
     internal RecordingDefaults LogDefaults => ReadLogDefaults(settings);
 
     private static RecordingDefaults ReadLogDefaults(JsonObject state)
@@ -375,7 +376,7 @@ public sealed class App : Application
     internal async Task SaveSettingsAsync(string languageChoice, string themeChoice, string bellChoice,
         string terminalFontFamily, double terminalFontSize, int retainedRows, bool autoCloseDisconnectedTabs,
         string vaultPath, int revision, bool? broadcastAcrossWindows = null, long? maxPasteTextBytes = null,
-        string? profileSaveDirectory = null, RecordingDefaults? logDefaults = null)
+        string? profileSaveDirectory = null, RecordingDefaults? logDefaults = null, KeyboardShortcuts? shortcuts = null)
     {
         if (revision != SettingsRevision)
             throw new InvalidOperationException(Text("ManagementTabOutdated"));
@@ -389,6 +390,11 @@ public sealed class App : Application
         var candidate = (JsonObject)settings.DeepClone();
         bool scopeChanged = broadcastAcrossWindows is { } scope && scope != BroadcastAcrossWindows;
         if (broadcastAcrossWindows is { } savedScope) candidate["broadcastAcrossWindows"] = savedScope;
+        if (shortcuts is not null)
+        {
+            candidate[KeyboardShortcuts.SettingsKey] = shortcuts.ToJson();
+            candidate.Remove("tabFocusKey");
+        }
         if (maxPasteTextBytes is { } maximum)
         {
             if (maximum <= 0) throw new ArgumentException(Text("InvalidPasteSourceMaximum"));
@@ -464,6 +470,7 @@ public sealed class App : Application
 
     private void ApplySettings()
     {
+        Shortcuts = KeyboardShortcuts.Read(settings);
         string selected = LanguageChoice == "system" ? SystemLanguage.Resolve() : LanguageChoice;
         language = CultureInfo.GetCultureInfo(selected == "ja" ? "ja" : "en");
 #pragma warning disable WPF0001 // .NET 10 Fluent theme integration.
@@ -548,6 +555,7 @@ public sealed class App : Application
         {
             throw new InvalidDataException("Invalid application settings.");
         }
+        _ = KeyboardShortcuts.Read(parsed);
 
         if (parsed["credentialVaultPath"] is { } vaultPath)
         {

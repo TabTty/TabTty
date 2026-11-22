@@ -1,9 +1,14 @@
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
+using System.Text.Json.Nodes;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Threading;
 using TabTty.App;
 using TabTty.Core;
@@ -13,30 +18,46 @@ internal static partial class Program
     private static void CheckTabHeaderClicks(App app)
     {
         RequireDesktopInput();
-        var window = new MainWindow(app) { ShowInTaskbar = false, Topmost = true };
+        var window = new MainWindow(app) { Width = 760, ShowInTaskbar = false, Topmost = true };
         GetCursorPos(out var original);
         try
         {
+            for (int index = 0; index < 3; index++)
+                window.AddTerminalTab(new TerminalTab($"tab-input-{index}.ttty"));
             window.OpenForm("Settings", _ => { });
-            window.OpenForm("ProfileCatalog", _ => { });
             window.Show();
             var group = (TabControl)window.FindName("tabs");
             var tabs = group.Items.Cast<TabItem>().ToArray();
+            group.SelectedIndex = 0;
+            DrainInput();
             for (int click = 0; click < 8; click++)
+                ClickAndCheck(tabs[1 - group.SelectedIndex]);
+
+            tabs[0].Focus();
+            for (int index = 1; index < tabs.Length; index++) PressAndCheck(Key.Right, tabs[index]);
+            PressAndCheck(Key.Right, tabs[^1]);
+            var strip = (ScrollViewer)group.Template.FindName("tabStripScroller", group);
+            if (strip.HorizontalOffset <= 0)
+                throw new InvalidOperationException("Switching to a hidden tab did not scroll it into view.");
+            for (int index = tabs.Length - 2; index >= 0; index--) PressAndCheck(Key.Left, tabs[index]);
+            PressAndCheck(Key.Left, tabs[0]);
+            ClickAndCheck(tabs[0]);
+
+            void ClickAndCheck(TabItem expected)
             {
-                var expected = tabs.Single(tab => tab != group.SelectedItem);
-                window.UpdateLayout();
-                var point = expected.PointToScreen(new Point(expected.ActualWidth / 3, expected.ActualHeight / 2));
-                if (!SetCursorPos((int)Math.Round(point.X), (int)Math.Round(point.Y)))
-                    throw new InvalidOperationException("The test could not move the pointer onto the tab.");
-                Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
-                MouseEvent(0x0002, 0, 0, 0, 0);
-                MouseEvent(0x0004, 0, 0, 0, 0);
-                Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
-                if (group.SelectedItem != expected)
-                    throw new InvalidOperationException($"Click {click + 1} on an inactive tab did not switch tabs.");
+                ClickTabBarElement(expected);
+                var pane = FindControls<TerminalSurface>((TerminalTab)expected.Content).Single();
+                WaitForTabBarInput(() => group.SelectedItem == expected && pane.IsKeyboardFocusWithin,
+                    "Clicking a terminal tab did not select it and focus its pane.");
                 if (Mouse.Captured == group)
                     throw new InvalidOperationException("A normal tab click left the pointer captured by the tab group.");
+            }
+
+            void PressAndCheck(Key key, TabItem expected)
+            {
+                PressTabBarKey(key);
+                WaitForTabBarInput(() => group.SelectedItem == expected && expected.IsKeyboardFocused,
+                    $"{key} did not select tab {Array.IndexOf(tabs, expected)} and retain header focus.");
             }
         }
         finally
@@ -45,6 +66,71 @@ internal static partial class Program
             SetCursorPos(original.X, original.Y);
         }
     }
+
+    private static void ClickTabBarElement(FrameworkElement element)
+    {
+        MovePointerToTabBarElement(element);
+        MouseEvent(0x0002, 0, 0, 0, 0);
+        MouseEvent(0x0004, 0, 0, 0, 0);
+        DrainInput();
+    }
+
+    private static void MovePointerToTabBarElement(FrameworkElement element)
+    {
+        element.UpdateLayout();
+        var point = element.PointToScreen(new Point(element.ActualWidth / 3, element.ActualHeight / 2));
+        if (!SetCursorPos((int)Math.Round(point.X), (int)Math.Round(point.Y)))
+            throw new InvalidOperationException("The test could not move the pointer onto the tab bar.");
+        DrainInput();
+    }
+
+    private static void PressTabBarKey(Key key, ModifierKeys modifiers = ModifierKeys.None)
+    {
+        const uint extendedKey = 0x0001, keyUp = 0x0002;
+        byte virtualKey = (byte)KeyInterop.VirtualKeyFromKey(key);
+        uint flags = key is Key.Left or Key.Right or Key.PageUp or Key.PageDown ? extendedKey : 0;
+        bool control = modifiers.HasFlag(ModifierKeys.Control);
+        bool shift = modifiers.HasFlag(ModifierKeys.Shift);
+        if (control)
+            KeyEvent((byte)KeyInterop.VirtualKeyFromKey(Key.LeftCtrl), 0, 0, 0);
+        if (shift)
+            KeyEvent((byte)KeyInterop.VirtualKeyFromKey(Key.LeftShift), 0, 0, 0);
+        try
+        {
+            if (modifiers != ModifierKeys.None)
+                WaitForTabBarInput(() => Keyboard.Modifiers == modifiers,
+                    "The shortcut modifiers did not reach the window.");
+            KeyEvent(virtualKey, 0, flags, 0);
+            KeyEvent(virtualKey, 0, flags | keyUp, 0);
+        }
+        finally
+        {
+            if (shift)
+                KeyEvent((byte)KeyInterop.VirtualKeyFromKey(Key.LeftShift), 0, keyUp, 0);
+            if (control)
+                KeyEvent((byte)KeyInterop.VirtualKeyFromKey(Key.LeftCtrl), 0, keyUp, 0);
+        }
+        if (modifiers != ModifierKeys.None)
+            WaitForTabBarInput(() => Keyboard.Modifiers == ModifierKeys.None, "The shortcut modifiers did not release.");
+        DrainInput();
+    }
+
+    private static void DrainInput() => Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+
+    private static void WaitForTabBarInput(Func<bool> ready, string message)
+    {
+        var timer = Stopwatch.StartNew();
+        do
+        {
+            DrainInput();
+            if (ready()) return;
+            Thread.Sleep(10);
+        } while (timer.Elapsed < TimeSpan.FromSeconds(2));
+        throw new InvalidOperationException(message);
+    }
+
+    [DllImport("user32.dll", EntryPoint = "keybd_event", ExactSpelling = true)]
+    private static extern void KeyEvent(byte virtualKey, byte scanCode, uint flags, nuint extraInfo);
 
     private static void CheckTabPreviewLayout(App app)
     {
@@ -114,7 +200,7 @@ internal static partial class Program
             source.OpenForm("Settings", _ => { });
             source.AddTerminalTab(sessionTab);
             source.OpenForm("ProfileCatalog", _ => { });
-            target.OpenForm("Settings", _ => { });
+            target.OpenForm("HighlightSets", _ => { });
             target.OpenForm("ProfileCatalog", _ => { });
             TabItem a = (TabItem)sourceTabs.Items[0], b = (TabItem)sourceTabs.Items[1], c = (TabItem)sourceTabs.Items[2];
             TabItem d = (TabItem)targetTabs.Items[0], e = (TabItem)targetTabs.Items[1];
@@ -230,6 +316,8 @@ internal static partial class Program
             await peer.GetStream().WriteAsync("\u001b[?1006l"u8.ToArray(), deadline.Token);
             while (await session.ObserveAiAsync((_, state) => state.Mouse.SgrCoordinates, deadline.Token))
                 await Task.Delay(10, deadline.Token);
+            CheckConnectedTabFocus(target, targetTabs, d, b, e, sessionTab);
+            await ChangeKeyboardShortcutsAsync(target, targetTabs, b, e, sessionTab, directory, deadline.Token);
         }
         finally
         {
@@ -278,6 +366,120 @@ internal static partial class Program
         {
             if (!group.Items.Cast<TabItem>().SequenceEqual(order))
                 throw new InvalidOperationException("The tab group has an unexpected order or a different tab instance.");
+        }
+    }
+
+    private static void CheckConnectedTabFocus(MainWindow window, TabControl group, TabItem first,
+        TabItem header, TabItem last, TerminalTab terminal)
+    {
+        window.Activate();
+        var list = (Button)group.Template.FindName("tabListButton", group);
+        if (!GetCursorPos(out var pointer)) throw new InvalidOperationException("Could not read the pointer position.");
+        try
+        {
+            var handle = new WindowInteropHelper(window).Handle;
+            if (VisualCheckForegroundWindow() != handle) ClickTabBarElement(header);
+            WaitForTabBarInput(() => VisualCheckForegroundWindow() == handle, "The connected tab window did not acquire desktop input.");
+            group.SelectedItem = first;
+            first.Focus();
+            WaitForTabBarInput(() => first.IsKeyboardFocused, "Could not focus the first tab header.");
+            PressTabBarKey(Key.Right);
+            WaitForTabBarInput(() => group.SelectedItem == header && header.IsKeyboardFocused,
+                "Entering the connected tab with Right did not keep focus on its header.");
+            PressTabBarKey(Key.Right);
+            WaitForTabBarInput(() => group.SelectedItem == last && last.IsKeyboardFocused,
+                "Right did not continue past the connected tab.");
+
+            var pane = FindControls<TerminalSurface>(terminal).Single();
+            MovePointerToTabBarElement(list);
+            MouseEvent(0x0800, 0, 0, 120, 0);
+            WaitForTabBarInput(() => group.SelectedItem == header && pane.IsKeyboardFocusWithin,
+                "Scrolling the mouse wheel did not focus the newly selected terminal pane.");
+
+            last.Focus();
+            ClickTabBarElement(list);
+            WaitForTabBarInput(() => list.ContextMenu?.IsOpen == true, "The tab list did not open.");
+            var connection = (MenuItem)list.ContextMenu.Items[1];
+            connection.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent, connection));
+            list.ContextMenu.IsOpen = false;
+            WaitForTabBarInput(() => group.SelectedItem == header && pane.IsKeyboardFocusWithin,
+                "Picking the connected tab from the list did not focus its pane.");
+
+            last.Focus();
+            ClickTabBarElement(header);
+            WaitForTabBarInput(() => group.SelectedItem == header && pane.IsKeyboardFocusWithin,
+                "Clicking the connected tab did not focus its terminal pane.");
+            PressTabBarKey(Key.T, ModifierKeys.Control | ModifierKeys.Shift);
+            if (!pane.IsKeyboardFocusWithin || group.SelectedItem != header)
+                throw new InvalidOperationException("The retired shortcut changed the focused terminal tab or pane.");
+
+            ExpectKeyboardSelection(Key.Tab, ModifierKeys.Control, last);
+            ExpectKeyboardSelection(Key.Tab, ModifierKeys.Control, first);
+            ExpectKeyboardSelection(Key.Tab, ModifierKeys.Control | ModifierKeys.Shift, last);
+            ExpectKeyboardSelection(Key.Tab, ModifierKeys.Control | ModifierKeys.Shift, header);
+        }
+        finally { SetCursorPos(pointer.X, pointer.Y); }
+
+        void ExpectKeyboardSelection(Key key, ModifierKeys modifiers, TabItem expected)
+        {
+            PressTabBarKey(key, modifiers);
+            WaitForTabBarInput(() => group.SelectedItem == expected && expected.IsKeyboardFocused,
+                "The tab shortcut did not select and focus the expected tab header.");
+        }
+    }
+
+    private static async Task ChangeKeyboardShortcutsAsync(MainWindow window, TabControl group, TabItem header,
+        TabItem next, TerminalTab terminal, string directory, CancellationToken cancellationToken)
+    {
+        OpenSettings(window);
+        window.Activate();
+        window.UpdateLayout();
+        var form = (FormView)group.SelectedContent;
+        var categories = FindControls<ListBox>(form).Single();
+        categories.SelectedItem = categories.Items.OfType<ListBoxItem>().Single(item => Equals(item.Tag, "SettingsKeyboardShortcuts"));
+        window.UpdateLayout();
+        Change("NextTabShortcut", "Ctrl+PageDown");
+        Change("PreviousTabShortcut", null);
+        Change("Copy", null);
+        Change("Paste", "Ctrl+Shift+P");
+        Change("Search", "Ctrl+Shift+G");
+        var save = FindControls<Button>(form).Single(button => Equals(button.Content, App.Text("Save")));
+        save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, save));
+        while (form.IsBusy) await Task.Delay(10, cancellationToken);
+        var settings = JsonNode.Parse(File.ReadAllText(Path.Combine(directory, "settings.json")))!.AsObject();
+        var saved = KeyboardShortcuts.Read(settings);
+        if (saved[ShortcutAction.NextTab] != "Ctrl+PageDown" ||
+            saved[ShortcutAction.PreviousTab] is not null || saved[ShortcutAction.Copy] is not null ||
+            saved[ShortcutAction.Paste] != "Ctrl+Shift+P" || saved[ShortcutAction.Search] != "Ctrl+Shift+G")
+            throw new InvalidOperationException("Settings did not save the changed and disabled shortcuts.");
+
+        group.SelectedItem = header;
+        window.UpdateLayout();
+        DrainInput();
+        header.Focus();
+        const ModifierKeys controlShift = ModifierKeys.Control | ModifierKeys.Shift;
+        PressTabBarKey(Key.Tab, ModifierKeys.Control);
+        PressTabBarKey(Key.Tab, controlShift);
+        if (!header.IsKeyboardFocused || group.SelectedItem != header)
+            throw new InvalidOperationException("A remapped or disabled Ctrl+Tab shortcut still switched tabs.");
+        PressTabBarKey(Key.PageDown, ModifierKeys.Control);
+        WaitForTabBarInput(() => next.IsKeyboardFocused && group.SelectedItem == next,
+            "The reassigned next-tab shortcut did not move to the next header.");
+
+        group.SelectedItem = header;
+        window.UpdateLayout();
+        terminal.FocusPane();
+        var search = FindControls<TextBox>(terminal).Single(box => AutomationProperties.GetName(box) == App.Text("Search"));
+        PressTabBarKey(Key.F, controlShift);
+        if (search.IsVisible) throw new InvalidOperationException("The old search shortcut opened search.");
+        PressTabBarKey(Key.G, controlShift);
+        WaitForTabBarInput(() => search.IsKeyboardFocused, "The reassigned search shortcut did not open terminal search.");
+
+        void Change(string label, string? binding)
+        {
+            var choice = FindControls<ComboBox>(form).Single(box =>
+                AutomationProperties.GetLabeledBy(box) is Label { Content: TextBlock text } && text.Text == App.Text(label));
+            choice.SelectedIndex = binding is null ? 0 : choice.Items.IndexOf(binding);
         }
     }
 }

@@ -19,6 +19,7 @@ internal sealed partial class MainWindow
     public static void SetCompactTabBar(DependencyObject element, bool value) => element.SetValue(CompactTabBarProperty, value);
     private SplitLayout groups = null!;
     private TabControl activeGroup = null!;
+    private TabControl? navigatingTabGroup;
     private TerminalTab? broadcastStatusTab;
     private IEnumerable<TabControl> Groups => groups.Views.Cast<TabControl>();
     private IEnumerable<WindowTab> AllTabs => Groups.SelectMany(group => group.Items.OfType<WindowTab>());
@@ -68,7 +69,14 @@ internal sealed partial class MainWindow
                 previous.CancelPaneComposition();
             if (group.SelectedItem is TabItem item) item.BringIntoView();
             if (groups is not null) LabelGroups();
-            ScheduleSelectedTerminalFocus(group);
+            if (navigatingTabGroup != group) ScheduleSelectedTerminalFocus(group);
+        };
+        group.PreviewKeyDown += (_, e) =>
+        {
+            if (Keyboard.Modifiers != ModifierKeys.None || e.Key is not (Key.Left or Key.Right) ||
+                e.OriginalSource is not TabItem header || header != group.SelectedItem) return;
+            e.Handled = true;
+            MoveTabHeaderFocus(group, e.Key == Key.Left ? -1 : 1, wrap: false);
         };
         group.PreviewGotKeyboardFocus += (_, _) => ActivateGroup(group);
         group.Loaded += (_, _) =>
@@ -79,12 +87,11 @@ internal sealed partial class MainWindow
         group.SizeChanged += (_, _) => UpdateGroupSplitButtons(group);
         group.PreviewMouseDown += (_, e) =>
         {
-            bool changedGroup = activeGroup != group;
             ActivateGroup(group);
             if (e.OriginalSource is DependencyObject source && Ancestor<WindowTab>(source) is { } item)
             {
                 if (!item.IsSelected) SelectedTab?.CancelPaneComposition();
-                else if (changedGroup && e.ChangedButton == MouseButton.Left && Ancestor<ButtonBase>(source) is null)
+                else if (e.ChangedButton == MouseButton.Left && Ancestor<ButtonBase>(source) is null)
                     ScheduleSelectedTerminalFocus(group);
             }
         };
@@ -95,6 +102,60 @@ internal sealed partial class MainWindow
         {
             if (dragCapture == group && Mouse.Captured != group) CancelTabDrag();
         };
+    }
+
+    private void OnTabShortcutKeyDown(object sender, KeyEventArgs e)
+    {
+        switch (app.Shortcuts.Match(e))
+        {
+            case ShortcutAction.NextTab:
+                e.Handled = true;
+                MoveTabHeaderFocus(activeGroup, 1, wrap: true);
+                return;
+            case ShortcutAction.PreviousTab:
+                e.Handled = true;
+                MoveTabHeaderFocus(activeGroup, -1, wrap: true);
+                return;
+            case ShortcutAction.Copy or ShortcutAction.Paste or ShortcutAction.Search
+                when Ancestor<TerminalSurface>(e.OriginalSource as DependencyObject) is not null:
+                return;
+        }
+
+        // TabControl otherwise cycles tabs on Ctrl+Tab even after rebinding or disabling the shortcut.
+        if (e.Key == Key.Tab && (e.KeyboardDevice.Modifiers & ~ModifierKeys.Shift) == ModifierKeys.Control)
+            e.Handled = true;
+    }
+
+    private void MoveTabHeaderFocus(TabControl group, int step, bool wrap)
+    {
+        int count = group.Items.Count;
+        int index = group.SelectedIndex;
+        for (int visited = 0; visited < count; visited++)
+        {
+            index += step;
+            if (index < 0 || index >= count)
+            {
+                if (!wrap) return;
+                index = step > 0 ? 0 : count - 1;
+            }
+            if (group.Items[index] is not TabItem { IsVisible: true, IsEnabled: true, Focusable: true } next) continue;
+            FocusTabHeader(group, next);
+            return;
+        }
+    }
+
+    private void FocusTabHeader(TabControl group, TabItem tab)
+    {
+        var previous = navigatingTabGroup;
+        navigatingTabGroup = group;
+        try
+        {
+            // WPF can focus the selected content during selection. Focus the header afterward.
+            group.SelectedItem = tab;
+            tab.BringIntoView();
+            tab.Focus();
+        }
+        finally { navigatingTabGroup = previous; }
     }
 
     private void ScheduleSelectedTerminalFocus(TabControl group)

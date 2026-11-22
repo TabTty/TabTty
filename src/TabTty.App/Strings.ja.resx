@@ -33,6 +33,11 @@
   <data name="SettingsLanguageAndTheme" xml:space="preserve"><value>言語・テーマ</value></data>
   <data name="SettingsTerminalDefaults" xml:space="preserve"><value>端末の既定値</value></data>
   <data name="SettingsTabBehavior" xml:space="preserve"><value>タブの動作</value></data>
+  <data name="SettingsKeyboardShortcuts" xml:space="preserve"><value>キーボードショートカット</value></data>
+  <data name="NextTabShortcut" xml:space="preserve"><value>次のタブに切り替える</value></data>
+  <data name="PreviousTabShortcut" xml:space="preserve"><value>前のタブに切り替える</value></data>
+  <data name="DisabledShortcut" xml:space="preserve"><value>無効</value></data>
+  <data name="DuplicateKeyboardShortcut" xml:space="preserve"><value>各操作に異なるキーボードショートカットを割り当ててください。</value></data>
   <data name="SettingsLogNaming" xml:space="preserve"><value>ログのファイル名</value></data>
   <data name="DefaultLogDirectory" xml:space="preserve"><value>既定のログ保存先</value></data>
   <data name="DefaultLogDirectoryDescription" xml:space="preserve"><value>空欄の場合は接続プロファイルの隣の Logs フォルダーを使います。相対パスはプロファイルのフォルダーが基準です。</value></data>

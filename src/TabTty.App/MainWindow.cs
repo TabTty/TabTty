@@ -54,6 +54,7 @@ internal sealed partial class MainWindow : Window
         StateChanged += (_, _) => UpdateMaximizeButton();
         NativeKeyState.Attach(this);
         InitializeGroups();
+        PreviewKeyDown += OnTabShortcutKeyDown;
         ConfigureTabDrag();
         UpdateLabels();
     }
@@ -217,9 +218,9 @@ internal sealed partial class MainWindow : Window
         });
         AddButton("CloseWindow", Close);
         BeginMenu("EditMenu", Key.E);
-        AddButton("Copy", () => SelectedTab?.CopySelection());
-        AddButton("Paste", async () => { if (SelectedTab is { } tab) await tab.PasteAsync(); });
-        AddButton("Search", () => SelectedTab?.ShowSearch());
+        AddButton("Copy", () => SelectedTab?.CopySelection(), ShortcutAction.Copy);
+        AddButton("Paste", async () => { if (SelectedTab is { } tab) await tab.PasteAsync(); }, ShortcutAction.Paste);
+        AddButton("Search", () => SelectedTab?.ShowSearch(), ShortcutAction.Search);
         BeginMenu("ViewMenu", Key.V);
         AddButton("ZoomIn", () => SelectedTab?.Zoom(1));
         AddButton("ZoomOut", () => SelectedTab?.Zoom(-1));
@@ -433,7 +434,12 @@ internal sealed partial class MainWindow : Window
             await selected.ChangeRecordingAsync(resume);
     }
 
-    private void AddButton(string key, Action action) => currentMenu!.Items.Add(MenuAction(key, action));
+    private void AddButton(string key, Action action, ShortcutAction? shortcut = null)
+    {
+        var item = MenuAction(key, action);
+        if (shortcut is { } assigned) item.InputGestureText = app.Shortcuts[assigned] ?? "";
+        currentMenu!.Items.Add(item);
+    }
 
     private static MenuItem MenuAction(string key, Action action)
     {
@@ -456,7 +462,11 @@ internal sealed partial class MainWindow : Window
             item.Click += (_, _) =>
             {
                 if (!group.Items.Contains(tab)) return;
-                if (tab.IsSelected) tab.BringIntoView();
+                if (tab.IsSelected)
+                {
+                    tab.BringIntoView();
+                    ScheduleSelectedTerminalFocus(group);
+                }
                 else group.SelectedItem = tab;
             };
             menu.Items.Add(item);
@@ -737,6 +747,7 @@ internal sealed partial class MainWindow : Window
         var autoClose = new CheckBox { IsChecked = app.AutoCloseDisconnectedTabs };
         var maxPaste = new TextBox { Text = app.MaxPasteTextBytes.ToString(CultureInfo.InvariantCulture), MaxLength = 19 };
         var broadcastScope = new CheckBox { IsChecked = app.BroadcastAcrossWindows };
+        var shortcutChoices = new List<ComboBox>();
         var naming = app.LogDefaults;
         var logDirectory = new TextBox { Text = naming.Directory, MaxLength = 32760 };
         var logTemplate = new TextBox { Text = naming.ProfileTemplate, MaxLength = RecordingNameTemplate.MaximumLength };
@@ -763,6 +774,20 @@ internal sealed partial class MainWindow : Window
                 form.AddField("AutoCloseDisconnectedTabs", autoClose, descriptionKey: "AutoCloseDisconnectedTabsDescription");
                 form.AddField("BroadcastAcrossWindows", broadcastScope);
                 form.AddField("MaxPasteSourceBytes", maxPaste);
+            }),
+            ("SettingsKeyboardShortcuts", () =>
+            {
+                foreach (var command in KeyboardShortcuts.Commands)
+                {
+                    var choice = new ComboBox();
+                    var disabled = new ComboBoxItem();
+                    form.AddLocalizedUpdate(() => disabled.Content = Text("DisabledShortcut"));
+                    choice.Items.Add(disabled);
+                    foreach (string option in KeyboardShortcuts.Options) choice.Items.Add(option);
+                    choice.SelectedIndex = app.Shortcuts[command.Action] is { } assigned ? choice.Items.IndexOf(assigned) : 0;
+                    shortcutChoices.Add(choice);
+                    form.AddField(command.Label, choice);
+                }
             }),
             ("SettingsLogNaming", () =>
             {
@@ -801,7 +826,8 @@ internal sealed partial class MainWindow : Window
                 fontFamily.Text, size, rows, autoClose.IsChecked == true, vaultPath.Text, revision,
                 broadcastScope.IsChecked == true, maxPasteBytes,
                 profileDirectory.Text == app.ProfileSaveDirectory ? null : profileDirectory.Text,
-                new RecordingDefaults(logDirectory.Text, logTemplate.Text, macroLogTemplate.Text));
+                new RecordingDefaults(logDirectory.Text, logTemplate.Text, macroLogTemplate.Text),
+                new KeyboardShortcuts(shortcutChoices.Select(choice => choice.SelectedItem as string)));
             revision = app.SettingsRevision;
             vaultPath.Text = app.VaultPath;
             profileDirectory.Text = app.ProfileSaveDirectory;

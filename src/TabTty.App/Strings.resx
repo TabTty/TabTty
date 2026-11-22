@@ -33,6 +33,11 @@
   <data name="SettingsLanguageAndTheme" xml:space="preserve"><value>Language and theme</value></data>
   <data name="SettingsTerminalDefaults" xml:space="preserve"><value>Terminal defaults</value></data>
   <data name="SettingsTabBehavior" xml:space="preserve"><value>Tab behavior</value></data>
+  <data name="SettingsKeyboardShortcuts" xml:space="preserve"><value>Keyboard shortcuts</value></data>
+  <data name="NextTabShortcut" xml:space="preserve"><value>Switch to the next tab</value></data>
+  <data name="PreviousTabShortcut" xml:space="preserve"><value>Switch to the previous tab</value></data>
+  <data name="DisabledShortcut" xml:space="preserve"><value>Disabled</value></data>
+  <data name="DuplicateKeyboardShortcut" xml:space="preserve"><value>Assign a different keyboard shortcut to each action.</value></data>
   <data name="SettingsLogNaming" xml:space="preserve"><value>Log file names</value></data>
   <data name="DefaultLogDirectory" xml:space="preserve"><value>Default log folder</value></data>
   <data name="DefaultLogDirectoryDescription" xml:space="preserve"><value>A blank field uses the Logs folder next to the connection profile. Relative paths start in the profile’s folder.</value></data>

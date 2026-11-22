@@ -838,13 +838,14 @@ internal sealed partial class TerminalTab : UserControl
     private void UpdatePaneMenu(TerminalSurface pane)
     {
         var menu = new ContextMenu();
-        var copy = new MenuItem { Header = Text("Copy") };
+        var shortcuts = ((App)Application.Current).Shortcuts;
+        var copy = new MenuItem { Header = Text("Copy"), InputGestureText = shortcuts[ShortcutAction.Copy] ?? "" };
         copy.Click += (_, _) => pane.Copy();
-        var paste = new MenuItem { Header = Text("Paste") };
+        var paste = new MenuItem { Header = Text("Paste"), InputGestureText = shortcuts[ShortcutAction.Paste] ?? "" };
         paste.Click += async (_, _) => { ActivatePane(pane); await PasteClipboardAsync(); };
         menu.Items.Add(copy);
         menu.Items.Add(paste);
-        var search = new MenuItem { Header = Text("Search"), InputGestureText = "Ctrl+Shift+F" };
+        var search = new MenuItem { Header = Text("Search"), InputGestureText = shortcuts[ShortcutAction.Search] ?? "" };
         search.Click += (_, _) => { ActivatePane(pane); OpenSearch(); };
         menu.Items.Add(search);
         var messages = new MenuItem { Header = Text("SshMessages") };
@@ -1237,17 +1238,20 @@ internal sealed partial class TerminalTab : UserControl
         ModifierKeys modifiers = Keyboard.Modifiers;
         Key key = e.Key == Key.System ? e.SystemKey : e.Key;
         if (key == Key.F4 && modifiers.HasFlag(ModifierKeys.Alt)) return;
-        if (modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && key == Key.F)
+        switch (((App)Application.Current).Shortcuts.Match(e))
         {
-            e.Handled = true;
-            OpenSearch();
-            return;
-        }
-        if (modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && key == Key.C)
-        {
-            e.Handled = true;
-            output.Copy();
-            return;
+            case ShortcutAction.Search:
+                e.Handled = true;
+                OpenSearch();
+                return;
+            case ShortcutAction.Copy:
+                e.Handled = true;
+                output.Copy();
+                return;
+            case ShortcutAction.Paste:
+                e.Handled = true;
+                await PasteClipboardAsync();
+                return;
         }
 
         if (InputSession is not { } active) return;
@@ -1271,13 +1275,6 @@ internal sealed partial class TerminalTab : UserControl
                 return;
             }
         }
-        if (modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && key == Key.V)
-        {
-            e.Handled = true;
-            await PasteClipboardAsync();
-            return;
-        }
-
         TerminalInput? send = (key, modifiers) switch
         {
             (Key.Enter, ModifierKeys.None) => new(TerminalInputKind.Enter),
