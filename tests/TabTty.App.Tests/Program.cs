@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Text;
 using System.Net;
 using System.Net.Sockets;
@@ -143,7 +144,7 @@ internal static partial class Program
                 CheckFileOperations(settingsDirectory).GetAwaiter().GetResult();
                 return 0;
             }
-            if (args is ["--native-utf8-baseline" or "--disconnected-tabs" or "--terminal-tab-close" or "--broadcast-splits" or
+            if (args is ["--visual-bell" or "--native-utf8-baseline" or "--disconnected-tabs" or "--terminal-tab-close" or "--broadcast-splits" or
                 "--profile-editor-heading" or "--profile-log-collision" or "--macro-profile-connect" or
                 "--macro-launch" or "--macro-network" or "--macro-cloud" or "--profile-trust" or "--vault-first-use" or "--vault-rename"] or
                 ["--transfer-window-close" or "--fullscreen-vim" or "--overload-controls" or "--sftp-batch", _] or
@@ -152,6 +153,7 @@ internal static partial class Program
                 var integrationFrame = new DispatcherFrame();
                 Task run = application.Dispatcher.InvokeAsync(() => args[0] switch
                 {
+                    "--visual-bell" => TerminalBellFlashesTheWholeStatusBar(settingsDirectory),
                     "--native-utf8-baseline" => TerminalReceivesWhilePresentationIsPaused(verifyNativeResidency: true),
                     "--disconnected-tabs" => DisconnectedTabsRespectSettingsAndBulkClose(application, settingsPath),
                     "--terminal-tab-close" => CheckTerminalClosure(application, settingsDirectory),
@@ -208,11 +210,16 @@ internal static partial class Program
             bool visualChecksPassed = true;
             RunVisualCheck(nameof(TerminalSurfaceRendersItsCellSnapshot), TerminalSurfaceRendersItsCellSnapshot);
             var highlightFrame = new DispatcherFrame();
-            Task highlightTest = application.Dispatcher.InvokeAsync(HighlightWaitsForIdleOrViewportChange).Task.Unwrap();
+            Task highlightTest = application.Dispatcher.InvokeAsync(async () =>
+            {
+                await HighlightWaitsForIdleOrViewportChange();
+                Console.WriteLine("PASS HighlightWaitsForIdleOrViewportChange");
+                await TerminalBellFlashesTheWholeStatusBar(settingsDirectory);
+                Console.WriteLine("PASS TerminalBellFlashesTheWholeStatusBar");
+            }).Task.Unwrap();
             _ = highlightTest.ContinueWith(_ => highlightFrame.Continue = false, TaskScheduler.Default);
             Dispatcher.PushFrame(highlightFrame);
             highlightTest.GetAwaiter().GetResult();
-            Console.WriteLine("PASS HighlightWaitsForIdleOrViewportChange");
             ProfileEditorKeepsUnchangedOptionsAndEditsTypedFields(application);
             Console.WriteLine("PASS ProfileEditorKeepsUnchangedOptionsAndEditsTypedFields");
             AuthenticationDialogsIdentifyTheRecipient(application);
@@ -2676,6 +2683,58 @@ internal static partial class Program
             double top = label.TranslatePoint(new Point(), footer).Y;
             if (Math.Abs(top * 2 + label.ActualHeight - footer.ActualHeight) > 0.01)
                 throw new InvalidOperationException("The status text was not centered vertically.");
+        }
+    }
+
+    private static async Task TerminalBellFlashesTheWholeStatusBar(string directory)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        string path = Path.Combine(directory, "visual-bell.ttty");
+        await ConnectionProfile.CreateTelnet("Visual bell", "127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port)
+            .SaveNewAsync(path, deadline.Token);
+        var tab = new TerminalTab(path);
+        tab.Resources["WindowBackground"] = Brushes.Navy;
+        tab.Resources["WindowForeground"] = Brushes.White;
+        var host = new Window { Content = tab, Width = 500, Height = 330, ShowActivated = false, ShowInTaskbar = false };
+        var footer = ((DockPanel)tab.Content).Children.OfType<DockPanel>().Single();
+        var connection = footer.Children.OfType<TextBlock>().Single(label => label.Visibility == Visibility.Visible);
+        tab.SetBroadcastStatus("Broadcast 1/1");
+        var broadcast = footer.Children.OfType<TextBlock>().Single(label => label.Text == "Broadcast 1/1");
+        var connected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        tab.Connected += _ => connected.TrySetResult();
+        var flash = new TaskCompletionSource<(Brush Background, Brush BroadcastText)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var restored = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var foreground = DependencyPropertyDescriptor.FromProperty(TextBlock.ForegroundProperty, typeof(TextBlock));
+        void ForegroundChanged(object? sender, EventArgs args)
+        {
+            if (connection.Foreground == Brushes.Black)
+                flash.TrySetResult((footer.Background, broadcast.Foreground));
+            else if (flash.Task.IsCompleted)
+                restored.TrySetResult();
+        }
+        foreground.AddValueChanged(connection, ForegroundChanged);
+        try
+        {
+            host.Show();
+            tab.Start();
+            using TcpClient peer = await listener.AcceptTcpClientAsync(deadline.Token);
+            await connected.Task.WaitAsync(deadline.Token);
+            await peer.GetStream().WriteAsync("\a"u8.ToArray(), deadline.Token);
+            var colors = await flash.Task.WaitAsync(deadline.Token);
+            if (colors.Background != Brushes.White || colors.BroadcastText != Brushes.Black)
+                throw new InvalidOperationException("The bell did not flash the whole status bar with readable text.");
+            await restored.Task.WaitAsync(deadline.Token);
+            if (footer.Background != Brushes.Navy || connection.Foreground != Brushes.White || broadcast.Foreground != Brushes.White)
+                throw new InvalidOperationException("The bell did not restore the status bar's theme colors.");
+        }
+        finally
+        {
+            foreground.RemoveValueChanged(connection, ForegroundChanged);
+            tab.Disconnect();
+            await tab.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+            host.Close();
         }
     }
 

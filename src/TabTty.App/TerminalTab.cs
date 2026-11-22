@@ -8,6 +8,7 @@ using System.Threading.Channels;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -93,8 +94,7 @@ internal sealed partial class TerminalTab : UserControl
         bellTimer.Tick += (_, _) =>
         {
             bellTimer.Stop();
-            status.ClearValue(TextBlock.BackgroundProperty);
-            status.ClearValue(TextBlock.ForegroundProperty);
+            RestoreStatusBarColors();
             Volatile.Write(ref bellPending, 0);
         };
         frameTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
@@ -159,7 +159,7 @@ internal sealed partial class TerminalTab : UserControl
         statusBar.Children.Add(highlightStatus);
         statusBar.Children.Add(broadcastTabStatus);
         statusBar.Children.Add(status);
-        statusBar.SetResourceReference(Panel.BackgroundProperty, "WindowBackground");
+        RestoreStatusBarColors();
         statusBar.SizeChanged += (_, e) =>
         {
             highlightStatus.MaxWidth = e.NewSize.Width / 4;
@@ -338,8 +338,8 @@ internal sealed partial class TerminalTab : UserControl
                         Volatile.Write(ref bellPending, 0);
                         return;
                     }
-                    status.Background = Brushes.White;
-                    status.Foreground = Brushes.Black;
+                    statusBar.Background = Brushes.White;
+                    statusBar.SetValue(TextElement.ForegroundProperty, Brushes.Black);
                     bellTimer.Start();
                 }));
             };
@@ -914,13 +914,18 @@ internal sealed partial class TerminalTab : UserControl
         AutomationProperties.SetName(broadcastTabStatus, text);
     }
 
+    private void RestoreStatusBarColors()
+    {
+        statusBar.SetResourceReference(Panel.BackgroundProperty, "WindowBackground");
+        statusBar.SetResourceReference(TextElement.ForegroundProperty, "WindowForeground");
+    }
+
     private static void ConfigureStatusIndicator(TextBlock indicator)
     {
         indicator.Padding = new Thickness(6, 0, 6, 0);
         indicator.VerticalAlignment = VerticalAlignment.Center;
         indicator.TextTrimming = TextTrimming.CharacterEllipsis;
         indicator.Focusable = true;
-        indicator.SetResourceReference(TextBlock.ForegroundProperty, "WindowForeground");
         ToolTipService.SetShowsToolTipOnKeyboardFocus(indicator, true);
     }
 
