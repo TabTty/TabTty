@@ -33,8 +33,10 @@ window. Its right edge contains the minimize, maximize and close buttons.
 Settings, Connection profile management, Vault management, SSH host keys, and
 Highlight set management open as tabs. Close a tab with its × button.
 Use the Tab list button at the left of the tab bar to jump to any tab in that
-tab group. A faded edge indicates tabs beyond that edge. Scroll the mouse
-wheel over the tab strip to select the next tab (down) or previous tab (up).
+tab group. A faded edge indicates tabs beyond that edge. When tabs overflow,
+use the left and right arrows beside **+** to reveal hidden headers while
+keeping the current tab selected. Scroll the mouse wheel over the tab strip
+to select the next tab (down) or previous tab (up).
 Selection wraps at either end of the list.
 Settings, profile editing, and highlight-set editing enable **Save** and
 **Discard changes** when the draft differs from its saved or initial values.
@@ -92,8 +94,11 @@ defaults while honoring received ANSI colors. Language and theme follow Windows
 settings by default. The UI falls back to English if the Windows display
 language preferences contain no supported language.
 
-Tabs can move between windows or detach by dragging outside a window. Closing an
-active connection asks for confirmation. **Automatically close tabs on normal
+Drag a tab header within its bar or into another window's tab bar. Neighboring
+tabs move aside to show where it will land. Release to place it, or press Esc
+to keep its original position. Release over the desktop or another application
+to open the tab in a new window. Closing an active connection asks for
+confirmation. **Automatically close tabs on normal
 disconnection** is enabled by default and also applies when you cancel a
 reconnect. Turn it off to keep those tabs with a broken-link icon. Failed
 connections, timeouts, and communication errors keep the tab open with a

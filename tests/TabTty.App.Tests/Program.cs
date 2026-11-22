@@ -113,6 +113,8 @@ internal static partial class Program
                     case "authentication": AuthenticationDialogsIdentifyTheRecipient(application); break;
                     case "keyboard": MainMenuAcceptsKeyboardCommands(); break;
                     case "menu-pointer": MainMenuOpensNestedSubmenusWithMouse(); break;
+                    case "tab-scroll": TabStripOverflowButtons(application); break;
+                    case "tab-preview": CheckTabPreviewLayout(application); break;
                     case "desktop": RequireDesktopInput(); break;
                     default: throw new ArgumentException("Unknown visual check.", nameof(args));
                 }
@@ -148,7 +150,7 @@ internal static partial class Program
                 return 0;
             }
             if (args is ["--visual-bell" or "--native-utf8-baseline" or "--disconnected-tabs" or "--terminal-tab-close" or "--broadcast-splits" or
-                "--profile-editor-heading" or "--profile-log-collision" or "--macro-profile-connect" or
+                "--tab-interactions" or "--profile-editor-heading" or "--profile-log-collision" or "--macro-profile-connect" or
                 "--macro-launch" or "--macro-network" or "--macro-cloud" or "--profile-trust" or "--vault-first-use" or "--vault-rename"] or
                 ["--transfer-window-close" or "--fullscreen-vim" or "--overload-controls" or "--sftp-batch", _] or
                 ["--macro-reset-relaunch", _, _])
@@ -163,6 +165,7 @@ internal static partial class Program
                     "--profile-editor-heading" => CheckProfileEditorHeadingAsync(application, settingsDirectory),
                     "--profile-log-collision" => ProfileLogCollisionAsync(application, settingsDirectory),
                     "--broadcast-splits" => BroadcastAndSplitViews(application, settingsDirectory),
+                    "--tab-interactions" => CheckTabInteractions(application, settingsDirectory),
                     "--macro-launch" => MacroLaunchAndDialog(application, settingsDirectory),
                     "--macro-reset-relaunch" => CheckMacroResetRelaunch(application, args[1], args[2]),
                     "--macro-network" => SharedConstantsNetworkAsync(application, settingsDirectory),

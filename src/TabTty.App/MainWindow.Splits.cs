@@ -12,6 +12,10 @@ namespace TabTty.App;
 internal sealed partial class MainWindow
 {
     private static readonly Size GroupMinimum = new(240, 160 + 43);
+    public static readonly DependencyProperty CompactTabBarProperty =
+        DependencyProperty.RegisterAttached("CompactTabBar", typeof(bool), typeof(MainWindow));
+    public static bool GetCompactTabBar(DependencyObject element) => (bool)element.GetValue(CompactTabBarProperty);
+    public static void SetCompactTabBar(DependencyObject element, bool value) => element.SetValue(CompactTabBarProperty, value);
     private SplitLayout groups = null!;
     private TabControl activeGroup = null!;
     private TerminalTab? broadcastStatusTab;
@@ -37,7 +41,8 @@ internal sealed partial class MainWindow
 
     private void UpdateGroupChrome()
     {
-        bool separateCaption = Groups.Skip(1).Any() || windowRoot.ActualWidth is > 0 and < 616;
+        // Leave room for one full tab even when both scroll arrows are visible.
+        bool separateCaption = Groups.Skip(1).Any() || windowRoot.ActualWidth is > 0 and < 664;
         groupHost.Margin = new Thickness(0, separateCaption ? 43 : 0, 0, 0);
         foreach (var group in Groups)
         {
@@ -79,8 +84,11 @@ internal sealed partial class MainWindow
         };
         group.PreviewMouseLeftButtonDown += FindDragCandidate;
         group.PreviewMouseMove += StartTabDrag;
-        group.DragOver += OnTabDragOver;
-        group.Drop += OnTabDrop;
+        group.PreviewMouseLeftButtonUp += FinishTabDrag;
+        group.LostMouseCapture += (_, _) =>
+        {
+            if (dragCapture == group && Mouse.Captured != group) CancelTabDrag();
+        };
     }
 
     private void ScheduleSelectedTerminalFocus(TabControl group)
@@ -118,6 +126,7 @@ internal sealed partial class MainWindow
 
     private void UpdateGroupSplitButtons(TabControl group)
     {
+        SetCompactTabBar(group, group.ActualWidth is > 0 and < 300);
         if (group.Template?.FindName("splitGroupsStackButton", group) is Button stack)
             stack.IsEnabled = SplitLayout.CanSplit(group, Orientation.Vertical, GroupMinimum);
         if (group.Template?.FindName("splitGroupsSideButton", group) is Button side)
@@ -152,7 +161,7 @@ internal sealed partial class MainWindow
     private void SplitGroup(TabControl group, Orientation orientation)
     {
         if (!SplitLayout.CanSplit(group, orientation, GroupMinimum)) return;
-        var added = new TabControl { AllowDrop = true, Template = (ControlTemplate)Resources["TabGroupTemplate"] };
+        var added = new TabControl { Template = (ControlTemplate)Resources["TabGroupTemplate"] };
         ConfigureGroup(added);
         try { groups.Split(group, added, orientation); }
         catch (ResourceLimitException exception) { ShowError(this, exception); return; }

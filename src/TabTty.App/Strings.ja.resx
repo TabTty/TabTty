@@ -8,6 +8,9 @@
   <data name="New" xml:space="preserve"><value>新規プロファイル…</value></data>
   <data name="NewTab" xml:space="preserve"><value>新規タブ</value></data>
   <data name="TabList" xml:space="preserve"><value>タブ一覧</value></data>
+  <data name="ScrollTabsLeft" xml:space="preserve"><value>タブバーを左にスクロール</value></data>
+  <data name="ScrollTabsRight" xml:space="preserve"><value>タブバーを右にスクロール</value></data>
+  <data name="TabMoveDestinationUnavailable" xml:space="preserve"><value>移動先を利用できなくなりました。タブは元の位置にあります。</value></data>
   <data name="ConnectionType" xml:space="preserve"><value>接続方式</value></data>
   <data name="Disconnect" xml:space="preserve"><value>切断</value></data>
   <data name="CloseTab" xml:space="preserve"><value>タブを閉じる</value></data>

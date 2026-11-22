@@ -8,6 +8,9 @@
   <data name="New" xml:space="preserve"><value>New profile…</value></data>
   <data name="NewTab" xml:space="preserve"><value>New tab</value></data>
   <data name="TabList" xml:space="preserve"><value>Tab list</value></data>
+  <data name="ScrollTabsLeft" xml:space="preserve"><value>Scroll tabs left</value></data>
+  <data name="ScrollTabsRight" xml:space="preserve"><value>Scroll tabs right</value></data>
+  <data name="TabMoveDestinationUnavailable" xml:space="preserve"><value>The destination is no longer available. The tab remains in its original position.</value></data>
   <data name="ConnectionType" xml:space="preserve"><value>Connection type</value></data>
   <data name="Disconnect" xml:space="preserve"><value>Disconnect</value></data>
   <data name="CloseTab" xml:space="preserve"><value>Close tab</value></data>

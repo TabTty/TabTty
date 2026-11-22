@@ -28,6 +28,16 @@
             <Setter Property="Width" Value="30" />
             <Setter Property="ToolTipService.ShowOnDisabled" Value="True" />
         </Style>
+        <Style x:Key="TabScrollButton" TargetType="Button" BasedOn="{StaticResource WindowButton}">
+            <Setter Property="Width" Value="24" />
+            <Setter Property="MinWidth" Value="0" />
+            <Setter Property="ToolTipService.ShowOnDisabled" Value="True" />
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.45" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
         <Style x:Key="GroupSplitIcon" TargetType="Path">
             <Setter Property="Width" Value="16" />
             <Setter Property="Height" Value="16" />
@@ -60,7 +70,7 @@
                                 </ContextMenu>
                             </Border.ContextMenu>
                             <DockPanel>
-                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="0,5,6,0"
+                                <StackPanel x:Name="splitButtons" DockPanel.Dock="Right" Orientation="Horizontal" Margin="0,5,6,0"
                                             VerticalAlignment="Top">
                                     <Button x:Name="splitGroupsStackButton" Style="{StaticResource GroupSplitButton}"
                                             ToolTip="{DynamicResource SplitGroupsStackLabel}"
@@ -81,7 +91,7 @@
                                         <Path Style="{StaticResource GroupSplitIcon}" Data="M 1.5,2.5 H 14.5 V 13.5 H 1.5 Z" />
                                     </Button>
                                 </StackPanel>
-                                <DockPanel Margin="6,5,14,0" HorizontalAlignment="Left" LastChildFill="False">
+                                <DockPanel x:Name="headerCommands" Margin="6,5,14,0" HorizontalAlignment="Left" LastChildFill="False">
                                     <Button x:Name="tabListButton" DockPanel.Dock="Left"
                                             Style="{StaticResource WindowButton}" Width="36" VerticalAlignment="Top"
                                             ToolTip="{DynamicResource TabListLabel}" AutomationProperties.Name="{DynamicResource TabListLabel}"
@@ -95,10 +105,25 @@
                                             Click="OpenNewTabMenu">
                                         <TextBlock Style="{StaticResource WindowGlyph}" Text="&#xE710;" />
                                     </Button>
+                                    <StackPanel x:Name="tabScrollButtons" DockPanel.Dock="Right" Visibility="Collapsed"
+                                                Orientation="Horizontal" VerticalAlignment="Top">
+                                        <Button x:Name="scrollTabsLeftButton" Style="{StaticResource TabScrollButton}"
+                                                ToolTip="{DynamicResource ScrollTabsLeftLabel}"
+                                                AutomationProperties.Name="{DynamicResource ScrollTabsLeftLabel}"
+                                                Click="OnScrollTabsLeft">
+                                            <TextBlock Style="{StaticResource WindowGlyph}" Text="&#xE76B;" />
+                                        </Button>
+                                        <Button x:Name="scrollTabsRightButton" Style="{StaticResource TabScrollButton}"
+                                                ToolTip="{DynamicResource ScrollTabsRightLabel}"
+                                                AutomationProperties.Name="{DynamicResource ScrollTabsRightLabel}"
+                                                Click="OnScrollTabsRight">
+                                            <TextBlock Style="{StaticResource WindowGlyph}" Text="&#xE76C;" />
+                                        </Button>
+                                    </StackPanel>
                                     <ScrollViewer x:Name="tabStripScroller" DockPanel.Dock="Left" VerticalScrollBarVisibility="Disabled"
                                                   HorizontalScrollBarVisibility="Hidden" Focusable="False" ScrollChanged="OnTabStripScrollChanged"
                                                   shell:WindowChrome.IsHitTestVisibleInChrome="True">
-                                        <TabPanel IsItemsHost="True" KeyboardNavigation.TabIndex="1" />
+                                        <local:TabHeaderPanel x:Name="tabHeaderPanel" IsItemsHost="True" KeyboardNavigation.TabIndex="1" />
                                     </ScrollViewer>
                                 </DockPanel>
                             </DockPanel>
@@ -107,11 +132,19 @@
                                           ContentSource="SelectedContent"
                                           KeyboardNavigation.DirectionalNavigation="Contained" />
                     </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="local:MainWindow.CompactTabBar" Value="True">
+                            <Setter TargetName="tabListButton" Property="Width" Value="24" />
+                            <Setter TargetName="newTabButton" Property="Width" Value="24" />
+                            <Setter TargetName="headerCommands" Property="Margin" Value="0,5,0,0" />
+                            <Setter TargetName="splitButtons" Property="Margin" Value="0,5,2,0" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
                 </ControlTemplate>
     </Window.Resources>
     <Grid x:Name="windowRoot">
         <Border x:Name="groupHost">
-            <TabControl x:Name="tabs" AllowDrop="True" Template="{StaticResource TabGroupTemplate}"
+            <TabControl x:Name="tabs" Template="{StaticResource TabGroupTemplate}"
                         Padding="0,0,176,0" />
         </Border>
         <Canvas ClipToBounds="True">

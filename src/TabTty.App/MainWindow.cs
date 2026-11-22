@@ -1,7 +1,6 @@
 using System.ComponentModel;
 using System.Globalization;
 using System.IO;
-using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -22,9 +21,6 @@ internal sealed partial class MainWindow : Window
     private bool closing;
     private bool readyToClose;
     private bool closed;
-    private static TabDrag? currentDrag;
-    private TabItem? dragCandidate;
-    private Point dragOrigin;
     private int tabWheelDelta;
 
     public MainWindow(App app)
@@ -56,6 +52,7 @@ internal sealed partial class MainWindow : Window
         StateChanged += (_, _) => UpdateMaximizeButton();
         NativeKeyState.Attach(this);
         InitializeGroups();
+        ConfigureTabDrag();
         UpdateLabels();
     }
 
@@ -153,6 +150,8 @@ internal sealed partial class MainWindow : Window
         vaultHint.Text = Text("VaultHint");
         Resources["NewTabLabel"] = Text("NewTab");
         Resources["TabListLabel"] = Text("TabList");
+        Resources["ScrollTabsLeftLabel"] = Text("ScrollTabsLeft");
+        Resources["ScrollTabsRightLabel"] = Text("ScrollTabsRight");
         Resources["SplitGroupsStackLabel"] = Text("SplitGroupsStack");
         Resources["SplitGroupsSideLabel"] = Text("SplitGroupsSide");
         Resources["RemoveTabGroupLabel"] = Text("RemoveTabGroup");
@@ -353,48 +352,6 @@ internal sealed partial class MainWindow : Window
             return true;
         }
     }
-    private void FindDragCandidate(object sender, MouseButtonEventArgs e)
-    {
-        DependencyObject? source = e.OriginalSource as DependencyObject;
-        dragCandidate = Ancestor<System.Windows.Controls.Primitives.ButtonBase>(source) is null
-            ? Ancestor<TabItem>(source) : null;
-        dragOrigin = e.GetPosition((TabControl)sender);
-    }
-
-    private void StartTabDrag(object sender, MouseEventArgs e)
-    {
-        if (e.LeftButton != MouseButtonState.Pressed || dragCandidate is not { } item)
-            return;
-        var group = (TabControl)sender;
-        Point point = e.GetPosition(group);
-        if (Math.Abs(point.X - dragOrigin.X) < SystemParameters.MinimumHorizontalDragDistance &&
-            Math.Abs(point.Y - dragOrigin.Y) < SystemParameters.MinimumVerticalDragDistance)
-            return;
-
-        dragCandidate = null;
-        if (!group.Items.Contains(item) || item.Content is FormView { IsBusy: true }) return;
-        var drag = new TabDrag(this, item);
-        currentDrag = drag;
-        bool cancelled = false;
-        void OnQuery(object _, QueryContinueDragEventArgs args) => cancelled |= args.EscapePressed;
-        group.QueryContinueDrag += OnQuery;
-        try
-        {
-            if (DragDrop.DoDragDrop(group, new DataObject("TabTty.TabDrag", true), DragDropEffects.Move)
-                    == DragDropEffects.None &&
-                !cancelled && GetCursorPos(out NativePoint cursor) &&
-                !app.Windows.OfType<MainWindow>().Any(window => window.ContainsScreenPoint(cursor)))
-            {
-                DetachTab(item, new Point(cursor.X, cursor.Y));
-            }
-        }
-        finally
-        {
-            group.QueryContinueDrag -= OnQuery;
-            currentDrag = null;
-        }
-    }
-
     private void DetachTab(TabItem item, Point? screenPoint = null)
     {
         if (closing || GroupOf(item) is null) return;
@@ -413,41 +370,6 @@ internal sealed partial class MainWindow : Window
         target.Show();
     }
 
-    private bool ContainsScreenPoint(NativePoint cursor)
-    {
-        if (!IsVisible || WindowState == WindowState.Minimized) return false;
-        Point local = PointFromScreen(new Point(cursor.X, cursor.Y));
-        return local.X >= 0 && local.Y >= 0 && local.X < ActualWidth && local.Y < ActualHeight;
-    }
-
-    private void OnTabDragOver(object sender, DragEventArgs e)
-    {
-        e.Effects = IsTabDrop((TabControl)sender, e) ? DragDropEffects.Move : DragDropEffects.None;
-        e.Handled = true;
-    }
-
-    private void OnTabDrop(object sender, DragEventArgs e)
-    {
-        e.Handled = true;
-        if (currentDrag is not { } drag || !IsTabDrop((TabControl)sender, e))
-        {
-            e.Effects = DragDropEffects.None;
-            return;
-        }
-
-        TabItem? hovered = Ancestor<TabItem>(e.OriginalSource as DependencyObject);
-        var group = (TabControl)sender;
-        int destination = hovered is null ? group.Items.Count : group.Items.IndexOf(hovered);
-        if (hovered is not null && e.GetPosition(hovered).X >= hovered.ActualWidth / 2) destination++;
-        e.Effects = DragDropEffects.Move;
-        Dispatcher.BeginInvoke(() => drag.Source.MoveTab(drag.Item, this, destination, group));
-    }
-
-    private bool IsTabDrop(TabControl group, DragEventArgs e) =>
-        currentDrag is { } drag && CanAcceptTabs && app.Broadcast.CanMove(drag.Source, this) &&
-        (Ancestor<TabPanel>(e.OriginalSource as DependencyObject) is not null ||
-         Ancestor<TabItem>(e.OriginalSource as DependencyObject) is not null || group.Items.Count == 0);
-
     internal static T? Ancestor<T>(DependencyObject? element) where T : DependencyObject
     {
         while (element is not null)
@@ -460,19 +382,6 @@ internal sealed partial class MainWindow : Window
 
         return null;
     }
-
-    private sealed record TabDrag(MainWindow Source, TabItem Item);
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct NativePoint
-    {
-        public int X;
-        public int Y;
-    }
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetCursorPos(out NativePoint cursor);
 
     private TerminalTab? SelectedTab => (activeGroup.SelectedItem as TabItem)?.Content as TerminalTab;
 
@@ -574,12 +483,46 @@ internal sealed partial class MainWindow : Window
             activeGroup.SelectedIndex = (Math.Max(0, activeGroup.SelectedIndex) - steps % count + count) % count;
     }
 
+    private void OnScrollTabsLeft(object sender, RoutedEventArgs args) => ScrollTabHeaders((Button)sender, left: true);
+
+    private void OnScrollTabsRight(object sender, RoutedEventArgs args) => ScrollTabHeaders((Button)sender, left: false);
+
+    private static void ScrollTabHeaders(Button button, bool left)
+    {
+        if (!button.IsEnabled || button.TemplatedParent is not TabControl group ||
+            group.Template.FindName("tabStripScroller", group) is not ScrollViewer strip) return;
+
+        var tabs = group.Items.OfType<TabItem>();
+        foreach (TabItem tab in left ? tabs.Reverse() : tabs)
+        {
+            double start = tab.TranslatePoint(new Point(), (UIElement)strip.Content).X - strip.HorizontalOffset;
+            double hidden = left ? -start : start + tab.ActualWidth - strip.ViewportWidth;
+            if (hidden <= TabScrollTolerance) continue;
+            double distance = Math.Min(hidden, strip.ViewportWidth);
+            strip.ScrollToHorizontalOffset(strip.HorizontalOffset + (left ? -distance : distance));
+            return;
+        }
+        if (left) strip.ScrollToLeftEnd();
+        else strip.ScrollToRightEnd();
+    }
+
+    private const double TabScrollTolerance = 0.01;
+
     private void OnTabStripScrollChanged(object sender, ScrollChangedEventArgs args)
     {
         if (sender != args.OriginalSource) return;
         var strip = (ScrollViewer)sender;
-        bool left = strip.HorizontalOffset > 0.5;
-        bool right = strip.ScrollableWidth - strip.HorizontalOffset > 0.5;
+        var group = (TabControl)strip.TemplatedParent;
+        var buttons = (StackPanel)group.Template.FindName("tabScrollButtons", group);
+        // Use the width available with the arrows hidden so they cannot sustain overflow themselves.
+        double available = strip.ViewportWidth + (buttons.Visibility == Visibility.Visible ? buttons.ActualWidth : 0);
+        var headers = (TabHeaderPanel)strip.Content;
+        double headerWidth = strip.ExtentWidth - headers.AddedPreviewWidth;
+        buttons.Visibility = headerWidth - available > TabScrollTolerance ? Visibility.Visible : Visibility.Collapsed;
+        bool left = strip.HorizontalOffset > TabScrollTolerance;
+        bool right = strip.ScrollableWidth - strip.HorizontalOffset > TabScrollTolerance;
+        ((Button)group.Template.FindName("scrollTabsLeftButton", group)).IsEnabled = left;
+        ((Button)group.Template.FindName("scrollTabsRightButton", group)).IsEnabled = right;
         if ((!left && !right) || strip.ViewportWidth <= 0)
         {
             strip.OpacityMask = null;

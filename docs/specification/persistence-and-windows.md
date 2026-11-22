@@ -585,6 +585,66 @@ work area if needed. Restore maximized separately. Detached windows use source
 normal size near the drop. Coalesce layout notifications to the final grid per
 layout transaction; changed grids go through the session resize contract.
 
+### Dragging a tab
+
+Once a drag starts on a tab header, the header follows the pointer. In the
+source tab bar, or in another group's tab bar in the same or another TabTty
+terminal window, neighboring headers shift to leave one tab-sized space at
+the proposed position. Moving back across a neighbor reverses the preview.
+The space stays stable while the pointer is still and clears as soon as the
+pointer leaves that bar. Releasing the button places the tab exactly where
+the preview shows it, including first, last,
+or as the first tab of an empty group. Unused space after the last header
+accepts an append. Tab-bar command buttons keep their own hit areas.
+Starting a drag on blank title-bar space still moves the whole window.
+
+TabTty handles a tab drag inside the application. Over the desktop, File
+Explorer or another application, keep the ordinary arrow and the floating
+tab header. External windows receive no drag or drop notifications. Explorer
+items therefore stay free of drop highlighting and the pointer shows no
+copy, move or prohibited-drop badge. If detaching is allowed, releasing there
+moves the tab into one new window near the pointer. Passing over another
+application on the way to a visible TabTty tab bar resumes the insertion
+preview on entry. Only
+the exposed window under the pointer can be a destination.
+
+Previewing an order leaves the tabs in their current groups and keeps
+reception and recording running in their existing states. Use the existing
+[tab movement rules](broadcast-and-split-views.md#moves-closure-and-scope-boundaries)
+to determine eligible destinations. Escape, loss of the drag or release over
+an ineligible area inside TabTty clears the preview and keeps the original
+placement. If the previewed destination disappears before commit, report the
+failed move and keep the tab in its source.
+
+Verify these cases with the mouse. [Implementation issue #148](https://github.com/TabTty/TabTty/issues/148)
+
+| Gesture | Expected result |
+| --- | --- |
+| Drag B past C in A B C, then back before A. | The bar shows A C B, then B A C, before release. Release gives B A C. Repeating the drag and pressing Escape keeps that starting order. |
+| Drag the only tab in a window between D and E in another window. | D and E make room before release. The source stays open until insertion succeeds. The same tab and session appear between D and E. |
+| Drag across Explorer, pause over a folder, then enter an empty TabTty group on a second monitor. Repeat and release over the folder instead. | Explorer gives no drop feedback in either run. The first release places the tab in the empty group. The second opens one detached window near the release point and leaves the folder untouched. |
+
+### Scrolling an overflowing tab bar
+
+For each tab group, check whether all its headers fit with the scroll buttons
+hidden. When they overflow, show a left arrow and a right arrow, in that order,
+immediately to the left of the **+** button. Keep both arrows in fixed positions
+while the headers scroll. Each press reveals more headers in that direction
+and keeps the current tab selected. The tab bar's mouse wheel still selects
+the previous or next tab.
+
+| Tab bar position | Left button | Right button | Faded edges |
+| --- | --- | --- | --- |
+| All headers fit, including an exact fit | Hidden | Hidden | None |
+| Left end | Disabled | Enabled | Right |
+| Between the ends | Enabled | Enabled | Both |
+| Right end | Enabled | Disabled | Left |
+
+Recheck after a group is resized or its tab headers change. Verify that closing
+or moving a tab, or widening the group just enough to fit all headers without
+the buttons, hides both buttons and returns their space to the headers.
+In a split window, scrolling one group affects only that group's tab bar.
+
 ## File Explorer and editors
 
 In the unpackaged Windows 11 distribution, register or refresh Explorer file
