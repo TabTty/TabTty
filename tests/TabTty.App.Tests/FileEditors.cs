@@ -31,7 +31,8 @@ internal static partial class Program
             save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, save));
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
             while (form.IsBusy) await Task.Delay(10, deadline.Token);
-            if (form.HasUnsavedChanges || editor.Identity != path || (await ConnectionProfile.LoadAsync(path)).DisplayName != newName)
+            string savedName = (await ConnectionProfile.LoadAsync(path)).DisplayName;
+            if (form.HasUnsavedChanges || editor.Identity != path || savedName != newName)
                 throw new InvalidOperationException("The profile was not saved in place.");
             CheckHeading(newName);
             editor.UpdateLabels();
@@ -254,9 +255,10 @@ internal static partial class Program
             save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             await paused.Issued.Task.WaitAsync(deadline.Token);
             firstEditor.Close();
-            if (!firstEditor.IsVisible || !FindControls<TextBlock>(form).Any(text =>
-                text.IsVisible && text.Text == App.Text("FileOperationPending")))
-                throw new InvalidOperationException("Issued publication lost its editor lifetime or pending status.");
+            if (!firstEditor.IsVisible)
+                throw new InvalidOperationException("Issued publication lost its editor lifetime.");
+            await UntilAsync(() => FindControls<TextBlock>(form).Any(text =>
+                text.IsVisible && text.Text == App.Text("SavingChanges")));
             byte[] candidate = File.ReadAllBytes(first);
             if (candidate.AsSpan().SequenceEqual(original) ||
                 !original.AsSpan().SequenceEqual(File.ReadAllBytes(first + ".bak")))

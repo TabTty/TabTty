@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Data;
+using System.Windows.Input;
 using TabTty.Core;
 using static TabTty.App.App;
 
@@ -193,7 +194,6 @@ internal sealed class VaultController(App app) : IDisposable
     private void BuildManagement(FormView form, Func<VaultFileController> target)
     {
         form.CanDismissBusyView = () => target().CanDismissMasterChange(form.OwnerWindow);
-        form.ShowFileOperationStatus();
         var list = new ListView();
         var columns = new DetailsColumns(list);
         columns.Add("ProfileListName", nameof(VaultEntryInfo.Name), 220);
@@ -206,13 +206,9 @@ internal sealed class VaultController(App app) : IDisposable
         DockPanel.SetDock(searchLabel, Dock.Left);
         searchRow.Children.Add(searchLabel);
         searchRow.Children.Add(search);
-        var status = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(4, 0, 4, 8) };
-        AutomationProperties.SetLiveSetting(status, AutomationLiveSetting.Polite);
         var contents = new DockPanel();
         DockPanel.SetDock(searchRow, Dock.Top);
-        DockPanel.SetDock(status, Dock.Top);
         contents.Children.Add(searchRow);
-        contents.Children.Add(status);
         contents.Children.Add(list);
         var frame = new Border
         {
@@ -239,31 +235,32 @@ internal sealed class VaultController(App app) : IDisposable
             return Task.CompletedTask;
         });
         menu.Items.Add(new Separator());
-        AddEntryAction("VaultDeleteEntry", static (file, window, entry) => file.DeleteEntryAsync(window, entry));
+        AddEntryAction("VaultDeleteEntry", DeleteEntryAsync);
 
         form.AddActionRow(() =>
         {
-            requiresVault.Add(Add("AddVaultPassword", static (file, window) => file.AddPasswordAsync(window)));
-            requiresVault.Add(Add("ImportPrivateKey", static (file, window) => file.ImportPrivateKeyAsync(window)));
+            requiresVault.Add(Add("AddVaultPassword", (file, window) => file.AddPasswordAsync(window, form)));
+            requiresVault.Add(Add("ImportPrivateKey", (file, window) => file.ImportPrivateKeyAsync(window, form)));
         });
         form.AddFillingDisplay("VaultEntryList", frame, () => form.AddGroup("VaultFileOperations", () =>
         {
             form.AddDisplay("VaultPath", vaultPath);
             form.AddActionRow(() =>
             {
-                requiresVault.Add(Add("BackupVault", static (file, window) => file.BackupAsync(window)));
-                form.AddAsyncAction("RestoreVault", () => target().RestoreAsync(form.OwnerWindow));
-                requiresVault.Add(Add("ChangeMaster", static (file, window) => file.ChangeMasterAsync(window)));
-                Add("RecheckFilePublication", static (file, window) => file.ReconcilePublicationAsync(window));
+                requiresVault.Add(Add("BackupVault", (file, window) => file.BackupAsync(window, form)));
+                form.AddAsyncAction("RestoreVault", () => target().RestoreAsync(form.OwnerWindow, form));
+                requiresVault.Add(Add("ChangeMaster", (file, window) => file.ChangeMasterAsync(window, form)));
+                Add("RecheckFilePublication", (file, window) => file.ReconcilePublicationAsync(window, form));
                 form.AddAsyncAction("ArchiveVault", async () =>
                 {
                     Window window = form.OwnerWindow;
                     VaultFileController file = target();
-                    bool archived = await file.ArchiveAsync(window);
+                    bool archived = await file.ArchiveAsync(window, form);
                     if (archived && window is VaultEditorWindow editor) editor.CloseAfterArchive();
                 });
             });
         }));
+        form.AddStatusBar();
 
         form.AddLocalizedUpdate(() =>
         {
@@ -302,6 +299,13 @@ internal sealed class VaultController(App app) : IDisposable
             args.Handled = true;
             await RunEntryAction(file, entry, static (current, window, item) => current.EditEntryAsync(window, item));
         };
+        list.PreviewKeyDown += async (_, args) =>
+        {
+            if (args.Key != Key.Delete || args.KeyboardDevice.Modifiers != ModifierKeys.None ||
+                listedFile is not { Unlocked: not null } file || list.SelectedItem is not VaultEntryInfo entry) return;
+            args.Handled = true;
+            if (!args.IsRepeat) await RunEntryAction(file, entry, DeleteEntryAsync);
+        };
         form.Loaded += (_, _) => { ManagementChanged += UpdateEntries; UpdateEntries(); };
         form.Unloaded += (_, _) => ManagementChanged -= UpdateEntries;
 
@@ -332,6 +336,9 @@ internal sealed class VaultController(App app) : IDisposable
             return file.RunAsync(window, () => action(file, window, entry));
         });
 
+        Task DeleteEntryAsync(VaultFileController file, Window owner, VaultEntryInfo entry) =>
+            file.DeleteEntryAsync(owner, entry, form);
+
         void UpdateEntries() => UpdateEntriesAndStatus(refreshLabels: false);
 
         void UpdateEntriesAndStatus(bool refreshLabels)
@@ -352,7 +359,7 @@ internal sealed class VaultController(App app) : IDisposable
             foreach (Button action in requiresVault) action.IsEnabled = true;
             if (file.Unlocked is null)
             {
-                SetStatus(Text("VaultEntriesLocked"));
+                form.SetStatusMessage(Text("VaultEntriesLocked"));
                 if (form.IsLoaded) _ = DescribeMissingAsync(file, revision);
             }
         }
@@ -370,20 +377,14 @@ internal sealed class VaultController(App app) : IDisposable
             columns.ApplySort();
             list.SelectedItem = visible.FirstOrDefault(entry => entry.Name == selection);
             if (listedFile?.Unlocked is not null)
-                SetStatus(visible.Length != 0 ? "" : Text(listedEntries.Count == 0 ? "VaultEntriesEmpty" : "NoSearchMatch"));
-        }
-
-        void SetStatus(string message)
-        {
-            status.Text = message;
-            status.Visibility = message.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+                form.SetStatusMessage(visible.Length != 0 ? "" : Text(listedEntries.Count == 0 ? "VaultEntriesEmpty" : "NoSearchMatch"));
         }
 
         async Task DescribeMissingAsync(VaultFileController file, int revision)
         {
             string? missing = await file.DescribeMissingTargetAsync(form.OwnerWindow);
             if (missing is null || statusRevision != revision || !form.IsLoaded || !ReferenceEquals(file, target())) return;
-            SetStatus(missing);
+            form.SetStatusMessage(missing);
             foreach (Button action in requiresVault) action.IsEnabled = false;
         }
     }

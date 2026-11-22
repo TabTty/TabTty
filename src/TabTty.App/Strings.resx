@@ -379,6 +379,8 @@
   <data name="NoFilePublicationToRecheck" xml:space="preserve"><value>There is no previous save awaiting verification.</value></data>
   <data name="StoreSaveUnverified" xml:space="preserve"><value>The save outcome could not be verified. Recheck the save or explicitly restore the file before saving again.</value></data>
   <data name="FileOperationPending" xml:space="preserve"><value>File operation in progress…</value></data>
+  <data name="SavingChanges" xml:space="preserve"><value>Saving changes…</value></data>
+  <data name="CheckingPreviousSave" xml:space="preserve"><value>Checking the previous save…</value></data>
   <data name="PublishedImageMissing" xml:space="preserve"><value>No file was found</value></data>
   <data name="PublishedImageCandidate" xml:space="preserve"><value>Verified candidate bytes</value></data>
   <data name="PublishedImageOriginal" xml:space="preserve"><value>Verified original bytes</value></data>

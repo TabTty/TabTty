@@ -282,6 +282,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 form.AddAsyncAction("RegisterProfile", RegisterAsync);
             });
             form.AddFillingDisplay("ProfileGroups", groupTabs);
+            form.AddStatusBar();
             form.AddLocalizedUpdate(() =>
             {
                 allGroups.Header = Text("AllProfiles");
@@ -324,6 +325,13 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 args.Handled = true;
                 await form.RunAsync(() => EditItemAsync(item, duplicate: false));
             };
+            list.PreviewKeyDown += async (_, args) =>
+            {
+                if (args.Key != Key.Delete || args.KeyboardDevice.Modifiers != ModifierKeys.None ||
+                    list.SelectedItems.Count != 1 || list.SelectedItem is not Registration item) return;
+                args.Handled = true;
+                if (!args.IsRepeat) await RunRowActionAsync(item, RecycleAsync);
+            };
             list.AddHandler(ButtonBase.ClickEvent, new RoutedEventHandler(async (_, args) =>
             {
                 if (args.OriginalSource is not Button { DataContext: Registration item }) return;
@@ -361,11 +369,14 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 entry.Click += async (_, _) =>
                 {
                     if (registrations.FirstOrDefault(item => item.Id == menuRegistration) is { } item)
-                        await form.RunAsync(() => action(item));
+                        await RunRowActionAsync(item, action);
                 };
                 menu.Items.Add(entry);
                 return entry;
             }
+
+            Task RunRowActionAsync(Registration item, Func<Registration, Task> action) =>
+                form.RunAsync(() => action(item));
 
             async Task LoadDetailsAsync()
             {
@@ -614,6 +625,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
             await registrationChanges.WaitAsync();
             try
             {
+                using var progress = form.BeginProgress("CheckingPreviousSave");
                 if (pendingCommit is null)
                 {
                     ConnectionProfile? committed;
@@ -626,6 +638,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                     if (committed is null)
                     {
                         var stages = await Task.Run(() => VerifiedFilePublication.ReinspectRetainedStages(attemptedPath));
+                        progress.Dispose();
                         if (!JsonStoreRecovery.ShowRetainedStages(app, form, stages))
                             app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow, Text("NoFilePublicationToRecheck"), Text("Profiles")));
                         return;
@@ -635,11 +648,12 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                     RetainVerifiedSave(path, committed);
                 }
                 await CompleteSaveAsync();
+                progress.Dispose();
+                ShowCleanupWarning(profile);
                 JsonStoreRecovery.ShowRetainedStages(app, form, VerifiedFilePublication.GetRetainedStagePaths(attemptedPath));
             }
             finally { registrationChanges.Release(); }
         }
-        form.ShowFileOperationStatus();
         form.AddEditorButtons(async () =>
         {
             await registrationChanges.WaitAsync();
@@ -648,6 +662,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 if (pendingCommit is not null)
                     throw new IOException(Text("ProfileSaveNeedsCompletion"));
                 ConnectionProfile draft = editor.GetDraft();
+                using var progress = form.BeginProgress("SavingChanges");
                 await ReadLegacyNamesAsync(CancellationToken.None);
                 registrationReset = trustReset;
                 if (path is null)
@@ -678,11 +693,14 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 {
                     throw new IOException(Text("ProfileSaveNeedsCompletion") + "\n\n" + error.Message, error);
                 }
+                progress.Dispose();
+                ShowCleanupWarning(profile);
                 JsonStoreRecovery.ShowRetainedStages(app, form, VerifiedFilePublication.GetRetainedStagePaths(attemptedPath!));
                 return true;
             }
             finally { registrationChanges.Release(); }
         }, isCreating: creating ? () => path is null : null);
+        form.AddStatusBar();
 
         async Task CompleteSaveAsync()
         {
@@ -695,6 +713,10 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
             outstanding = null;
             editor.UseSavedRevision(saved);
             onSaved?.Invoke(path, saved.DisplayName);
+        }
+
+        void ShowCleanupWarning(ConnectionProfile saved)
+        {
             if (BackupCleanupWarning(saved) is { } warning)
                 app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow, warning, Text("EditProfile"),
                     icon: MessageBoxImage.Warning));

@@ -379,6 +379,8 @@
   <data name="NoFilePublicationToRecheck" xml:space="preserve"><value>確認待ちの保存はありません。</value></data>
   <data name="StoreSaveUnverified" xml:space="preserve"><value>保存結果を確認できませんでした。次に保存する前に、保存結果を再確認するか、明示的に復元してください。</value></data>
   <data name="FileOperationPending" xml:space="preserve"><value>ファイルを処理しています…</value></data>
+  <data name="SavingChanges" xml:space="preserve"><value>変更を保存しています…</value></data>
+  <data name="CheckingPreviousSave" xml:space="preserve"><value>前回の保存結果を確認しています…</value></data>
   <data name="PublishedImageMissing" xml:space="preserve"><value>ファイルがありません</value></data>
   <data name="PublishedImageCandidate" xml:space="preserve"><value>保存候補の内容を確認済み</value></data>
   <data name="PublishedImageOriginal" xml:space="preserve"><value>元の内容を確認済み</value></data>

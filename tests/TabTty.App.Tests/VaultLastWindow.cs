@@ -85,8 +85,8 @@ internal static partial class Program
                 if (candidate.AsSpan().SequenceEqual(original) ||
                     !original.AsSpan().SequenceEqual(File.ReadAllBytes(path + ".bak")))
                     throw new InvalidOperationException("Issued replacement did not install the candidate and preserve the original.");
-                if (!FindControls<TextBlock>(host).Any(text => text.IsVisible && text.Text == App.Text("FileOperationPending")))
-                    throw new InvalidOperationException("The management form did not present its pending publication.");
+                await UntilAsync(() => FindControls<TextBlock>(host).Any(text =>
+                    text.IsVisible && text.Text == App.Text("SavingChanges")));
 
                 oldRead = app.Vault.ReadSavedPasswordAsync(host, reference, token);
                 host.Close();

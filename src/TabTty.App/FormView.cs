@@ -6,6 +6,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
+using System.Windows.Threading;
 using static TabTty.App.App;
 
 namespace TabTty.App;
@@ -27,6 +28,9 @@ internal sealed class FormView : DockPanel
     private bool tracksEdits;
     private Action? updateEditorButtons;
     private TextBlock? busyStatus;
+    private TextBlock? statusBarText;
+    private string statusMessage = "";
+    private string? progressKey;
 
     public FormView(bool modal = false)
     {
@@ -65,6 +69,74 @@ internal sealed class FormView : DockPanel
         SetText("FileOperationPending", value => status.Text = value);
         fields.Children.Add(status);
         busyStatus = status;
+    }
+
+    internal void AddStatusBar()
+    {
+        var text = new TextBlock { Height = 20, TextTrimming = TextTrimming.CharacterEllipsis };
+        AutomationProperties.SetLiveSetting(text, AutomationLiveSetting.Polite);
+        var bar = new Border
+        {
+            Child = text, Padding = new Thickness(14, 4, 14, 4),
+            BorderThickness = new Thickness(0, 1, 0, 0),
+        };
+        bar.SetResourceReference(Border.BorderBrushProperty, "SurfaceStrokeColorDefaultBrush");
+        statusBarText = text;
+        SetDock(bar, Dock.Bottom);
+        Children.Insert(0, bar);
+        AddLocalizedUpdate(UpdateStatusBar);
+    }
+
+    internal void SetStatusMessage(string message)
+    {
+        statusMessage = message;
+        UpdateStatusBar();
+    }
+
+    internal IDisposable BeginProgress(string key) => new DelayedProgress(this, key);
+
+    private void UpdateStatusBar()
+    {
+        if (statusBarText is not { } text) return;
+        string message = progressKey is { } key ? Text(key) : statusMessage;
+        if (Equals(text.ToolTip, message.Length == 0 ? null : message)) return;
+        text.Text = message.ReplaceLineEndings(" ");
+        text.ToolTip = message.Length == 0 ? null : message;
+        AutomationProperties.SetName(text, message);
+        UIElementAutomationPeer.FromElement(text)?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+    }
+
+    private sealed class DelayedProgress : IDisposable
+    {
+        private readonly FormView form;
+        private readonly string key;
+        private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(500) };
+        private bool disposed;
+
+        public DelayedProgress(FormView form, string key)
+        {
+            this.form = form;
+            this.key = key;
+            timer.Tick += Show;
+            timer.Start();
+        }
+
+        private void Show(object? sender, EventArgs args)
+        {
+            timer.Stop();
+            form.progressKey = key;
+            form.UpdateStatusBar();
+        }
+
+        public void Dispose()
+        {
+            if (disposed) return;
+            disposed = true;
+            timer.Stop();
+            timer.Tick -= Show;
+            form.progressKey = null;
+            form.UpdateStatusBar();
+        }
     }
 
     public void SetPageTitle(string key, string? argument = null, bool useTabBackground = false)

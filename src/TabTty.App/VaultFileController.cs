@@ -68,10 +68,11 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         if (owner.IsLoaded) owner.OpenForm("ManageVault", app.Vault.BuildManagement);
     });
 
-    internal async Task ReconcilePublicationAsync(Window owner)
+    internal async Task ReconcilePublicationAsync(Window owner, FormView? form = null)
     {
         if (vault is { HasUnverifiedPublication: true } opened)
         {
+            using var progress = form?.BeginProgress("CheckingPreviousSave");
             var result = await opened.ReconcilePublicationResultAsync();
             if (result is null) throw new IOException(Text("StoreSaveUnverified"));
             JsonStoreRecovery.RequireVerified(result);
@@ -81,12 +82,18 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
             CheckAvailable();
             char[]? password = PromptMaster(owner, "RecheckFilePublication", confirm: false, path: FilePath);
             if (password is null) return;
-            try { vault = await CredentialVault.ReconcileLockedPublicationAsync(FilePath, password); }
+            try
+            {
+                using var progress = form?.BeginProgress("CheckingPreviousSave");
+                vault = await CredentialVault.ReconcileLockedPublicationAsync(FilePath, password);
+            }
             finally { Array.Clear(password); }
         }
         else
         {
-            var retained = await Task.Run(() => VerifiedFilePublication.ReinspectRetainedStages(FilePath));
+            string[] retained;
+            using (form?.BeginProgress("CheckingPreviousSave"))
+                retained = await Task.Run(() => VerifiedFilePublication.ReinspectRetainedStages(FilePath));
             if (!ShowRetainedFilePaths(owner, retained))
                 app.Modal(() => ThemedMessageBox.ShowVault(owner, Text("NoFilePublicationToRecheck"), Text("Vault")));
             return;
@@ -95,16 +102,16 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         ShowRetainedFilePaths(owner, VerifiedFilePublication.GetRetainedStagePaths(FilePath));
     }
 
-    public Task RestoreAsync(Window owner) => RunAsync(owner, () => RestoreFileAsync(owner));
+    public Task RestoreAsync(Window owner, FormView? form = null) => RunAsync(owner, () => RestoreFileAsync(owner, form));
 
-    public async Task<bool> ArchiveAsync(Window owner)
+    public async Task<bool> ArchiveAsync(Window owner, FormView? form = null)
     {
         bool archived = false;
-        await RunAsync(owner, async () => archived = await ArchiveFileAsync(owner));
+        await RunAsync(owner, async () => archived = await ArchiveFileAsync(owner, form));
         return archived;
     }
 
-    private async Task<bool> ArchiveFileAsync(Window owner)
+    private async Task<bool> ArchiveFileAsync(Window owner, FormView? form)
     {
         if (unlockInteraction.IsPending) throw new InvalidOperationException(Text("VaultBusy"));
         string path = FilePath;
@@ -122,6 +129,7 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
                 if (app.Modal(() => ThemedMessageBox.ShowVault(owner, $"{Text("ArchiveVaultConfirm")}\n\n{path}",
                     Text("ArchiveVault"), MessageBoxButton.YesNo, MessageBoxImage.Warning,
                     MessageBoxResult.No)) != MessageBoxResult.Yes) return false;
+                using var progress = form?.BeginProgress("FileOperationPending");
                 archived = await Task.Run(() => CredentialVault.ArchiveFile(path, evidence, app.VaultFiles?.MoveForArchive));
             }
             ClearUnlocked();
@@ -412,7 +420,7 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         return (form, list);
     }
 
-    public async Task ImportPrivateKeyAsync(Window owner)
+    public async Task ImportPrivateKeyAsync(Window owner, FormView? management = null)
     {
         if (await UnlockFileAsync(owner) is not { } unlocked || !owner.IsLoaded) return;
         long revision = unlocked.Revision;
@@ -460,11 +468,12 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
             RefreshManagement();
             return true;
 
-            Task<string> ImportReviewedAsync(ReadOnlyMemory<byte>? passphrase = null)
+            async Task ImportReviewedAsync(ReadOnlyMemory<byte>? passphrase = null)
             {
                 if (!ReferenceEquals(vault, unlocked) || unlocked.Revision != revision)
                     throw new InvalidOperationException(Text("ManagementTabOutdated"));
-                return unlocked.ImportPrivateKeySourceAsync(keyName, source, passphrase, revision);
+                using var progress = management?.BeginProgress("SavingChanges");
+                await unlocked.ImportPrivateKeySourceAsync(keyName, source, passphrase, revision);
             }
         }
         app.Modal(form.ShowDialog);
@@ -596,7 +605,7 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         }
     }
 
-    public async Task AddPasswordAsync(Window owner)
+    public async Task AddPasswordAsync(Window owner, FormView? management = null)
     {
         if (await UnlockFileAsync(owner) is not { } unlocked || !owner.IsLoaded) return;
         long revision = unlocked.Revision;
@@ -619,7 +628,8 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
                 {
                     StrictUtf8.GetBytes(input, bytes);
                     Array.Clear(input);
-                    await unlocked.AddPasswordAsync(name.Text, bytes, revision);
+                    using (management?.BeginProgress("SavingChanges"))
+                        await unlocked.AddPasswordAsync(name.Text, bytes, revision);
                     RefreshManagement();
                 }
                 finally { CryptographicOperations.ZeroMemory(bytes); }
@@ -644,12 +654,13 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         return entry.Name;
     }
 
-    public async Task DeleteEntryAsync(Window owner, VaultEntryInfo entry)
+    public async Task DeleteEntryAsync(Window owner, VaultEntryInfo entry, FormView? form = null)
     {
         var (unlocked, revision) = CurrentEntry(entry);
         if (await ConfirmImpactAsync(owner, unlocked, entry, "DeleteCredentialWarning"))
         {
-            await unlocked.DeleteEntryAsync(entry.Name, revision);
+            using (form?.BeginProgress("SavingChanges"))
+                await unlocked.DeleteEntryAsync(entry.Name, revision);
             RefreshManagement();
         }
     }
@@ -658,6 +669,7 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
     {
         var (unlocked, revision) = CurrentEntry(entry);
         var form = new MainWindow.FormWindow(owner, Text("EditCredential"), WindowIcons.Vault);
+        form.AddStatusBar();
         var name = new TextBox { Text = entry.Name, MaxLength = 512 };
         var replace = new CheckBox { Margin = new Thickness(0, 10, 0, 3) };
         var password = new PasswordBox { MaxLength = 16 * 1024, IsEnabled = false };
@@ -699,8 +711,9 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
             {
                 if (replace.IsChecked == true) bytes = StrictUtf8.GetBytes(characters);
                 Array.Clear(characters);
-                await unlocked.UpdateEntryAsync(entry.Name, newName,
-                    bytes is null ? null : new ReadOnlyMemory<byte>(bytes), revision);
+                using (form.BeginProgress("SavingChanges"))
+                    await unlocked.UpdateEntryAsync(entry.Name, newName,
+                        bytes is null ? null : new ReadOnlyMemory<byte>(bytes), revision);
             }
             finally
             {
@@ -786,7 +799,7 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         return owner.IsLoaded;
     }
 
-    private async Task RestoreFileAsync(Window owner)
+    private async Task RestoreFileAsync(Window owner, FormView? form)
     {
         CheckAvailable();
         if (unlockInteraction.IsPending) throw new InvalidOperationException(Text("VaultBusy"));
@@ -806,6 +819,7 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         if (password is null) return;
         try
         {
+            using var progress = form?.BeginProgress("FileOperationPending");
             CredentialVault restored = await CredentialVault.RestoreFileAsync(basis, password, current,
                 issue: app.VaultFiles?.IssueRestore);
             if (disposed)
@@ -834,7 +848,7 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         return app.Modal(() => dialog.ShowDialog(owner)) == true ? dialog.FileName : null;
     }
 
-    public async Task BackupAsync(Window owner)
+    public async Task BackupAsync(Window owner, FormView? form = null)
     {
         CredentialVault? unlocked = vault ?? await UnlockFileAsync(owner);
         if (unlocked is null || !owner.IsLoaded) return;
@@ -844,18 +858,23 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
                 MessageBoxResult.Cancel)) != MessageBoxResult.OK) return;
         var dialog = new SaveFileDialog { Filter = Filter, DefaultExt = ".tttykey", OverwritePrompt = false };
         if (app.Modal(() => dialog.ShowDialog(owner)) != true) return;
+        using var progress = form?.BeginProgress("FileOperationPending");
         if (rescue) await unlocked.BackupRetainedGenerationAsync(dialog.FileName);
         else await unlocked.BackupAsync(dialog.FileName);
     }
 
-    public async Task ChangeMasterAsync(Window owner)
+    public async Task ChangeMasterAsync(Window owner, FormView? form = null)
     {
         if (await UnlockFileAsync(owner) is not { } unlocked || !owner.IsLoaded) return;
         char[]? password = PromptMaster(owner, "ChangeMaster", confirm: true);
         if (password is null) return;
         // RunAsync keeps the file and application alive even after this host closes.
         masterChangeHost = owner;
-        try { await unlocked.ChangeMasterPasswordAsync(password, app.IssueMasterPassword); }
+        try
+        {
+            using var progress = form?.BeginProgress("SavingChanges");
+            await unlocked.ChangeMasterPasswordAsync(password, app.IssueMasterPassword);
+        }
         finally { Array.Clear(password); }
         RefreshManagement();
     }

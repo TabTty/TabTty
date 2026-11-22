@@ -62,11 +62,23 @@ search field and the details list.
 The list shows the registered name, connection protocol, destination and file
 path and fills the available space below the search field. Double-click a row
 to edit its profile. The single-row context menu provides Connect, Edit, Duplicate,
-favorite, Unregister and Delete file actions. The star in the first column
+favorite, Unregister and Delete profile file actions. The star in the first column
 toggles favorite status. Clicking a column header sorts the displayed rows
 and clicking the same header again reverses the order. The new-tab menu shows
 named groups as submenus and ungrouped profiles at the root. Both the menu
 and the list support [connecting multiple profiles](#connecting-multiple-profiles).
+
+The connection profile manager and every profile editor reserve a single-line
+status bar at the bottom of the view, below the controls and outside the
+scrollable content. The bar keeps its height when empty. Showing, changing or
+clearing a message keeps the list, fields and buttons in place. The manager
+starts with an empty bar and leaves it empty until it has a message of its own.
+
+In the editor, leave the bar empty during ordinary input, credential selection
+and confirmation prompts. If a save or a recheck is still running 500 ms after
+the work begins, show **Saving changes…** or **Checking the previous save…**
+respectively. Clear the message when the work ends. Present any failure through
+the existing error dialog. The editor reports its progress in its own bar.
 
 The selected vault's rename dialog can update reviewed registered profiles. The update uses the ordinary verified edit path and changes the matching name field. Connection trust is evaluated for the resulting file revision. See [Vault format and operations](vault-format.md).
 
@@ -116,6 +128,17 @@ selected, the context menu offers only the connection action and shows its
 count, for example **Connect to 3 selected profiles**. Right-clicking an
 unselected row selects that row alone and opens its single-row menu.
 Double-clicking a row edits that profile.
+
+With keyboard focus in the profile list and exactly one row selected, pressing
+Delete on its own passes that row to the same function as the **Delete profile
+file** menu command (`RecycleAsync`). That function owns confirmation and
+deletion. Its confirmation shows the selected file's path and defaults to
+**No**. On approval, move the `.ttty` file to the Windows Recycle Bin,
+then remove its registration and the
+trust for that location. If recycling fails, report the error and keep the
+registration. With zero or multiple rows selected, Delete has no effect.
+In the search field, Delete edits text. Holding the key starts at most one
+deletion per press.
 
 When a connection updates a registration's group or last-used time, refresh
 open profile lists in every window. Use the same registration data when
@@ -708,6 +731,29 @@ the public-key algorithm), and fingerprint. Double-click a row to edit it. The
 row context menu offers edit, delete, and the password entry's macro-reference
 copy action. The Vault file section displays the absolute path as plain text
 and contains file-level operations.
+
+In both vault views, pressing Delete on its own with keyboard focus in the
+credential list and exactly one entry selected passes that entry through the
+same command handler as the **Delete…** menu item, including the call to
+`VaultFileController.DeleteEntryAsync`. The handler presents the usual
+confirmation, including the impact on referring profiles, with **No**
+selected by default. Cancellation keeps the entry.
+An empty selection or an unavailable command does nothing. Holding Delete
+starts at most one deletion per press. In search and editor fields, Delete
+edits text.
+
+Reserve a single-line status bar at the bottom of the vault management tab,
+standalone vault editor and credential edit dialog, outside the scrolling
+content and below the controls. Use this bar for file-operation progress
+and keep its height reserved when empty. Showing,
+changing or clearing status text keeps the list, fields and buttons in place.
+
+Leave the bars empty while the user edits a credential or answers a
+confirmation. After **OK** and any required confirmation, show **Saving
+changes…** in the edit dialog's status bar only if the vault save is still
+pending after 500 ms. The parent view stays quiet throughout the edit. Clear
+the message when the save succeeds or fails and show any save error through
+the usual error handling.
 
 When the user chooses **Manage vault** and the selected file is missing or zero
 bytes, prompt for a master password before opening the tab. Show the tab after

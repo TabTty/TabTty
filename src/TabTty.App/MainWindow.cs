@@ -1118,6 +1118,8 @@ internal sealed partial class MainWindow : Window
             form.AddField(key, control, inlineCheckBox: inlineCheckBox);
         public void AddPrompt(string caption, Control control) => form.AddPrompt(caption, control);
         public void AddNotice(string key) => form.AddNotice(key);
+        internal void AddStatusBar() => form.AddStatusBar();
+        internal IDisposable BeginProgress(string key) => form.BeginProgress(key);
         public void AddPinnedNotice(string message)
         {
             var notice = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(14, 10, 14, 4) };

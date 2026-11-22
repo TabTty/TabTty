@@ -218,6 +218,8 @@ internal static partial class Program
             var highlightFrame = new DispatcherFrame();
             Task highlightTest = application.Dispatcher.InvokeAsync(async () =>
             {
+                await CheckManagementStatusBarAsync();
+                Console.WriteLine("PASS ManagementStatusBarKeepsLayout");
                 await HighlightWaitsForIdleOrViewportChange();
                 Console.WriteLine("PASS HighlightWaitsForIdleOrViewportChange");
                 await TerminalBellFlashesTheWholeStatusBar(settingsDirectory);
