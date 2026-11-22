@@ -120,7 +120,7 @@ internal sealed partial class MainWindow : Window
     {
         if (closing || SelectForm(titleKey)) return;
         var form = new FormView();
-        form.SetPageTitle(pageTitleKey ?? titleKey);
+        form.SetPageTitle(pageTitleKey ?? titleKey, useTabBackground: true);
         var item = new WindowTab(form) { FormKey = titleKey, Caption = Text(titleKey) };
         form.Completed += _ =>
         {
@@ -787,17 +787,17 @@ internal sealed partial class MainWindow : Window
                 form.AddField("VaultPath", vaultPath, actionKey: "BrowsePath", action: BrowseVaultPathAsync);
                 form.AddField("ProfileSaveDirectory", profileDirectory, actionKey: "BrowsePath", action: BrowseProfileDirectoryAsync);
             }),
-            ("SettingsMaintenance", () => form.AddActionRow(() =>
+            ("SettingsMaintenance", () =>
             {
-                form.AddAction("RegisterFileType", RegisterFileType);
-                form.AddAction("ProfileTrustReset", () => app.Profiles.ResetTrust(form.OwnerWindow));
-                form.AddAction("MacroManageTrust", () => form.TabOwner?.ManageMacroTrust());
-                form.AddAction("MacroTrustReset", () => ResetMacroTrust(form.OwnerWindow));
-                form.AddAction("RecoverStores", () =>
+                form.AddActionField("RegisterFileType", "Run", RegisterFileType);
+                form.AddActionField("ProfileTrustReset", "Run", () => app.Profiles.ResetTrust(form.OwnerWindow));
+                form.AddActionField("MacroManageTrust", "Run", () => form.TabOwner?.ManageMacroTrust());
+                form.AddActionField("MacroTrustReset", "Run", () => ResetMacroTrust(form.OwnerWindow));
+                form.AddActionField("RecoverStores", "Run", () =>
                 {
                     if (form.TabOwner is { } host) app.ShowStoreRecovery(host);
                 });
-            })));
+            }));
         form.AddEditorButtons(async () =>
         {
             if (string.IsNullOrWhiteSpace(fontFamily.Text) ||

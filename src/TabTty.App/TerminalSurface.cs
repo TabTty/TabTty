@@ -42,6 +42,7 @@ internal sealed class TerminalSurface : FrameworkElement
     private TextComposition? activeComposition;
     internal bool HasComposition => activeComposition is not null;
     private TextComposition? discardedComposition;
+    private bool imeCleanupScheduled;
     // The default WPF text store is shared by the UI thread. Its result can
     // arrive as a new, result-only composition on the pane taking focus.
     [ThreadStatic] private static TextComposition? terminatingComposition;
@@ -50,7 +51,7 @@ internal sealed class TerminalSurface : FrameworkElement
     private readonly DispatcherTimer blink;
     private bool presentationEnabled = true;
     private bool cursorOn = true;
-    private double fontSize = 16;
+    private double fontSize = App.DefaultTerminalFontSize * 96 / 72;
     private const double HorizontalInset = 4;
     private double? outputScrollOffset;
     private readonly TranslateTransform viewportTranslation = new();
@@ -83,6 +84,7 @@ internal sealed class TerminalSurface : FrameworkElement
     public TerminalSurface()
     {
         Focusable = true;
+        KeyboardNavigation.SetIsTabStop(this, false);
         ClipToBounds = true;
         imeInput = new TextBox
         {
@@ -103,7 +105,7 @@ internal sealed class TerminalSurface : FrameworkElement
         void UpdateBlink()
         {
             bool enabled = blinkTime is not (0 or uint.MaxValue) && connected && IsPresentationActive &&
-                IsKeyboardFocusWithin && snapshot is { CursorVisible: true, CursorBlink: true };
+                IsKeyboardFocusWithin && !HasComposition && snapshot is { CursorVisible: true, CursorBlink: true };
             if (enabled && !blink.IsEnabled) blink.Start();
             if (!enabled) blink.Stop();
             cursorOn = true;
@@ -215,10 +217,7 @@ internal sealed class TerminalSurface : FrameworkElement
             }
             ClearComposition();
         });
-        imeInput.TextChanged += (_, _) =>
-        {
-            if (composition.Length == 0 && imeInput.Text.Length != 0) imeInput.Clear();
-        };
+        imeInput.TextChanged += (_, _) => ScheduleImeCleanup();
         IsKeyboardFocusWithinChanged += (_, _) =>
         {
             InvalidateVisual();
@@ -608,7 +607,18 @@ internal sealed class TerminalSurface : FrameworkElement
                         CellRect(0, backgroundStart, backgroundEnd - backgroundStart));
             }
         }
-        if (connected && snapshot.CursorVisible && cursorOn && snapshot.CursorRow >= first && snapshot.CursorRow < end)
+        // The cursor can be on a blank row beyond the retained text.
+        double cursorTop = snapshot.CursorRow * rowHeight;
+        if (connected && composition.Length > 0 && cursorTop < viewportClip.Rect.Bottom &&
+            cursorTop + rowHeight > viewportClip.Rect.Top)
+        {
+            Rect caret = CellRect(snapshot.CursorRow, cursorCell?.Column ?? snapshot.CursorColumn, 1);
+            var text = Glyph(composition, 0xFFFFFF, TerminalStyleFlags.Underline);
+            Rect overlay = new(caret.TopLeft, new Size(text.WidthIncludingTrailingWhitespace + 2, rowHeight));
+            drawing.DrawRectangle(Brushes.Black, new Pen(Brushes.White, 1), overlay);
+            drawing.DrawText(text, overlay.TopLeft);
+        }
+        else if (connected && snapshot.CursorVisible && cursorOn && snapshot.CursorRow >= first && snapshot.CursorRow < end)
         {
             Rect caret = CellRect(snapshot.CursorRow, cursorCell?.Column ?? snapshot.CursorColumn, cursorCell?.Width ?? 1);
             uint cursor = ContrastCursor(cursorBackground);
@@ -626,13 +636,6 @@ internal sealed class TerminalSurface : FrameworkElement
                     DrawGlyph(drawing, caret, cell.Text, 0xFFFFFF ^ cursor, cursorFlags);
             }
             else drawing.DrawRectangle(null, new Pen(BrushFor(cursor), 1), caret);
-            if (composition.Length > 0)
-            {
-                var text = Glyph(composition, 0xFFFFFF, TerminalStyleFlags.Underline);
-                Rect overlay = new(caret.TopLeft, new Size(text.WidthIncludingTrailingWhitespace + 2, rowHeight));
-                drawing.DrawRectangle(Brushes.Black, new Pen(Brushes.White, 1), overlay);
-                drawing.DrawText(text, overlay.TopLeft);
-            }
         }
         renderedSnapshotVersion = snapshotVersion;
         ViewportRendered?.Invoke();
@@ -891,6 +894,7 @@ internal sealed class TerminalSurface : FrameworkElement
         terminatingComposition = null;
         activeComposition = e.TextComposition;
         composition = e.TextComposition.CompositionText;
+        updateBlink();
         InvalidateVisual();
     }
 
@@ -911,10 +915,25 @@ internal sealed class TerminalSurface : FrameworkElement
 
     private void ClearComposition()
     {
+        bool wasComposing = HasComposition;
         activeComposition = null;
-        if (composition.Length == 0) return;
         composition = "";
+        ScheduleImeCleanup();
+        if (!wasComposing) return;
+        updateBlink();
         InvalidateVisual();
+    }
+
+    private void ScheduleImeCleanup()
+    {
+        if (HasComposition || imeCleanupScheduled || imeInput.Text.Length == 0) return;
+        // WPF replays IME edits and events as a batch. Clear the input only after it finishes.
+        imeCleanupScheduled = true;
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+        {
+            imeCleanupScheduled = false;
+            if (!HasComposition && imeInput.Text.Length != 0) imeInput.Clear();
+        }));
     }
 
     private readonly Action updateBlink;

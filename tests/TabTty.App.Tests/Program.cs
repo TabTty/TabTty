@@ -106,7 +106,10 @@ internal static partial class Program
                 switch (check)
                 {
                     case "terminal": TerminalSurfaceRendersItsCellSnapshot(); break;
+                    case "terminal-focus": SwitchingTerminalTabsRestoresInputFocus(); break;
+                    case "terminal-ime": TerminalCompositionIgnoresRemoteCursorVisibility(); break;
                     case "menu": MainMenuOpensAndReusesManagementTabs(application); break;
+                    case "management-pages": ManagementPagesShareResponsiveLayout(application); break;
                     case "authentication": AuthenticationDialogsIdentifyTheRecipient(application); break;
                     case "keyboard": MainMenuAcceptsKeyboardCommands(); break;
                     case "menu-pointer": MainMenuOpensNestedSubmenusWithMouse(); break;
@@ -1182,18 +1185,18 @@ internal static partial class Program
         try
         {
             app.Profiles.Show(window);
-            window.OpenForm("ManageVault", app.Vault.BuildManagement, pageTitleKey: "VaultEntries");
+            window.OpenForm("ManageVault", app.Vault.BuildManagement);
             app.Highlights.Show(window);
             OpenSettings(window);
             var tabs = (TabControl)window.FindName("tabs");
             var root = (FrameworkElement)window.Content;
-            string[] titleKeys = ["ProfileCatalog", "VaultEntries", "HighlightSets", "Settings"];
+            string[] titleKeys = ["ProfileCatalog", "ManageVault", "HighlightSets", "Settings"];
             if (tabs.Items.Count != titleKeys.Length) throw new InvalidOperationException("A management page failed to open.");
             for (int index = 0; index < titleKeys.Length; index++)
             {
                 tabs.SelectedIndex = index;
                 var form = (FormView)tabs.SelectedContent;
-                bool detailsPage = titleKeys[index] is "ProfileCatalog" or "VaultEntries";
+                bool detailsPage = titleKeys[index] is "ProfileCatalog" or "ManageVault";
                 var fields = detailsPage
                     ? form.Children.OfType<StackPanel>().Single(panel => DockPanel.GetDock(panel) == Dock.Top)
                     : FormFields(form);
@@ -1211,7 +1214,7 @@ internal static partial class Program
                         var presenter = groups.Template.FindName("PART_SelectedContentHost", groups) as ContentPresenter;
                         frame = presenter is null ? null : VisualTreeHelper.GetParent(presenter) as Border;
                     }
-                    else frame = form.Children.OfType<Border>().Single();
+                    else frame = form.Children.OfType<Border>().Single(border => FindControls<ListView>(border).Any());
                     if (frame is null || frame.BorderThickness != new Thickness(1))
                         throw new InvalidOperationException("The details page does not have a shared rectangular content frame.");
                     double tallHeight = frame.ActualHeight;
@@ -1236,7 +1239,7 @@ internal static partial class Program
                         FindControls<Button>(footer).Any(button => Equals(button.Content, App.Text("Save")))))
                     throw new InvalidOperationException("The editor save button was not fixed at the bottom of the page.");
 
-                if (titleKeys[index] == "VaultEntries")
+                if (titleKeys[index] == "ManageVault")
                 {
                     var entries = FindControls<ListView>(form).Single();
                     string path = ProfileLocation.Normalize(app.VaultPath);
@@ -1260,12 +1263,18 @@ internal static partial class Program
                         "SettingsLogNaming", "SettingsVault", "SettingsMaintenance");
                 }
                 if (Environment.GetEnvironmentVariable("TABTTY_MANAGEMENT_RENDER_DIR") is { } folder &&
-                    titleKeys[index] is "VaultEntries" or "Settings")
+                    titleKeys[index] is "ManageVault" or "Settings")
                 {
                     Layout(new Size(1000, 660));
                     RenderLayoutPreview(root, window.Background, Path.Combine(folder, titleKeys[index] + ".png"));
                 }
             }
+
+            Color darkBackground = CheckManagementTitleBackgrounds();
+            app.ThemeMode = ThemeMode.Light;
+            if (CheckManagementTitleBackgrounds() == darkBackground)
+                throw new InvalidOperationException("The management title backgrounds did not update when the theme changed.");
+            app.ThemeMode = ThemeMode.Dark;
 
             var editor = new ProfileEditorWindow(app, "NewProfile", null, ProfileEditor.NewProfile("ssh"), creating: true);
             try
@@ -1282,6 +1291,35 @@ internal static partial class Program
                 }
             }
             finally { editor.Close(); }
+
+            Color CheckManagementTitleBackgrounds()
+            {
+                Color background = default;
+                for (int index = 0; index < titleKeys.Length; index++)
+                {
+                    tabs.SelectedIndex = index;
+                    Layout(new Size(1000, 660));
+                    var selected = (TabItem)tabs.SelectedItem;
+                    var unselected = (TabItem)tabs.Items[(index + 1) % titleKeys.Length];
+                    var form = (FormView)tabs.SelectedContent;
+                    var heading = FindControls<TextBlock>(form).Single(text =>
+                        AutomationProperties.GetHeadingLevel(text) == AutomationHeadingLevel.Level1);
+                    if (form.Background is not null || heading.Background is not null ||
+                        heading.Parent is not Border { Background: SolidColorBrush title } titleBand ||
+                        selected.Template.FindName("Border", selected) is not Border { Background: SolidColorBrush active } activeTab ||
+                        unselected.Template.FindName("Border", unselected) is not Border { Background: SolidColorBrush inactive } ||
+                        title.Color != active.Color || title.Color == inactive.Color)
+                        throw new InvalidOperationException($"The {titleKeys[index]} page did not confine its selected tab color to the title in {app.ThemeMode} mode.");
+                    Point titleTop = titleBand.TranslatePoint(new Point(), root);
+                    double tabBottom = activeTab.TranslatePoint(new Point(0, activeTab.ActualHeight), root).Y;
+                    if (titleTop.Y > tabBottom || tabBottom - titleTop.Y > 1 ||
+                        Math.Abs(titleBand.ActualWidth - form.ActualWidth) > 1 ||
+                        titleBand.ActualHeight <= heading.ActualHeight)
+                        throw new InvalidOperationException($"The {titleKeys[index]} title background did not meet the selected tab across the page.");
+                    background = title.Color;
+                }
+                return background;
+            }
 
             void Layout(Size size)
             {
@@ -1302,9 +1340,12 @@ internal static partial class Program
     {
         var navigation = FindControls<ListBox>(form).Single();
         var layout = (Grid)LogicalTreeHelper.GetParent(navigation);
-        var heading = layout.Children.OfType<TextBlock>().Single();
+        var heading = FindControls<TextBlock>(form).Single(text =>
+            AutomationProperties.GetHeadingLevel(text) == AutomationHeadingLevel.Level1);
         var scroller = layout.Children.OfType<ScrollViewer>().Single();
-        if (Grid.GetRow(heading) != 0 || Grid.GetColumnSpan(heading) != 2 ||
+        bool titleAboveColumns = heading.Parent == layout && Grid.GetRow(heading) == 0 && Grid.GetColumnSpan(heading) == 2 ||
+            heading.Parent is Border titleBand && titleBand.Parent == form && DockPanel.GetDock(titleBand) == Dock.Top;
+        if (!titleAboveColumns ||
             Grid.GetRow(navigation) != 1 || Grid.GetColumn(navigation) != 0 ||
             Grid.GetRow(scroller) != 1 || Grid.GetColumn(scroller) != 1)
             throw new InvalidOperationException("The page title did not span the navigation and settings columns.");
@@ -1334,6 +1375,10 @@ internal static partial class Program
     private static StackPanel FormFields(FormView form) =>
         (StackPanel)FindControls<ScrollViewer>(form).Single(view => view.Content is StackPanel).Content;
 
+    private static Button SettingsActionButton(FormView form, string key) => FindControls<Button>(form).Single(button =>
+        Equals(button.Content, App.Text("Run")) && AutomationProperties.GetLabeledBy(button) is Label { Content: TextBlock label } &&
+        label.Text == App.Text(key));
+
     private static void OpenSettings(MainWindow window)
     {
         var tools = ((Menu)window.FindName("mainMenu")).Items.OfType<MenuItem>()
@@ -1357,10 +1402,10 @@ internal static partial class Program
             var save = FindControls<Button>(form).Single(button => Equals(button.Content, App.Text("Save")));
 
             await Apply("Japanese", "Dark", "ja", "dark", "設定", "認証情報 vault", "vault の管理");
-            await Apply("English", "Light", "en", "light", "Settings", "Credential vault", "Manage vault");
+            await Apply("English", "Light", "en", "light", "Settings", "Credential vault", "Vault management");
             bool systemJapanese = SystemLanguage.Resolve() == "ja";
             await Apply("System", "System", "system", "system", systemJapanese ? "設定" : "Settings",
-                systemJapanese ? "認証情報 vault" : "Credential vault", systemJapanese ? "vault の管理" : "Manage vault");
+                systemJapanese ? "認証情報 vault" : "Credential vault", systemJapanese ? "vault の管理" : "Vault management");
 
             async Task Apply(string languageKey, string themeKey, string languageCode, string themeMode, string settingsLabel,
                 string vaultLabel, string manageLabel)
@@ -1379,6 +1424,16 @@ internal static partial class Program
                 if (!tools.Items.OfType<MenuItem>().Any(item => Equals(item.Header, settingsLabel)) ||
                     !vault.Items.OfType<MenuItem>().Any(item => Equals(item.Header, manageLabel)))
                     throw new InvalidOperationException("The open window did not switch its settings and vault menu labels.");
+
+                string runLabel = settingsLabel == "設定" ? "実行" : "Run";
+                foreach (string key in new[] { "RegisterFileType", "ProfileTrustReset", "MacroManageTrust", "MacroTrustReset", "RecoverStores" })
+                {
+                    var action = SettingsActionButton(form, key);
+                    var label = (Label)AutomationProperties.GetLabeledBy(action);
+                    var section = (Panel)action.Parent;
+                    if (!Equals(action.Content, runLabel) || section.Children.IndexOf(label) + 1 != section.Children.IndexOf(action))
+                        throw new InvalidOperationException($"The maintenance item {key} did not show a localized Run button below its label.");
+                }
 #pragma warning disable WPF0001 // .NET 10 Fluent theme integration.
                 var expectedTheme = themeMode == "dark" ? ThemeMode.Dark : themeMode == "light" ? ThemeMode.Light : ThemeMode.System;
                 if (app.ThemeMode != expectedTheme)
@@ -1817,8 +1872,11 @@ internal static partial class Program
                 var composition = new TextComposition(InputManager.Current, surface, "変換", TextCompositionAutoComplete.Off);
                 surface.RaiseEvent(new TextCompositionEventArgs(Keyboard.PrimaryDevice, composition)
                     { RoutedEvent = TextCompositionManager.PreviewTextInputStartEvent });
-                surface.RaiseEvent(new TextCompositionEventArgs(Keyboard.PrimaryDevice, composition)
-                    { RoutedEvent = TextCompositionManager.PreviewTextInputEvent });
+                var result = new TextCompositionEventArgs(Keyboard.PrimaryDevice, composition)
+                    { RoutedEvent = TextCompositionManager.PreviewTextInputEvent };
+                surface.RaiseEvent(result);
+                if (result.Handled)
+                    throw new InvalidOperationException("The terminal intercepted the IME result before WPF could finish the composition.");
                 byte[] composed = new byte["変換"u8.Length];
                 await wire.ReadExactlyAsync(composed, deadline.Token);
                 if (!composed.AsSpan().SequenceEqual("変換"u8))
@@ -2462,6 +2520,9 @@ internal static partial class Program
     {
         TerminalBackgroundAndViewportUseWholeCells();
         TerminalTabStartsAtItsHeader();
+        TerminalInputPrecedesStatusInKeyboardNavigation();
+        SwitchingTerminalTabsRestoresInputFocus();
+        TerminalCompositionIgnoresRemoteCursorVisibility();
         TerminalStatusBarKeepsItsHeight();
         TerminalTailFollowDrawsTheLatestRowsFirst();
         foreach (var (background, expected) in new (uint, uint)[]
@@ -2530,7 +2591,7 @@ internal static partial class Program
     private static void TerminalBackgroundAndViewportUseWholeCells()
     {
         var glyph = new FormattedText("M", System.Globalization.CultureInfo.InvariantCulture,
-            FlowDirection.LeftToRight, new Typeface("Consolas"), 16, Brushes.White, 1);
+            FlowDirection.LeftToRight, new Typeface("Consolas"), 11d * 96 / 72, Brushes.White, 1);
         double rowHeight = Math.Ceiling(glyph.Height);
         double cellWidth = glyph.WidthIncludingTrailingWhitespace;
         foreach (bool alternate in new[] { false, true })
@@ -2626,18 +2687,151 @@ internal static partial class Program
         }
     }
 
+    private static void TerminalInputPrecedesStatusInKeyboardNavigation()
+    {
+        var tab = new TerminalTab("focus-fixture.ttty");
+        var surface = FindControls<TerminalSurface>(tab).Single();
+        var host = new Window { Content = tab, Width = 500, Height = 330, ShowInTaskbar = false };
+        try
+        {
+            host.Show();
+            host.Activate();
+            host.UpdateLayout();
+            tab.MoveFocus(new TraversalRequest(FocusNavigationDirection.First));
+            var input = (TextBox)VisualTreeHelper.GetChild(surface, 0);
+            if (!input.IsKeyboardFocused)
+                throw new InvalidOperationException($"Entering the terminal tab focused {Keyboard.FocusedElement?.GetType().Name} instead of terminal input.");
+
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var challenge = new SshChallenge(SshDestination.Parse("fixture.example", 22), "", "", [new("Code", false)]);
+            var (dialog, _) = TerminalTab.CreateSshChallengeForm(host, challenge);
+            dialog.ContentRendered += (_, _) => dialog.DialogResult = true;
+            bool? accepted = SshHostTrust.ShowCancellable((App)Application.Current, dialog, deadline.Token);
+            host.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            if (accepted != true || !input.IsKeyboardFocused)
+                throw new InvalidOperationException("Closing the authentication prompt did not return keyboard focus to terminal input.");
+
+            var status = TerminalStatusBar(tab)
+                .Children.OfType<TextBlock>().Single(label => label.Visibility == Visibility.Visible);
+            if (!tab.MoveFocus(new TraversalRequest(FocusNavigationDirection.Last)) || !status.IsKeyboardFocused)
+                throw new InvalidOperationException("The status details were not reachable by keyboard focus.");
+        }
+        finally { host.Close(); }
+    }
+
+    private static DockPanel TerminalStatusBar(TerminalTab tab) => FindControls<DockPanel>(tab).Single(panel =>
+        panel.Children.OfType<TextBlock>().Any(label => label.Text == tab.ConnectionStatus));
+
+    private static void SwitchingTerminalTabsRestoresInputFocus()
+    {
+        var host = new MainWindow((App)Application.Current) { ShowInTaskbar = false };
+        var group = (TabControl)host.FindName("tabs");
+        var first = new TerminalTab("first-focus-fixture.ttty");
+        var second = new TerminalTab("second-focus-fixture.ttty");
+        try
+        {
+            host.AddTerminalTab(first);
+            host.AddTerminalTab(second);
+            host.OpenForm("Settings", _ => { });
+            host.Show();
+            host.Activate();
+            host.UpdateLayout();
+            ((TabItem)group.SelectedItem).Focus();
+            SelectAndCheck(0, first);
+            SelectAndCheck(1, second);
+            group.SelectedIndex = 0;
+            SelectAndCheck(1, second);
+        }
+        finally
+        {
+            group.Items.Clear();
+            host.Close();
+        }
+
+        void SelectAndCheck(int index, TerminalTab tab)
+        {
+            group.SelectedIndex = index;
+            host.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            var surface = FindControls<TerminalSurface>(tab).Single();
+            if (!((TextBox)VisualTreeHelper.GetChild(surface, 0)).IsKeyboardFocused)
+                throw new InvalidOperationException($"Selecting a terminal tab focused {Keyboard.FocusedElement?.GetType().Name} instead of terminal input.");
+        }
+    }
+
+    private static void TerminalCompositionIgnoresRemoteCursorVisibility()
+    {
+        var output = new TerminalOutput(columns: 80, screenRows: 4);
+        try
+        {
+            output.Receive(TerminalReceiveSource.Data, "\u001b[?25l"u8);
+            var surface = new TerminalSurface();
+            surface.SetSnapshot(output.GetRows());
+            surface.SetConnected(true);
+            var frame = surface.Scroller;
+            frame.VerticalScrollBarVisibility = ScrollBarVisibility.Hidden;
+            frame.HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden;
+            var size = new Size(360, 120);
+            frame.Measure(size);
+            frame.Arrange(new Rect(size));
+            frame.UpdateLayout();
+            var input = (TextBox)VisualTreeHelper.GetChild(surface, 0);
+            byte[] before = Capture();
+            var composition = new ImeTestComposition(input);
+            input.RaiseEvent(new TextCompositionEventArgs(Keyboard.PrimaryDevice, composition)
+                { RoutedEvent = TextCompositionManager.PreviewTextInputStartEvent });
+            string preedit = string.Concat(Enumerable.Repeat("にほんご", 64));
+            input.Text = preedit;
+            frame.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            Equal(input.Text, preedit);
+            composition.Update(preedit);
+            input.RaiseEvent(new TextCompositionEventArgs(Keyboard.PrimaryDevice, composition)
+                { RoutedEvent = TextCompositionManager.PreviewTextInputUpdateEvent });
+            if (Capture().SequenceEqual(before))
+                throw new InvalidOperationException($"The uncommitted composition was hidden with the remote cursor. " +
+                    $"Active composition {surface.HasComposition}, cursor row {output.GetRows().CursorRow}, visible rows {surface.VisibleRows()}.");
+
+            input.RaiseEvent(new TextCompositionEventArgs(Keyboard.PrimaryDevice, composition)
+                { RoutedEvent = TextCompositionManager.PreviewTextInputEvent });
+            if (!Capture().SequenceEqual(before))
+                throw new InvalidOperationException("The composition remained on screen after completion.");
+            frame.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            Equal(input.Text, "");
+
+            byte[] Capture()
+            {
+                frame.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                frame.UpdateLayout();
+                var bitmap = new RenderTargetBitmap((int)size.Width, (int)size.Height, 96, 96, PixelFormats.Pbgra32);
+                bitmap.Render(frame);
+                int stride = bitmap.PixelWidth * 4;
+                var pixels = new byte[stride * bitmap.PixelHeight];
+                bitmap.CopyPixels(pixels, stride, 0);
+                return pixels;
+            }
+        }
+        finally { output.ReleaseNativeState(); }
+    }
+
+    private sealed class ImeTestComposition(IInputElement source)
+        : TextComposition(InputManager.Current, source, "", TextCompositionAutoComplete.Off)
+    {
+        public void Update(string preedit) => CompositionText = preedit;
+    }
+
     private static void TerminalStatusBarKeepsItsHeight()
     {
         const double statusBarHeight = 30;
         var tab = new TerminalTab("layout-fixture.ttty");
         var surface = FindControls<TerminalSurface>(tab).Single();
-        var footer = ((DockPanel)tab.Content).Children.OfType<DockPanel>().Single();
+        var footer = TerminalStatusBar(tab);
         var output = new TerminalOutput(columns: 80, screenRows: 32);
         for (int row = 0; row < 48; row++)
             output.Receive(TerminalReceiveSource.Data, "terminal output\r\n"u8);
         surface.SetSnapshot(output.GetRows());
         surface.Scroller.VerticalScrollBarVisibility = ScrollBarVisibility.Hidden;
-        double rowHeight = RowHeight(12);
+        if (Math.Abs(surface.AutomationFontPoints - 11) > 0.01)
+            throw new InvalidOperationException("The default terminal font was not 11 points.");
+        double rowHeight = RowHeight(11);
         foreach (var scrollbar in new[] { ScrollBarVisibility.Hidden, ScrollBarVisibility.Visible })
         {
             surface.Scroller.HorizontalScrollBarVisibility = scrollbar;
@@ -2645,7 +2839,7 @@ internal static partial class Program
                 CheckLayout(new Size(640, statusBarHeight + rowHeight * heightInRows), rowHeight);
         }
         tab.Zoom(4);
-        CheckLayout(new Size(640, statusBarHeight + rowHeight * 24.4), RowHeight(16));
+        CheckLayout(new Size(640, statusBarHeight + rowHeight * 24.4), RowHeight(15));
         output.ReleaseNativeState();
 
         static double RowHeight(double fontSizePoints) => Math.Ceiling(new FormattedText("M",
@@ -2698,7 +2892,7 @@ internal static partial class Program
         tab.Resources["WindowBackground"] = Brushes.Navy;
         tab.Resources["WindowForeground"] = Brushes.White;
         var host = new Window { Content = tab, Width = 500, Height = 330, ShowActivated = false, ShowInTaskbar = false };
-        var footer = ((DockPanel)tab.Content).Children.OfType<DockPanel>().Single();
+        var footer = TerminalStatusBar(tab);
         var connection = footer.Children.OfType<TextBlock>().Single(label => label.Visibility == Visibility.Visible);
         tab.SetBroadcastStatus("Broadcast 1/1");
         var broadcast = footer.Children.OfType<TextBlock>().Single(label => label.Text == "Broadcast 1/1");

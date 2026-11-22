@@ -4,7 +4,7 @@ TabTty runs on Windows 11 x64. Extract the whole folder and run `TabTty.exe`.
 Keep its .NET runtime, native libraries and license files together.
 
 To register TabTty file types for your Windows account, open **Settings →
-Maintenance** and select **Register TabTty file types with Windows**.
+Maintenance** and click **Run** under **Register TabTty file types with Windows**.
 This adds TabTty to **Open with** for `.ttty` (connection profiles), `.tttym`
 (macros), and `.tttykey` (credential vaults). It also registers Explorer icons
 for those types and for `.tttylog` (raw and terminal session logs). Keep the
@@ -30,8 +30,8 @@ To register the file types again, use the same button in Settings.
 Use the menu button at the right of the tab bar to access File, Edit, View,
 Window, Connection and Tools. Drag the empty area of the tab bar to move the
 window. Its right edge contains the minimize, maximize and close buttons.
-Settings, Connection profile management, the credential vault, SSH
-host keys and highlight sets open as tabs. Close a tab with its × button.
+Settings, Connection profile management, Vault management, SSH host keys, and
+Highlight set management open as tabs. Close a tab with its × button.
 Use the Tab list button at the left of the tab bar to jump to any tab in that
 tab group. A faded edge indicates tabs beyond that edge. Scroll the mouse
 wheel over the tab strip to select the next tab (down) or previous tab (up).
@@ -114,9 +114,9 @@ and ordered arguments, TabTty shows the captured inputs before execution. A macr
 terminal commands and submit saved passwords. **Cancel** is the default.
 You can run it once or remember an allow or block for that exact combination.
 Identical copies of the source and its declared constants files use the same
-decision with the same arguments. To forget
-a decision, open **Settings → Maintenance → Manage macro decisions**. Windows
-Credential Manager stores decisions for your Windows account on this PC.
+decision with the same arguments. To forget a decision, open **Settings → Maintenance**.
+Click **Run** under **Manage macro allow and block decisions…**. Windows Credential
+Manager stores decisions for your Windows account on this PC.
 An external request that could read a remote source requires separate read
 permission. A constants file that could require remote access needs read
 permission on every launch route. An elevated run also requires explicit approval.
@@ -213,7 +213,7 @@ inner splits.
 
 The shared `.tttykey` vault stores named passwords and imported private keys.
 Set its path in Settings, then choose Credential vault →
-Unlock vault or Manage vault from the Tools menu. If the file is missing or
+Unlock vault or Vault management from the Tools menu. If the file is missing or
 zero bytes, these commands open master password setup and show the management
 tab after creation. Set a password of 14–1024 Unicode scalars and choose Save
 to create or initialize the vault. Unlocking applies
@@ -222,14 +222,14 @@ the selected vault. Copy the vault
 with profile files when moving to another PC. Profiles refer to vault entries
 by their exact, case-sensitive names.
 Use encrypted backups before changing credentials. A backup retains the master
-password used when that backup was made. Open **Manage vault** to add or import
+password used when that backup was made. Open **Vault management** to add or import
 credentials. Search the list or click a column heading to sort. Double-click
 an entry to edit it or right-click
 for its actions. Use the Vault file section for backups, restore, and
 master-password changes.
 When renaming an entry, you can also update the registered profiles that use it.
 
-The profile's saved-credential picker also opens **Manage vault**. Reopen the
+The profile's saved-credential picker also opens **Vault management**. Reopen the
 picker after adding an entry. Set the SSH username in each connection profile.
 Multiple profiles can use the same vault entry with their own usernames.
 During a connection, TabTty reports a missing or zero-byte vault or a missing

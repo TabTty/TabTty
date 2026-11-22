@@ -48,7 +48,7 @@ SSH 認証方式は設定済みの方式を一行ずつ表示する。［認証�
 
 | ファイル | 共通のバージョンフィールド以外の必須データ |
 | --- | --- |
-| settings.json | `language` は既定 `system`（`en/ja/system`）、`theme` は既定 `system`（`system/light/dark`）、`bell` は既定 `visual`（`visual/off`）。`defaultTerminalFont` は family が Consolas、sizePoints が 12。`defaultRetainedRows` は 5000。任意の `autoCloseDisconnectedTabs` は真偽値、既定 `true`。任意の `credentialVaultPath` は絶対 `.tttykey` パスまたは既定位置を示す null。任意の `broadcastAcrossWindows` は真偽値、既定 `false`（同時送信の拡張）。任意の `maxPasteTextBytes` は正の整数バイト数、既定 `536870912`（512 MiB）。 |
+| settings.json | `language` は既定 `system`（`en/ja/system`）、`theme` は既定 `system`（`system/light/dark`）、`bell` は既定 `visual`（`visual/off`）。`defaultTerminalFont` は family が Consolas、sizePoints が 11。`defaultRetainedRows` は 5000。任意の `autoCloseDisconnectedTabs` は真偽値、既定 `true`。任意の `credentialVaultPath` は絶対 `.tttykey` パスまたは既定位置を示す null。任意の `broadcastAcrossWindows` は真偽値、既定 `false`（同時送信の拡張）。任意の `maxPasteTextBytes` は正の整数バイト数、既定 `536870912`（512 MiB）。 |
 | highlighting.json | `sets` は順序付き配列で初期状態は空。各セットは `setId`、`name`、`enabled`、`rules` を持ち、各ルールは `ruleId`、`name`、`enabled`、`pattern`、`ignoreCase`、`style` を持つ。 |
 | style | null 許容の `foreground`/`background` は `#RRGGBB` 形式。`bold` と `underline` は null 許容の真偽値。null は端末属性を継承する。優先順位の低いルールからは継承しない。 |
 | state.json | `registrations`、`lastWindow`、vault パスのフィールド導入前の設定用の旧 `selectedVaultPath`。アプリケーション状態のみを含む。 |

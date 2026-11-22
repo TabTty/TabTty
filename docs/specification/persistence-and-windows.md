@@ -161,7 +161,7 @@ for the same vault unlock share its result under the
 
 | File | Required payload besides common version fields |
 | --- | --- |
-| settings.json | `language`: `system` (`en/ja/system`), `theme`: `system` (`system/light/dark`), `bell`: `visual` (`visual/off`), `defaultTerminalFont`: family Consolas and sizePoints 12, `defaultRetainedRows`: 5000, optional `autoCloseDisconnectedTabs`: boolean, default `true`, optional `credentialVaultPath`: absolute `.tttykey` path or null for the default, optional `broadcastAcrossWindows`: boolean, default `false` (broadcast extension), optional `maxPasteTextBytes`: positive integer byte count, default `536870912` (512 MiB) |
+| settings.json | `language`: `system` (`en/ja/system`), `theme`: `system` (`system/light/dark`), `bell`: `visual` (`visual/off`), `defaultTerminalFont`: family Consolas and sizePoints 11, `defaultRetainedRows`: 5000, optional `autoCloseDisconnectedTabs`: boolean, default `true`, optional `credentialVaultPath`: absolute `.tttykey` path or null for the default, optional `broadcastAcrossWindows`: boolean, default `false` (broadcast extension), optional `maxPasteTextBytes`: positive integer byte count, default `536870912` (512 MiB) |
 | highlighting.json | `sets`: ordered array, initially empty; each has `setId`, `name`, `enabled`, `rules`; each rule has `ruleId`, `name`, `enabled`, `pattern`, `ignoreCase`, `style` |
 | style | Nullable `foreground`/`background` as `#RRGGBB`; nullable booleans `bold` and `underline`; null inherits terminal attributes, never a lower-priority rule |
 | state.json | `registrations`, `lastWindow`, legacy `selectedVaultPath` for settings that predate the vault path field. Contains application state only. |

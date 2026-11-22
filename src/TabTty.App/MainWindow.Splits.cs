@@ -3,6 +3,7 @@ using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Threading;
 using TabTty.Core;
 using static TabTty.App.App;
 
@@ -56,6 +57,7 @@ internal sealed partial class MainWindow
                 previous.CancelPaneComposition();
             if (group.SelectedItem is TabItem item) item.BringIntoView();
             if (groups is not null) LabelGroups();
+            ScheduleSelectedTerminalFocus(group);
         };
         group.PreviewGotKeyboardFocus += (_, _) => ActivateGroup(group);
         group.Loaded += (_, _) =>
@@ -66,14 +68,30 @@ internal sealed partial class MainWindow
         group.SizeChanged += (_, _) => UpdateGroupSplitButtons(group);
         group.PreviewMouseDown += (_, e) =>
         {
+            bool changedGroup = activeGroup != group;
             ActivateGroup(group);
-            if (e.OriginalSource is DependencyObject source && Ancestor<TabItem>(source) is { } item && !item.IsSelected)
-                SelectedTab?.CancelPaneComposition();
+            if (e.OriginalSource is DependencyObject source && Ancestor<WindowTab>(source) is { } item)
+            {
+                if (!item.IsSelected) SelectedTab?.CancelPaneComposition();
+                else if (changedGroup && e.ChangedButton == MouseButton.Left && Ancestor<ButtonBase>(source) is null)
+                    ScheduleSelectedTerminalFocus(group);
+            }
         };
         group.PreviewMouseLeftButtonDown += FindDragCandidate;
         group.PreviewMouseMove += StartTabDrag;
         group.DragOver += OnTabDragOver;
         group.Drop += OnTabDrop;
+    }
+
+    private void ScheduleSelectedTerminalFocus(TabControl group)
+    {
+        if (group.SelectedItem is not WindowTab { Content: TerminalTab terminal } selected) return;
+        // Wait for the tab template to attach the newly selected content.
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+        {
+            if (!closing && IsActive && group == activeGroup && group.SelectedItem == selected && terminal.IsVisible)
+                terminal.FocusPane();
+        }));
     }
 
     private void ActivateGroup(TabControl group)

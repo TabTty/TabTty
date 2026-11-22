@@ -15,7 +15,7 @@
   <data name="AutoCloseDisconnectedTabs" xml:space="preserve"><value>Automatically close tabs on normal disconnection</value></data>
   <data name="AutoCloseDisconnectedTabsDescription" xml:space="preserve"><value>This also applies when you cancel a reconnect. If a connection fails, times out, or ends with a communication error, its tab stays open so you can see the cause.</value></data>
   <data name="ConnectionAttemptFailed" xml:space="preserve"><value>Connection failed</value></data>
-  <data name="ConnectionLost" xml:space="preserve"><value>Connection lost due to an error</value></data>
+  <data name="ConnectionLost" xml:space="preserve"><value>Disconnected due to a communication error</value></data>
   <data name="ApplicationMenu" xml:space="preserve"><value>Application menu</value></data>
   <data name="ManagementTabOutdated" xml:space="preserve"><value>The saved settings changed while this tab was open. Reopen the tab to edit the current settings.</value></data>
   <data name="MinimizeWindow" xml:space="preserve"><value>Minimize window</value></data>
@@ -49,6 +49,7 @@
   <data name="RecordingStartFailed" xml:space="preserve"><value>Recording could not start. {0}</value></data>
   <data name="SettingsVault" xml:space="preserve"><value>Save paths</value></data>
   <data name="SettingsMaintenance" xml:space="preserve"><value>Maintenance</value></data>
+  <data name="Run" xml:space="preserve"><value>Run</value></data>
   <data name="Connecting" xml:space="preserve"><value>Connecting…</value></data>
   <data name="Connected" xml:space="preserve"><value>Connected</value></data>
   <data name="Disconnected" xml:space="preserve"><value>Disconnected</value></data>
@@ -78,7 +79,7 @@
   <data name="Profiles" xml:space="preserve"><value>TabTty profiles</value></data>
   <data name="WelcomeTitle" xml:space="preserve"><value>Welcome to TabTty</value></data>
   <data name="OpenHint" xml:space="preserve"><value>Use the menu at the right of the tab bar to create or open a connection profile.</value></data>
-  <data name="VaultHint" xml:space="preserve"><value>To save SSH passwords or import private keys, choose Tools → Credential vault → Manage vault.</value></data>
+  <data name="VaultHint" xml:space="preserve"><value>To save SSH passwords or import private keys, choose Tools → Credential vault → Vault management.</value></data>
   <data name="Failed" xml:space="preserve"><value>Failed</value></data>
   <data name="English" xml:space="preserve"><value>English</value></data>
   <data name="Japanese" xml:space="preserve"><value>日本語</value></data>
@@ -133,7 +134,7 @@
   <data name="BadBaudRate" xml:space="preserve"><value>Enter a positive baud rate.</value></data>
   <data name="ConnectionCommands" xml:space="preserve"><value>Connection commands…</value></data>
   <data name="SendBreak" xml:space="preserve"><value>Send BREAK</value></data>
-  <data name="AreYouThere" xml:space="preserve"><value>Send Are You There</value></data>
+  <data name="AreYouThere" xml:space="preserve"><value>Send AYT</value></data>
   <data name="DtrOn" xml:space="preserve"><value>Set DTR on</value></data>
   <data name="DtrOff" xml:space="preserve"><value>Set DTR off</value></data>
   <data name="RtsOn" xml:space="preserve"><value>Set RTS on</value></data>
@@ -155,7 +156,7 @@
   <data name="Vault" xml:space="preserve"><value>Credential vault</value></data>
   <data name="VaultFiles" xml:space="preserve"><value>TabTty credential vault</value></data>
   <data name="UnlockVault" xml:space="preserve"><value>Unlock vault</value></data>
-  <data name="ManageVault" xml:space="preserve"><value>Manage vault</value></data>
+  <data name="ManageVault" xml:space="preserve"><value>Vault management</value></data>
   <data name="InitializeVault" xml:space="preserve"><value>Set vault master password</value></data>
   <data name="InitializeEmptyVaultDescription" xml:space="preserve"><value>Initialize the selected empty file as a new encrypted vault.</value></data>
   <data name="VaultPath" xml:space="preserve"><value>Credential vault path</value></data>
@@ -166,7 +167,7 @@
   <data name="VaultUnlocked" xml:space="preserve"><value>The credential vault is unlocked.</value></data>
   <data name="ArchiveVault" xml:space="preserve"><value>Archive vault and start over…</value></data>
   <data name="ArchiveVaultConfirm" xml:space="preserve"><value>Move the current vault to a new file in the same folder? Existing credential references will need to be selected again after you create a new vault.</value></data>
-  <data name="VaultArchived" xml:space="preserve"><value>The vault was moved to the path below. Unlock or manage the vault to set a new master password.</value></data>
+  <data name="VaultArchived" xml:space="preserve"><value>The vault was moved to the path below. Choose Unlock vault or Vault management to set a new master password.</value></data>
   <data name="AddVaultPassword" xml:space="preserve"><value>Add password</value></data>
   <data name="VaultEntries" xml:space="preserve"><value>Vault entries</value></data>
   <data name="VaultEntryList" xml:space="preserve"><value>Saved credentials</value></data>
@@ -186,7 +187,7 @@
   <data name="ConfirmMaster" xml:space="preserve"><value>Repeat master password</value></data>
   <data name="MasterMismatch" xml:space="preserve"><value>The passwords do not match.</value></data>
   <data name="VaultAuthenticationFailed" xml:space="preserve"><value>The vault could not be authenticated.</value></data>
-  <data name="VaultCredentialKindMismatch" xml:space="preserve"><value>The credential reference has a different kind.</value></data>
+  <data name="VaultCredentialKindMismatch" xml:space="preserve"><value>The credential reference type does not match.</value></data>
   <data name="VaultCryptoUnavailable" xml:space="preserve"><value>The OpenSSL runtime is unavailable.</value></data>
   <data name="VaultAlreadyOpen" xml:space="preserve"><value>A vault is already unlocked for this application run.</value></data>
   <data name="VaultStateInvalid" xml:space="preserve"><value>The vault selection settings are invalid.</value></data>
@@ -206,12 +207,12 @@
   <data name="ReconnectDestinationChanged" xml:space="preserve"><value>Connection destination changed</value></data>
   <data name="ReconnectDestinationDetails" xml:space="preserve"><value>{0} reconnected to a different destination.&#10;&#10;Previous: {1}&#10;Current: {2}</value></data>
   <data name="NewHostKey" xml:space="preserve"><value>New SSH host key</value></data>
-  <data name="AdditionalHostKey" xml:space="preserve"><value>Known SSH host presented a new key type</value></data>
+  <data name="AdditionalHostKey" xml:space="preserve"><value>A registered SSH destination presented a different key type</value></data>
   <data name="ApprovedHostKeys" xml:space="preserve"><value>Previously approved keys for this destination</value></data>
   <data name="AddHostKey" xml:space="preserve"><value>Add key and connect</value></data>
   <data name="ChangedHostKey" xml:space="preserve"><value>SSH host key changed</value></data>
   <data name="HostKeyType" xml:space="preserve"><value>Host key type</value></data>
-  <data name="PreviousFingerprint" xml:space="preserve"><value>Previous fingerprint</value></data>
+  <data name="PreviousFingerprint" xml:space="preserve"><value>Saved fingerprint</value></data>
   <data name="PresentedFingerprint" xml:space="preserve"><value>Presented fingerprint</value></data>
   <data name="TrustHostKey" xml:space="preserve"><value>Save key and connect</value></data>
   <data name="ReplaceHostKey" xml:space="preserve"><value>Replace key and connect</value></data>
@@ -226,7 +227,7 @@
   <data name="SshMessages" xml:space="preserve"><value>SSH messages</value></data>
   <data name="NoHighlighting" xml:space="preserve"><value>No highlighting</value></data>
   <data name="HighlightSet" xml:space="preserve"><value>Highlight set</value></data>
-  <data name="HighlightSets" xml:space="preserve"><value>Highlight sets</value></data>
+  <data name="HighlightSets" xml:space="preserve"><value>Highlight set management</value></data>
   <data name="HighlightSetList" xml:space="preserve"><value>Sets</value></data>
   <data name="HighlightSetsEmpty" xml:space="preserve"><value>No highlight sets have been added.</value></data>
   <data name="SelectHighlightSet" xml:space="preserve"><value>Select a set to view its rules.</value></data>
@@ -246,12 +247,12 @@
   <data name="IgnoreCase" xml:space="preserve"><value>Ignore case</value></data>
   <data name="HighlightForeground" xml:space="preserve"><value>Foreground (#RRGGBB or blank)</value></data>
   <data name="HighlightBackground" xml:space="preserve"><value>Background (#RRGGBB or blank)</value></data>
-  <data name="HighlightBold" xml:space="preserve"><value>Bold (mixed: inherit)</value></data>
-  <data name="HighlightUnderline" xml:space="preserve"><value>Underline (mixed: inherit)</value></data>
+  <data name="HighlightBold" xml:space="preserve"><value>Bold (mixed: use the terminal attribute)</value></data>
+  <data name="HighlightUnderline" xml:space="preserve"><value>Underline (mixed: use the terminal attribute)</value></data>
   <data name="InvalidHighlightPattern" xml:space="preserve"><value>Enter a valid regular expression or disable this rule.</value></data>
   <data name="HighlightStoreInvalid" xml:space="preserve"><value>The highlighting settings are invalid.</value></data>
   <data name="HighlightStoreChanged" xml:space="preserve"><value>Highlighting settings changed outside TabTty.</value></data>
-  <data name="InvalidHighlightName" xml:space="preserve"><value>Enter a highlight name of up to 256 characters.</value></data>
+  <data name="InvalidHighlightName" xml:space="preserve"><value>Enter a name of up to 256 characters.</value></data>
   <data name="InvalidHighlightColor" xml:space="preserve"><value>Enter a color in #RRGGBB format or leave it blank.</value></data>
   <data name="ResumeHighlighting" xml:space="preserve"><value>Resume highlight rules</value></data>
   <data name="HighlightRuleSuspended" xml:space="preserve"><value>A highlight rule timed out and was suspended in this tab.</value></data>
@@ -291,7 +292,7 @@
   <data name="AssociationNeedsExecutable" xml:space="preserve"><value>Run TabTty.exe from its permanent location before registering the file type.</value></data>
   <data name="ImportPrivateKey" xml:space="preserve"><value>Import private key…</value></data>
   <data name="SelectPrivateKey" xml:space="preserve"><value>Choose private key</value></data>
-  <data name="PublicKey" xml:space="preserve"><value>Public key</value></data>
+  <data name="PublicKey" xml:space="preserve"><value>Public-key authentication</value></data>
   <data name="CredentialName" xml:space="preserve"><value>Credential name</value></data>
   <data name="VisualBell" xml:space="preserve"><value>Visual indication</value></data>
   <data name="Off" xml:space="preserve"><value>Off</value></data>
@@ -319,8 +320,8 @@
   <data name="VaultUnavailableMissing" xml:space="preserve"><value>The configured vault is missing. {0}</value></data>
   <data name="VaultUnavailableEmpty" xml:space="preserve"><value>The configured vault is a zero-byte file. {0}</value></data>
   <data name="SelectOrRestoreVault" xml:space="preserve"><value>Select the original vault or restore its backup to use this credential.</value></data>
-  <data name="ImportKeyBeforeConnecting" xml:space="preserve"><value>Use Manage vault to import the intended private key.</value></data>
-  <data name="OpenVaultManagementToCreate" xml:space="preserve"><value>Choose Manage vault in the vault menu to create it, or restore a backup.</value></data>
+  <data name="ImportKeyBeforeConnecting" xml:space="preserve"><value>Import the private key you want to use in Vault management.</value></data>
+  <data name="OpenVaultManagementToCreate" xml:space="preserve"><value>Choose Vault management from the vault menu to create the vault, or restore a backup.</value></data>
   <data name="SavedPrivateKeyMissing" xml:space="preserve"><value>The private key selected in the profile is missing from the vault.</value></data>
   <data name="SshCredentialMissing" xml:space="preserve"><value>The saved credential is missing. Select the intended credential again in the profile editor.</value></data>
   <data name="NoEligiblePrivateKey" xml:space="preserve"><value>The vault has no private keys.</value></data>
@@ -331,7 +332,7 @@
   <data name="DuplicateCredentialName" xml:space="preserve"><value>A credential with this name already exists in this vault.</value></data>
   <data name="InvalidCredentialName" xml:space="preserve"><value>Enter a credential name of 1 to 256 Unicode characters.</value></data>
   <data name="RenameCredentialWarning" xml:space="preserve"><value>Rename {0} to {1}? Profile and macro references using the old name will stop finding this credential. Edit macros and other profile files manually.</value></data>
-  <data name="RenameCredentialProfileScope" xml:space="preserve"><value>You can update the registered profiles listed below.</value></data>
+  <data name="RenameCredentialProfileScope" xml:space="preserve"><value>You can update the registered profiles listed below together.</value></data>
   <data name="RenameAndUpdateProfiles" xml:space="preserve"><value>Rename and update registered profiles</value></data>
   <data name="RenameCredentialOnly" xml:space="preserve"><value>Rename only</value></data>
   <data name="NoKnownCredentialReferences" xml:space="preserve"><value>None found.</value></data>
@@ -358,10 +359,10 @@
   <data name="Inherit" xml:space="preserve"><value>Use application setting</value></data>
   <data name="Override" xml:space="preserve"><value>Override for this profile</value></data>
   <data name="LogDirectory" xml:space="preserve"><value>Log directory (relative to profile or absolute)</value></data>
-  <data name="NetworkLogDestinationNotice" xml:space="preserve"><value>Leave blank to use the default log folder. Relative paths start in the profile’s folder. Recording to a network share can send the session logs to that share.</value></data>
+  <data name="NetworkLogDestinationNotice" xml:space="preserve"><value>Leave blank to use the default log folder. Relative paths start in the profile’s folder. If you specify a network share, session logs are saved to that share.</value></data>
   <data name="ClearPrivateKey" xml:space="preserve"><value>Clear selected private key</value></data>
   <data name="MissingHighlightSet" xml:space="preserve"><value>Unavailable highlight set</value></data>
-  <data name="RecycleProfile" xml:space="preserve"><value>Delete file</value></data>
+  <data name="RecycleProfile" xml:space="preserve"><value>Delete profile file</value></data>
   <data name="RecycleProfileConfirm" xml:space="preserve"><value>Move this profile file to the Windows Recycle Bin? Its vault credentials and connected sessions will be retained.</value></data>
   <data name="RecycleProfileFailed" xml:space="preserve"><value>The profile could not be recycled. Check its location and availability.</value></data>
   <data name="RecoverStores" xml:space="preserve"><value>Recover application files…</value></data>
@@ -373,7 +374,7 @@
   <data name="StoreChanged" xml:space="preserve"><value>The file changed outside TabTty. Reload it before saving.</value></data>
   <data name="RecheckFilePublication" xml:space="preserve"><value>Recheck previous save</value></data>
   <data name="NoFilePublicationToRecheck" xml:space="preserve"><value>There is no previous save awaiting verification.</value></data>
-  <data name="StoreSaveUnverified" xml:space="preserve"><value>The save outcome could not be verified. Recheck the save or use explicit recovery before writing again.</value></data>
+  <data name="StoreSaveUnverified" xml:space="preserve"><value>The save outcome could not be verified. Recheck the save or explicitly restore the file before saving again.</value></data>
   <data name="FileOperationPending" xml:space="preserve"><value>File operation in progress…</value></data>
   <data name="PublishedImageMissing" xml:space="preserve"><value>No file was found</value></data>
   <data name="PublishedImageCandidate" xml:space="preserve"><value>Verified candidate bytes</value></data>
@@ -406,7 +407,7 @@
   <data name="ResetZoom" xml:space="preserve"><value>Reset font size</value></data>
   <data name="CloseWindow" xml:space="preserve"><value>Close window</value></data>
   <data name="ProfileValidation" xml:space="preserve"><value>Profile validation</value></data>
-  <data name="InvalidProfileSettings" xml:space="preserve"><value>Review the highlighted profile settings.</value></data>
+  <data name="InvalidProfileSettings" xml:space="preserve"><value>Review the profile settings.</value></data>
   <data name="FileTransfer" xml:space="preserve"><value>File transfer</value></data>
   <data name="TransferLocal" xml:space="preserve"><value>Local PC</value></data>
   <data name="TransferPath" xml:space="preserve"><value>Folder path</value></data>
@@ -435,7 +436,9 @@
   <data name="TransferMore" xml:space="preserve"><value>And {0} more</value></data>
   <data name="TransferDeleteLocal" xml:space="preserve"><value>Delete the selected items from the local PC? Folders include all contents.&#10;&#10;{0}&#10;{1}</value></data>
   <data name="TransferDeleteRemote" xml:space="preserve"><value>Permanently delete the selected items from the server? Folders include all contents.&#10;&#10;{0}&#10;{1}</value></data>
-  <data name="TransferDeletePermanent" xml:space="preserve"><value>The Recycle Bin is unavailable. Permanently delete this item and any contents?&#10;&#10;{0}</value></data>
+  <data name="TransferDeletePermanent" xml:space="preserve"><value>The item could not be moved to the Recycle Bin. Permanently delete it and any contents?
+
+{0}</value></data>
   <data name="TransferCloseBusy" xml:space="preserve"><value>Cancel active work and close the transfer window?</value></data>
   <data name="TransferSkipped" xml:space="preserve"><value>Skipped</value></data>
   <data name="TransferSkippedType" xml:space="preserve"><value>Skipped · link or unsupported item type</value></data>
@@ -446,8 +449,8 @@
   <data name="TransferMetadataWarning" xml:space="preserve"><value>Completed · could not preserve last-modified time</value></data>
   <data name="TransferTemporaryRemains" xml:space="preserve"><value>Temporary file cleanup could not be confirmed</value></data>
   <data name="SftpChannelRefused" xml:space="preserve"><value>The server refused an additional SSH channel.</value></data>
-  <data name="SftpSubsystemRefused" xml:space="preserve"><value>The server refused the SFTP subsystem.</value></data>
-  <data name="SftpVersion" xml:space="preserve"><value>The server did not negotiate SFTP version 3.</value></data>
+  <data name="SftpSubsystemRefused" xml:space="preserve"><value>The server refused SFTP.</value></data>
+  <data name="SftpVersion" xml:space="preserve"><value>Could not connect to the server using SFTP version 3.</value></data>
   <data name="SftpDisconnected" xml:space="preserve"><value>The SFTP channel closed.</value></data>
   <data name="SftpCapacity" xml:space="preserve"><value>The file transfer resource limit was reached.</value></data>
   <data name="SftpTimeout" xml:space="preserve"><value>The file operation timed out.</value></data>
@@ -475,13 +478,13 @@
   <data name="BroadcastStatus" xml:space="preserve"><value>Broadcast · {0} · {1}/{2} ready</value></data>
   <data name="BroadcastNextScope" xml:space="preserve"><value>Next start: {0}</value></data>
   <data name="BroadcastNone" xml:space="preserve"><value>No targets selected</value></data>
-  <data name="BroadcastUnready" xml:space="preserve"><value>Selected targets are not ready</value></data>
+  <data name="BroadcastUnready" xml:space="preserve"><value>Cannot send to the selected targets</value></data>
   <data name="BroadcastGestureCancelled" xml:space="preserve"><value>Remote mouse gesture cancelled</value></data>
   <data name="BroadcastFailed" xml:space="preserve"><value>Broadcast stopped after an input failure</value></data>
   <data name="BroadcastFailedTarget" xml:space="preserve"><value>Failed</value></data>
-  <data name="BroadcastSubmitted" xml:space="preserve"><value>Submitted or possibly delivered</value></data>
+  <data name="BroadcastSubmitted" xml:space="preserve"><value>Sent or delivery unconfirmed</value></data>
   <data name="BroadcastNotSent" xml:space="preserve"><value>Not sent</value></data>
-  <data name="PasteTargetChanged" xml:space="preserve"><value>The target terminal changed while preparing the paste.</value></data>
+  <data name="PasteTargetChanged" xml:space="preserve"><value>The target terminal's state changed while preparing the paste.</value></data>
   <data name="BroadcastMoveBusy" xml:space="preserve"><value>Wait for the current broadcast operation to finish or stop it before moving this tab to another window.</value></data>
   <data name="TabGroups" xml:space="preserve"><value>Tab Groups</value></data>
   <data name="TerminalPanes" xml:space="preserve"><value>Terminal Panes</value></data>
@@ -490,7 +493,7 @@
   <data name="ActiveTabGroupName" xml:space="preserve"><value>Group {0} · {1} (active)</value></data>
   <data name="SplitGroupsSide" xml:space="preserve"><value>Split Tab Group Left/Right</value></data>
   <data name="SplitGroupsStack" xml:space="preserve"><value>Split Tab Group Top/Bottom</value></data>
-  <data name="RemoveTabGroup" xml:space="preserve"><value>Remove Group and Move Tabs To</value></data>
+  <data name="RemoveTabGroup" xml:space="preserve"><value>Remove Group and Move Tabs</value></data>
   <data name="FocusTabGroup" xml:space="preserve"><value>Focus Tab Group</value></data>
   <data name="SplitPanesSide" xml:space="preserve"><value>Split Terminal Pane Left/Right</value></data>
   <data name="SplitPanesStack" xml:space="preserve"><value>Split Terminal Pane Top/Bottom</value></data>
@@ -503,18 +506,18 @@
   <data name="WindowGroupName" xml:space="preserve"><value>Window {0} · {1}</value></data>
   <data name="RunMacro" xml:space="preserve"><value>Run macro</value></data>
   <data name="MacroReview" xml:space="preserve"><value>Review macro execution</value></data>
-  <data name="MacroTrustNotice" xml:space="preserve"><value>A macro can connect to a saved profile, send commands and submit saved passwords. Your decision covers identical copies of the macro and its declared constants files with these arguments, including later external launches. Moving the macro can change which profile a relative path selects.</value></data>
+  <data name="MacroTrustNotice" xml:space="preserve"><value>A macro can connect using a saved profile and send commands or saved passwords. A remembered decision also applies when launching the macro from another location if the macro contents, declared constants file contents, and arguments are the same. Moving the macro can change which profile a relative path refers to.</value></data>
   <data name="MacroElevatedNotice" xml:space="preserve"><value>This macro would run with administrator privileges. It can connect to a saved profile, send commands and submit saved passwords. Approve only if you intend this elevated run.</value></data>
   <data name="MacroReadRemote" xml:space="preserve"><value>Read a file for this macro</value></data>
   <data name="MacroReadRemoteNotice" xml:space="preserve"><value>Reading this file may contact a network share or start a download. Continue to read it for this launch.</value></data>
   <data name="MacroReadSource" xml:space="preserve"><value>Read file</value></data>
-  <data name="MacroSourceDigest" xml:space="preserve"><value>Source SHA-256</value></data>
-  <data name="MacroInspectSource" xml:space="preserve"><value>Inspect source</value></data>
+  <data name="MacroSourceDigest" xml:space="preserve"><value>File SHA-256</value></data>
+  <data name="MacroInspectSource" xml:space="preserve"><value>View macro contents</value></data>
   <data name="MacroConstantsVersion" xml:space="preserve"><value>Constants version (SHA-256)</value></data>
   <data name="MacroConstantsFileDigest" xml:space="preserve"><value>Constants file SHA-256</value></data>
-  <data name="MacroConstantsAlias" xml:space="preserve"><value>Declared constants file alias</value></data>
+  <data name="MacroConstantsAlias" xml:space="preserve"><value>Constants file alias</value></data>
   <data name="MacroReadFilePath" xml:space="preserve"><value>File path</value></data>
-  <data name="MacroInspectConstants" xml:space="preserve"><value>Inspect constants file</value></data>
+  <data name="MacroInspectConstants" xml:space="preserve"><value>View constants file contents</value></data>
   <data name="MacroShowAllDecisions" xml:space="preserve"><value>Show all decisions for this macro</value></data>
   <data name="MacroErrorConstantsDeclaration" xml:space="preserve"><value>Invalid constants declaration.</value></data>
   <data name="MacroErrorConstantsAlias" xml:space="preserve"><value>The constants file alias conflicts with another name.</value></data>
@@ -527,14 +530,14 @@
   <data name="MacroErrorConstantsType" xml:space="preserve"><value>The literal does not match the declared constant type.</value></data>
   <data name="MacroErrorConstantsRead" xml:space="preserve"><value>The constants file could not be read.</value></data>
   <data name="MacroErrorConstantFile" xml:space="preserve"><value>The declared constants file is unavailable.</value></data>
-  <data name="MacroErrorMemoryLimit" xml:space="preserve"><value>There is insufficient memory available within the macro limits.</value></data>
+  <data name="MacroErrorMemoryLimit" xml:space="preserve"><value>The macro memory limit was reached.</value></data>
   <data name="MacroRunOnce" xml:space="preserve"><value>Run once</value></data>
   <data name="MacroAlwaysAllow" xml:space="preserve"><value>Always allow with these arguments</value></data>
   <data name="MacroAlwaysBlock" xml:space="preserve"><value>Always block with these arguments</value></data>
   <data name="MacroTrustChanged" xml:space="preserve"><value>A remembered decision changed. Open the macro again to check the current decision.</value></data>
-  <data name="MacroTrustUnavailable" xml:space="preserve"><value>TabTty could not read or update macro decisions in Windows Credential Manager.</value></data>
-  <data name="MacroManageTrust" xml:space="preserve"><value>Manage macro decisions…</value></data>
-  <data name="MacroTrustEmpty" xml:space="preserve"><value>There are no remembered macro decisions.</value></data>
+  <data name="MacroTrustUnavailable" xml:space="preserve"><value>TabTty could not read or update macro execution settings in Windows Credential Manager.</value></data>
+  <data name="MacroManageTrust" xml:space="preserve"><value>Manage macro allow and block decisions…</value></data>
+  <data name="MacroTrustEmpty" xml:space="preserve"><value>There are no remembered macro allow or block decisions.</value></data>
   <data name="MacroPairFingerprint" xml:space="preserve"><value>Content and argument fingerprint</value></data>
   <data name="MacroFindArguments" xml:space="preserve"><value>Find by arguments…</value></data>
   <data name="MacroForgetDecision" xml:space="preserve"><value>Forget decision</value></data>
@@ -553,7 +556,7 @@
   <data name="MacroResume" xml:space="preserve"><value>Resume macro</value></data>
   <data name="MacroStop" xml:space="preserve"><value>Stop macro</value></data>
   <data name="MacroRetry" xml:space="preserve"><value>Retry recording</value></data>
-  <data name="MacroContinue" xml:space="preserve"><value>Continue after loss</value></data>
+  <data name="MacroContinue" xml:space="preserve"><value>Accept the loss and continue</value></data>
   <data name="MacroHistoryLost" xml:space="preserve"><value>Some received text was lost. A truncated line is ignored through its next line ending, so an unfinished prompt may be missed. Continue or stop the macro.</value></data>
   <data name="MacroRecordingFailed" xml:space="preserve"><value>Recording failed. Retry recording or stop the macro.</value></data>
   <data name="MacroRecordingReady" xml:space="preserve"><value>Recording restarted in a new part. Resume the macro when ready.</value></data>
@@ -600,7 +603,7 @@
   <data name="AiReadOnly" xml:space="preserve"><value>AI sharing (read only)</value></data>
   <data name="AiControlling" xml:space="preserve"><value>AI controlling</value></data>
   <data name="AiTakingControl" xml:space="preserve"><value>Taking control</value></data>
-  <data name="AiTakeControl" xml:space="preserve"><value>Take control from AI</value></data>
+  <data name="AiTakeControl" xml:space="preserve"><value>Interrupt AI control and take over</value></data>
   <data name="AiGiveControl" xml:space="preserve"><value>Give control to AI</value></data>
   <data name="AiShareOutput" xml:space="preserve"><value>Share output with AI</value></data>
   <data name="AiLauncherProcess" xml:space="preserve"><value>Bridge parent recorded by Windows (PID {1}) — {0}</value></data>
@@ -614,7 +617,7 @@
 
 Match the pairing code in your AI host. Windows reports the bridge's parent process. Use the pairing code to confirm which host connection receives access. Programs and chats that share this connection can use this permission.
 
-The host can read the current screen and search retained terminal history, including the normal screen behind a full-screen application. Text from before sharing or while sharing was off is included if still retained. The bridge runs locally. The host may keep this data or send it to an external model, depending on its settings.
+The host can read the current screen and read or search retained terminal history, including the normal screen behind a full-screen application. Text from before sharing or while sharing was off is included if still retained. The bridge runs locally. The host may keep this data or send it to an external model, depending on its settings.
 
 Use End AI sharing to stop future reads. Sharing again gives the recipient access to the history still retained then.</value></data>
   <data name="AiConfirmControl" xml:space="preserve"><value>Allow integration {1} to operate the terminal in “{0}”?
@@ -624,11 +627,11 @@ Use End AI sharing to stop future reads. Sharing again gives the recipient acces
 Match the pairing code in your AI host. Windows reports the bridge's parent process. Use the pairing code to confirm which host connection receives access. Programs and chats that share this connection can use this permission.
 
 The host can send keys and multiple lines of commands without asking again, with all permissions available in the connected terminal. Taking control back stops new AI input and keeps output shared. Choose End AI sharing before entering a password or one-time code.</value></data>
-  <data name="AiConfirmSwitch" xml:space="preserve"><value>Continuing also ends this tab’s sharing with integration {0}.</value></data>
+  <data name="AiConfirmSwitch" xml:space="preserve"><value>Continuing ends this tab’s sharing with integration {0}.</value></data>
   <data name="AiUnattendedConsent" xml:space="preserve"><value>This permission stays active when Windows locks, you switch users, or Remote Desktop disconnects.</value></data>
-  <data name="AiConsentExpired" xml:space="preserve"><value>The terminal or its sharing permissions changed. Review the current tab and integration before granting access.</value></data>
+  <data name="AiConsentExpired" xml:space="preserve"><value>The terminal or its sharing permissions changed. Review the current tab and integration before granting access again.</value></data>
   <data name="AiEndSharing" xml:space="preserve"><value>End AI sharing</value></data>
-  <data name="AiSetup" xml:space="preserve"><value>Set up AI collaboration</value></data>
+  <data name="AiSetup" xml:space="preserve"><value>AI connection settings</value></data>
   <data name="AiCleanupPending" xml:space="preserve"><value>Terminal input cleanup is still pending. Disconnect is available.</value></data>
   <data name="AiUnverified" xml:space="preserve"><value>unverified name</value></data>
   <data name="AiNoCounterpart" xml:space="preserve"><value>No AI integration is attached.</value></data>
@@ -638,7 +641,7 @@ The host can send keys and multiple lines of commands without asking again, with
   <data name="AiBroadcastExcluded" xml:space="preserve"><value>This tab is sharing output with AI.</value></data>
   <data name="AiMacroOwnsInput" xml:space="preserve"><value>The macro owns terminal input, including while paused.</value></data>
   <data name="AiInputBusy" xml:space="preserve"><value>Finish or cancel the current input, then grant control again.</value></data>
-  <data name="AiUncertainDelivery" xml:space="preserve"><value>AI input delivery could not be confirmed. Inspect the terminal before sending again.</value></data>
+  <data name="AiUncertainDelivery" xml:space="preserve"><value>How much AI input was delivered could not be confirmed. Inspect the terminal before sending again.</value></data>
   <data name="AiEndpointUnavailable" xml:space="preserve"><value>The local AI integration endpoint is unavailable.</value></data>
   <data name="AiSetupInstructions" xml:space="preserve"><value>Register the bridge in your AI application</value></data>
   <data name="AiSetupConfiguration" xml:space="preserve"><value>MCP configuration</value></data>
@@ -652,7 +655,7 @@ The host can send keys and multiple lines of commands without asking again, with
   <data name="PastePreviousPage" xml:space="preserve"><value>Previous page</value></data>
   <data name="PasteNextPage" xml:space="preserve"><value>Next page</value></data>
   <data name="PastePreviewPage" xml:space="preserve"><value>Page {0} of {1}</value></data>
-  <data name="VaultRescueCopyExplanation" xml:space="preserve"><value>Copy the retained authenticated vault generation to another file? The selected file will not be changed.</value></data>
+  <data name="VaultRescueCopyExplanation" xml:space="preserve"><value>Copy the retained, authenticated vault to another file? The selected file will not be changed.</value></data>
   <data name="ProfileTrustReview" xml:space="preserve"><value>Review connection profile</value></data>
   <data name="ProfileConnectOnce" xml:space="preserve"><value>Connect once</value></data>
   <data name="ProfileRegisterAndConnect" xml:space="preserve"><value>Register and connect</value></data>
@@ -662,7 +665,7 @@ The host can send keys and multiple lines of commands without asking again, with
   <data name="ProfileReadSource" xml:space="preserve"><value>Read profile file</value></data>
   <data name="ProfileReadSourceNotice" xml:space="preserve"><value>Reading this file may access a network or redirected location. Allow reading the file for this request?</value></data>
   <data name="ProfileTrustReset" xml:space="preserve"><value>Reset all connection profile trust</value></data>
-  <data name="ProfileTrustResetConfirm" xml:space="preserve"><value>Clear all remembered versions for registered and unregistered connection profiles on this PC?</value></data>
+  <data name="ProfileTrustResetConfirm" xml:space="preserve"><value>Clear all remembered trust decisions for registered and unregistered connection profiles on this PC?</value></data>
   <data name="ProfileTrustWriteFailed" xml:space="preserve"><value>The profile trust change could not be verified. Retry the operation.</value></data>
   <data name="MacroTrustReset" xml:space="preserve"><value>Reset all macro trust</value></data>
   <data name="MacroTrustResetConfirm" xml:space="preserve"><value>Clear every remembered macro allow and block decision on this PC?</value></data>
@@ -678,11 +681,11 @@ The host can send keys and multiple lines of commands without asking again, with
   <data name="ProfileFavoriteRemove" xml:space="preserve"><value>Remove from favorites</value></data>
   <data name="ProfileSortAscending" xml:space="preserve"><value>Ascending</value></data>
   <data name="ProfileSortDescending" xml:space="preserve"><value>Descending</value></data>
-  <data name="ProfileListProtocol" xml:space="preserve"><value>Protocol</value></data>
+  <data name="ProfileListProtocol" xml:space="preserve"><value>Connection type</value></data>
   <data name="ProfileListDestination" xml:space="preserve"><value>Destination</value></data>
   <data name="ProfileListFilePath" xml:space="preserve"><value>File path</value></data>
   <data name="ProfileNameInUse" xml:space="preserve"><value>This profile name is already registered. Enter a different name.</value></data>
-  <data name="ProfileFileInUse" xml:space="preserve"><value>A file or registration already uses this path. Enter a different profile name.</value></data>
+  <data name="ProfileFileInUse" xml:space="preserve"><value>A file or registration with this name already exists at the destination. Enter a different name.</value></data>
   <data name="InvalidProfileFileName" xml:space="preserve"><value>The profile name cannot be used as a Windows file name. Enter a different name.</value></data>
   <data name="ProfileRenameStateChanged" xml:space="preserve"><value>The registration changed before the file rename could complete.</value></data>
   <data name="ProfileRenameRecovery" xml:space="preserve"><value>The rename needs recovery. Check the file at this location.&#10;&#10;{0}</value></data>

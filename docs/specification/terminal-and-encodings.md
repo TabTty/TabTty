@@ -207,7 +207,7 @@ observation capacities.
 
 ### Presentation and accessibility
 
-Use Consolas 12 pt with installed fallback and fixed row/cell metrics; absent
+Use Consolas 11 pt with installed fallback and fixed row/cell metrics; absent
 fonts are visible nonfatal fallback status. Keep required shaping while
 disabling optional programming ligatures. Fit glyphs to assigned cells instead
 of widening columns. IME composition is an uncommitted overlay anchored at the

@@ -67,18 +67,32 @@ internal sealed class FormView : DockPanel
         busyStatus = status;
     }
 
-    public void SetPageTitle(string key, string? argument = null)
+    public void SetPageTitle(string key, string? argument = null, bool useTabBackground = false)
     {
         pageTitleKey = key;
         pageTitleArgument = argument;
         if (pageTitle is null)
         {
-            fields.Margin = new Thickness(24, 20, 24, 24);
+            fields.Margin = new Thickness(24, useTabBackground ? 0 : 20, 24, 24);
             fields.MaxWidth = 1000;
             pageTitle = new TextBlock { FontSize = 26, FontWeight = FontWeights.SemiBold,
                 TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 18) };
             AutomationProperties.SetHeadingLevel(pageTitle, AutomationHeadingLevel.Level1);
-            fields.Children.Insert(0, pageTitle);
+            if (useTabBackground)
+            {
+                pageTitle.Margin = new Thickness(24, 20, 24, 18);
+                // Cover the gap under the tab without shifting the title or body.
+                var header = new Border
+                {
+                    Child = pageTitle,
+                    Margin = new Thickness(0, -1, 0, 0),
+                    Padding = new Thickness(0, 1, 0, 0),
+                };
+                header.SetResourceReference(Border.BackgroundProperty, "TabViewItemHeaderBackgroundSelected");
+                SetDock(header, Dock.Top);
+                Children.Insert(0, header);
+            }
+            else fields.Children.Insert(0, pageTitle);
             AddLocalizedUpdate(() => pageTitle.Text = FormatPageTitle());
         }
         else pageTitle.Text = FormatPageTitle();
@@ -220,10 +234,13 @@ internal sealed class FormView : DockPanel
         layout.RowDefinitions.Add(new RowDefinition());
         if (pageTitle is not null)
         {
-            fields.Children.Remove(pageTitle);
             pageTitle.Margin = new Thickness(24, 20, 24, 12);
-            Grid.SetColumnSpan(pageTitle, 2);
-            layout.Children.Add(pageTitle);
+            if (fields.Children.Contains(pageTitle))
+            {
+                fields.Children.Remove(pageTitle);
+                Grid.SetColumnSpan(pageTitle, 2);
+                layout.Children.Add(pageTitle);
+            }
             var margin = fields.Margin;
             fields.Margin = new Thickness(margin.Left, 0, margin.Right, margin.Bottom);
         }
@@ -347,6 +364,20 @@ internal sealed class FormView : DockPanel
 
     public Button AddAction(string key, Action action)
     {
+        var button = CreateAction(key, action);
+        (section ?? fields).Children.Add(button);
+        return button;
+    }
+
+    public void AddActionField(string key, string actionKey, Action action)
+    {
+        var button = CreateAction(actionKey, action);
+        button.HorizontalAlignment = HorizontalAlignment.Left;
+        AddField(key, button, trackEdit: false);
+    }
+
+    private Button CreateAction(string key, Action action)
+    {
         var button = new Button { Margin = section is WrapPanel ? new Thickness(0, 0, 8, 6) : new Thickness(0, 4, 0, 0) };
         SetText(key, value => button.Content = value);
         button.Click += (_, _) =>
@@ -354,7 +385,6 @@ internal sealed class FormView : DockPanel
             action();
             updateEditorButtons?.Invoke();
         };
-        (section ?? fields).Children.Add(button);
         return button;
     }
 

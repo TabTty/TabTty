@@ -11,6 +11,7 @@ namespace TabTty.App;
 
 public sealed class App : Application
 {
+    internal const double DefaultTerminalFontSize = 11;
     private const bool DefaultAutoCloseDisconnectedTabs = true;
     private static readonly ResourceManager Strings = new("TabTty.App.Strings", typeof(App).Assembly);
     private static CultureInfo language = CultureInfo.GetCultureInfo("en");
@@ -481,7 +482,7 @@ public sealed class App : Application
         ["language"] = "system",
         ["theme"] = "system",
         ["bell"] = "visual",
-        ["defaultTerminalFont"] = new JsonObject { ["family"] = "Consolas", ["sizePoints"] = 12d },
+        ["defaultTerminalFont"] = new JsonObject { ["family"] = "Consolas", ["sizePoints"] = DefaultTerminalFontSize },
         ["defaultRetainedRows"] = 5000,
         ["autoCloseDisconnectedTabs"] = DefaultAutoCloseDisconnectedTabs,
         ["defaultLogDirectory"] = RecordingDefaults.BuiltIn.Directory,

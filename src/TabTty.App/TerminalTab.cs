@@ -73,8 +73,8 @@ internal sealed partial class TerminalTab : UserControl
     private Channel<TerminalMouseInput> mouseInput = Channel.CreateBounded<TerminalMouseInput>(256);
     private Task mousePump = Task.CompletedTask;
     private string baseFontFamily = "Consolas";
-    private double baseFontSize = 12;
-    private double zoomFontSize = 12;
+    private double baseFontSize = DefaultTerminalFontSize;
+    private double zoomFontSize = DefaultTerminalFontSize;
 
     public TerminalTab(string path) : this(path, null) { }
 
@@ -141,14 +141,12 @@ internal sealed partial class TerminalTab : UserControl
             presentationEnabled = false;
             foreach (var pane in panes.Keys) pane.SetPresentationEnabled(false);
         };
-        DockPanel.SetDock(searchBar, Dock.Top);
         searchBar.Children.Add(searchQuery);
         searchBar.Children.Add(matchCase);
         searchBar.Children.Add(previousMatch);
         searchBar.Children.Add(nextMatch);
         searchBar.Children.Add(closeSearch);
         searchBar.Children.Add(searchStatus);
-        panel.Children.Add(searchBar);
         ConfigureStatusIndicator(status);
         terminalArea.Children.Add(output.Scroller);
         InitializeAiControls();
@@ -165,9 +163,16 @@ internal sealed partial class TerminalTab : UserControl
             highlightStatus.MaxWidth = e.NewSize.Width / 4;
             aiStatus.MaxWidth = broadcastTabStatus.MaxWidth = e.NewSize.Width * 0.28;
         };
-        DockPanel.SetDock(statusBar, Dock.Bottom);
-        panel.Children.Add(statusBar);
-        panel.Children.Add(terminalArea);
+        var body = new Grid();
+        body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        body.RowDefinitions.Add(new RowDefinition());
+        body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        Grid.SetRow(terminalArea, 1);
+        Grid.SetRow(statusBar, 2);
+        body.Children.Add(searchBar);
+        body.Children.Add(terminalArea);
+        body.Children.Add(statusBar);
+        panel.Children.Add(body);
         Content = panel;
         searchBar.PreviewKeyDown += OnSearchKeyDown;
         searchQuery.TextChanged += async (_, _) => await RefreshSearchAsync();
@@ -1203,7 +1208,8 @@ internal sealed partial class TerminalTab : UserControl
     {
         if (e.Handled || InputSession is null || e.Text.Length == 0) return;
         ActivatePane((TerminalSurface)sender);
-        e.Handled = true;
+        // Let the WPF text store finish its IME transaction and deliver any queued updates.
+        if (e.TextComposition.AutoComplete != TextCompositionAutoComplete.Off) e.Handled = true;
         string text = e.Text;
         bool alt = Keyboard.Modifiers.HasFlag(ModifierKeys.Alt) && !Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
         await SendAsync(new(TerminalInputKind.Text, text, Alt: alt));

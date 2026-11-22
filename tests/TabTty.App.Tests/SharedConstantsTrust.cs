@@ -165,7 +165,8 @@ internal static partial class Program
                             }
                             finally { if (confirm.IsVisible) confirm.Close(); }
                         }, DispatcherPriority.ContextIdle)).ToArray();
-                        Click(resetOwner, "MacroTrustReset");
+                        var reset = SettingsActionButton(form, "MacroTrustReset");
+                        reset.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, reset));
                         foreach (var answer in answers) answer.Task.GetAwaiter().GetResult();
                     }
                     ResetFromOtherWindow("Cancel");

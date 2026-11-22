@@ -49,6 +49,7 @@
   <data name="RecordingStartFailed" xml:space="preserve"><value>ログを開始できませんでした。{0}</value></data>
   <data name="SettingsVault" xml:space="preserve"><value>保存パス</value></data>
   <data name="SettingsMaintenance" xml:space="preserve"><value>メンテナンス</value></data>
+  <data name="Run" xml:space="preserve"><value>実行</value></data>
   <data name="Connecting" xml:space="preserve"><value>接続中…</value></data>
   <data name="Connected" xml:space="preserve"><value>接続済み</value></data>
   <data name="Disconnected" xml:space="preserve"><value>切断済み</value></data>
