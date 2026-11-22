@@ -22,7 +22,7 @@ internal sealed partial class MainWindow
         internal readonly WindowTab Item = item;
         internal readonly TabHeaderPanel SourcePanel = panel;
         internal readonly FloatingTabHeader Header = header;
-        internal readonly Size Size = item.DesiredSize;
+        internal readonly Size Size = LayoutInformation.GetLayoutSlot(item).Size;
         internal readonly Cursor? PreviousCursor = Mouse.OverrideCursor;
         internal Point? LastPoint;
         internal nint LastWindow;

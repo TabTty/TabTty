@@ -686,7 +686,7 @@ internal static partial class Program
             if (tabs.SelectedItem != settings || tabs.Items.Count != 3)
                 throw new InvalidOperationException("Opening settings again discarded or duplicated its tab.");
             CheckTabStripLayout(window, menuButton, settings);
-            CheckFixedWidthTabHeaders(window, settings, highlights);
+            CheckTabHeaderLabels(window, settings, highlights, expectedWidth: 240);
             CheckTabStripNavigation(window, tabs);
             var add = (Button)tabs.Template.FindName("newTabButton", tabs);
             var root = (FrameworkElement)window.Content;
@@ -1485,7 +1485,7 @@ internal static partial class Program
         encoder.Save(file);
     }
 
-    private static void CheckFixedWidthTabHeaders(Window window, TabItem shortTab, TabItem longTab)
+    private static void CheckTabHeaderLabels(Window window, TabItem shortTab, TabItem longTab, double expectedWidth)
     {
         var longHeader = (DockPanel)longTab.Header;
         var label = longHeader.Children.OfType<TextBlock>().Single();
@@ -1500,13 +1500,14 @@ internal static partial class Program
             var close = longHeader.Children.OfType<Button>().Single();
             var shortClose = ((DockPanel)shortTab.Header).Children.OfType<Button>().Single();
             double closeStart = close.TranslatePoint(new Point(), longTab).X;
-            if (Math.Abs(shortTab.ActualWidth - 240) > 0.5 || Math.Abs(longTab.ActualWidth - 240) > 0.5 ||
+            if (Math.Abs(shortTab.ActualWidth - expectedWidth) > 0.5 ||
+                Math.Abs(longTab.ActualWidth - expectedWidth) > 0.5 ||
                 label.TextTrimming != TextTrimming.CharacterEllipsis || label.ActualWidth <= 0 ||
                 label.ActualWidth >= untrimmed.DesiredSize.Width ||
                 label.TranslatePoint(new Point(label.ActualWidth, 0), longTab).X > closeStart ||
                 Math.Abs(closeStart - shortClose.TranslatePoint(new Point(), shortTab).X) > 0.5 ||
                 closeStart + close.ActualWidth > longTab.ActualWidth)
-                throw new InvalidOperationException("The fixed-width headers did not constrain long text and align their close buttons.");
+                throw new InvalidOperationException("The headers did not constrain long text and align their close buttons.");
 
         }
         finally { label.Text = original; }
@@ -1535,6 +1536,8 @@ internal static partial class Program
                 throw new InvalidOperationException("The narrow strip did not provide a complete tab and hidden scrolling.");
             ExpectFades(left: false, right: true);
 
+            // A slightly narrower viewport clips both neighbors of the middle tab.
+            Layout(new Size(window.MinWidth - 24, wide.Height));
             listButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, listButton));
             ContextMenu menu = listButton.ContextMenu;
             try

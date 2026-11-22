@@ -1022,7 +1022,6 @@ internal sealed partial class MainWindow : Window
         public WindowTab(FrameworkElement content)
         {
             SetResourceReference(StyleProperty, typeof(TabItem));
-            Width = 240;
             HorizontalContentAlignment = HorizontalAlignment.Stretch;
             var header = new DockPanel();
             disconnectedIcon.SetBinding(System.Windows.Shapes.Shape.StrokeProperty,

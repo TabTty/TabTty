@@ -146,11 +146,12 @@
                                             <TextBlock Style="{StaticResource WindowGlyph}" Text="&#xE76C;" />
                                         </Button>
                                     </StackPanel>
-                                    <ScrollViewer x:Name="tabStripScroller" DockPanel.Dock="Left" VerticalScrollBarVisibility="Disabled"
-                                                  HorizontalScrollBarVisibility="Hidden" Focusable="False" ScrollChanged="OnTabStripScrollChanged"
-                                                  shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                                    <local:TabStripScroller x:Name="tabStripScroller" DockPanel.Dock="Left" VerticalScrollBarVisibility="Disabled"
+                                                            HorizontalScrollBarVisibility="Hidden" Focusable="False" ScrollChanged="OnTabStripScrollChanged"
+                                                            Style="{DynamicResource {x:Type ScrollViewer}}"
+                                                            shell:WindowChrome.IsHitTestVisibleInChrome="True">
                                         <local:TabHeaderPanel x:Name="tabHeaderPanel" IsItemsHost="True" KeyboardNavigation.TabIndex="1" />
-                                    </ScrollViewer>
+                                    </local:TabStripScroller>
                                 </DockPanel>
                             </DockPanel>
                         </Border>

@@ -174,10 +174,10 @@ internal static partial class Program
         {
             var root = (FrameworkElement)window.Content;
             var group = (TabControl)window.FindName("tabs");
-            for (int index = 0; index < 5; index++)
-                group.Items.Add(new TabItem { Header = $"Tab {index + 1}", Width = 220 });
+            foreach (string key in new[] { "Settings", "ProfileCatalog", "Vault", "HighlightSets", "ConnectionType" })
+                window.OpenForm(key, _ => { });
             group.SelectedIndex = 0;
-            const double narrowWidth = 900;
+            const double narrowWidth = 760;
             Layout(narrowWidth);
             var strip = (ScrollViewer)group.Template.FindName("tabStripScroller", group);
             var buttons = (StackPanel)group.Template.FindName("tabScrollButtons", group);
@@ -186,6 +186,8 @@ internal static partial class Program
             var add = (Button)group.Template.FindName("newTabButton", group);
             double fitWidth = narrowWidth + strip.ScrollableWidth - buttons.ActualWidth;
             ExpectEdges(false, true);
+            ExpectWidths(120);
+            CheckTabHeaderLabels(window, (TabItem)group.Items[0], (TabItem)group.Items[1], expectedWidth: 120);
             if (AutomationProperties.GetName(left) != App.Text("ScrollTabsLeft") ||
                 AutomationProperties.GetName(right) != App.Text("ScrollTabsRight") ||
                 Math.Abs(left.TranslatePoint(new Point(left.ActualWidth, 0), right).X) > 0.5 ||
@@ -203,8 +205,9 @@ internal static partial class Program
                 throw new InvalidOperationException("The scroll buttons must appear even when only one DIP is clipped.");
             Layout(fitWidth);
             ExpectEdges(false, false);
+            ExpectWidths(120);
             var headers = (TabHeaderPanel)strip.Content;
-            headers.Preview(null, (TabItem)group.Items[0], new Size(220, 34));
+            headers.Preview(null, (TabItem)group.Items[0], new Size(240, 34));
             root.UpdateLayout();
             if (buttons.Visibility != Visibility.Collapsed)
                 throw new InvalidOperationException("A provisional insertion gap brought up scroll buttons during a drag.");
@@ -214,13 +217,18 @@ internal static partial class Program
             group.Items.RemoveAt(group.Items.Count - 1);
             root.UpdateLayout();
             ExpectEdges(false, false);
+            ExpectWidths((120 * 5 - 1) / 4d);
+            Layout(1500);
+            ExpectEdges(false, false);
+            ExpectWidths(240);
+            Layout(narrowWidth);
 
             var split = (Button)group.Template.FindName("splitGroupsSideButton", group);
             split.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, split));
             root.UpdateLayout();
             var second = FindControls<TabControl>(root).Single(candidate => candidate != group);
             for (int index = 0; index < 5; index++)
-                second.Items.Add(new TabItem { Header = $"Other {index + 1}", Width = 220 });
+                second.Items.Add(new TabItem { Header = $"Other {index + 1}" });
             second.SelectedIndex = 0;
             root.UpdateLayout();
             var otherStrip = (ScrollViewer)second.Template.FindName("tabStripScroller", second);
@@ -240,6 +248,16 @@ internal static partial class Program
                 root.Measure(size);
                 root.Arrange(new Rect(size));
                 root.UpdateLayout();
+            }
+
+            void ExpectWidths(double width)
+            {
+                foreach (TabItem header in group.Items)
+                {
+                    var slot = System.Windows.Controls.Primitives.LayoutInformation.GetLayoutSlot(header);
+                    if (Math.Abs(slot.Width - width) > 0.01 || header.ActualWidth > slot.Width + 0.01)
+                        throw new InvalidOperationException($"Expected equally sized {width}-DIP tabs, found slot {slot.Width} and header {header.ActualWidth}.");
+                }
             }
 
             void Click(Button button)

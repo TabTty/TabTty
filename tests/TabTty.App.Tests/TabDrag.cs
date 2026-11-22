@@ -65,14 +65,14 @@ internal static partial class Program
                 throw new InvalidOperationException("An empty group must reserve and show its first slot before insertion.");
 
             panel.Preview(null, null, default);
-            var first = new TabItem { Header = "First", Width = 100 };
-            var last = new TabItem { Header = "Last", Width = 150 };
+            var first = new TabItem { Header = "First" };
+            var last = new TabItem { Header = "Last" };
             group.Items.Add(first);
             group.Items.Add(last);
             group.SelectedItem = first;
             root.UpdateLayout();
             double originalLeft = last.TranslatePoint(new Point(), panel).X;
-            double between = first.DesiredSize.Width + last.DesiredSize.Width / 4;
+            double between = originalLeft + last.ActualWidth / 4;
             if (panel.HeaderAfterDrop(between, incoming) != last)
                 throw new InvalidOperationException("The proposed insertion did not use the headers' actual widths.");
             panel.Preview(null, last, size);
@@ -118,7 +118,6 @@ internal static partial class Program
             target.OpenForm("ProfileCatalog", _ => { });
             TabItem a = (TabItem)sourceTabs.Items[0], b = (TabItem)sourceTabs.Items[1], c = (TabItem)sourceTabs.Items[2];
             TabItem d = (TabItem)targetTabs.Items[0], e = (TabItem)targetTabs.Items[1];
-            foreach (var header in new[] { a, b, c, d, e }) header.Width = 120;
             sourceTabs.SelectedItem = b;
             target.Show();
             source.Show();
