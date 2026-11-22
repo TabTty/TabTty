@@ -650,11 +650,11 @@ Verify these cases with the mouse. [Implementation issue #148](https://github.co
 ### Scrolling an overflowing tab bar
 
 For each tab group, check whether all its headers fit with the scroll buttons
-hidden. When they overflow, show a left arrow and a right arrow, in that order,
-immediately to the left of the **+** button. Keep both arrows in fixed positions
-while the headers scroll. Each press reveals more headers in that direction
-and keeps the current tab selected. The tab bar's mouse wheel still selects
-the previous or next tab.
+hidden. When they overflow, show the left arrow between the tab list and the
+tabs, and the right arrow immediately to the left of the **+** button. Keep both
+arrows in fixed positions while the headers scroll. Each press reveals more
+headers in that direction and keeps the current tab selected. The tab bar's
+mouse wheel still selects the previous or next tab.
 
 | Tab bar position | Left button | Right button | Faded edges |
 | --- | --- | --- | --- |

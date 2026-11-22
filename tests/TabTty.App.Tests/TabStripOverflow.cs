@@ -180,19 +180,21 @@ internal static partial class Program
             const double narrowWidth = 760;
             Layout(narrowWidth);
             var strip = (ScrollViewer)group.Template.FindName("tabStripScroller", group);
-            var buttons = (StackPanel)group.Template.FindName("tabScrollButtons", group);
+            var list = (Button)group.Template.FindName("tabListButton", group);
             var left = (Button)group.Template.FindName("scrollTabsLeftButton", group);
             var right = (Button)group.Template.FindName("scrollTabsRightButton", group);
             var add = (Button)group.Template.FindName("newTabButton", group);
-            double fitWidth = narrowWidth + strip.ScrollableWidth - buttons.ActualWidth;
+            double fitWidth = narrowWidth + strip.ScrollableWidth - left.ActualWidth - right.ActualWidth;
             ExpectEdges(false, true);
             ExpectWidths(120);
             CheckTabHeaderLabels(window, (TabItem)group.Items[0], (TabItem)group.Items[1], expectedWidth: 120);
             if (AutomationProperties.GetName(left) != App.Text("ScrollTabsLeft") ||
                 AutomationProperties.GetName(right) != App.Text("ScrollTabsRight") ||
-                Math.Abs(left.TranslatePoint(new Point(left.ActualWidth, 0), right).X) > 0.5 ||
+                Math.Abs(list.TranslatePoint(new Point(list.ActualWidth, 0), left).X) > 0.5 ||
+                Math.Abs(left.TranslatePoint(new Point(left.ActualWidth, 0), strip).X) > 0.5 ||
+                Math.Abs(strip.TranslatePoint(new Point(strip.ActualWidth, 0), right).X) > 0.5 ||
                 Math.Abs(right.TranslatePoint(new Point(right.ActualWidth, 0), add).X) > 0.5)
-                throw new InvalidOperationException("The named left and right scroll buttons must be beside + in order.");
+                throw new InvalidOperationException("The named scroll buttons must sit between the tab list and the strip, and between the strip and +.");
 
             Click(right);
             ExpectEdges(true, true);
@@ -201,7 +203,7 @@ internal static partial class Program
             Click(left);
             ExpectEdges(true, true);
             Layout(fitWidth - 1);
-            if (buttons.Visibility != Visibility.Visible)
+            if (left.Visibility != Visibility.Visible || right.Visibility != Visibility.Visible)
                 throw new InvalidOperationException("The scroll buttons must appear even when only one DIP is clipped.");
             Layout(fitWidth);
             ExpectEdges(false, false);
@@ -209,7 +211,7 @@ internal static partial class Program
             var headers = (TabHeaderPanel)strip.Content;
             headers.Preview(null, (TabItem)group.Items[0], new Size(240, 34));
             root.UpdateLayout();
-            if (buttons.Visibility != Visibility.Collapsed)
+            if (left.Visibility != Visibility.Collapsed || right.Visibility != Visibility.Collapsed)
                 throw new InvalidOperationException("A provisional insertion gap brought up scroll buttons during a drag.");
             headers.Preview(null, null, default);
             root.UpdateLayout();
@@ -271,8 +273,9 @@ internal static partial class Program
             void ExpectEdges(bool moreLeft, bool moreRight)
             {
                 var fades = (strip.OpacityMask as LinearGradientBrush)?.GradientStops;
-                bool visible = buttons.Visibility == Visibility.Visible;
-                if (visible != (moreLeft || moreRight) || left.IsEnabled != moreLeft || right.IsEnabled != moreRight ||
+                var visibility = moreLeft || moreRight ? Visibility.Visible : Visibility.Collapsed;
+                if (left.Visibility != visibility || right.Visibility != visibility ||
+                    left.IsEnabled != moreLeft || right.IsEnabled != moreRight ||
                     (fades?[0].Color.A == 0) != moreLeft || (fades?[^1].Color.A == 0) != moreRight)
                     throw new InvalidOperationException($"Scroll buttons and fades disagree at {strip.HorizontalOffset} of {strip.ScrollableWidth}.");
             }

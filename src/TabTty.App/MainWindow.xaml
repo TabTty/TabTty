@@ -125,27 +125,26 @@
                                             Click="OpenTabListMenu">
                                         <TextBlock Style="{StaticResource WindowGlyph}" Text="&#xE70D;" />
                                     </Button>
+                                    <Button x:Name="scrollTabsLeftButton" DockPanel.Dock="Left" Visibility="Collapsed"
+                                            Style="{StaticResource TabScrollButton}" VerticalAlignment="Top"
+                                            ToolTip="{DynamicResource ScrollTabsLeftLabel}"
+                                            AutomationProperties.Name="{DynamicResource ScrollTabsLeftLabel}"
+                                            Click="OnScrollTabsLeft">
+                                        <TextBlock Style="{StaticResource WindowGlyph}" Text="&#xE76B;" />
+                                    </Button>
                                     <Button x:Name="newTabButton" DockPanel.Dock="Right"
                                             Style="{StaticResource WindowButton}" Width="36" VerticalAlignment="Top"
                                             ToolTip="{DynamicResource NewTabLabel}" AutomationProperties.Name="{DynamicResource NewTabLabel}"
                                             Click="OpenNewTabMenu">
                                         <TextBlock Style="{StaticResource WindowGlyph}" Text="&#xE710;" />
                                     </Button>
-                                    <StackPanel x:Name="tabScrollButtons" DockPanel.Dock="Right" Visibility="Collapsed"
-                                                Orientation="Horizontal" VerticalAlignment="Top">
-                                        <Button x:Name="scrollTabsLeftButton" Style="{StaticResource TabScrollButton}"
-                                                ToolTip="{DynamicResource ScrollTabsLeftLabel}"
-                                                AutomationProperties.Name="{DynamicResource ScrollTabsLeftLabel}"
-                                                Click="OnScrollTabsLeft">
-                                            <TextBlock Style="{StaticResource WindowGlyph}" Text="&#xE76B;" />
-                                        </Button>
-                                        <Button x:Name="scrollTabsRightButton" Style="{StaticResource TabScrollButton}"
-                                                ToolTip="{DynamicResource ScrollTabsRightLabel}"
-                                                AutomationProperties.Name="{DynamicResource ScrollTabsRightLabel}"
-                                                Click="OnScrollTabsRight">
-                                            <TextBlock Style="{StaticResource WindowGlyph}" Text="&#xE76C;" />
-                                        </Button>
-                                    </StackPanel>
+                                    <Button x:Name="scrollTabsRightButton" DockPanel.Dock="Right" Visibility="Collapsed"
+                                            Style="{StaticResource TabScrollButton}" VerticalAlignment="Top"
+                                            ToolTip="{DynamicResource ScrollTabsRightLabel}"
+                                            AutomationProperties.Name="{DynamicResource ScrollTabsRightLabel}"
+                                            Click="OnScrollTabsRight">
+                                        <TextBlock Style="{StaticResource WindowGlyph}" Text="&#xE76C;" />
+                                    </Button>
                                     <local:TabStripScroller x:Name="tabStripScroller" DockPanel.Dock="Left" VerticalScrollBarVisibility="Disabled"
                                                             HorizontalScrollBarVisibility="Hidden" Focusable="False" ScrollChanged="OnTabStripScrollChanged"
                                                             Style="{DynamicResource {x:Type ScrollViewer}}"

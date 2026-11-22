@@ -555,16 +555,19 @@ internal sealed partial class MainWindow : Window
         if (sender != args.OriginalSource) return;
         var strip = (ScrollViewer)sender;
         var group = (TabControl)strip.TemplatedParent;
-        var buttons = (StackPanel)group.Template.FindName("tabScrollButtons", group);
+        var leftButton = (Button)group.Template.FindName("scrollTabsLeftButton", group);
+        var rightButton = (Button)group.Template.FindName("scrollTabsRightButton", group);
         // Use the width available with the arrows hidden so they cannot sustain overflow themselves.
-        double available = strip.ViewportWidth + (buttons.Visibility == Visibility.Visible ? buttons.ActualWidth : 0);
+        double available = strip.ViewportWidth +
+            (leftButton.Visibility == Visibility.Visible ? leftButton.ActualWidth + rightButton.ActualWidth : 0);
         var headers = (TabHeaderPanel)strip.Content;
         double headerWidth = strip.ExtentWidth - headers.AddedPreviewWidth;
-        buttons.Visibility = headerWidth - available > TabScrollTolerance ? Visibility.Visible : Visibility.Collapsed;
+        leftButton.Visibility = rightButton.Visibility =
+            headerWidth - available > TabScrollTolerance ? Visibility.Visible : Visibility.Collapsed;
         bool left = strip.HorizontalOffset > TabScrollTolerance;
         bool right = strip.ScrollableWidth - strip.HorizontalOffset > TabScrollTolerance;
-        ((Button)group.Template.FindName("scrollTabsLeftButton", group)).IsEnabled = left;
-        ((Button)group.Template.FindName("scrollTabsRightButton", group)).IsEnabled = right;
+        leftButton.IsEnabled = left;
+        rightButton.IsEnabled = right;
         if ((!left && !right) || strip.ViewportWidth <= 0)
         {
             strip.OpacityMask = null;
