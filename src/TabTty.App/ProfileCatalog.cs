@@ -233,9 +233,9 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
             favoriteCell.SetValue(Control.PaddingProperty, new Thickness(0));
             favoriteCell.SetValue(Control.BorderThicknessProperty, new Thickness(0));
             favoriteCell.SetValue(Control.BackgroundProperty, System.Windows.Media.Brushes.Transparent);
-            favoriteCell.SetValue(Control.FontSizeProperty, 16d);
+            favoriteCell.SetValue(Control.FontSizeProperty, 14d);
             favoriteCell.SetValue(FrameworkElement.MinWidthProperty, 28d);
-            favoriteCell.SetValue(FrameworkElement.MinHeightProperty, 24d);
+            favoriteCell.SetValue(FrameworkElement.MinHeightProperty, 20d);
             favoriteCell.SetBinding(ContentControl.ContentProperty, new Binding(nameof(Registration.FavoriteIcon)));
             favoriteCell.SetBinding(FrameworkElement.ToolTipProperty, new Binding(nameof(Registration.FavoriteAction)));
             favoriteCell.SetBinding(AutomationProperties.NameProperty, new Binding(nameof(Registration.FavoriteAction)));
