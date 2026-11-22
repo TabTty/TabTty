@@ -115,6 +115,7 @@ internal static partial class Program
                     case "menu-pointer": MainMenuOpensNestedSubmenusWithMouse(); break;
                     case "tab-scroll": TabStripOverflowButtons(application); break;
                     case "tab-preview": CheckTabPreviewLayout(application); break;
+                    case "tab-click": CheckTabHeaderClicks(application); break;
                     case "desktop": RequireDesktopInput(); break;
                     default: throw new ArgumentException("Unknown visual check.", nameof(args));
                 }

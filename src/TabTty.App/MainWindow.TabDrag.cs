@@ -56,9 +56,9 @@ internal sealed partial class MainWindow
             Ancestor<WindowTab>(e.OriginalSource as DependencyObject) is not { IsClosing: false } item ||
             !group.Items.Contains(item) || item.Content is FormView { IsBusy: true }) return;
         dragOrigin = e.GetPosition(group);
-        // Keep seeing the threshold and the release even if a fast drag leaves
-        // the window between the press and the first move.
-        if (group.CaptureMouse())
+        // Keep the normal press routed to the tab header while watching for
+        // movement or release outside the group.
+        if (Mouse.Capture(group, CaptureMode.SubTree))
         {
             dragCapture = group;
             dragCandidate = item;

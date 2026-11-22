@@ -10,6 +10,42 @@ using TabTty.Core;
 
 internal static partial class Program
 {
+    private static void CheckTabHeaderClicks(App app)
+    {
+        RequireDesktopInput();
+        var window = new MainWindow(app) { ShowInTaskbar = false, Topmost = true };
+        GetCursorPos(out var original);
+        try
+        {
+            window.OpenForm("Settings", _ => { });
+            window.OpenForm("ProfileCatalog", _ => { });
+            window.Show();
+            var group = (TabControl)window.FindName("tabs");
+            var tabs = group.Items.Cast<TabItem>().ToArray();
+            for (int click = 0; click < 8; click++)
+            {
+                var expected = tabs.Single(tab => tab != group.SelectedItem);
+                window.UpdateLayout();
+                var point = expected.PointToScreen(new Point(expected.ActualWidth / 3, expected.ActualHeight / 2));
+                if (!SetCursorPos((int)Math.Round(point.X), (int)Math.Round(point.Y)))
+                    throw new InvalidOperationException("The test could not move the pointer onto the tab.");
+                Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                MouseEvent(0x0002, 0, 0, 0, 0);
+                MouseEvent(0x0004, 0, 0, 0, 0);
+                Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+                if (group.SelectedItem != expected)
+                    throw new InvalidOperationException($"Click {click + 1} on an inactive tab did not switch tabs.");
+                if (Mouse.Captured == group)
+                    throw new InvalidOperationException("A normal tab click left the pointer captured by the tab group.");
+            }
+        }
+        finally
+        {
+            window.Close();
+            SetCursorPos(original.X, original.Y);
+        }
+    }
+
     private static void CheckTabPreviewLayout(App app)
     {
         var window = new MainWindow(app);
