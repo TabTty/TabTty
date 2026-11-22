@@ -20,9 +20,19 @@
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="shell:WindowChrome.IsHitTestVisibleInChrome" Value="True" />
         </Style>
+        <Style x:Key="CaptionButton" TargetType="Button" BasedOn="{StaticResource WindowButton}">
+            <Setter Property="Width" Value="46" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="VerticalAlignment" Value="Top" />
+        </Style>
         <Style x:Key="WindowGlyph" TargetType="TextBlock">
             <Setter Property="FontFamily" Value="Segoe MDL2 Assets" />
             <Setter Property="FontSize" Value="13" />
+        </Style>
+        <Style x:Key="CaptionGlyph" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets" />
+            <Setter Property="FontSize" Value="10" />
+            <Setter Property="TextOptions.TextFormattingMode" Value="Display" />
         </Style>
         <Style x:Key="GroupSplitButton" TargetType="Button" BasedOn="{StaticResource WindowButton}">
             <Setter Property="Width" Value="30" />
@@ -88,7 +98,12 @@
                                             ToolTip="{DynamicResource RemoveTabGroupLabel}"
                                             AutomationProperties.Name="{DynamicResource RemoveTabGroupLabel}"
                                             Click="OnRemoveGroup">
-                                        <Path Style="{StaticResource GroupSplitIcon}" Data="M 1.5,2.5 H 14.5 V 13.5 H 1.5 Z" />
+                                        <Grid>
+                                            <Path Style="{StaticResource GroupSplitIcon}"
+                                                  Data="M 1.5,2.5 H 14.5 V 13.5 H 1.5 Z" />
+                                            <Path Style="{StaticResource GroupSplitIcon}" Data="M 13,4 L 3,12"
+                                                  StrokeDashArray="1.5,1.5" />
+                                        </Grid>
                                     </Button>
                                 </StackPanel>
                                 <DockPanel x:Name="headerCommands" Margin="6,5,14,0" HorizontalAlignment="Left" LastChildFill="False">
@@ -144,8 +159,7 @@
     </Window.Resources>
     <Grid x:Name="windowRoot">
         <Border x:Name="groupHost">
-            <TabControl x:Name="tabs" Template="{StaticResource TabGroupTemplate}"
-                        Padding="0,0,176,0" />
+            <TabControl x:Name="tabs" Template="{StaticResource TabGroupTemplate}" />
         </Border>
         <Canvas ClipToBounds="True">
             <Border x:Name="broadcastBand" Canvas.Left="2" Canvas.Bottom="2"
@@ -166,18 +180,19 @@
                 <TextBlock x:Name="vaultHint" Margin="0,8,0,0" TextWrapping="Wrap" />
             </StackPanel>
         </DockPanel>
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,5,0,0">
-            <Button x:Name="menuButton" Style="{StaticResource WindowButton}">
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
+            <Button x:Name="menuButton" Style="{StaticResource WindowButton}" Margin="0,5,0,0"
+                    VerticalAlignment="Top">
                 <TextBlock Style="{StaticResource WindowGlyph}" Text="&#xE700;" />
             </Button>
-            <Button x:Name="minimizeButton" Style="{StaticResource WindowButton}">
-                <TextBlock Style="{StaticResource WindowGlyph}" Text="&#xE921;" />
+            <Button x:Name="minimizeButton" Style="{StaticResource CaptionButton}">
+                <TextBlock Style="{StaticResource CaptionGlyph}" Text="&#xE921;" />
             </Button>
-            <Button x:Name="maximizeButton" Style="{StaticResource WindowButton}">
-                <TextBlock x:Name="maximizeGlyph" Style="{StaticResource WindowGlyph}" Text="&#xE922;" />
+            <Button x:Name="maximizeButton" Style="{StaticResource CaptionButton}">
+                <TextBlock x:Name="maximizeGlyph" Style="{StaticResource CaptionGlyph}" Text="&#xE922;" />
             </Button>
-            <Button x:Name="closeButton" Style="{StaticResource WindowButton}">
-                <TextBlock Style="{StaticResource WindowGlyph}" Text="&#xE8BB;" />
+            <Button x:Name="closeButton" Style="{StaticResource CaptionButton}">
+                <TextBlock Style="{StaticResource CaptionGlyph}" Text="&#xE8BB;" />
             </Button>
         </StackPanel>
         <Menu x:Name="mainMenu" IsMainMenu="False" Visibility="Collapsed"

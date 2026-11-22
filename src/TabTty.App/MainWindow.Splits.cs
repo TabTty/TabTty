@@ -12,6 +12,7 @@ namespace TabTty.App;
 internal sealed partial class MainWindow
 {
     private static readonly Size GroupMinimum = new(240, 160 + 43);
+    private const double MinimumSharedTabBarWidth = 488;
     public static readonly DependencyProperty CompactTabBarProperty =
         DependencyProperty.RegisterAttached("CompactTabBar", typeof(bool), typeof(MainWindow));
     public static bool GetCompactTabBar(DependencyObject element) => (bool)element.GetValue(CompactTabBarProperty);
@@ -35,6 +36,7 @@ internal sealed partial class MainWindow
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
         };
         windowRoot.SizeChanged += (_, _) => UpdateGroupChrome();
+        UpdateGroupChrome();
         app.Broadcast.Register(this);
         RefreshBroadcast();
     }
@@ -42,11 +44,13 @@ internal sealed partial class MainWindow
     private void UpdateGroupChrome()
     {
         // Leave room for one full tab even when both scroll arrows are visible.
-        bool separateCaption = Groups.Skip(1).Any() || windowRoot.ActualWidth is > 0 and < 664;
+        double captionWidth = menuButton.Width + minimizeButton.Width + maximizeButton.Width + closeButton.Width;
+        bool separateCaption = Groups.Skip(1).Any() ||
+            windowRoot.ActualWidth > 0 && windowRoot.ActualWidth < MinimumSharedTabBarWidth + captionWidth;
         groupHost.Margin = new Thickness(0, separateCaption ? 43 : 0, 0, 0);
         foreach (var group in Groups)
         {
-            group.Padding = new Thickness(0, 0, separateCaption ? 0 : 176, 0);
+            group.Padding = new Thickness(0, 0, separateCaption ? 0 : captionWidth, 0);
             UpdateGroupSplitButtons(group);
         }
     }

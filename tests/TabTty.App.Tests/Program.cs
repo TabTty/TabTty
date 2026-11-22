@@ -1163,6 +1163,17 @@ internal static partial class Program
         if (menuPosition.X <= tabPosition.X + item.ActualWidth || menuPosition.Y > 12 ||
             menu.ActualWidth <= 0 || item.ActualHeight <= 0)
             throw new InvalidOperationException("The menu and window buttons did not fit next to the tabs.");
+        var captionButtons = new[] { "minimizeButton", "maximizeButton", "closeButton" }
+            .Select(name => (Button)window.FindName(name)).ToArray();
+        double captionRight = root.ActualWidth - captionButtons.Sum(button => button.ActualWidth);
+        foreach (Button button in captionButtons)
+        {
+            var position = button.TranslatePoint(new Point(), root);
+            if (button.ActualWidth != 46 || button.ActualHeight != 32 ||
+                Math.Abs(position.X - captionRight) > 0.5 || Math.Abs(position.Y) > 0.5)
+                throw new InvalidOperationException("The caption buttons were not flush with the upper-right corner.");
+            captionRight += button.ActualWidth;
+        }
         var tabs = (TabControl)window.FindName("tabs");
         var strip = (Border)tabs.Template.FindName("tabStripRow", tabs);
         if (strip.BorderThickness.Bottom != 0)

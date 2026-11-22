@@ -8,6 +8,7 @@ using System.Windows.Input;
 using System.Windows.Threading;
 using TabTty.App;
 using TabTty.Core;
+using ShapePath = System.Windows.Shapes.Path;
 
 internal static partial class Program
 {
@@ -549,7 +550,10 @@ internal static partial class Program
         {
             var button = (Button)group.Template.FindName(name, group);
             string label = App.Text(labelKey);
-            if (button.Content is not System.Windows.Shapes.Path || !Equals(button.ToolTip, label) ||
+            bool hasIcon = name == "removeTabGroupButton"
+                ? button.Content is Grid { Children: [ShapePath, ShapePath { StrokeDashArray.Count: > 0 }] }
+                : button.Content is ShapePath;
+            if (!hasIcon || !Equals(button.ToolTip, label) ||
                 System.Windows.Automation.AutomationProperties.GetName(button) != label)
                 throw new InvalidOperationException("A tab-group button omitted its icon or localized label.");
             return button;
