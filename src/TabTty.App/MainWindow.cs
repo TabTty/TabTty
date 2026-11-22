@@ -1092,8 +1092,29 @@ internal sealed partial class MainWindow : Window
                     if (updatingBroadcast || Host is not { } host) return;
                     host.app.Broadcast.Select(host, terminal, targetCheck.IsChecked == true);
                 };
+                bool enterPressed = false;
+                PreviewKeyDown += (_, args) =>
+                {
+                    if (args.Key != Key.Enter || !ReferenceEquals(args.OriginalSource, this) || !IsSelected ||
+                        (!enterPressed && args.KeyboardDevice.Modifiers != ModifierKeys.None)) return;
+                    if (!args.IsRepeat) enterPressed = true;
+                    args.Handled = true;
+                };
+                LostKeyboardFocus += (_, args) =>
+                {
+                    if (ReferenceEquals(args.OldFocus, this)) enterPressed = false;
+                };
                 PreviewKeyUp += (_, args) =>
                 {
+                    if (args.Key == Key.Enter && enterPressed && ReferenceEquals(args.OriginalSource, this))
+                    {
+                        enterPressed = false;
+                        args.Handled = true;
+                        // Keep the key and its repeats on the header until it is released.
+                        if (IsSelected && terminal.IsVisible && args.KeyboardDevice.Modifiers == ModifierKeys.None)
+                            terminal.FocusPane();
+                        return;
+                    }
                     if (args.Key != Key.Apps && (args.Key != Key.F10 || Keyboard.Modifiers != ModifierKeys.Shift)) return;
                     if (args.OriginalSource is not DependencyObject source || !IsHeaderSource(source)) return;
                     menu.PlacementTarget = header;

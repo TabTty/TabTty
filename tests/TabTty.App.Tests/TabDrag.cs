@@ -317,6 +317,7 @@ internal static partial class Program
             while (await session.ObserveAiAsync((_, state) => state.Mouse.SgrCoordinates, deadline.Token))
                 await Task.Delay(10, deadline.Token);
             CheckConnectedTabFocus(target, targetTabs, d, b, e, sessionTab);
+            await CheckEnterFocusesTerminalAsync(b, sessionTab, peer.GetStream(), deadline.Token);
             await ChangeKeyboardShortcutsAsync(target, targetTabs, b, e, sessionTab, directory, deadline.Token);
         }
         finally
@@ -426,6 +427,30 @@ internal static partial class Program
             WaitForTabBarInput(() => group.SelectedItem == expected && expected.IsKeyboardFocused,
                 "The tab shortcut did not select and focus the expected tab header.");
         }
+    }
+
+    private static async Task CheckEnterFocusesTerminalAsync(TabItem header, TerminalTab terminal, NetworkStream peer,
+        CancellationToken cancellationToken)
+    {
+        byte enter = (byte)KeyInterop.VirtualKeyFromKey(Key.Enter);
+        KeyEvent(enter, 0, 0, 0);
+        try
+        {
+            WaitForTabBarInput(() => Keyboard.IsKeyDown(Key.Enter), "Enter did not reach the tab header.");
+            KeyEvent(enter, 0, 0, 0);
+            DrainInput();
+            if (!header.IsKeyboardFocused)
+                throw new InvalidOperationException("Enter moved focus while the key was still held.");
+        }
+        finally { KeyEvent(enter, 0, 0x0002, 0); }
+
+        var pane = FindControls<TerminalSurface>(terminal).Single();
+        WaitForTabBarInput(() => pane.IsKeyboardFocusWithin, "Releasing Enter did not focus the terminal pane.");
+        PressTabBarKey(Key.X);
+        byte[] input = new byte[1];
+        await peer.ReadExactlyAsync(input, cancellationToken);
+        if (input[0] != (byte)'x')
+            throw new InvalidOperationException($"Entering the pane sent unexpected data before the next keystroke: {input[0]:X2}.");
     }
 
     private static async Task ChangeKeyboardShortcutsAsync(MainWindow window, TabControl group, TabItem header,

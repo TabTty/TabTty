@@ -1278,7 +1278,7 @@ internal static partial class Program
                 if (titleKeys[index] == "Settings")
                 {
                     AssertNavigation(form, "SettingsLanguageAndTheme", "SettingsTerminalDefaults", "SettingsTabBehavior",
-                        "SettingsLogNaming", "SettingsVault", "SettingsMaintenance");
+                        "SettingsKeyboardShortcuts", "SettingsLogNaming", "SettingsVault", "SettingsMaintenance");
                 }
                 if (Environment.GetEnvironmentVariable("TABTTY_MANAGEMENT_RENDER_DIR") is { } folder &&
                     titleKeys[index] is "ManageVault" or "Settings")
