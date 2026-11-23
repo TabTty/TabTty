@@ -119,11 +119,18 @@ obsolete secrets. Compression is none in both directions.
 
 Apply the profile trust decision before using the captured SSH destination,
 account or credential reference. After the connection is permitted, verify
-the host key before retrieving credentials from the selected vault. Password
-authentication sends the selected password to that server for that account.
-Explain this in the SSH profile editor and password picker. Explorer's Edit
-action opens the profile for inspection. The connection-time trust decision
-is specified for a future implementation. [Profile trust](profile-trust.md)
+the host key before retrieving credentials from the selected vault. Explorer's
+Edit action opens the profile for inspection. The connection-time trust
+decision is specified for a future implementation. [Profile trust](profile-trust.md)
+
+Show this notice in the profile editor's **Password authentication** field and
+in the saved-password picker. Explain SSH host keys in the dialogs for first
+approval and changed keys.
+
+> When password authentication is used, TabTty automatically sends the saved
+> password to the destination specified in the profile to authenticate as the
+> configured user. Editing the profile outside TabTty can change the destination
+> or username.
 
 The captured connection profile supplies the SSH username for every user
 authentication request, including `none`, partial success, and method fallback.
@@ -181,8 +188,9 @@ authentication stage, try the configured password and public-key methods in
 profile order when the server offers them and existing attempt limits allow.
 Use one selected key. Keyboard-interactive is enabled by default and has the
 lowest priority among methods available at that stage. Use it immediately if it
-is the sole eligible method offered, including at the first stage. If disabled
-in advanced settings, exclude it at every stage.
+is the sole eligible method offered, including at the first stage. If the
+profile's **Allow keyboard-interactive authentication** checkbox is cleared,
+exclude it at every stage.
 [RFC 4252 §4](https://www.rfc-editor.org/rfc/rfc4252.html#section-4)
 
 Use server-sig-algs when present; absent that extension, RSA probes try SHA-512
@@ -584,6 +592,12 @@ and keeps its value when those references change. Connect with two profiles
 that share one vault password and use different usernames, and verify that
 each request uses its own profile's username. Verify that the connection-time
 key picker lists all private keys and displays the captured SSH username.
+
+Check the password notice in the profile editor and saved-password picker.
+Verify that it describes automatic submission, the configured destination and
+username, and the effect of external edits. Check that the first-approval and
+changed-host-key dialogs explain host-key fingerprint verification.
+
 Exercise missing and zero-byte targets for both a saved reference and
 connection-time key selection, and an absent saved key entry in the intended
 vault. Check the visible reason, continuation with an allowed server-offered
@@ -594,10 +608,36 @@ vault with no private keys, with and without an alternative method offered by
 the server. Verify that
 **Try another authentication method** advances the current attempt, **Cancel
 connection** ends it, and SSH leaves vault initialization to user management.
-Verify that a new profile starts with only the password row and can add the key
-row. Check configured priority when both are offered, keyboard-interactive at
-the first stage when it is the only offered eligible method, keyboard-interactive
-after a partial success, and its exclusion when disabled.
+Verify that both method selectors stay visible and that a new profile shows
+**Password authentication** first and **None** second, with the password
+settings between the selectors. Set a second method and verify its settings
+appear immediately below its selector. Swap the order, then change the second
+selector to **None** and select a second method again. Verify that each
+settings field follows its method with its draft reference and is hidden
+while its method is unselected. Check that the standalone keyboard-interactive
+checkbox follows both method sections. Verify that a saved profile opens with
+its configured order. Check configured priority when both methods are offered,
+keyboard-interactive at the first stage when it is the only offered eligible
+method, keyboard-interactive after a partial success, and its exclusion when
+the standalone checkbox is cleared.
+
+Verify that both credential fields show **Select** followed by **Reset** to
+their right. Open each picker with **Select**, including when unlock or setup is
+required. Choose or replace a saved entry and verify its name appears in the
+field. Cancel the picker and verify the draft does not change. With references
+set and the vault locked, use **Reset** on each field and check that it clears
+only that draft reference and leaves the vault locked and its entries intact.
+Verify that the password field switches to **Ask at connection** and asks for
+a password at connection after saving. Verify that the private-key field
+switches to **No key selected**.
+
+Verify that an SSH profile with public-key authentication first or second and
+an empty private-key reference fails save validation. Check that the message
+asks the user to select a private key, the draft stays editable, and no file
+or registration changes. Select a key and verify that saving succeeds. Verify
+that password-only profiles can save with an empty reference and that existing
+profiles with public-key authentication and an empty reference can still open
+for editing.
 
 References: [OpenSSH PROTOCOL](https://github.com/openssh/openssh-portable/blob/master/PROTOCOL),
 [strict KEX draft](https://datatracker.ietf.org/doc/html/draft-ietf-sshm-strict-kex-02),

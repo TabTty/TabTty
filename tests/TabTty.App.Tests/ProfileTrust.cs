@@ -295,7 +295,7 @@ internal static partial class Program
             if (new ProfileCatalog(app).ReadRegistrations().Single().GroupName == savedGroup ||
                 form.UnresolvedPublication is null)
                 throw new InvalidOperationException("Reopening completed the profile save without consent.");
-            Click(editor, "RecheckFilePublication");
+            Click(editor, "RetryProfileRegistration");
             while (form.IsBusy) await Task.Delay(10, token);
             byte[] after = await File.ReadAllBytesAsync(path, token);
             if (form.UnresolvedPublication is not null || !form.HasUnsavedChanges ||

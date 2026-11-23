@@ -27,6 +27,7 @@ internal sealed class FormView : DockPanel
     private Func<bool>? savesSection;
     private bool tracksEdits;
     private Action? updateEditorButtons;
+    private Grid? editorFooter;
     private TextBlock? busyStatus;
     private TextBlock? statusBarText;
     private string statusMessage = "";
@@ -463,7 +464,7 @@ internal sealed class FormView : DockPanel
     public Button AddAsyncAction(string key, Func<Task> action) => AddAction(key, async () => await RunAsync(action));
 
     public void AddField(string key, Control control, bool trackEdit = true, string? actionKey = null,
-        Func<Task>? action = null, string? descriptionKey = null, bool inlineCheckBox = false)
+        Func<Task>? action = null, string? descriptionKey = null, bool inlineCheckBox = false, Action? reset = null)
     {
         if (control is CheckBox { Content: null } check && descriptionKey is null &&
             (inlineCheckBox || !modal && section is not null && (!hasNavigation || section is WrapPanel)))
@@ -488,11 +489,20 @@ internal sealed class FormView : DockPanel
                 (section ?? fields).Children.Add(row);
                 BuildIn(row, () =>
                 {
-                    var button = AddAsyncAction(actionKey!, action);
+                    AddButton(AddAsyncAction(actionKey!, action), 1);
+                    if (reset is not null)
+                    {
+                        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                        AddButton(AddAction("Reset", reset), 2);
+                    }
+                });
+
+                static void AddButton(Button button, int column)
+                {
                     button.Margin = new Thickness(8, 0, 0, 0);
                     button.VerticalAlignment = VerticalAlignment.Center;
-                    Grid.SetColumn(button, 1);
-                });
+                    Grid.SetColumn(button, column);
+                }
             }
         }
         if (modal || !trackEdit) return;
@@ -528,7 +538,22 @@ internal sealed class FormView : DockPanel
         edits.Add(new EditField(IsChanged, () =>
         {
             if (IsChanged()) restore(saved);
-        }, () => saved = read(), savesField));
+        }, () =>
+        {
+            T snapshot = read();
+            return () => saved = snapshot;
+        }, savesField));
+    }
+
+    internal Action CaptureSaveBaseline()
+    {
+        Action[] capture = edits.Where(edit => edit.IsSaved?.Invoke() != false)
+            .Select(edit => edit.Snapshot()).ToArray();
+        return () =>
+        {
+            foreach (Action setBaseline in capture) setBaseline();
+            updateEditorButtons?.Invoke();
+        };
     }
 
     public void AddPrompt(string caption, Control control) => AddLabel(control).Text = caption;
@@ -570,7 +595,7 @@ internal sealed class FormView : DockPanel
 
     public void AddEditorButtons(Func<Task<bool>> save, Func<bool>? isCreating = null)
     {
-        foreach (EditField edit in edits) edit.Capture();
+        foreach (EditField edit in edits) edit.Snapshot()();
         tracksEdits = true;
         AddButtonRow(save, "Save", false, "DiscardChanges", () =>
         {
@@ -614,9 +639,7 @@ internal sealed class FormView : DockPanel
             if (!committed) return;
             if (tracksEdits)
             {
-                foreach (EditField edit in edits)
-                    if (edit.IsSaved?.Invoke() != false) edit.Capture();
-                updateEditorButtons?.Invoke();
+                CaptureSaveBaseline()();
             }
             else Completed?.Invoke(true);
         };
@@ -641,20 +664,53 @@ internal sealed class FormView : DockPanel
             };
             updateEditorButtons();
         }
-        if (!modal && pageTitle is not null && tracksEdits)
+        if (!modal && tracksEdits && (pageTitle is not null || hasNavigation))
         {
             var footer = new Grid { MaxWidth = 1000, Margin = new Thickness(24, 0, 24, 8) };
+            footer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            footer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            footer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             var divider = new Border { BorderThickness = new Thickness(0, 1, 0, 0), Opacity = 0.18,
                 IsHitTestVisible = false };
             divider.SetResourceReference(Border.BorderBrushProperty, "WindowForeground");
             buttons.Margin = new Thickness(0, 5, 0, 0);
+            Grid.SetRow(buttons, 2);
             footer.Children.Add(divider);
             footer.Children.Add(buttons);
             SetDock(footer, Dock.Bottom);
             Children.Insert(0, footer);
+            editorFooter = footer;
         }
         else fields.Children.Add(buttons);
         return apply;
+    }
+
+    internal Action AddEditorSaveRecovery(Func<(string Message, string Action)?> recovery, Func<Task> retry)
+    {
+        var row = new Grid { Margin = new Thickness(0, 8, 0, 0) };
+        row.ColumnDefinitions.Add(new ColumnDefinition());
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var message = new TextBlock { TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
+        AutomationProperties.SetLiveSetting(message, AutomationLiveSetting.Polite);
+        var button = new Button { Margin = new Thickness(8, 0, 4, 0), VerticalAlignment = VerticalAlignment.Center };
+        KeyboardNavigation.SetAcceptsReturn(button, false);
+        button.Click += async (_, _) => await RunAsync(retry);
+        Grid.SetColumn(button, 1);
+        row.Children.Add(message);
+        row.Children.Add(button);
+        Grid.SetRow(row, 1);
+        editorFooter!.Children.Insert(1, row);
+        AddLocalizedUpdate(Refresh);
+        return Refresh;
+
+        void Refresh()
+        {
+            var state = recovery();
+            row.Visibility = state is null ? Visibility.Collapsed : Visibility.Visible;
+            message.Text = state is { } pending ? Text(pending.Message) : "";
+            button.Content = state is { } action ? Text(action.Action) : null;
+            UIElementAutomationPeer.FromElement(message)?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+        }
     }
 
     internal async Task RunAsync(Func<Task> action)
@@ -690,5 +746,5 @@ internal sealed class FormView : DockPanel
 
     private void SetText(string key, Action<string> apply) => AddLocalizedUpdate(() => apply(Text(key)));
 
-    private sealed record EditField(Func<bool> IsChanged, Action Restore, Action Capture, Func<bool>? IsSaved);
+    private sealed record EditField(Func<bool> IsChanged, Action Restore, Func<Action> Snapshot, Func<bool>? IsSaved);
 }

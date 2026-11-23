@@ -205,6 +205,12 @@ internal static class VerifiedFilePublication
     internal static bool HasPendingPublication(string target)
         => IsPublicationActive(target) || IsUnresolved(target);
 
+    internal static bool CanReconcile(FilePublicationResult result)
+    {
+        lock (Gate)
+            return Unresolved.TryGetValue(result.TargetPath, out var evidence) && evidence.Id == result.OperationId;
+    }
+
     internal static bool IsPublicationActive(string target)
     {
         string path = Path.GetFullPath(target);

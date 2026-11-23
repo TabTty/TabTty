@@ -285,21 +285,57 @@ internal static partial class Program
             ProfileEditorWindow? reopened = null;
             await UntilAsync(() => (reopened = app.Windows.OfType<ProfileEditorWindow>()
                 .SingleOrDefault(window => window.IsVisible && window.Identity == firstLocation)) is not null);
-            var recheck = FindControls<Button>(reopened!).Single(button =>
-                Equals(button.Content, App.Text("RecheckFilePublication")));
+            var reopenedForm = (FormView)reopened!.Content;
+            var recheck = FindControls<Button>(reopenedForm).Single(button =>
+                Equals(button.Content, App.Text("CheckProfileSaveResult")));
+            var reopenedSave = FindControls<Button>(reopenedForm).Single(button => Equals(button.Content, App.Text("Save")));
+            var recoveryRow = (Grid)recheck.Parent;
+            var editorButtons = (StackPanel)reopenedSave.Parent;
+            if (recoveryRow.Parent != editorButtons.Parent || Grid.GetRow(recoveryRow) + 1 != Grid.GetRow(editorButtons))
+                throw new InvalidOperationException("The recovery action was not immediately above Save.");
+            var laterGroup = (TextBox)reopenedForm.FindName("ProfileGroupName");
+            laterGroup.Text = "Newer unsaved group";
+            FindControls<ListBox>(reopenedForm).Single().SelectedIndex = 2;
             recheck.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            await UntilAsync(() => !((FormView)reopened!.Content).IsBusy);
+            await UntilAsync(() => !reopenedForm.IsBusy);
             if (VerifiedFilePublication.IsUnresolved(first) ||
                 !candidate.AsSpan().SequenceEqual(File.ReadAllBytes(first)) ||
-                !original.AsSpan().SequenceEqual(File.ReadAllBytes(first + ".bak")))
-                throw new InvalidOperationException("Reinspection from a reopened editor republished or lost its evidence.");
-            reopened!.Close();
+                !original.AsSpan().SequenceEqual(File.ReadAllBytes(first + ".bak")) || recheck.IsVisible ||
+                !reopenedForm.HasUnsavedChanges || laterGroup.Text != "Newer unsaved group")
+                throw new InvalidOperationException("Reinspection changed the file, evidence, recovery notice, or newer draft.");
+            editorButtons.Children.OfType<Button>().Single(button => Equals(button.Content, App.Text("DiscardChanges")))
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
-            async Task RespondAsync(string title, string action, string? message = null)
+            const string renamedName = "Recovered profile name";
+            string renamed = Path.Combine(directory, renamedName + ".ttty");
+            ((TextBox)reopenedForm.FindName("Name")).Text = renamedName;
+            using (var pausedRename = profileFixture.PauseNextWrite())
+            {
+                using var renameDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+                reopenedSave.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                await pausedRename.Issued.Task.WaitAsync(renameDeadline.Token);
+                File.WriteAllText(renamed, "A different file owns the requested name.");
+                pausedRename.Dispose();
+                await RespondAsync("Error", "OK", App.Text("ProfileFileNameChangeIncomplete"), reopened);
+                await UntilAsync(() => !reopenedForm.IsBusy);
+            }
+            var retryRename = FindControls<Button>(reopenedForm).Single(button =>
+                button.IsVisible && Equals(button.Content, App.Text("RetryProfileFileNameChange")));
+            if (File.ReadAllText(renamed) != "A different file owns the requested name." || !File.Exists(first))
+                throw new InvalidOperationException("The interrupted rename changed another file or lost the saved profile.");
+            File.Delete(renamed);
+            retryRename.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await UntilAsync(() => !reopenedForm.IsBusy);
+            if (retryRename.IsVisible || reopenedForm.HasUnsavedChanges || File.Exists(first) ||
+                reopened.Identity != renamed || (await ConnectionProfile.LoadAsync(renamed)).DisplayName != renamedName)
+                throw new InvalidOperationException("The retry did not finish the original rename.");
+            reopened.Close();
+
+            async Task RespondAsync(string title, string action, string? message = null, Window? owner = null)
             {
                 Window? dialog = null;
                 await UntilAsync(() => (dialog = app.Windows.Cast<Window>()
-                    .SingleOrDefault(window => window.IsVisible && window.Owner == firstEditor &&
+                    .SingleOrDefault(window => window.IsVisible && window.Owner == (owner ?? firstEditor) &&
                         window.Title == (title == "Error" ? App.Text(title) : title))) is not null);
                 if (!FindControls<TextBlock>(dialog!).Any(text => message is not null
                     ? text.Text.Contains(message, StringComparison.Ordinal)

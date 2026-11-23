@@ -19,13 +19,15 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
 {
     private readonly Dictionary<string, ProfileDetails> metadata = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim registrationChanges = new(1);
-    private readonly Dictionary<string, PendingProfileSave> verifiedSaves = new(StringComparer.Ordinal);
-    private sealed record PendingProfileSave(string? Original, string Attempted, ConnectionProfile Saved,
-        ProfileEdit? Edit, long Reset, long Removal)
+    private readonly Dictionary<string, PendingProfileSave> pendingSaves = new(StringComparer.Ordinal);
+    private sealed record PendingProfileSave(string? Original, string Attempted, ProfileEdit? Edit, long Reset, long Removal)
     {
+        internal ConnectionProfile? Saved { get; set; }
+        internal FilePublicationResult? Publication { get; set; }
         internal FileObjectIdentity? Identity { get; set; }
         internal string? CompletedPath { get; set; }
     }
+    private event Action? SaveRecoveryChanged;
     private event Action? ProfileSaved;
     private event Action? CatalogFolderChanged;
     private event Action? RegistrationUsed;
@@ -608,149 +610,173 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
         Action<string, string>? onSaved = null, bool fromExplorer = false)
     {
         var editor = new ProfileEditor(form, profile, app, creating, fromExplorer);
-        string? attemptedPath = path;
-        FilePublicationResult? pendingPublication = null;
-        var resumed = path is null ? null : verifiedSaves.GetValueOrDefault(path);
-        ConnectionProfile? pendingCommit = resumed?.Saved;
-        attemptedPath = resumed?.Attempted ?? attemptedPath;
-        long registrationReset = trustReset;
-        ProfileEdit? pendingEdit = null;
-        PendingProfileSave? outstanding = resumed;
-        form.DescribeUnresolvedPublication = () => pendingPublication is { } publication
-            ? JsonStoreRecovery.DescribeFailure(publication)
-            : pendingCommit is null ? null : Text("ProfileSaveNeedsCompletion");
-        form.AddActionRow(() => form.AddAsyncAction("RecheckFilePublication", RecheckAsync));
+        PendingProfileSave? ownRequest = null;
+        Action? savedBaseline = null;
+        form.DescribeUnresolvedPublication = () => CurrentRecovery() is { } pending
+            ? pending.Publication is { } publication
+                ? JsonStoreRecovery.DescribeFailure(publication)
+                : Text(RecoveryLabels(pending).Message)
+            : null;
 
         async Task RecheckAsync()
         {
-            if (attemptedPath is null) return;
             await registrationChanges.WaitAsync();
             try
             {
+                if (CurrentRecovery() is not { } pending) return;
                 using var progress = form.BeginProgress("CheckingPreviousSave");
-                if (pendingCommit is null)
+                if (pending.Publication is { } publication)
                 {
                     ConnectionProfile? committed;
-                    try { committed = await ConnectionProfile.ReconcileSaveAsync(attemptedPath, pendingPublication?.OperationId); }
+                    try { committed = await ConnectionProfile.ReconcileSaveAsync(pending.Attempted, publication.OperationId); }
                     catch (FilePublicationException error)
                     {
-                        pendingPublication = error.Result.EvidenceRetired ? null : error.Result;
+                        if (!VerifiedFilePublication.CanReconcile(error.Result) || error.Result.Target == FileImageStatus.Other)
+                            RetirePendingSave(pending);
+                        else pending.Publication = error.Result;
                         throw;
                     }
                     if (committed is null)
                     {
-                        var stages = await Task.Run(() => VerifiedFilePublication.ReinspectRetainedStages(attemptedPath));
-                        progress.Dispose();
-                        if (!JsonStoreRecovery.ShowRetainedStages(app, form, stages))
-                            app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow, Text("NoFilePublicationToRecheck"), Text("Profiles")));
+                        RetirePendingSave(pending);
                         return;
                     }
-                    pendingPublication = null;
-                    pendingCommit = committed;
-                    RetainVerifiedSave(path, committed);
+                    pending.Saved = committed;
+                    pending.Publication = null;
+                    SaveRecoveryChanged?.Invoke();
                 }
-                await CompleteSaveAsync();
+                await CompleteSaveAsync(pending);
                 progress.Dispose();
-                ShowCleanupWarning(profile);
-                JsonStoreRecovery.ShowRetainedStages(app, form, VerifiedFilePublication.GetRetainedStagePaths(attemptedPath));
+                ShowCleanupWarning(profile, pending.Attempted);
             }
-            finally { registrationChanges.Release(); }
+            finally
+            {
+                registrationChanges.Release();
+                SaveRecoveryChanged?.Invoke();
+            }
         }
         form.AddEditorButtons(async () =>
         {
             await registrationChanges.WaitAsync();
             try
             {
-                if (pendingCommit is not null)
-                    throw new IOException(Text("ProfileSaveNeedsCompletion"));
+                if (CurrentRecovery() is { } recovery)
+                    throw new IOException(Text(RecoveryLabels(recovery).Message));
                 ConnectionProfile draft = editor.GetDraft();
+                Action baseline = form.CaptureSaveBaseline();
                 using var progress = form.BeginProgress("SavingChanges");
-                registrationReset = trustReset;
+                long reset = trustReset;
+                string attemptedPath;
+                ProfileEdit? pendingEdit = null;
                 if (path is null)
                 {
-                    string destination = ProfilePathFor(app.ProfileSaveDirectory, editor.ProfileName);
+                    attemptedPath = ProfilePathFor(app.ProfileSaveDirectory, editor.ProfileName);
                     using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
                     {
-                        string location = await NormalizeLocationAsync(destination, timeout.Token);
+                        string location = await NormalizeLocationAsync(attemptedPath, timeout.Token);
                         if (ReadTrust(location).Registration is not null)
                             throw new IOException(Text("ProfileFileInUse"));
                     }
-                    if (!string.Equals(attemptedPath, destination, StringComparison.OrdinalIgnoreCase))
-                        pendingPublication = null;
-                    attemptedPath = destination;
-                    await ObserveSaveAsync(draft.BeginSaveNew(destination, issueProfiles, validateProfileStage));
                 }
                 else
                 {
                     attemptedPath = path;
                     pendingEdit = await PrepareEditAsync(path, profile, editor.ProfileName, fromExplorer);
-                    await ObserveSaveAsync(draft.BeginSaveEdit(issueProfiles, validateProfileStage));
                 }
-                pendingCommit = draft;
-                RetainVerifiedSave(path, draft);
-                try { await CompleteSaveAsync(); }
+                var pending = new PendingProfileSave(path, attemptedPath, pendingEdit, reset, removals.GetValueOrDefault(attemptedPath));
+                var operation = path is null ? draft.BeginSaveNew(attemptedPath, issueProfiles, validateProfileStage)
+                    : draft.BeginSaveEdit(issueProfiles, validateProfileStage);
+                try { await operation.ObserveAsync(); }
+                catch (FilePublicationException error) when (error.Result.OperationId == operation.Id &&
+                    VerifiedFilePublication.CanReconcile(error.Result))
+                {
+                    pending.Publication = error.Result;
+                    RetainPendingSave();
+                    throw;
+                }
+                pending.Saved = draft;
+                RetainPendingSave();
+                try { await CompleteSaveAsync(pending); }
                 catch (Exception error) when (IsFileProblem(error))
                 {
-                    throw new IOException(Text("ProfileSaveNeedsCompletion") + "\n\n" + error.Message, error);
+                    throw new IOException(Text(RecoveryLabels(pending).Message) + "\n\n" + error.Message, error);
                 }
                 progress.Dispose();
-                ShowCleanupWarning(profile);
-                JsonStoreRecovery.ShowRetainedStages(app, form, VerifiedFilePublication.GetRetainedStagePaths(attemptedPath!));
+                ShowCleanupWarning(profile, pending.Attempted);
                 return true;
+
+                void RetainPendingSave()
+                {
+                    ownRequest = pending;
+                    savedBaseline = baseline;
+                    pendingSaves[attemptedPath] = pending;
+                    if (pending.Edit?.Destination is { } destination) pendingSaves[destination] = pending;
+                }
             }
-            finally { registrationChanges.Release(); }
+            finally
+            {
+                registrationChanges.Release();
+                SaveRecoveryChanged?.Invoke();
+            }
         }, isCreating: creating ? () => path is null : null);
+        Action refreshRecovery = form.AddEditorSaveRecovery(() => CurrentRecovery() is { } pending
+            ? RecoveryLabels(pending) : null, RecheckAsync);
+        form.Loaded += (_, _) =>
+        {
+            SaveRecoveryChanged += refreshRecovery;
+            refreshRecovery();
+        };
+        form.Unloaded += (_, _) => SaveRecoveryChanged -= refreshRecovery;
         form.AddStatusBar();
 
-        async Task CompleteSaveAsync()
+        PendingProfileSave? CurrentRecovery()
         {
-            ConnectionProfile saved = pendingCommit!;
-            var completion = outstanding!;
+            string? location = path ?? ownRequest?.Attempted;
+            return location is null ? null : pendingSaves.GetValueOrDefault(location);
+        }
+
+        async Task CompleteSaveAsync(PendingProfileSave completion)
+        {
+            ConnectionProfile saved = completion.Saved!;
             path = await CompleteVerifiedSaveAsync(completion);
             profile = saved;
-            pendingEdit = null;
-            pendingCommit = null;
-            outstanding = null;
             editor.UseSavedRevision(saved);
+            if (ReferenceEquals(ownRequest, completion))
+            {
+                savedBaseline?.Invoke();
+                ownRequest = null;
+                savedBaseline = null;
+            }
             onSaved?.Invoke(path, saved.DisplayName);
         }
 
-        void ShowCleanupWarning(ConnectionProfile saved)
+        void ShowCleanupWarning(ConnectionProfile saved, string attemptedPath)
         {
             if (BackupCleanupWarning(saved) is { } warning)
                 app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow, warning, Text("EditProfile"),
                     icon: MessageBoxImage.Warning));
+            JsonStoreRecovery.ShowRetainedStages(app, form, VerifiedFilePublication.GetRetainedStagePaths(attemptedPath));
         }
+    }
 
-        void RetainVerifiedSave(string? previous, ConnectionProfile saved)
-        {
-            string location = attemptedPath!;
-            outstanding = new(previous, location, saved, pendingEdit, registrationReset,
-                removals.GetValueOrDefault(location));
-            verifiedSaves[location] = outstanding;
-            if (pendingEdit?.Destination is { } destination) verifiedSaves[destination] = outstanding;
-        }
+    private static (string Message, string Action) RecoveryLabels(PendingProfileSave pending)
+    {
+        if (pending.Publication is not null) return ("ProfileSaveResultUnknown", "CheckProfileSaveResult");
+        return pending.Edit?.Destination is not null
+            ? ("ProfileFileNameChangeIncomplete", "RetryProfileFileNameChange")
+            : ("ProfileRegistrationIncomplete", "RetryProfileRegistration");
+    }
 
-        async Task ObserveSaveAsync(ConnectionProfile.ProfileSaveOperation operation)
-        {
-            try
-            {
-                await operation.ObserveAsync();
-                pendingPublication = null;
-            }
-            catch (FilePublicationException error) when (error.Result.OperationId == operation.Id)
-            {
-                if (error.Result.Status != FilePublicationStatus.Unchanged || error.Result.CleanupError is not null)
-                    pendingPublication = error.Result;
-                throw;
-            }
-        }
+    private void RetirePendingSave(PendingProfileSave pending)
+    {
+        var locations = pendingSaves.Where(pair => ReferenceEquals(pair.Value, pending)).Select(pair => pair.Key).ToArray();
+        foreach (string location in locations) pendingSaves.Remove(location);
     }
 
     // Runs under registrationChanges. Several editors can observe the same pending save.
     private async Task<string> CompleteVerifiedSaveAsync(PendingProfileSave completion)
     {
-        ConnectionProfile saved = completion.Saved;
+        ConnectionProfile saved = completion.Saved!;
         string? previous = completion.Original;
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         string location = completion.CompletedPath ?? (completion.Edit?.Destination is { } destination && saved.IsSavedAt(destination)
@@ -758,12 +784,18 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
         string normalized = await NormalizeLocationAsync(location, timeout.Token);
         var identity = await saved.CheckSavedRevisionAsync(normalized, timeout.Token);
         if (identity is null || completion.Identity is { } expected && identity != expected)
+        {
+            RetirePendingSave(completion);
             throw new IOException(Text("ProfileTrustVersionChanged"));
+        }
         if (completion.CompletedPath is { } completedPath) return completedPath;
         completion.Identity = identity;
         var authority = ReadTrust(completion.Attempted);
         if (authority.Reset != completion.Reset || authority.Removal != completion.Removal)
+        {
+            RetirePendingSave(completion);
             throw new IOException(Text("ProfileTrustWriteFailed"));
+        }
 
         string path;
         if (previous is null)
@@ -779,8 +811,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
         }
 
         completion.CompletedPath = path;
-        var completed = verifiedSaves.Where(pair => ReferenceEquals(pair.Value, completion)).Select(pair => pair.Key).ToArray();
-        foreach (string key in completed) verifiedSaves.Remove(key);
+        RetirePendingSave(completion);
         if (previous is not null) ProfileSaved?.Invoke();
         return path;
     }

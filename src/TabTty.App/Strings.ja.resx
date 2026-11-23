@@ -202,10 +202,10 @@
   <data name="CloseDialog" xml:space="preserve"><value>閉じる</value></data>
   <data name="NewSsh" xml:space="preserve"><value>新規SSHプロファイル</value></data>
   <data name="SshUsername" xml:space="preserve"><value>SSHユーザー名</value></data>
-  <data name="SshPasswordSource" xml:space="preserve"><value>SSH認証</value></data>
+  <data name="SshPasswordSource" xml:space="preserve"><value>パスワード認証</value></data>
   <data name="AskAtConnect" xml:space="preserve"><value>接続時に入力</value></data>
   <data name="SelectSavedPassword" xml:space="preserve"><value>保存済みパスワードを選択</value></data>
-  <data name="SshSavedPasswordDestinationNotice" xml:space="preserve"><value>SSH ホスト鍵はサーバーの身元を確認します。パスワード認証では、プロファイルに指定されたサーバーへ、そのアカウントでの認証用に保存済みパスワードを自動送信します。TabTty の外でファイルを書き換えると、次回の接続で別の信頼済みサーバーや別のアカウントに送られる場合があります。</value></data>
+  <data name="SshSavedPasswordDestinationNotice" xml:space="preserve"><value>パスワード認証を使うと、プロファイルで指定した接続先へ保存済みパスワードを自動送信し、指定したユーザー名で認証します。プロファイルが外部で編集されると、送信先やユーザー名が変わる場合があります。</value></data>
   <data name="SshDestination" xml:space="preserve"><value>SSH接続先</value></data>
   <data name="SshServerQuestions" xml:space="preserve"><value>以下は SSH サーバー {0} からの質問です。回答はこのサーバーに送信されます。TabTty の vault のマスターパスワードは入力しないでください。</value></data>
   <data name="SendSshAnswers" xml:space="preserve"><value>サーバーに回答を送信</value></data>
@@ -324,8 +324,8 @@
   <data name="DeleteCredentialsWarning" xml:space="preserve"><value>選択した {0} 件の認証情報を削除しますか。参照するプロファイルは、次回認証時に別の認証情報が必要になります。</value></data>
   <data name="DeleteCredentialWarning" xml:space="preserve"><value>この認証情報を削除しますか。参照するプロファイルは、次回認証時に別の認証情報が必要になります。</value></data>
   <data name="UpdateCredentialWarning" xml:space="preserve"><value>今後の接続に使う共有認証情報を更新しますか。</value></data>
-  <data name="AddSshMethod" xml:space="preserve"><value>認証方式を追加</value></data>
-  <data name="SshAdvancedAuthentication" xml:space="preserve"><value>認証の詳細設定</value></data>
+  <data name="Select" xml:space="preserve"><value>選択</value></data>
+  <data name="Reset" xml:space="preserve"><value>リセット</value></data>
   <data name="AllowKeyboardInteractive" xml:space="preserve"><value>キーボード対話認証を許可</value></data>
   <data name="VaultUnavailableMissing" xml:space="preserve"><value>設定先に vault ファイルがありません。{0}</value></data>
   <data name="VaultUnavailableEmpty" xml:space="preserve"><value>設定先の vault ファイルが 0 バイトです。{0}</value></data>
@@ -370,7 +370,8 @@
   <data name="Override" xml:space="preserve"><value>このプロファイルで指定</value></data>
   <data name="LogDirectory" xml:space="preserve"><value>ログ保存先（プロファイル基準の相対パスまたは絶対パス）</value></data>
   <data name="NetworkLogDestinationNotice" xml:space="preserve"><value>空欄の場合は既定のログ保存先を使います。相対パスはプロファイルのフォルダーが基準です。ネットワーク共有を指定すると、セッションのログはその共有先に保存されます。</value></data>
-  <data name="ClearPrivateKey" xml:space="preserve"><value>選択した秘密鍵を解除</value></data>
+  <data name="NoPrivateKeySelected" xml:space="preserve"><value>未選択</value></data>
+  <data name="ProfilePrivateKeyRequired" xml:space="preserve"><value>公開鍵認証を使うには、秘密鍵を選択してください。</value></data>
   <data name="MissingHighlightSet" xml:space="preserve"><value>強調セットが見つかりません</value></data>
   <data name="RecycleProfile" xml:space="preserve"><value>完全削除</value></data>
   <data name="RecycleProfileConfirm" xml:space="preserve"><value>このプロファイルファイルをごみ箱へ移動しますか。vault 内の認証情報と接続中のセッションは保持されます。</value></data>
@@ -699,7 +700,12 @@ AI アプリは個別の確認なしでキーや複数行のコマンドを入�
   <data name="InvalidProfileFileName" xml:space="preserve"><value>プロファイル名を Windows のファイル名として使用できません。別の名前を指定してください。</value></data>
   <data name="ProfileRenameStateChanged" xml:space="preserve"><value>登録情報が変更されたため、ファイル名を変更できませんでした。</value></data>
   <data name="ProfileRenameRecovery" xml:space="preserve"><value>ファイル名の変更に復旧が必要です。ファイルの場所を確認してください。&#10;&#10;{0}</value></data>
-  <data name="ProfileSaveNeedsCompletion" xml:space="preserve"><value>ファイルの保存は完了しました。登録またはファイル名変更を完了するには、保存結果の再確認を実行してください。</value></data>
+  <data name="ProfileSaveResultUnknown" xml:space="preserve"><value>ファイルの保存結果を確認できませんでした。</value></data>
+  <data name="CheckProfileSaveResult" xml:space="preserve"><value>保存結果を確認</value></data>
+  <data name="ProfileRegistrationIncomplete" xml:space="preserve"><value>ファイルは保存されました。一覧への登録が完了していません。</value></data>
+  <data name="RetryProfileRegistration" xml:space="preserve"><value>登録を再試行</value></data>
+  <data name="ProfileFileNameChangeIncomplete" xml:space="preserve"><value>ファイルは保存されました。ファイル名の変更が完了していません。</value></data>
+  <data name="RetryProfileFileNameChange" xml:space="preserve"><value>ファイル名の変更を再試行</value></data>
   <data name="ProfileBackupCleanupFailed" xml:space="preserve"><value>プロファイルは保存されました。次のバックアップファイルは削除できませんでした。&#10;&#10;{0}</value></data>
   <data name="TransferAllUnresolved" xml:space="preserve"><value>未解決の結果をすべて表示</value></data>
   <data name="ProfileListLastUsed" xml:space="preserve"><value>最終使用日時</value></data>

@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.IO;
 using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Automation;
@@ -318,42 +319,70 @@ internal sealed class ProfileEditor
     private void ConfigureSshAuthentication(JsonObject auth, App app)
     {
         string[] methods = ["password", "publicKey"];
-        string[] labels = [Text("VaultPassword"), Text("PublicKey")];
         string[] savedMethods = auth["methods"]!.AsArray().Select(method => method!.GetValue<string>()).ToArray();
-        var primary = Selection("PrimarySshMethod", methods, labels, savedMethods[0]);
-        ComboBox secondary = null!;
-        var secondaryRow = form.AddSection(_ => secondary = Selection("SecondarySshMethod", [.. methods, ""],
-            [.. labels, Text("None")], savedMethods.Length == 2 ? savedMethods[1] : ""));
-        var addMethod = form.AddAction("AddSshMethod", () => secondary.SelectedValue = OtherMethod((string)primary.SelectedValue));
+        var primary = Selection("PrimarySshMethod", methods, methods.Select(MethodLabel).ToArray(), savedMethods[0],
+            trackEdit: false);
+        var firstSettings = form.AddSection(_ => { });
+        var secondary = Selection("SecondarySshMethod", [], [], "", trackEdit: false);
+        var secondSettings = form.AddSection(_ => { });
+        var password = form.AddSection(_ => Credential(auth, "password", "SshPasswordSource", app));
+        var privateKey = form.AddSection(_ => Credential(auth, "privateKey", "PublicKey", app));
+        var settingsParent = (Panel)password.Parent;
+        settingsParent.Children.Remove(password);
+        settingsParent.Children.Remove(privateKey);
+        Boolean(auth, "allowKeyboardInteractive", "AllowKeyboardInteractive", inlineCheckBox: true);
+
+        UpdateSecondary(savedMethods.Length == 2);
         primary.SelectionChanged += (_, _) =>
         {
-            if (secondary.SelectedValue is string { Length: > 0 } second && Equals(primary.SelectedValue, second))
-                secondary.SelectedValue = OtherMethod(second);
-            Update();
+            if (primary.SelectedValue is string) UpdateSecondary(secondary.SelectedIndex == 1);
         };
-        secondary.SelectionChanged += (_, _) =>
+        secondary.SelectionChanged += (_, _) => UpdateSettings();
+        form.AddLocalizedUpdate(() =>
         {
-            if (secondary.SelectedValue is string { Length: > 0 } second && Equals(primary.SelectedValue, second))
-                primary.SelectedValue = OtherMethod(second);
-            Update();
-        };
-        form.AddGroup("SshAdvancedAuthentication", () => Boolean(auth, "allowKeyboardInteractive", "AllowKeyboardInteractive"));
+            string first = (string)primary.SelectedValue;
+            bool hasSecond = secondary.SelectedIndex == 1;
+            primary.ItemsSource = methods.Select(method => new Option(method, MethodLabel(method))).ToArray();
+            primary.SelectedValue = first;
+            UpdateSecondary(hasSecond);
+        });
+        form.TrackValue(() => (First: (string)primary.SelectedValue, HasSecond: secondary.SelectedIndex == 1), saved =>
+        {
+            primary.SelectedValue = saved.First;
+            secondary.SelectedIndex = saved.HasSecond ? 1 : 0;
+        });
         apply.Add(() =>
         {
-            auth["methods"] = secondary.SelectedValue is string { Length: > 0 } second
-                ? new JsonArray((string)primary.SelectedValue, second) : new JsonArray((string)primary.SelectedValue);
+            string first = (string)primary.SelectedValue;
+            bool hasSecond = secondary.SelectedIndex == 1;
+            if ((first == "publicKey" || hasSecond) && auth["privateKey"] is null)
+                throw new InvalidDataException(Text("ProfilePrivateKeyRequired"));
+            auth["methods"] = hasSecond ? new JsonArray(first, OtherMethod(first)) : new JsonArray(first);
         });
-        Credential(auth, "password", "SelectSavedPassword", app);
-        Credential(auth, "privateKey", "SelectPrivateKey", app);
-        Update();
 
         static string OtherMethod(string value) => value == "password" ? "publicKey" : "password";
+        static string MethodLabel(string value) => Text(value == "password" ? "SshPasswordSource" : "PublicKey");
 
-        void Update()
+        void UpdateSecondary(bool hasSecond)
         {
-            bool hasSecondary = secondary.SelectedValue is string { Length: > 0 };
-            secondaryRow.Visibility = hasSecondary ? Visibility.Visible : Visibility.Collapsed;
-            addMethod.Visibility = hasSecondary ? Visibility.Collapsed : Visibility.Visible;
+            string other = OtherMethod((string)primary.SelectedValue);
+            secondary.ItemsSource = new[] { new Option("", Text("None")), new Option(other, MethodLabel(other)) };
+            secondary.SelectedIndex = hasSecond ? 1 : 0;
+            UpdateSettings();
+        }
+
+        void UpdateSettings()
+        {
+            var first = Equals(primary.SelectedValue, "password") ? password : privateKey;
+            var second = ReferenceEquals(first, password) ? privateKey : password;
+            var selectedSecond = secondary.SelectedIndex == 1 ? second : null;
+            if (firstSettings.Children.Contains(first) &&
+                (selectedSecond is null ? secondSettings.Children.Count == 0 : secondSettings.Children.Contains(selectedSecond)))
+                return;
+            firstSettings.Children.Clear();
+            secondSettings.Children.Clear();
+            firstSettings.Children.Add(first);
+            if (selectedSecond is not null) secondSettings.Children.Add(selectedSecond);
         }
     }
 
@@ -410,30 +439,25 @@ internal sealed class ProfileEditor
 
     private void Credential(JsonObject auth, string kind, string key, App app)
     {
-        var value = new TextBox { IsReadOnly = true, Text = auth[kind]?.GetValue<string>() is { } savedName
-            ? PermissionDisplay.Literal(savedName) : Text("AskAtConnect") };
-        Add(kind == "password" ? "SshPasswordSource" : "PublicKey", value,
-            descriptionKey: kind == "password" ? "SshSavedPasswordDestinationNotice" : null);
-        form.TrackValue(() => (Reference: auth[kind], Label: value.Text), saved =>
+        bool password = kind == "password";
+        var value = new TextBox { IsReadOnly = true };
+        names.RegisterName(key, value);
+        form.AddField(key, value, trackEdit: false, actionKey: "Select", action: async () =>
         {
-            auth[kind] = saved.Reference?.DeepClone();
-            value.Text = saved.Label;
-        }, (saved, current) => JsonNode.DeepEquals(saved.Reference, current.Reference));
-        form.AddAsyncAction(key, async () =>
+            if (password) await app.Vault.ChoosePasswordAsync(form.OwnerWindow, SetReference);
+            else await app.Vault.ChoosePrivateKeyAsync(form.OwnerWindow, SetReference);
+        }, descriptionKey: password ? "SshSavedPasswordDestinationNotice" : null, reset: () => SetReference(null));
+        form.TrackValue(() => auth[kind]?.GetValue<string>(), SetReference);
+        form.AddLocalizedUpdate(UpdateValue);
+
+        void SetReference(string? reference)
         {
-            void Chosen(string name)
-            {
-                auth[kind] = name;
-                value.Text = PermissionDisplay.Literal(name);
-            }
-            if (kind == "password") await app.Vault.ChoosePasswordAsync(form.OwnerWindow, Chosen);
-            else await app.Vault.ChoosePrivateKeyAsync(form.OwnerWindow, Chosen);
-        });
-        form.AddAction(kind == "password" ? "AskAtConnect" : "ClearPrivateKey", () =>
-        {
-            auth[kind] = null;
-            value.Text = Text("AskAtConnect");
-        });
+            auth[kind] = reference;
+            UpdateValue();
+        }
+
+        void UpdateValue() => value.Text = auth[kind]?.GetValue<string>() is { } savedName
+            ? PermissionDisplay.Literal(savedName) : Text(password ? "AskAtConnect" : "NoPrivateKeySelected");
     }
 
     private TextBox String(JsonObject node, string property, string key, string? descriptionKey = null, bool optional = false)
@@ -457,10 +481,10 @@ internal sealed class ProfileEditor
         return box;
     }
 
-    private CheckBox Boolean(JsonObject node, string property, string key)
+    private CheckBox Boolean(JsonObject node, string property, string key, bool inlineCheckBox = false)
     {
         var box = new CheckBox { IsChecked = node[property]!.GetValue<bool>() };
-        Add(key, box);
+        Add(key, box, inlineCheckBox: inlineCheckBox);
         apply.Add(() => node[property] = box.IsChecked == true);
         return box;
     }
@@ -473,18 +497,18 @@ internal sealed class ProfileEditor
         return box;
     }
 
-    private ComboBox Selection(string key, string[] values, string[] labels, string selected)
+    private ComboBox Selection(string key, string[] values, string[] labels, string selected, bool trackEdit = true)
     {
         var box = new ComboBox { ItemsSource = values.Select((value, index) => new Option(value, labels[index])).ToArray(),
             DisplayMemberPath = nameof(Option.Label), SelectedValuePath = nameof(Option.Value), SelectedValue = selected };
-        Add(key, box);
+        Add(key, box, trackEdit);
         return box;
     }
 
-    private void Add(string key, Control control, bool trackEdit = true, string? descriptionKey = null)
+    private void Add(string key, Control control, bool trackEdit = true, string? descriptionKey = null, bool inlineCheckBox = false)
     {
         names.RegisterName(key, control);
-        form.AddField(key, control, trackEdit, descriptionKey: descriptionKey);
+        form.AddField(key, control, trackEdit, descriptionKey: descriptionKey, inlineCheckBox: inlineCheckBox);
     }
 
     private sealed record Option(string Value, string Label);

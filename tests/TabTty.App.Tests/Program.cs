@@ -548,14 +548,32 @@ internal static partial class Program
             var authentication = (StackPanel)profileForm.FindName("sshAuthenticationFields");
             var username = (TextBox)authentication.FindName("SshUsername");
             if (sshFields.FindName("SshUsername") is not null ||
-                authentication.FindName("PrimarySshMethod") is not ComboBox ||
+                authentication.FindName("PrimarySshMethod") is not ComboBox primary ||
+                authentication.FindName("SecondarySshMethod") is not ComboBox secondary ||
                 authentication.FindName("SshPasswordSource") is not TextBox passwordSource ||
-                authentication.FindName("PublicKey") is not TextBox ||
+                authentication.FindName("PublicKey") is not TextBox privateKey ||
                 authentication.FindName("AllowKeyboardInteractive") is not CheckBox keyboardInteractive)
                 throw new InvalidOperationException("The SSH authentication fields were not grouped on their own page.");
-            AssertStandaloneCheckBox(keyboardInteractive, "AllowKeyboardInteractive");
+            if (keyboardInteractive.Content is not TextBlock keyboardLabel ||
+                keyboardLabel.Text != App.Text("AllowKeyboardInteractive") || keyboardInteractive.Parent != authentication ||
+                authentication.Children.IndexOf(keyboardInteractive) <= authentication.Children.IndexOf(secondary))
+                throw new InvalidOperationException("Keyboard-interactive authentication was not a standalone checkbox after the methods.");
             AssertStandaloneCheckBox((CheckBox)sshFields.FindName("SshLiveness"), "SshLiveness");
-            AssertDescriptionBefore(passwordSource, "SshSavedPasswordDestinationNotice");
+            var passwordRow = (Grid)passwordSource.Parent;
+            var keyRow = (Grid)privateKey.Parent;
+            AssertDescriptionBefore(passwordRow, "SshSavedPasswordDestinationNotice");
+            CheckCredentialOrder(passwordRow, keyRow);
+            primary.SelectedValue = "publicKey";
+            CheckCredentialOrder(keyRow, passwordRow);
+            if (!profileEditor.GetDraft().SshMethods.SequenceEqual(["publicKey", "password"]))
+                throw new InvalidOperationException("Changing the first method did not swap the configured order.");
+            primary.SelectedValue = "password";
+            secondary.SelectedValue = "";
+            if (keyRow.Parent is not StackPanel hiddenKey || hiddenKey.Parent is not null ||
+                profileEditor.GetDraft().SshPrivateKey != savedKey)
+                throw new InvalidOperationException("Removing the second method did not hide and retain the key reference.");
+            secondary.SelectedValue = "publicKey";
+            CheckCredentialOrder(passwordRow, keyRow);
             AssertDescriptionBefore((TextBox)profileForm.FindName("LogDirectory"), "NetworkLogDestinationNotice");
             string[] logKeys = ["RecordRaw", "RecordText", "RecordTerminal"];
             CheckBox[] logs = logKeys.Select(key => (CheckBox)profileForm.FindName(key)).ToArray();
@@ -576,6 +594,39 @@ internal static partial class Program
                 throw new InvalidOperationException("Editing the SSH username changed the selected credentials.");
             if (!changed.RecordRaw || changed.RecordText || !changed.RecordTerminal)
                 throw new InvalidOperationException("Recording choices were not independently editable.");
+
+            Reset(passwordRow);
+            if (passwordSource.Text != App.Text("AskAtConnect") || profileEditor.GetDraft().SshPassword is not null)
+                throw new InvalidOperationException("Reset did not switch password authentication to entry at connection.");
+            Reset(keyRow);
+            try
+            {
+                _ = profileEditor.GetDraft();
+                throw new InvalidOperationException("A profile could save with public-key authentication and no private key.");
+            }
+            catch (InvalidDataException error) when (error.Message == App.Text("ProfilePrivateKeyRequired")) { }
+            secondary.SelectedValue = "";
+            if (privateKey.Text != App.Text("NoPrivateKeySelected") || profileEditor.GetDraft().SshPrivateKey is not null)
+                throw new InvalidOperationException("Reset did not remove the private-key reference.");
+
+            void CheckCredentialOrder(Grid first, Grid second)
+            {
+                FrameworkElement FirstSlot(Grid row) => (FrameworkElement)((FrameworkElement)row.Parent).Parent;
+                if (authentication.Children.IndexOf(FirstSlot(first)) != authentication.Children.IndexOf(primary) + 1 ||
+                    authentication.Children.IndexOf(FirstSlot(second)) != authentication.Children.IndexOf(secondary) + 1)
+                    throw new InvalidOperationException("Credential fields did not follow their method selectors.");
+                foreach (Grid row in new[] { first, second })
+                {
+                    Button[] buttons = row.Children.OfType<Button>().ToArray();
+                    if (buttons.Length != 2 || !Equals(buttons[0].Content, App.Text("Select")) ||
+                        !Equals(buttons[1].Content, App.Text("Reset")) ||
+                        Grid.GetColumn(buttons[0]) != 1 || Grid.GetColumn(buttons[1]) != 2)
+                        throw new InvalidOperationException("Credential buttons were not placed beside the field.");
+                }
+            }
+
+            static void Reset(Grid row) => row.Children.OfType<Button>()
+                .Single(button => Equals(button.Content, App.Text("Reset"))).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
             var destination = SshDestination.Parse("fixture.example", 2222);
             var challenge = new SshChallenge(destination, "Example", "Sign in", [new("User", true), new("Code", false)]);
@@ -771,8 +822,8 @@ internal static partial class Program
             app.Profiles.AddEditor(form, profile, path);
             var name = (TextBox)form.FindName("Name");
             var timeout = (TextBox)form.FindName("WaitSeconds");
-            var buttons = FormFields(form).Children.OfType<StackPanel>().Last();
-            var save = buttons.Children.OfType<Button>().Single(button => Equals(button.Content, App.Text("Save")));
+            var save = FindControls<Button>(form).Single(button => Equals(button.Content, App.Text("Save")));
+            var buttons = (StackPanel)save.Parent;
             var discard = buttons.Children.OfType<Button>().Single(button => Equals(button.Content, App.Text("DiscardChanges")));
             var close = buttons.Children.OfType<Button>().Single(button => Equals(button.Content, App.Text("CloseDialog")));
             if (!close.IsEnabled || buttons.Children.IndexOf(close) != buttons.Children.IndexOf(discard) + 1)

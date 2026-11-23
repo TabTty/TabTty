@@ -90,10 +90,40 @@ within 1,024 bytes of strict UTF-8. Preserve it without trimming, case folding,
 or Unicode normalization. Selecting a credential changes only its reference.
 [Saved SSH credentials](transports-and-authentication.md#authentication-and-user-facing-messages)
 
-Show one row per configured SSH method. **Add authentication method** offers
-only supported methods not already in the list. Keep at least one configured
-method and let the user set their order when both are configured. Expose
-**Allow keyboard-interactive authentication** separately in advanced settings.
+Always show **First authentication method** and **Second authentication
+method**. Use **Password authentication** and **Public-key authentication**
+for the method names and the corresponding credential field labels. A new
+profile starts with **Password authentication** first and **None** second.
+Offer **None** and the other method in the second selector. If both methods
+are selected, choosing the second method in the first selector swaps their
+order. Save only the selected methods, in order.
+
+Show each selected method's credential settings immediately below its
+selector. The first method's settings appear before the second selector.
+When the second selector is **None**, omit its credential settings. Changing
+or swapping the methods keeps draft credential references attached to their
+methods, including while their settings are hidden.
+
+Place **Allow keyboard-interactive authentication** below the second selector
+and its settings, if shown, as a standalone checkbox.
+
+Place **Select** and **Reset** side by side to the right of each credential
+field, in that order. **Select** opens the picker for that credential type.
+Choosing a vault entry sets or replaces the reference in the draft and displays
+the entry name in the field. Cancelling either picker preserves the draft.
+
+**Reset** clears the corresponding reference in the editor draft without
+accessing or changing the vault. With an empty reference, the password field
+shows **Ask at connection** and the saved profile asks for password entry when
+that method is used. The private-key field shows **No key selected** when its
+reference is empty.
+
+When an SSH draft selects **Public-key authentication** as either method,
+require a private-key reference before saving. If the reference is empty,
+stop before writing the profile or updating its registration and show
+**Choose a private key to use public-key authentication.** The draft stays
+editable. If neither method is public-key authentication, an empty reference
+is valid. The editor can still open existing profiles with an empty reference.
 
 `enter` is `cr` (SSH/serial default), `lf`, or `crlf` (Telnet default).
 `backspace` is `del` (SSH/Telnet default) or `bs` (serial default), as accepted
@@ -433,12 +463,25 @@ known hosts into unrecognized hosts eligible for fresh first-use approval.
 
 ### Completing a profile save after reopening the editor
 
-The profile catalog coordinates both **Save** and **Recheck previous save**
-for all profile editors. It uses the existing file operation to write the
-profile or recheck an uncertain file outcome. Once the saved revision is
-verified, the catalog owns completion of the original registration or rename
-request. The editor owns the current draft and displays the file and
-registration outcomes separately.
+The profile catalog coordinates save and recovery for all profile editors. It
+uses the existing file operation to write the profile or recheck an uncertain
+file outcome. Once the saved revision is verified, the catalog owns completion
+of the original registration or rename request. The editor owns the current
+draft.
+
+When an actionable save recovery is pending, show its message and button side
+by side in the editor footer, immediately above the row containing **Save**.
+Keep the notice visible on every editor page. Show it after the interrupted
+save and on reopening while the editor can still resume that request. Update
+the message and button when the pending state changes. Remove the notice when
+the request completes or can no longer be resumed. The status bar below the
+buttons continues to show operation progress.
+
+| Pending state | Message | Button |
+| --- | --- | --- |
+| File save outcome could not be verified | The file save result could not be verified. | **Check save result** |
+| The file was saved and registration remains pending | The file was saved. Registration in the profile list is incomplete. | **Retry registration** |
+| The file was saved and a requested file name change remains pending | The file was saved. The file name change is incomplete. | **Retry file name change** |
 
 Save and recheck requests share the catalog's existing serialization across
 profiles. A request for profile B waits while the catalog is processing one
@@ -451,8 +494,8 @@ location, verified revision and outstanding part of the original request.
 Closing a quiescent editor leaves that information available to an editor
 reopened for the same file. Reopening alone performs no registration or rename.
 
-When the user selects **Recheck previous save**, check the file against that
-location and revision and recheck the applicable registration and rename
+When the user selects the recovery action, check the file against the original
+save's location and revision and recheck the applicable registration and rename
 conditions. If they still hold, finish only the outstanding work. Recognize a
 step that already completed and leave the verified file contents intact.
 If the file has been replaced or edited externally, report the difference
@@ -900,7 +943,10 @@ final-exit rules. No hidden lifetime or session-recording timeout is introduced.
 | Select two `.ttty` files and choose Open or press Enter | Evaluate each file independently. Connecting or registering one file does not decide the other. Use distinct tabs for permitted connections. |
 | Select two `.ttty` files and choose Edit | Two editable windows and independent saves. With no running TabTty, the first launch shows only editors. Editing creates neither a registration nor a connection. |
 | Reopen a profile under edit from the other entry point | Restore and activate the existing editor with its draft. A copy at a different location opens separately. |
-| Reopen a verified profile whose registration failed, then choose **Recheck previous save** | Opening alone leaves registration pending. Rechecking completes registration once for the verified revision and preserves later draft edits. Rechecking after external replacement reports the changed file. A trust reset cannot be undone by the old request. |
+| Open an editor with no resumable save, or complete a normal save | The editor footer shows no recovery message or button. |
+| Leave the file save outcome unverified and switch editor pages | The message and **Check save result** stay together above **Save** on every page. Once the request is resolved, the notice disappears. |
+| Reopen a verified profile whose registration failed, then choose **Retry registration** | The notice identifies pending registration. Opening alone leaves registration pending. Retrying completes registration once for the verified revision and preserves later draft edits. Retrying after external replacement reports the changed file. A trust reset cannot be undone by the old request. |
+| Finish writing a profile but fail to complete its requested file name change | The notice offers **Retry file name change**. It checks the saved revision and finishes only the remaining work if the original request is still valid. |
 | Start a save for B while the catalog is processing a save for A, then let A's registration update fail after its file is verified | B waits for A's catalog operation to return. B can then save independently while A's verified revision awaits explicit recheck. |
 | One profile in a multi-selection fails to load | Report that path's error. The other admitted file actions proceed. |
 | Open or edit one `.tttykey`, or select multiple vault files | Single-file verbs open one editor. A vault invocation carrying multiple paths is rejected before opening or unlocking a file. |

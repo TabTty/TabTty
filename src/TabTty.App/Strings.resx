@@ -202,10 +202,10 @@
   <data name="CloseDialog" xml:space="preserve"><value>Close</value></data>
   <data name="NewSsh" xml:space="preserve"><value>New SSH profile</value></data>
   <data name="SshUsername" xml:space="preserve"><value>SSH username</value></data>
-  <data name="SshPasswordSource" xml:space="preserve"><value>SSH authentication</value></data>
+  <data name="SshPasswordSource" xml:space="preserve"><value>Password authentication</value></data>
   <data name="AskAtConnect" xml:space="preserve"><value>Ask at connection</value></data>
   <data name="SelectSavedPassword" xml:space="preserve"><value>Choose saved password</value></data>
-  <data name="SshSavedPasswordDestinationNotice" xml:space="preserve"><value>The SSH host key identifies the server. For password authentication, TabTty automatically sends this password to the server for the account named in the profile. An edit outside TabTty can redirect the password to another trusted server or account on the next connection.</value></data>
+  <data name="SshSavedPasswordDestinationNotice" xml:space="preserve"><value>When password authentication is used, TabTty automatically sends the saved password to the destination specified in the profile to authenticate as the configured user. Editing the profile outside TabTty can change the destination or username.</value></data>
   <data name="SshDestination" xml:space="preserve"><value>SSH destination</value></data>
   <data name="SshServerQuestions" xml:space="preserve"><value>The SSH server at {0} supplies these questions and receives your answers. Never enter your TabTty vault master password here.</value></data>
   <data name="SendSshAnswers" xml:space="preserve"><value>Send answers to server</value></data>
@@ -324,8 +324,8 @@
   <data name="DeleteCredentialsWarning" xml:space="preserve"><value>Delete the {0} selected credentials? Referring profiles will require another credential before their next authentication.</value></data>
   <data name="DeleteCredentialWarning" xml:space="preserve"><value>Delete this credential? Referring profiles will require another credential before their next authentication.</value></data>
   <data name="UpdateCredentialWarning" xml:space="preserve"><value>Update this shared credential for future authentication?</value></data>
-  <data name="AddSshMethod" xml:space="preserve"><value>Add authentication method</value></data>
-  <data name="SshAdvancedAuthentication" xml:space="preserve"><value>Advanced authentication</value></data>
+  <data name="Select" xml:space="preserve"><value>Select</value></data>
+  <data name="Reset" xml:space="preserve"><value>Reset</value></data>
   <data name="AllowKeyboardInteractive" xml:space="preserve"><value>Allow keyboard-interactive authentication</value></data>
   <data name="VaultUnavailableMissing" xml:space="preserve"><value>The configured vault is missing. {0}</value></data>
   <data name="VaultUnavailableEmpty" xml:space="preserve"><value>The configured vault is a zero-byte file. {0}</value></data>
@@ -370,7 +370,8 @@
   <data name="Override" xml:space="preserve"><value>Override for this profile</value></data>
   <data name="LogDirectory" xml:space="preserve"><value>Log directory (relative to profile or absolute)</value></data>
   <data name="NetworkLogDestinationNotice" xml:space="preserve"><value>Leave blank to use the default log folder. Relative paths start in the profile’s folder. If you specify a network share, session logs are saved to that share.</value></data>
-  <data name="ClearPrivateKey" xml:space="preserve"><value>Clear selected private key</value></data>
+  <data name="NoPrivateKeySelected" xml:space="preserve"><value>No key selected</value></data>
+  <data name="ProfilePrivateKeyRequired" xml:space="preserve"><value>Choose a private key to use public-key authentication.</value></data>
   <data name="MissingHighlightSet" xml:space="preserve"><value>Unavailable highlight set</value></data>
   <data name="RecycleProfile" xml:space="preserve"><value>Delete profile file</value></data>
   <data name="RecycleProfileConfirm" xml:space="preserve"><value>Move this profile file to the Windows Recycle Bin? Its vault credentials and connected sessions will be retained.</value></data>
@@ -701,7 +702,12 @@ The host can send keys and multiple lines of commands without asking again, with
   <data name="InvalidProfileFileName" xml:space="preserve"><value>The profile name cannot be used as a Windows file name. Enter a different name.</value></data>
   <data name="ProfileRenameStateChanged" xml:space="preserve"><value>The registration changed before the file rename could complete.</value></data>
   <data name="ProfileRenameRecovery" xml:space="preserve"><value>The rename needs recovery. Check the file at this location.&#10;&#10;{0}</value></data>
-  <data name="ProfileSaveNeedsCompletion" xml:space="preserve"><value>The file was saved. Recheck the save result to complete registration or renaming.</value></data>
+  <data name="ProfileSaveResultUnknown" xml:space="preserve"><value>The file save result could not be verified.</value></data>
+  <data name="CheckProfileSaveResult" xml:space="preserve"><value>Check save result</value></data>
+  <data name="ProfileRegistrationIncomplete" xml:space="preserve"><value>The file was saved. Registration in the profile list is incomplete.</value></data>
+  <data name="RetryProfileRegistration" xml:space="preserve"><value>Retry registration</value></data>
+  <data name="ProfileFileNameChangeIncomplete" xml:space="preserve"><value>The file was saved. The file name change is incomplete.</value></data>
+  <data name="RetryProfileFileNameChange" xml:space="preserve"><value>Retry file name change</value></data>
   <data name="ProfileBackupCleanupFailed" xml:space="preserve"><value>The profile was saved, but TabTty could not delete this backup file.&#10;&#10;{0}</value></data>
   <data name="TransferAllUnresolved" xml:space="preserve"><value>Show all unresolved outcomes</value></data>
   <data name="ProfileListLastUsed" xml:space="preserve"><value>Last used</value></data>
