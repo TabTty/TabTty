@@ -1,5 +1,8 @@
 # Profile management and credential references
 
+> The [profile import contract](../specification/persistence-and-windows.md#importing-profile-files)
+> supersedes the historical external registration and profile naming rules below.
+
 > The [profile trust specification](../specification/profile-trust.md) supersedes the historical Q112 activation decision and the registration behavior described below.
 
 > Consolidated on 2026-11-10: [implementation readiness and completed contracts](../specification/implementation-readiness.md). Accepted product decisions below remain binding; historical lists of unfinished technical design are superseded by those contracts. Implementation and runtime verification have not begun.

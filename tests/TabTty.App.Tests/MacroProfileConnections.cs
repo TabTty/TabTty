@@ -132,7 +132,7 @@ internal static partial class Program
             var buttons = FindControls<Button>(review).ToList();
             CheckMacroLaunch(Equals(buttons.Single(button => button.IsDefault).Content, App.Text("Cancel")) &&
                 buttons.Any(button => Equals(button.Content, App.Text("ProfileTrustAndConnect"))) &&
-                !buttons.Any(button => Equals(button.Content, App.Text("ProfileRegisterAndConnect"))),
+                !buttons.Any(button => Equals(button.Content, App.Text("ProfileImportAndConnect"))),
                 "The macro review offered the wrong trust choices.");
             return review;
         }

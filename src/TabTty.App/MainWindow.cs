@@ -597,7 +597,7 @@ internal sealed partial class MainWindow : Window
         };
     }
 
-    private async void OpenNewTabMenu(object sender, RoutedEventArgs args)
+    private void OpenNewTabMenu(object sender, RoutedEventArgs args)
     {
         var button = (Button)sender;
         var group = Ancestor<TabControl>(button) ?? activeGroup;
@@ -606,7 +606,6 @@ internal sealed partial class MainWindow : Window
         IReadOnlyList<ProfileCatalog.Registration> profiles;
         try { profiles = app.Profiles.ReadRegistrations(); }
         catch (Exception exception) when (ProfileCatalog.IsFileProblem(exception)) { profiles = []; }
-        var entries = new List<(string Path, MenuItem Item)>();
         foreach (var profileGroup in profiles.GroupBy(profile => profile.GroupName, StringComparer.OrdinalIgnoreCase))
         {
             ItemsControl parent = menu;
@@ -663,29 +662,14 @@ internal sealed partial class MainWindow : Window
             foreach (var profile in profileGroup)
             {
                 var item = CreateProfileMenuItem(profile.Name, profile.Path, path => OpenProfiles([path], group));
-                entries.Add((profile.Path, item));
                 parent.Items.Add(item);
             }
         }
-        if (entries.Count > 0) menu.Items.Add(new Separator());
+        if (profiles.Count > 0) menu.Items.Add(new Separator());
         menu.Items.Add(MenuAction("ProfileCatalog", () => app.Profiles.Show(this)));
         menu.Closed += (_, _) => button.ClearValue(ContextMenuProperty);
-        using var lifetime = new CancellationTokenSource();
-        RoutedEventHandler closed = (_, _) => lifetime.Cancel();
-        menu.Closed += closed;
-        try
-        {
-            button.ContextMenu = menu;
-            menu.IsOpen = true;
-            await app.Profiles.ReadRegistrationDetailsAsync(profiles, lifetime.Token, legacyOnly: true);
-            if (lifetime.IsCancellationRequested) return;
-            var names = app.Profiles.ReadRegistrations().ToDictionary(profile => profile.Path, profile => profile.Name,
-                StringComparer.Ordinal);
-            foreach (var (path, item) in entries)
-                if (names.TryGetValue(path, out string? name)) SetMenuItemName(item, name);
-        }
-        catch (Exception exception) when (ProfileCatalog.IsFileProblem(exception)) { }
-        finally { menu.Closed -= closed; }
+        button.ContextMenu = menu;
+        menu.IsOpen = true;
     }
 
     internal static MenuItem CreateProfileMenuItem(string name, string path, Action<string> open)

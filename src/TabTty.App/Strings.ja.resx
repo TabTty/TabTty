@@ -275,7 +275,7 @@
   <data name="AllProfiles" xml:space="preserve"><value>すべて</value></data>
   <data name="UngroupedProfiles" xml:space="preserve"><value>グループなし</value></data>
   <data name="SearchProfiles" xml:space="preserve"><value>検索</value></data>
-  <data name="RegisterProfile" xml:space="preserve"><value>ファイルを登録</value></data>
+  <data name="ImportProfileFile" xml:space="preserve"><value>ファイルを取り込み</value></data>
   <data name="RemoveRegistration" xml:space="preserve"><value>登録解除</value></data>
   <data name="EditProfile" xml:space="preserve"><value>編集…</value></data>
   <data name="EditProfileWindowTitle" xml:space="preserve"><value>接続プロファイル編集</value></data>
@@ -668,7 +668,7 @@ AI アプリは個別の確認なしでキーや複数行のコマンドを入�
   <data name="VaultRescueCopyExplanation" xml:space="preserve"><value>保持している認証済みの vault を別のファイルにコピーしますか？ 選択中のファイルは変更されません。</value></data>
   <data name="ProfileTrustReview" xml:space="preserve"><value>接続プロファイルの確認</value></data>
   <data name="ProfileConnectOnce" xml:space="preserve"><value>今回だけ接続</value></data>
-  <data name="ProfileRegisterAndConnect" xml:space="preserve"><value>登録して接続</value></data>
+  <data name="ProfileImportAndConnect" xml:space="preserve"><value>取り込んで接続</value></data>
   <data name="ProfileTrustAndConnect" xml:space="preserve"><value>この版を信頼して接続</value></data>
   <data name="ProfileTrustVersionChanged" xml:space="preserve"><value>保存されている版は、以前に信頼した版と異なります。</value></data>
   <data name="ProfileLogNetworkShare" xml:space="preserve"><value>ログの保存先はネットワーク共有です。</value></data>
@@ -703,4 +703,6 @@ AI アプリは個別の確認なしでキーや複数行のコマンドを入�
   <data name="ProfileBackupCleanupFailed" xml:space="preserve"><value>プロファイルは保存されました。次のバックアップファイルは削除できませんでした。&#10;&#10;{0}</value></data>
   <data name="TransferAllUnresolved" xml:space="preserve"><value>未解決の結果をすべて表示</value></data>
   <data name="ProfileListLastUsed" xml:space="preserve"><value>最終使用日時</value></data>
+  <data name="ProfileImportLogDirectory" xml:space="preserve"><value>取り込むと、相対ログパスの基準は次のフォルダーに変わります。</value></data>
+  <data name="ProfileImportRecovery" xml:space="preserve"><value>取り込みを確認できませんでした。再試行の前に次のパスを確認してください。</value></data>
 </root>

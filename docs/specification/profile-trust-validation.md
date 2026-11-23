@@ -2,6 +2,8 @@
 
 Validation recorded on 2026-11-19 for [TabTty #68](https://github.com/TabTty/TabTty/issues/68)
 and its eight implementation tasks. See [Connection profile registration and trust](profile-trust.md).
+The 2026-11-23 import and reconnect decisions postdate this evidence. See
+the [current acceptance cases](profile-trust.md#acceptance-cases).
 
 ## Passed
 

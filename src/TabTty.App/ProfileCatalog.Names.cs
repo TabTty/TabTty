@@ -1,6 +1,4 @@
-using System.Globalization;
 using System.IO;
-using System.Text;
 using System.Text.Json.Nodes;
 using System.Windows;
 using TabTty.Core;
@@ -10,83 +8,60 @@ namespace TabTty.App;
 
 internal sealed partial class ProfileCatalog
 {
-    private static string AllocateName(string requested, HashSet<string> names)
+    private string? configuredFolder;
+    private string activeFolder = "";
+
+    private string ActiveFolder
     {
-        if (string.IsNullOrWhiteSpace(requested)) requested = Text("ProfileListName");
-        if (names.Add(requested)) return requested;
-        for (int i = 1; ; i++)
+        get
         {
-            string suffix = " (" + i.ToString(CultureInfo.InvariantCulture) + ")";
-            string name = string.Concat(requested.EnumerateRunes().Take(256 - suffix.Length)) + suffix;
-            if (names.Add(name)) return name;
+            string configured = app.ProfileSaveDirectory;
+            if (configuredFolder != configured)
+            {
+                activeFolder = configured.Length == 0 ? "" : ProfileLocation.Normalize(configured);
+                configuredFolder = configured;
+            }
+            return activeFolder;
         }
     }
 
-    private string GetRegistrationName(JsonObject state, string? location, string requested, bool allowSuffix)
+    internal void ProfileFolderChanged()
     {
-        var names = ReadRegistrations(state).Where(item => item.Path != location).Select(item => item.Name)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (allowSuffix) return AllocateName(requested, names);
-        if (names.Contains(requested)) throw new IOException(Text("ProfileNameInUse"));
-        return requested;
+        configuredFolder = null;
+        CatalogFolderChanged?.Invoke();
     }
 
-    private async Task ReadLegacyNamesAsync(CancellationToken token)
+    internal static void ValidateProfileName(string name)
     {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
-        timeout.CancelAfter(TimeSpan.FromSeconds(3));
-        var missing = LocalState.ReadForProfileTrust()["registrations"]!.AsArray().OfType<JsonObject>()
-            .Where(item => item["name"] is null).Select(item => item["path"]!.GetValue<string>())
-            .ToHashSet(StringComparer.Ordinal);
-        if (missing.Count != 0)
-            await ReadRegistrationDetailsAsync(ReadRegistrations().Where(item => missing.Contains(item.Path)).ToArray(),
-                timeout.Token, legacyOnly: true);
-        token.ThrowIfCancellationRequested();
-    }
-
-    private async Task<bool> IsInProfileDirectoryAsync(string location, CancellationToken token)
-    {
-        string directory = app.ProfileSaveDirectory;
-        if (directory.Length == 0) return false;
-        string normalized = await NormalizeLocationAsync(directory, token);
-        return Path.GetDirectoryName(location) == normalized;
+        if (string.IsNullOrWhiteSpace(name) || name.Length > 250 || name.EndsWith(' ') || name.EndsWith('.') ||
+            name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || OrdinaryWindowsPath.IsReservedFileName(name))
+            throw new ArgumentException(Text("InvalidProfileFileName"));
     }
 
     private static string ProfilePathFor(string directory, string name)
     {
         if (directory.Length == 0) throw new IOException(Text("ProfileSaveLocation"));
-        if (name.Length > 250 || name.EndsWith(' ') || name.EndsWith('.') ||
-            name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || OrdinaryWindowsPath.IsReservedFileName(name))
-            throw new ArgumentException(Text("InvalidProfileFileName"));
+        ValidateProfileName(name);
         string path = Path.Combine(directory, name + ".ttty");
         if (!OrdinaryWindowsPath.IsValid(path)) throw new ArgumentException(Text("InvalidProfileFileName"));
         return path;
     }
 
-    private async Task<ProfileEdit> PrepareEditAsync(string path, ConnectionProfile original, ConnectionProfile draft,
-        bool fromExplorer)
+    private async Task<ProfileEdit> PrepareEditAsync(string path, ConnectionProfile original, string name, bool fromExplorer)
     {
         TrustState trust = ReadTrust(path);
-        string? name = null;
         string? destination = null;
-        if (trust.Registration is not null && original.DisplayName != draft.DisplayName)
+        if (original.DisplayName != name)
         {
-            name = GetRegistrationName(LocalState.ReadForProfileTrust(), path, draft.DisplayName, allowSuffix: false);
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            if (await IsInProfileDirectoryAsync(path, timeout.Token))
-            {
-                string target = ProfilePathFor(Path.GetDirectoryName(path)!, name);
-                if (target != path)
-                {
-                    string existing = await NormalizeLocationAsync(target, timeout.Token);
-                    if (existing != path && (FindRegistration(LocalState.ReadForProfileTrust(), existing) is not null ||
-                        await Task.Run(() => Path.Exists(target), timeout.Token).WaitAsync(timeout.Token)))
-                        throw new IOException(Text("ProfileFileInUse"));
-                    destination = target;
-                }
-            }
+            string target = ProfilePathFor(Path.GetDirectoryName(path)!, name);
+            string existing = await NormalizeLocationAsync(target, timeout.Token);
+            if (existing != path && (FindRegistration(LocalState.ReadForProfileTrust(), existing) is not null ||
+                await Task.Run(() => Path.Exists(target), timeout.Token).WaitAsync(timeout.Token)))
+                throw new IOException(Text("ProfileFileInUse"));
+            destination = target;
         }
-        return new(name, destination, trust, fromExplorer ? null : original.TrustVersion);
+        return new(destination, trust, fromExplorer ? null : original.TrustVersion);
     }
 
     private async Task<string> FinishEditAsync(string path, ConnectionProfile saved, ProfileEdit edit)
@@ -95,7 +70,7 @@ internal sealed partial class ProfileCatalog
         bool moved = destination != path;
         TrustState originalLocation = ReadTrust(path);
         bool registrationAlreadyMoved = moved && originalLocation.Registration is null &&
-            ReadTrust(destination).Registration == edit.Trust.Registration;
+            edit.Trust.Registration is { } originalId && ReadTrust(destination).Registration == originalId;
         if (originalLocation.Registration != edit.Trust.Registration && !registrationAlreadyMoved)
             throw new IOException(Text("ProfileRenameStateChanged"));
         if (moved && !saved.IsSavedAt(destination))
@@ -107,11 +82,12 @@ internal sealed partial class ProfileCatalog
                 ? saved.TrustVersion : null;
             JsonObject snapshot = LocalState.ReadForProfileTrust();
             JsonObject? existing = FindRegistration(snapshot, path);
-            bool updateRegistration = existing is not null && (edit.Name is not null ||
+            bool updateRegistration = existing is not null && (moved ||
                 existing["groupName"]?.GetValue<string>() != saved.GroupName);
             bool registrationMoved = moved && existing is null && edit.Trust.Registration is { } id &&
                 FindRegistration(snapshot, destination)?["registrationId"]?.GetValue<Guid>() == id;
-            if (!registrationMoved && (moved || updateRegistration || version is not null))
+            bool removeOldTrust = moved && (current.Version is not null || snapshot[TrustKey]?[destination] is not null);
+            if (!registrationMoved && (removeOldTrust || updateRegistration || version is not null))
             {
                 LocalState.Change(state =>
                 {
@@ -119,10 +95,13 @@ internal sealed partial class ProfileCatalog
                     if (moved)
                     {
                         if (registration?["registrationId"]?.GetValue<Guid>() != edit.Trust.Registration ||
-                            registration is null || FindRegistration(state, destination) is not null)
+                            FindRegistration(state, destination) is not null)
                             throw new IOException(Text("ProfileRenameStateChanged"));
-                        registration!["path"] = destination;
-                        registration["displayPath"] = destination;
+                        if (registration is not null)
+                        {
+                            registration["path"] = destination;
+                            registration["displayPath"] = destination;
+                        }
                         if (state[TrustKey] is JsonObject trust)
                         {
                             trust.Remove(path);
@@ -131,7 +110,6 @@ internal sealed partial class ProfileCatalog
                     }
                     if (updateRegistration && registration is not null)
                     {
-                        if (edit.Name is not null) registration["name"] = edit.Name;
                         StoreRegistrationGroup(registration, saved.GroupName);
                     }
                     if (version is not null) StoreVersion(state, destination, version);
@@ -162,5 +140,5 @@ internal sealed partial class ProfileCatalog
         return destination;
     }
 
-    private sealed record ProfileEdit(string? Name, string? Destination, TrustState Trust, string? PreviousVersion);
+    private sealed record ProfileEdit(string? Destination, TrustState Trust, string? PreviousVersion);
 }

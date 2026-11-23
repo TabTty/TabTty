@@ -313,7 +313,7 @@ internal static partial class MacroContracts
             run.Start();
             Task<TcpClient> accepted = listener.AcceptTcpClientAsync(deadline.Token).AsTask();
             using var peer = await accepted;
-            Check(File.Exists(Path.Combine(logs, "example-接続_テスト_0000.raw.tttylog")),
+            Check(File.Exists(Path.Combine(logs, "example-profile_0000.raw.tttylog")),
                 "Connect did not use the captured macro's logging overrides before transport.");
             byte[] message = new byte[20]; // Initial Telnet negotiation and the five macro bytes.
             await peer.GetStream().ReadExactlyAsync(message, deadline.Token);

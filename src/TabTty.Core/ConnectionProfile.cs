@@ -21,6 +21,7 @@ public sealed class ConnectionProfile
     private readonly JsonElement document;
     private byte[]? sourceBytes;
     private string? sourcePath;
+    private string? unsavedName;
     private JsonElement Connection => document.GetProperty("connection");
     private JsonElement Terminal => document.GetProperty("terminal");
     private JsonElement Logging => document.GetProperty("logging");
@@ -32,7 +33,9 @@ public sealed class ConnectionProfile
         LogCollision = logCollision;
     }
 
-    public string DisplayName => document.GetProperty("displayName").GetString()!;
+    public string DisplayName => sourcePath is null ? unsavedName ?? "" : Path.GetFileNameWithoutExtension(sourcePath);
+    internal string OpenedPath => sourcePath ?? throw new InvalidOperationException("Profile has no file path.");
+    internal byte[] SnapshotBytes => sourceBytes ?? throw new InvalidOperationException("Profile has no verified file revision.");
     internal string? RetainedSaveBackup { get; private set; }
     public string? GroupName { get; }
     public Guid Id => document.GetProperty("profileId").GetGuid();
@@ -93,6 +96,7 @@ public sealed class ConnectionProfile
         using var parsed = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = 16 });
         ConnectionProfile revision = Validate(parsed.RootElement.Clone());
         if (revision.Id != Id) throw new InvalidDataException("An edit must preserve the profile ID.");
+        revision.unsavedName = unsavedName;
         revision.sourcePath = sourcePath;
         revision.sourceBytes = sourceBytes;
         return revision;
@@ -102,7 +106,9 @@ public sealed class ConnectionProfile
     {
         JsonObject copy = JsonNode.Parse(document.GetRawText())!.AsObject();
         copy["profileId"] = Guid.NewGuid();
-        return Validate(JsonSerializer.SerializeToElement(copy));
+        var duplicate = Validate(JsonSerializer.SerializeToElement(copy));
+        duplicate.unsavedName = DisplayName;
+        return duplicate;
     }
 
     public static ConnectionProfile CreateTelnet(string name, string host, int port = 23, bool recordRaw = false,
@@ -145,12 +151,12 @@ public sealed class ConnectionProfile
     private static ConnectionProfile Create(string name, object connection, string enter, string backspace,
         string localEcho, bool recordRaw, string receiveEncoding, string? transmitEncoding,
         JapaneseSettings? japanese, int ambiguousWidth, bool recordText, bool recordTerminal, Guid? highlightSetId)
-        => Validate(JsonSerializer.SerializeToElement(new
+    {
+        var profile = Validate(JsonSerializer.SerializeToElement(new
         {
             schemaVersion = 1,
             requiredFeatures = Array.Empty<string>(),
             profileId = Guid.NewGuid().ToString("D"),
-            displayName = name,
             connection,
             terminal = new
             {
@@ -166,6 +172,9 @@ public sealed class ConnectionProfile
             logging = new { raw = recordRaw, text = recordText, terminal = recordTerminal, directory = "",
                 collision = LogCollisionPolicies.Format(LogCollisionPolicy.Error) },
         }));
+        profile.unsavedName = name;
+        return profile;
+    }
 
     public static async Task<ConnectionProfile> LoadAsync(string path, CancellationToken cancellationToken = default)
     {
@@ -192,7 +201,7 @@ public sealed class ConnectionProfile
                 if (handle is null) return null;
                 string location = LocalMacroFile.OpenedLocation(handle, source);
                 await using var stream = new FileStream(handle, FileAccess.Read);
-                var profile = ParseProfile(source, await ReadBytesAsync(stream, token).ConfigureAwait(false));
+                var profile = ParseProfile(location, await ReadBytesAsync(stream, token).ConfigureAwait(false));
                 profile.LocalOpeningLocation = location;
                 return profile;
             }, token).ConfigureAwait(false);
@@ -359,7 +368,8 @@ public sealed class ConnectionProfile
         }
 
         Uuid(Text(root, "profileId", 36));
-        Text(root, "displayName", 256);
+        if (root.TryGetProperty("displayName", out _))
+            throw new InvalidDataException("The retired displayName profile property is unsupported.");
         string? groupName = root.TryGetProperty("groupName", out var group) && group.ValueKind != JsonValueKind.Null
             ? NormalizeGroupName(Field(root, "groupName", JsonValueKind.String).GetString()) : null;
         var connection = Field(root, "connection", JsonValueKind.Object);

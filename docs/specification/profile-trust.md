@@ -13,7 +13,7 @@ location. Apply the following table to each file independently.
 
 | Request | Registration | Trust for this version | Action |
 | --- | --- | --- | --- |
-| Manual open or reconnect | Unregistered | Either | **Connect once**, **Register and connect**, **Cancel** |
+| Manual open or reconnect requiring review | Unregistered | Either | **Connect once**, **Import and connect**, **Cancel** |
 | Manual open or reconnect | Registered | Trusted | Connect directly |
 | Manual open or reconnect | Registered | Untrusted | **Connect once**, **Trust this version and connect**, **Cancel** |
 | Macro `Connect` | Either | Trusted | Connect directly. Preserve registration as it is. |
@@ -23,11 +23,21 @@ Manual open includes Explorer, CLI file activation, the in-app file picker
 and the registered list. Re-evaluate the file on each reconnect. The default
 button is **Cancel**. Cancelling stops only this request. **Connect once**
 authorizes this attempt and preserves any existing registration and trust.
-**Register and connect** completes registration, automatically trusts the
-loaded version and starts the connection with that snapshot. A subsequent
-network or authentication failure leaves the completed registration and trust
-in place. **Trust this version and connect** remembers the version for this
-location and starts this attempt. It never creates a registration.
+
+A tab opened with **Connect once** from an unregistered file can reconnect to
+that same file without a prompt while the file is still unregistered and
+matches the last version approved in that tab. Treat this as **Connect once**
+for the new attempt. A changed version requires all three unregistered
+choices. If the location has since become registered, apply the registered
+rows. A tab opened using a registration that has since been removed requires
+the unregistered choices on reconnect. The implicit decision belongs to the
+tab and grants no remembered trust or registration.
+
+**Import and connect** completes [profile import](persistence-and-windows.md#importing-profile-files),
+including trust for the verified destination version, then starts the
+connection with that snapshot. The tab uses the registered destination for
+subsequent reconnects. **Trust this version and connect** remembers the
+version for the opened location and starts this attempt without registering it.
 
 Macro launch approval covers the source, ordered arguments and contents of
 every declared constants file. Evaluate
@@ -39,10 +49,10 @@ manually still presents the registration choice.
 ## Registration and editing
 
 - Successful new registration automatically trusts the exact version being
-  registered. This includes **Register** in the profile list, **Register and
-  connect**, and a verified new-profile or duplicate save that creates a
-  registration. The standalone **Register** operation completes without
-  starting a connection. There is no second trust confirmation.
+  registered. This includes **Import file** in the profile manager,
+  **Import and connect**, and a verified new-profile or duplicate save that
+  creates a registration. **Import file** completes without starting a
+  connection. There is no second trust confirmation.
   Receiving a file activation or reserving its tab does not register it.
 - The main window's editor may advance trust on a verified save of a profile
   whose exact starting version was trusted. For an existing unreviewed or
@@ -53,9 +63,8 @@ manually still presents the registration choice.
   save authority. Do not prompt about profile trust on edit, save or close.
 - Registration is a transition from unregistered to registered. Looking up
   an existing entry, refreshing its display name or usage, opening the list
-  and loading saved registrations do not renew trust. Preserve existing
-  registrations on upgrade and treat versions without trust records as
-  untrusted.
+  and loading saved registrations do not renew trust. Versions without trust
+  records are untrusted.
 - Unregister removes the entry and all profile trust for its opened location,
   including trust remembered through a macro. The same rule applies when a
   completed deletion removes the registration. Other file locations are
@@ -128,12 +137,14 @@ provide a retry. Recovery must not resurrect erased trust from an old backup.
 
 ## Acceptance cases
 
-1. Choose **Connect once** on an unregistered manual open. The next manual
-   open offers all three choices again. Choose **Register and connect** and
-   reconnect with the same bytes. Only the first of these two attempts prompts.
+1. Choose **Connect once** on an unregistered manual open. Reconnect in the
+   same tab with unchanged bytes and verify that the decision is implicit.
+   A fresh manual open or a reconnect after an external edit offers all three
+   choices. Choose **Import and connect** and verify that reconnect uses the
+   registered destination without a prompt for the same bytes.
 2. Trust an unregistered version from a macro. A second approved macro can use
-   that version directly. Explorer still offers **Register and connect**.
-3. Register in the list, then edit the file externally. The edit causes no
+   that version directly. Explorer still offers **Import and connect**.
+3. Import from the manager, then edit the registered file externally. The edit causes no
    trust prompt. Before the next connection or logging starts, review the
    new version using the registered-profile choices.
 4. Unregister a profile while its tab remains connected. That tab continues
@@ -148,3 +159,16 @@ provide a retry. Recovery must not resurrect erased trust from an old backup.
 7. Reset while an affected confirmation or editor save is pending. A later
    reply or save completion cannot re-create the previous trust. A newly
    initiated registration at that location trusts its current version.
+8. Import an external file whose original name and first candidate are occupied,
+   including by an unregistered file. Verify that the next candidate receives
+   the exact bytes, that the source is unchanged, and that no connection starts
+   from **Import file**. Import a file already directly in the configured
+   folder and verify that it is registered in place.
+9. Fail import before registration and trust are verified. Verify that no
+   connection starts and that any surviving copy is reported. Fail authentication
+   after a completed import and verify that the registered copy remains.
+10. Import and connect with a relative log directory and a colliding file name.
+    Verify that the list, tab and log filename use the destination stem and that
+    logs resolve from the import folder. Switch folders and back. Verify that
+    each folder shows its own registrations and that favorites and usage history
+    return with their original folder.

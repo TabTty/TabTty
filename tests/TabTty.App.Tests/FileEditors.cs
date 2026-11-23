@@ -14,7 +14,7 @@ internal static partial class Program
     {
         const string originalName = "Saved profile";
         const string newName = "Renamed profile";
-        string path = Path.Combine(directory, "separate-file-name.ttty");
+        string path = Path.Combine(directory, originalName + ".ttty");
         var profile = ConnectionProfile.CreateTelnet(originalName, "localhost");
         await profile.SaveNewAsync(path);
         var editor = new ProfileEditorWindow(app, "EditProfile", path, profile, creating: false, fromExplorer: true);
@@ -31,9 +31,10 @@ internal static partial class Program
             save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, save));
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
             while (form.IsBusy) await Task.Delay(10, deadline.Token);
-            string savedName = (await ConnectionProfile.LoadAsync(path)).DisplayName;
-            if (form.HasUnsavedChanges || editor.Identity != path || savedName != newName)
-                throw new InvalidOperationException("The profile was not saved in place.");
+            string renamed = Path.Combine(directory, newName + ".ttty");
+            string savedName = (await ConnectionProfile.LoadAsync(renamed)).DisplayName;
+            if (form.HasUnsavedChanges || editor.Identity != renamed || savedName != newName || File.Exists(path))
+                throw new InvalidOperationException("The profile file was not renamed in its original directory.");
             CheckHeading(newName);
             editor.UpdateLabels();
             CheckHeading(newName);
@@ -212,8 +213,8 @@ internal static partial class Program
         async Task CheckProfilePublicationCloseAsync()
         {
             var form = (FormView)firstEditor.Content;
-            var name = FindControls<TextBox>(form).Single(box => box.Text == "First profile");
-            name.Text = "New name under verification";
+            var group = (TextBox)form.FindName("ProfileGroupName");
+            group.Text = "New group under verification";
             byte[] original = File.ReadAllBytes(first);
             var save = FindControls<Button>(form).Single(button => Equals(button.Content, App.Text("Save")));
             string? replacementStage = null;

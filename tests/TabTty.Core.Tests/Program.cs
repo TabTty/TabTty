@@ -145,6 +145,8 @@ try
     await RecordingCollisionContracts.RunAsync();
     await ProfileEditsPreserveIdentityAndRejectExternalChanges();
     Console.WriteLine("PASS ProfileEditsPreserveIdentityAndRejectExternalChanges");
+    await ExclusiveProfilePublicationReportsConcurrentCollision();
+    Console.WriteLine("PASS ExclusiveProfilePublicationReportsConcurrentCollision");
     await SavedSshProfileKeepsTheCredentialReference();
     Console.WriteLine("PASS SavedSshProfileKeepsTheCredentialReference");
     await SavedSerialProfileKeepsItsLineSettings();
@@ -1208,17 +1210,17 @@ static async Task ProfileEditsPreserveIdentityAndRejectExternalChanges()
     await created.SaveNewAsync(path);
     ConnectionProfile loaded = await ConnectionProfile.LoadAsync(path);
     var draft = JsonNode.Parse(loaded.ToEditorJson())!.AsObject();
-    draft["displayName"] = "Edited";
     draft["futureProperty"] = new JsonObject { ["data"] = 17 };
     ConnectionProfile revision = loaded.Edit(draft.ToJsonString());
     await revision.SaveEditAsync();
     ConnectionProfile saved = await ConnectionProfile.LoadAsync(path);
-    if (saved.Id != loaded.Id || saved.DisplayName != "Edited" ||
+    if (saved.Id != loaded.Id || saved.DisplayName != "edit" ||
+        JsonNode.Parse(saved.ToEditorJson())!.AsObject().ContainsKey("displayName") ||
         JsonNode.Parse(saved.ToEditorJson())!["futureProperty"]!["data"]!.GetValue<int>() != 17 ||
         File.Exists(path + ".bak"))
         throw new InvalidOperationException("Profile editing lost identity or unknown fields, or left a backup after verification.");
     if (saved.Duplicate().Id == saved.Id) throw new InvalidOperationException("A duplicate reused the source ID.");
-    draft["displayName"] = "External";
+    draft["futureProperty"] = "External";
     string external = draft.ToJsonString();
     await File.WriteAllTextAsync(path, external);
     try
@@ -1229,6 +1231,23 @@ static async Task ProfileEditsPreserveIdentityAndRejectExternalChanges()
     catch (IOException) { }
     if (await File.ReadAllTextAsync(path) != external)
         throw new InvalidOperationException("A failed profile save modified the external file.");
+}
+
+static async Task ExclusiveProfilePublicationReportsConcurrentCollision()
+{
+    using var folder = new TemporaryDirectory();
+    string path = Path.Combine(folder.Path, "import.ttty");
+    byte[] bytes = "identical bytes"u8.ToArray();
+    var operation = VerifiedFilePublication.Begin(new(path, bytes, null, null, 1024,
+        Issue: (staged, destination, _) =>
+        {
+            File.WriteAllBytes(destination, bytes);
+            File.Move(staged, destination, overwrite: false);
+        }, ExclusiveCreate: true));
+    var result = await operation.ObserveAsync();
+    if (result.Status != FilePublicationStatus.Occupied || !File.ReadAllBytes(path).SequenceEqual(bytes) ||
+        File.Exists(result.CandidatePath) || VerifiedFilePublication.HasPendingPublication(path))
+        throw new InvalidOperationException("An identical file from a concurrent writer was mistaken for the imported copy.");
 }
 
 static async Task SavedSshProfileKeepsTheCredentialReference()
@@ -1250,7 +1269,7 @@ static async Task SavedTelnetProfileKeepsItsSettings()
     string path = Path.Combine(folder.Path, "console.ttty");
     await ConnectionProfile.CreateTelnet("Lab console", "localhost", 2323).SaveNewAsync(path);
     var saved = await ConnectionProfile.LoadAsync(path);
-    if (saved.DisplayName != "Lab console" || saved.Host != "localhost" ||
+    if (saved.DisplayName != "console" || saved.Host != "localhost" ||
         saved.Port != 2323 || saved.ReceiveEncoding != "utf-8" ||
         saved.Enter != "crlf" || saved.RecordRaw || saved.RecordText || saved.RecordTerminal || saved.GroupName is not null)
     {
@@ -1271,7 +1290,7 @@ static async Task FirstProfileSaveCreatesTheParentFolders()
     var profile = ConnectionProfile.CreateTelnet("First profile", "localhost");
     await profile.SaveNewAsync(path);
     ConnectionProfile saved = await ConnectionProfile.LoadAsync(path);
-    if (saved.Id != profile.Id || saved.DisplayName != "First profile")
+    if (saved.Id != profile.Id || saved.DisplayName != "first")
         throw new InvalidOperationException("The first profile was not saved in the requested folder.");
 }
 
@@ -1301,8 +1320,8 @@ static async Task ProfileAndRecordingPathsUseOrdinaryFiles()
     SessionRecording recording = SessionRecording.Open(profilePath, profile);
     await recording.FinishAsync();
     string logs = Path.Combine(folder.Path, "Logs");
-    if (!Directory.EnumerateFiles(logs, "_NUL.session_*_0000.log").Any())
-        throw new InvalidOperationException("The recording name did not preserve the label as an ordinary file.");
+    if (!Directory.EnumerateFiles(logs, "record_*_0000.log").Any())
+        throw new InvalidOperationException("The recording name did not use the profile file's name.");
 
     var longName = ConnectionProfile.CreateTelnet(new string('P', 64), "localhost", recordText: true);
     string macroPrefix = string.Concat(Enumerable.Repeat("🔧", 64));

@@ -37,7 +37,7 @@ otherwise. Defaults describe newly created profiles, not missing-field repair.
 
 | Object | Fields and interpretation |
 | --- | --- |
-| Root | `schemaVersion`, `requiredFeatures`, `profileId`, `displayName`, optional `groupName`, `connection`, `terminal`, `logging` |
+| Root | `schemaVersion`, `requiredFeatures`, `profileId`, optional `groupName`, `connection`, `terminal`, `logging`. The retired `displayName` property is unsupported. |
 | connection | `type`: `ssh`, `telnet`, or `serial`; `waitSeconds`: 30, allowed 1-300; exactly the applicable transport fields below |
 | SSH | `host`, `port`: 22, `username`, `authentication`, `liveness` |
 | authentication | `methods`: one or two distinct values in priority order from `publicKey` and `password`, initially `[password]`; `allowKeyboardInteractive`: boolean, initially true; `privateKey` and `password`: null or credential reference; request unsaved input during authentication when needed |
@@ -306,7 +306,7 @@ Active window borders follow the Windows setting for accent colors on title
 bars and window borders.
 
 Limits: profile 1 MiB; settings 64 KiB; highlighting/state/host records 16 MiB
-each; JSON depth 16; display names 256 scalars, host 253 ASCII bytes after IDNA,
+each; JSON depth 16; host 253 ASCII bytes after IDNA,
 paths 32760 UTF-16 units, advertised terminal type 64 printable ASCII bytes;
 1000 highlight sets, 100 rules/set, 4096 pattern UTF-16 units; 10000 profile
 registrations/host destinations; 32 required features of at most 64 ASCII bytes.
@@ -322,9 +322,17 @@ connection profile folder. The optional `profileSaveDirectory` setting in
 `TabTty\Profiles` under the Windows Documents known folder. Creating or
 duplicating a profile saves it as `<profile name>.ttty` in that folder. The editor
 requires a name usable as a Windows file name and refuses to overwrite an
-existing file. Changing the folder affects subsequent saves of new profiles.
-Open external profiles in place. Resolve log directory relative
-to the profile's opening directory. Accept ordinary absolute DOS/UNC paths and
+existing file. New saves and imports use the currently configured folder.
+
+The profile name is the opened file's name without the `.ttty` extension.
+Use it in the editor, registration list, connection menu, terminal tab and
+profile-name placeholders in log filenames. Capture it when a connection
+starts and keep it for that connection. The revised pre-release format derives
+the name from the path and omits `displayName`. There is no migration from
+pre-release profile or catalog data.
+
+Open external profiles in place until the user chooses to import. Resolve the
+log directory relative to the profile's opening directory. Accept ordinary absolute DOS/UNC paths and
 ordinary relative log paths, normalizing separators and dot components. Reject
 drive-relative `C:Logs`, root-relative `\Logs`, device namespaces, alternate
 data streams, and embedded NUL. Do not expand environment variables or a tilde.
@@ -345,26 +353,53 @@ the filesystem supplies them without merging distinct link paths. If location
 equivalence cannot be established, keep separate registrations rather than
 silently join histories. Relative logs continue to use the opened location.
 
-Registered names are unique across groups using ordinal case-insensitive
-comparison. On registering a profile outside the configured folder, append
-` (1)`, ` (2)`, and so on to the local registration name when necessary.
-Registration leaves the external file and its contents in place. Editing the
-name of a registered profile in the configured folder also renames its file,
-preserving the registration ID, favorites and usage history. Editing a profile
-outside that folder leaves its file path in place.
+Only files directly in the configured folder qualify for active registration.
+Switching the folder switches the catalog shown in the list and connection
+menu. It neither moves files nor registers files found on disk. Returning to
+a previous folder restores its registrations, favorites and usage history.
 
-External copies/new locations get new registration IDs with no inherited
-favorites/history. Do not infer a move from a duplicate profileId. An explicit
-external move is old-registration removal and new registration. Without move
-tracking, an old inaccessible path can remain visibly missing until removed.
-A file
-handle ID/digest is useful for edit-conflict detection, not registration merging.
+Saving a changed name in the editor renames the file within its current
+directory, including when editing an external file. A registered rename
+preserves the registration ID, favorites and usage history. If the requested
+name would overwrite another file, keep the draft and let the user choose
+another name. An external move or copy can be brought into the catalog as a
+new registration with its own ID and history. An inaccessible old path can
+remain visibly missing until removed. Use file identity and digest to detect
+edit conflicts. Registration follows the opened location independently of
+any matching serialized profile ID.
 
-Successful new registration automatically trusts the registered revision. Manual
-connection to an unregistered profile offers the three connection choices even
-if the revision is already trusted. Opening an editor, saving, or registering
-a profile does not prompt for trust. Unregistering removes all profile trust
-for that opened location. See the [profile trust specification](profile-trust.md).
+### Importing profile files
+
+The profile manager offers **Import file**. The unregistered connection review
+offers **Import and connect** for **Open profile…**, Explorer and other manual
+opens and eligible reconnects. If the source is already directly in the
+configured folder, register the file in place. For an existing registration,
+**Import file** selects the existing entry without renewing its trust.
+
+For other sources, create the configured folder if needed and copy the exact
+validated bytes there. Preserve the source name if available. If it collides,
+append the first available suffix starting at ` (2)` before the extension,
+using the entire original stem. For example, a collision with
+`server (2).ttty` when importing that name produces `server (2) (2).ttty`
+if available. Check all occupied names, including unregistered entries, under
+the destination directory's Windows comparison rules. Publish without
+overwriting. A concurrent collision uses the next available name. Each
+successful import from outside the folder creates a separate registration.
+The source remains at its original path with its original contents.
+
+Verify the destination version before completing its registration and
+automatic trust. **Import file** ends there. **Import and connect** then
+starts the connection with the verified bytes at the registered destination.
+Relative log paths use that directory. The connection review explains the
+change of base directory before the user chooses to import.
+
+An incomplete or uncertain import cannot start the connection or be reported
+as successful. Reconcile publication, registration and trust before reporting
+the result. On failure, remove an owned copy only when it can be safely
+identified and removed. Report the path of any copy left behind and how to
+retry. A connection or authentication failure after a completed import leaves
+the copy, registration and trust in place.
+[Profile trust and reconnect decisions](profile-trust.md)
 
 ## Save and recovery
 
@@ -692,8 +727,9 @@ starts separate invocations. Apply the single-file rule to each vault invocation
 
 TabTty's profile creation and editing use top-level windows. Edit from Explorer
 uses the same profile form, layout, validation, and explicit save workflow as
-TabTty's existing-file editor. An Explorer edit saves in place and leaves
-profile registration and connection startup to Open. Selecting a saved
+TabTty's existing-file editor. An Explorer edit saves in the original directory,
+including when it renames the file. It leaves import and connection to the
+explicit connection workflow. Selecting a saved
 credential explicitly may unlock the selected vault and select a reference.
 Keep the SSH username editable with or without selected vault entries.
 Opening or saving the profile does not unlock a vault. When

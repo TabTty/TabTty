@@ -425,6 +425,7 @@ public sealed class App : Application
         JsonStoreRecovery.RequireVerified(await operation.ObserveAsync());
         settingsOriginal = bytes;
         settings = candidate;
+        if (profileSaveDirectory is not null) Profiles.ProfileFolderChanged();
         if (vaultChanged) Vault.SelectionChanged(priorVaultPath);
         if (scopeChanged) Broadcast.ScopeChanged();
         SettingsRevision++;
@@ -444,6 +445,7 @@ public sealed class App : Application
             return new JsonStoreRecovery.Adoption(reservation, () =>
             {
                 settings = prepared;
+                Profiles.ProfileFolderChanged();
                 settingsOriginal = preparedBytes;
                 settingsReadOnly = false;
                 SettingsRevision++;

@@ -25,9 +25,12 @@ internal static partial class Program
         owner.Show();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(25));
         CancellationToken token = deadline.Token;
-        string path = Path.Combine(directory, "profile.ttty");
+        string sourcePath = Path.Combine(directory, "profile.ttty");
+        string catalogFolder = Path.Combine(directory, "profiles");
+        string path = sourcePath;
         try
         {
+            await SetProfileFolderAsync(catalogFolder);
             var remote = app.Profiles.AdmitAsync(owner, @"\\localhost\TabTty-profile-review-test\profile.ttty", null, token);
             Window? remoteReview;
             while ((remoteReview = app.Windows.OfType<Window>().FirstOrDefault(window =>
@@ -39,12 +42,16 @@ internal static partial class Program
             var original = ConnectionProfile.CreateTelnet("First version", "localhost", 23001);
             await original.SaveNewAsync(path, token);
             string originalVersion = original.TrustVersion;
-            var admission = app.Profiles.AdmitAsync(owner, path, null, token);
-            await AnswerAsync("ProfileRegisterAndConnect", "ProfileConnectOnce");
-            CheckMacroLaunch((await admission).TrustVersion == originalVersion &&
+            var initial = app.Profiles.AdmitAsync(owner, path, null, token, reconnect: false, previousOnce: null);
+            await AnswerAsync("ProfileImportAndConnect", "ProfileConnectOnce");
+            var first = await initial;
+            CheckMacroLaunch(first.Once is not null && first.Profile.TrustVersion == originalVersion &&
                 app.Profiles.ReadRegistrations().Count == 0, "Connect once registered a file.");
+            var reconnect = await app.Profiles.AdmitAsync(owner, path, null, token, reconnect: true, first.Once)
+                .WaitAsync(TimeSpan.FromSeconds(2), token);
+            CheckMacroLaunch(reconnect.Once == first.Once, "An unchanged reconnect did not reuse the tab's decision.");
 
-            admission = app.Profiles.AdmitAsync(owner, path, "Fixture macro", token);
+            var admission = app.Profiles.AdmitAsync(owner, path, "Fixture macro", token);
             await ReviewAsync();
             MacroTrust.Reset();
             await AnswerAsync("ProfileTrustAndConnect", "ProfileTrustAndConnect");
@@ -52,12 +59,30 @@ internal static partial class Program
             await app.Profiles.AdmitAsync(owner, path, "Second macro", token);
             CheckMacroLaunch(app.Profiles.ReadRegistrations().Count == 0, "Macro trust registered the profile.");
 
-            admission = app.Profiles.AdmitAsync(owner, path, null, token);
+            Directory.CreateDirectory(catalogFolder);
+            string occupied = Path.Combine(catalogFolder, "profile.ttty");
+            string occupiedSecond = Path.Combine(catalogFolder, "profile (2).ttty");
+            File.WriteAllText(occupied, "existing");
+            File.WriteAllText(occupiedSecond, "existing");
+            File.AppendAllText(sourcePath, "\n");
+            var changedReconnect = app.Profiles.AdmitAsync(owner, sourcePath, null, token, reconnect: true, first.Once);
             Window review = await ReviewAsync();
+            byte[] reviewed = File.ReadAllBytes(sourcePath);
+            File.AppendAllText(sourcePath, " ");
+            Click(review, "ProfileImportAndConnect");
+            var imported = (await changedReconnect).Profile;
+            path = Path.Combine(catalogFolder, "profile (3).ttty");
+            CheckMacroLaunch(imported.OpenedPath == path && imported.DisplayName == "profile (3)" &&
+                File.ReadAllBytes(path).SequenceEqual(reviewed) && File.ReadAllText(sourcePath).EndsWith(' ') &&
+                File.ReadAllText(occupied) == "existing" && File.ReadAllText(occupiedSecond) == "existing" &&
+                app.Profiles.ReadRegistrations().Single().Name == "profile (3)",
+                "The import did not preserve the reviewed bytes or allocate the next free name.");
+            await app.Profiles.AdmitAsync(owner, path, null, token);
+            await SetProfileFolderAsync(Path.Combine(directory, "another profile folder"));
+            CheckMacroLaunch(app.Profiles.ReadRegistrations().Count == 0, "A different folder showed the prior catalog.");
+            await SetProfileFolderAsync(catalogFolder);
+            CheckMacroLaunch(app.Profiles.ReadRegistrations().Single().Path == path, "The original catalog did not return.");
             File.AppendAllText(path, "\n");
-            Click(review, "ProfileRegisterAndConnect");
-            CheckMacroLaunch((await admission).TrustVersion == originalVersion &&
-                app.Profiles.ReadRegistrations().Count == 1, "Registration did not use the reviewed file revision.");
             admission = app.Profiles.AdmitAsync(owner, path, null, token);
             await AnswerAsync("ProfileTrustAndConnect", "ProfileTrustAndConnect");
             var modified = await admission;
@@ -78,7 +103,7 @@ internal static partial class Program
             list.SelectedIndex = 0;
             await ClickProfileActionAsync(list, "EditProfile");
             const string groupName = "Lab_東京";
-            await EditProfileNameAsync("First version", "Main editor version", $" {groupName} ");
+            await EditProfileNameAsync("profile (3)", "Main editor version", $" {groupName} ");
             if (groupTabs.SelectedItem is not TabItem { Tag: string selectedGroup } || selectedGroup != groupName ||
                 list.SelectedItem is not ProfileCatalog.Registration { GroupName: groupName } ||
                 new ProfileCatalog(app).ReadRegistrations().Single().GroupName != groupName)
@@ -162,11 +187,22 @@ internal static partial class Program
             try { await admission; throw new InvalidOperationException("Unregister preserved remembered trust."); }
             catch (SshInteractionCancelledException) { }
 
+            string numbered = Path.Combine(directory, "numbered (2).ttty");
+            await ConnectionProfile.CreateTelnet("Unused draft name", "localhost").SaveNewAsync(numbered, token);
+            var firstCopy = await app.Profiles.ImportFileAsync(owner, numbered, token);
+            var secondCopy = await app.Profiles.ImportFileAsync(owner, numbered, token);
+            CheckMacroLaunch(firstCopy.DisplayName == "numbered (2)" &&
+                secondCopy.DisplayName == "numbered (2) (2)" && app.Profiles.ReadRegistrations().Count == 2 &&
+                File.Exists(numbered), "Repeated import did not retain the entire original stem and source.");
+            var inPlace = await app.Profiles.ImportFileAsync(owner, secondCopy.OpenedPath, token);
+            CheckMacroLaunch(inPlace.OpenedPath == secondCopy.OpenedPath && app.Profiles.ReadRegistrations().Count == 2,
+                "Importing a registered file in the destination directory created a copy.");
+
             await app.SaveSettingsAsync("ja", app.ThemeChoice, app.BellChoice, app.TerminalFontFamily,
                 app.TerminalFontSize, app.RetainedRows, app.AutoCloseDisconnectedTabs, app.VaultPath, app.SettingsRevision);
             admission = app.Profiles.AdmitAsync(owner, path, null, token);
             review = await ReviewAsync();
-            CheckMacroLaunch(FindControls<Button>(review).Any(button => Equals(button.Content, "登録して接続")) &&
+            CheckMacroLaunch(FindControls<Button>(review).Any(button => Equals(button.Content, "取り込んで接続")) &&
                 FindControls<Button>(review).Any(button => Equals(button.Content, "今回だけ接続")),
                 "Japanese review actions were missing.");
             Click(review, "Cancel");
@@ -175,17 +211,21 @@ internal static partial class Program
         }
         finally { owner.Close(); }
 
+        Task SetProfileFolderAsync(string folder) => app.SaveSettingsAsync(app.LanguageChoice, app.ThemeChoice, app.BellChoice,
+            app.TerminalFontFamily, app.TerminalFontSize, app.RetainedRows, app.AutoCloseDisconnectedTabs,
+            app.VaultPath, app.SettingsRevision, profileSaveDirectory: folder);
+
         async Task RefreshSelectionsAcrossWindowsAsync(ListView list, TabControl groupTabs, string groupName)
         {
             const string name = "Second catalog profile";
-            string extraPath = Path.Combine(directory, "catalog-second.ttty");
+            string extraPath = Path.Combine(catalogFolder, name + ".ttty");
             var extra = ConnectionProfile.CreateTelnet(name, "localhost", 23001);
             var draft = System.Text.Json.Nodes.JsonNode.Parse(extra.ToEditorJson())!;
             draft["groupName"] = groupName;
             extra = extra.Edit(draft.ToJsonString());
             await extra.SaveNewAsync(extraPath, token);
             var registering = app.Profiles.AdmitAsync(owner, extraPath, null, token);
-            await AnswerAsync("ProfileRegisterAndConnect", "ProfileRegisterAndConnect");
+            await AnswerAsync("ProfileImportAndConnect", "ProfileImportAndConnect");
             await registering;
             var other = app.CreateWindow(restorePlacement: false);
             other.Show();
@@ -308,8 +348,10 @@ internal static partial class Program
             Click(editor, "Save");
             var form = (FormView)editor.Content;
             while (form.IsBusy) await Task.Delay(10, token);
-            CheckMacroLaunch((await ConnectionProfile.LoadAsync(path, token)).DisplayName == after,
+            string renamed = Path.Combine(catalogFolder, after + ".ttty");
+            CheckMacroLaunch(!File.Exists(path) && (await ConnectionProfile.LoadAsync(renamed, token)).DisplayName == after,
                 "The profile editor did not save its changes.");
+            path = renamed;
             editor.Close();
         }
 

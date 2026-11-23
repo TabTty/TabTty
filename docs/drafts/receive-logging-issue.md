@@ -348,7 +348,10 @@ Contract for destination defaults, filename templates, and recording startup.
   default. Ordinary connections start at the profile.
 - The default macro filename begins with the captured macro basename, a hyphen,
   and the connection profile name. The default for ordinary connections begins
-  with the connection profile name. Application settings have separate fallback
+  with the connection profile name. Use the opened profile's filename without
+  `.ttty`, captured when the connection starts. After **Import and connect**,
+  use the registered destination's name and directory.
+  Application settings have separate fallback
   template fields for ordinary and macro connections. Their built-in defaults
   are `<cpname>_<datetime:yyyy-MM-dd>_<serial:0,4>` and
   `<macroname>-<cpname>_<datetime:yyyy-MM-dd>_<serial:0,4>`, respectively.

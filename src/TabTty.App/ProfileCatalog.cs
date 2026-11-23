@@ -27,6 +27,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
         internal string? CompletedPath { get; set; }
     }
     private event Action? ProfileSaved;
+    private event Action? CatalogFolderChanged;
     private event Action? RegistrationUsed;
     private (long Sequence, string? Location) lastCreatedProfile;
     private bool stateErrorShown;
@@ -52,7 +53,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
         var matches = new List<CredentialProfileMatch>();
         int unavailable = 0;
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        foreach (var registration in ReadRegistrations().OrderBy(registration => registration.Path, StringComparer.Ordinal))
+        foreach (var registration in ReadRegistrations(LocalState.Read(), allFolders: true).OrderBy(registration => registration.Path, StringComparer.Ordinal))
         {
             if (timeout.IsCancellationRequested) { unavailable++; continue; }
             try
@@ -154,63 +155,57 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
 
     public IReadOnlyList<Registration> ReadRegistrations() => ReadRegistrations(LocalState.Read());
 
-    private IReadOnlyList<Registration> ReadRegistrations(JsonObject state)
+    private IReadOnlyList<Registration> ReadRegistrations(JsonObject state, bool allFolders = false)
     {
-        var entries = state["registrations"]!.AsArray().OfType<JsonObject>().ToArray();
-        var names = entries.Select(node => node["name"]?.GetValue<string>()).OfType<string>()
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return entries.Select(node =>
+        string folder = allFolders ? "" : ActiveFolder;
+        return state["registrations"]!.AsArray().OfType<JsonObject>().Select(node =>
         {
             string path = node["path"]!.GetValue<string>();
             metadata.TryGetValue(path, out var details);
-            string name = node["name"]?.GetValue<string>() ??
-                AllocateName(details?.Name ?? Path.GetFileNameWithoutExtension(path), names);
             return new Registration(node["registrationId"]!.GetValue<Guid>(), path,
-                name, details is null or { Unavailable: true } ? node["groupName"]?.GetValue<string>() : details.GroupName,
+                Path.GetFileNameWithoutExtension(path),
+                details is null or { Unavailable: true } ? node["groupName"]?.GetValue<string>() : details.GroupName,
                 node["favorite"]!.GetValue<bool>(), node["lastUsed"]?.GetValue<DateTimeOffset>(),
                 details?.Protocol, details?.Destination, details?.Unavailable ?? false);
-        }).OrderByDescending(item => item.Favorite).ThenByDescending(item => item.LastUsed)
-        .ThenBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
+        }).Where(item => allFolders || Path.GetDirectoryName(item.Path) == folder)
+            .OrderByDescending(item => item.Favorite).ThenByDescending(item => item.LastUsed)
+            .ThenBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
     }
 
-    internal async Task ReadRegistrationDetailsAsync(IReadOnlyList<Registration> registrations, CancellationToken token,
-        bool legacyOnly = false)
+    internal async Task ReadRegistrationDetailsAsync(IReadOnlyList<Registration> registrations, CancellationToken token)
     {
-        foreach (var batch in registrations.Where(item => !legacyOnly || !metadata.ContainsKey(item.Path)).Chunk(4))
+        foreach (var batch in registrations.Chunk(4))
         {
             if (token.IsCancellationRequested) return;
-            await Task.WhenAll(batch.Select(item => ReadDetailsAsync(item.Path, token, legacyOnly)));
+            await Task.WhenAll(batch.Select(item => ReadDetailsAsync(item.Path, token)));
         }
     }
 
-    private async Task ReadDetailsAsync(string path, CancellationToken cancellationToken, bool localOnly)
+    private async Task ReadDetailsAsync(string path, CancellationToken cancellationToken)
     {
         metadata.TryGetValue(path, out var before);
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(TimeSpan.FromSeconds(1));
-            ConnectionProfile? profile = localOnly ? await ConnectionProfile.TryLoadLocalAsync(path, timeout.Token)
-                : await ConnectionProfile.LoadAsync(path, timeout.Token);
+            ConnectionProfile profile = await ConnectionProfile.LoadAsync(path, timeout.Token);
             cancellationToken.ThrowIfCancellationRequested();
-            if (profile is not null && ReferenceEquals(metadata.GetValueOrDefault(path), before))
+            if (ReferenceEquals(metadata.GetValueOrDefault(path), before))
                 RememberMetadata(path, profile);
         }
         catch (Exception exception) when (IsFileProblem(exception) || exception is OperationCanceledException)
         {
-            if (!cancellationToken.IsCancellationRequested && !localOnly &&
-                ReferenceEquals(metadata.GetValueOrDefault(path), before))
-                metadata[path] = new(before?.Name ?? Path.GetFileNameWithoutExtension(path), before?.GroupName,
-                    null, null, Unavailable: true);
+            if (!cancellationToken.IsCancellationRequested && ReferenceEquals(metadata.GetValueOrDefault(path), before))
+                metadata[path] = new(before?.GroupName, null, null, Unavailable: true);
         }
     }
 
     private void RememberMetadata(string location, ConnectionProfile profile) =>
-        metadata[location] = new(profile.DisplayName, profile.GroupName,
+        metadata[location] = new(profile.GroupName,
             profile.Type == "serial" ? "COM" : profile.Type.ToUpperInvariant(),
             profile.Type == "serial" ? profile.Serial.PortName : $"{profile.Host}:{profile.Port}", Unavailable: false);
 
-    private sealed record ProfileDetails(string Name, string? GroupName, string? Protocol, string? Destination, bool Unavailable);
+    private sealed record ProfileDetails(string? GroupName, string? Protocol, string? Destination, bool Unavailable);
 
     private static void StoreRegistrationGroup(JsonObject registration, string? groupName)
     {
@@ -282,7 +277,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
             form.AddActionRow(() =>
             {
                 form.AddAction("AddProfile", CreateProfile);
-                form.AddAsyncAction("RegisterProfile", RegisterAsync);
+                form.AddAsyncAction("ImportProfileFile", ImportAsync);
             });
             form.AddFillingDisplay("ProfileGroups", groupTabs);
             form.AddStatusBar();
@@ -350,11 +345,17 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
             {
                 if (args.Source == groupTabs && !reloading) RefreshList();
             };
-            form.Loaded += (_, _) => { ProfileSaved += Reload; Reload(); _ = LoadDetailsAsync(); };
+            form.Loaded += (_, _) =>
+            {
+                ProfileSaved += Reload;
+                CatalogFolderChanged += ReloadFolder;
+                ReloadFolder();
+            };
             RegistrationUsed += ReloadAfterConnection;
             form.Unloaded += (_, _) =>
             {
                 ProfileSaved -= Reload;
+                CatalogFolderChanged -= ReloadFolder;
                 RegistrationUsed -= ReloadAfterConnection;
                 detailsLoad?.Cancel();
             };
@@ -381,6 +382,13 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
             Task RunRowActionAsync(Registration item, Func<Registration, Task> action) =>
                 form.RunAsync(() => action(item));
 
+            void ReloadFolder()
+            {
+                detailsLoad?.Cancel();
+                Reload();
+                _ = LoadDetailsAsync();
+            }
+
             async Task LoadDetailsAsync()
             {
                 using var load = new CancellationTokenSource();
@@ -393,21 +401,12 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 finally { if (ReferenceEquals(detailsLoad, load)) detailsLoad = null; }
             }
 
-            async Task RegisterAsync()
+            async Task ImportAsync()
             {
                 var dialog = new OpenFileDialog { Filter = Filter };
                 if (app.Modal(() => dialog.ShowDialog(form.OwnerWindow)) != true) return;
-                long reset = trustReset;
-                ConnectionProfile profile;
-                try { profile = await LoadForUseAsync(form.OwnerWindow, dialog.FileName, CancellationToken.None); }
-                catch (SshInteractionCancelledException) { return; }
-                await registrationChanges.WaitAsync();
-                try
-                {
-                    await ReadLegacyNamesAsync(CancellationToken.None);
-                    await RegisterSavedAsync(dialog.FileName, profile, reset, selectNewProfile: true);
-                }
-                finally { registrationChanges.Release(); }
+                try { await ImportFileAsync(form.OwnerWindow, dialog.FileName, CancellationToken.None); }
+                catch (SshInteractionCancelledException) { }
             }
 
             async Task RecycleAsync(Registration item)
@@ -666,12 +665,10 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                     throw new IOException(Text("ProfileSaveNeedsCompletion"));
                 ConnectionProfile draft = editor.GetDraft();
                 using var progress = form.BeginProgress("SavingChanges");
-                await ReadLegacyNamesAsync(CancellationToken.None);
                 registrationReset = trustReset;
                 if (path is null)
                 {
-                    string destination = ProfilePathFor(app.ProfileSaveDirectory, draft.DisplayName);
-                    _ = GetRegistrationName(LocalState.ReadForProfileTrust(), null, draft.DisplayName, allowSuffix: false);
+                    string destination = ProfilePathFor(app.ProfileSaveDirectory, editor.ProfileName);
                     using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
                     {
                         string location = await NormalizeLocationAsync(destination, timeout.Token);
@@ -686,7 +683,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 else
                 {
                     attemptedPath = path;
-                    pendingEdit = await PrepareEditAsync(path, profile, draft, fromExplorer);
+                    pendingEdit = await PrepareEditAsync(path, profile, editor.ProfileName, fromExplorer);
                     await ObserveSaveAsync(draft.BeginSaveEdit(issueProfiles, validateProfileStage));
                 }
                 pendingCommit = draft;
@@ -774,7 +771,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
             if (authority.Registration is not null && authority.Version != saved.TrustVersion)
                 throw new IOException(Text("ProfileFileInUse"));
             path = authority.Registration is not null ? normalized :
-                await RegisterSavedAsync(completion.Attempted, saved, completion.Reset, selectNewProfile: true, createdInApp: true);
+                await RegisterSavedAsync(completion.Attempted, saved, completion.Reset, selectNewProfile: true);
         }
         else
         {

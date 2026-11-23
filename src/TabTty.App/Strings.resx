@@ -275,7 +275,7 @@
   <data name="AllProfiles" xml:space="preserve"><value>All</value></data>
   <data name="UngroupedProfiles" xml:space="preserve"><value>Ungrouped</value></data>
   <data name="SearchProfiles" xml:space="preserve"><value>Search</value></data>
-  <data name="RegisterProfile" xml:space="preserve"><value>Register file</value></data>
+  <data name="ImportProfileFile" xml:space="preserve"><value>Import file</value></data>
   <data name="RemoveRegistration" xml:space="preserve"><value>Unregister</value></data>
   <data name="EditProfile" xml:space="preserve"><value>Edit…</value></data>
   <data name="EditProfileWindowTitle" xml:space="preserve"><value>Edit connection profile</value></data>
@@ -670,7 +670,7 @@ The host can send keys and multiple lines of commands without asking again, with
   <data name="VaultRescueCopyExplanation" xml:space="preserve"><value>Copy the retained, authenticated vault to another file? The selected file will not be changed.</value></data>
   <data name="ProfileTrustReview" xml:space="preserve"><value>Review connection profile</value></data>
   <data name="ProfileConnectOnce" xml:space="preserve"><value>Connect once</value></data>
-  <data name="ProfileRegisterAndConnect" xml:space="preserve"><value>Register and connect</value></data>
+  <data name="ProfileImportAndConnect" xml:space="preserve"><value>Import and connect</value></data>
   <data name="ProfileTrustAndConnect" xml:space="preserve"><value>Trust this version and connect</value></data>
   <data name="ProfileTrustVersionChanged" xml:space="preserve"><value>The saved version differs from the version you trusted.</value></data>
   <data name="ProfileLogNetworkShare" xml:space="preserve"><value>The recording destination is a network share.</value></data>
@@ -705,4 +705,6 @@ The host can send keys and multiple lines of commands without asking again, with
   <data name="ProfileBackupCleanupFailed" xml:space="preserve"><value>The profile was saved, but TabTty could not delete this backup file.&#10;&#10;{0}</value></data>
   <data name="TransferAllUnresolved" xml:space="preserve"><value>Show all unresolved outcomes</value></data>
   <data name="ProfileListLastUsed" xml:space="preserve"><value>Last used</value></data>
+  <data name="ProfileImportLogDirectory" xml:space="preserve"><value>Importing uses this folder as the base for relative recording paths.</value></data>
+  <data name="ProfileImportRecovery" xml:space="preserve"><value>The import could not be verified. Check the following path before trying again.</value></data>
 </root>

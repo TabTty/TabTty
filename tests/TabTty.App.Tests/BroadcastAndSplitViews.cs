@@ -78,7 +78,8 @@ internal static partial class Program
                             throw new InvalidOperationException("The destination change notification appeared at the wrong time or below the owner.");
                         string before = string.Format(App.Text("AiTelnetTarget"), previous.LocalEndpoint);
                         string after = string.Format(App.Text("AiTelnetTarget"), endpoint.LocalEndpoint);
-                        string body = string.Format(App.Text("ReconnectDestinationDetails"), "Same name", before, after);
+                        string body = string.Format(App.Text("ReconnectDestinationDetails"),
+                            Path.GetFileNameWithoutExtension(path), before, after);
                         if (!FindControls<TextBlock>(notice).Any(label => label.Text == body) || FindControls<Button>(notice).Count() != 1)
                             throw new InvalidOperationException("The reconnect notification did not identify the old and new destinations.");
                         var pane = FindControls<TerminalSurface>(tab).Single();
@@ -439,7 +440,7 @@ internal static partial class Program
         async Task<(TerminalTab Tab, TcpClient Peer)> Connect(MainWindow window, string name, string codec,
             Func<Window, long, CancellationToken, Task<TerminalPaste?>>? capture = null)
         {
-            string path = Path.Combine(directory, $"broadcast-{codec}-{Guid.NewGuid():N}.ttty");
+            string path = Path.Combine(directory, name + ".ttty");
             await ConnectionProfile.CreateTelnet(name, "127.0.0.1", port, receiveEncoding: codec).SaveNewAsync(path, deadline.Token);
             var terminal = new TerminalTab(path, null, captureClipboard: capture);
             terminals.Add(terminal);

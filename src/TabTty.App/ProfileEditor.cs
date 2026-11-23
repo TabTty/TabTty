@@ -22,6 +22,8 @@ internal sealed class ProfileEditor
     private readonly Dictionary<string, TransportFields> transports = new(StringComparer.Ordinal);
     private readonly JsonObject commonConnection;
     private string selectedProtocol;
+    private TextBox profileName = null!;
+    internal string ProfileName => profileName.Text;
 
     public ProfileEditor(FormView form, ConnectionProfile profile, App app, bool creating = false, bool fromExplorer = false)
     {
@@ -51,8 +53,8 @@ internal sealed class ProfileEditor
 
         void BuildConnection()
         {
-            if (creating) draft["displayName"] = "";
-            String(draft, "displayName", "Name");
+            profileName = new TextBox { Text = creating ? "" : profile.DisplayName, MaxLength = 250 };
+            Add("Name", profileName);
             var groupName = new TextBox { Text = profile.GroupName ?? "", MaxLength = ConnectionProfile.MaximumGroupNameLength * 2 };
             Add("ProfileGroupName", groupName);
             apply.Add(() =>
@@ -210,6 +212,7 @@ internal sealed class ProfileEditor
 
     public ConnectionProfile GetDraft()
     {
+        ProfileCatalog.ValidateProfileName(ProfileName);
         foreach (Action action in apply) action();
         TransportFields selected = transports[selectedProtocol];
         foreach (Action action in selected.Apply) action();

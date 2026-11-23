@@ -39,8 +39,7 @@ internal sealed partial class ProfileCatalog
         trust[location] = version;
     }
 
-    private void CommitRegistration(string location, string path, ConnectionProfile profile, bool used, string version,
-        bool allowNameSuffix)
+    private void CommitRegistration(string location, string path, ConnectionProfile profile, bool used, string version)
     {
         LocalState.Change(state =>
         {
@@ -49,11 +48,10 @@ internal sealed partial class ProfileCatalog
             {
                 var registrations = state["registrations"]!.AsArray();
                 if (registrations.Count >= 10_000) throw new IOException(Text("LocalStateInvalid"));
-                string name = GetRegistrationName(state, location, profile.DisplayName, allowNameSuffix);
                 registration = new JsonObject
                 {
                     ["registrationId"] = Guid.NewGuid(), ["path"] = location, ["displayPath"] = path,
-                    ["name"] = name, ["favorite"] = false, ["lastUsed"] = null,
+                    ["favorite"] = false, ["lastUsed"] = null,
                 };
                 registrations.Add(registration);
                 StoreVersion(state, location, version);
@@ -64,14 +62,13 @@ internal sealed partial class ProfileCatalog
         RememberMetadata(location, profile);
     }
 
-    private async Task<string> RegisterSavedAsync(string path, ConnectionProfile profile, long reset, bool selectNewProfile = false,
-        bool createdInApp = false)
+    private async Task<string> RegisterSavedAsync(string path, ConnectionProfile profile, long reset, bool selectNewProfile = false)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         string location = await NormalizeLocationAsync(path, timeout.Token);
-        bool allowNameSuffix = !createdInApp && !await IsInProfileDirectoryAsync(location, timeout.Token);
-        if (reset != trustReset) throw new IOException(Text("ProfileTrustWriteFailed"));
-        CommitRegistration(location, path, profile, used: false, profile.TrustVersion, allowNameSuffix);
+        configuredFolder = null;
+        if (reset != trustReset || Path.GetDirectoryName(location) != ActiveFolder) throw new IOException(Text("ProfileTrustWriteFailed"));
+        CommitRegistration(location, path, profile, used: false, profile.TrustVersion);
         if (selectNewProfile) lastCreatedProfile = (lastCreatedProfile.Sequence + 1, location);
         ProfileSaved?.Invoke();
         return location;
@@ -91,51 +88,55 @@ internal sealed partial class ProfileCatalog
         { MainWindow.ShowError(owner, new IOException(Text("ProfileTrustWriteFailed"), error)); }
     }
 
-    internal async Task<ConnectionProfile> AdmitAsync(
-        Window? owner, string path, string? macroName, CancellationToken token)
+    internal sealed record OnceApproval(string Location, string Version);
+    internal sealed record Admission(ConnectionProfile Profile, OnceApproval? Once);
+
+    internal async Task<ConnectionProfile> AdmitAsync(Window? owner, string path, string? macroName, CancellationToken token) =>
+        (await AdmitAsync(owner, path, macroName, token, reconnect: false, previousOnce: null)).Profile;
+
+    internal async Task<Admission> AdmitAsync(Window? owner, string path, string? macroName, CancellationToken token,
+        bool reconnect, OnceApproval? previousOnce)
     {
         ConnectionProfile profile = await LoadForUseAsync(owner, path, token, macroName);
-        string? location = profile.LocalOpeningLocation;
-        if (location is null)
-        {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
-            timeout.CancelAfter(TimeSpan.FromSeconds(10));
-            location = await NormalizeLocationAsync(path, timeout.Token);
-        }
-
+        string location = await ProfileLocationAsync(profile, token);
         string version = profile.TrustVersion;
+        var once = new OnceApproval(location, version);
         while (true)
         {
             token.ThrowIfCancellationRequested();
+            string folder = app.ProfileSaveDirectory;
             var before = ReadTrust(location);
-            bool register = macroName is null && before.Registration is null;
-            if (register || before.Version != version)
+            bool unregistered = macroName is null && (before.Registration is null || Path.GetDirectoryName(location) != ActiveFolder);
+            if (unregistered && previousOnce == once)
+                return new(profile, once);
+            if (!unregistered && before.Version == version)
+                return new(profile, null);
+
+            string details = Describe(location, profile, macroName,
+                before.Version is not null || previousOnce is not null);
+            if (unregistered && Path.GetDirectoryName(location) != ActiveFolder)
+                details += "\n\n" + Text("ProfileImportLogDirectory") + "\n" + PermissionDisplay.Literal(folder);
+            var choice = await AskAsync(owner, "ProfileTrustReview", details,
+                "ProfileConnectOnce", unregistered ? "ProfileImportAndConnect" : "ProfileTrustAndConnect", token);
+            if (choice == ProfileAnswer.Cancel) throw new SshInteractionCancelledException();
+            token.ThrowIfCancellationRequested();
+            if (ReadTrust(location) != before || folder != app.ProfileSaveDirectory) continue;
+            if (choice == ProfileAnswer.Once)
+                return new(profile, unregistered && (!reconnect || previousOnce is not null) ? once : null);
+            if (!unregistered)
             {
-                var choice = await AskAsync(owner, "ProfileTrustReview",
-                    Describe(location, profile, macroName, before.Version is not null),
-                    "ProfileConnectOnce", register ? "ProfileRegisterAndConnect" : "ProfileTrustAndConnect", token);
-                if (choice == ProfileAnswer.Cancel) throw new SshInteractionCancelledException();
-                token.ThrowIfCancellationRequested();
-                if (ReadTrust(location) != before) continue;
-                if (choice == ProfileAnswer.Remember)
-                {
-                    if (register)
-                    {
-                        await registrationChanges.WaitAsync(token);
-                        try
-                        {
-                            await ReadLegacyNamesAsync(token);
-                            bool allowSuffix = !await IsInProfileDirectoryAsync(location, token);
-                            if (ReadTrust(location) != before) continue;
-                            CommitRegistration(location, path, profile, used: true, version, allowSuffix);
-                            ProfileSaved?.Invoke();
-                        }
-                        finally { registrationChanges.Release(); }
-                    }
-                    else LocalState.Change(state => StoreVersion(state, location, version));
-                }
+                LocalState.Change(state => StoreVersion(state, location, version));
+                return new(profile, null);
             }
-            return profile;
+
+            await registrationChanges.WaitAsync(token);
+            try
+            {
+                if (ReadTrust(location) != before || folder != app.ProfileSaveDirectory) continue;
+                var imported = await ImportRevisionAsync(profile, location, folder, before, used: true, token);
+                if (imported is not null) return new(imported, null);
+            }
+            finally { registrationChanges.Release(); }
         }
     }
 

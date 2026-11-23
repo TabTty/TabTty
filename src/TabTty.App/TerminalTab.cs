@@ -216,6 +216,8 @@ internal sealed partial class TerminalTab : UserControl
     {
         if (path == previous) path = destination;
     }
+    private bool hasAdmission;
+    private ProfileCatalog.OnceApproval? previousOnce;
     private Task connectionCompletion = Task.CompletedTask;
     public Task Completion => Macro is null ? connectionCompletion : Task.WhenAll(connectionCompletion, Macro.Completion);
     public bool CanTransfer => !ClosePending && IsRunning && !stop.IsCancellationRequested && session?.CanTransfer == true;
@@ -323,7 +325,12 @@ internal sealed partial class TerminalTab : UserControl
             {
                 Window? owner = MacroWindow ?? Window.GetWindow(this);
                 string attemptPath = path;
-                var profile = await app.Profiles.AdmitAsync(owner, attemptPath, Macro?.FullPath, startup.Token);
+                var admission = await app.Profiles.AdmitAsync(owner, attemptPath, Macro?.FullPath, startup.Token,
+                    reconnect: hasAdmission, previousOnce);
+                var profile = admission.Profile;
+                hasAdmission = true;
+                previousOnce = admission.Once;
+                attemptPath = path = profile.OpenedPath;
                 RecordingSettings? logging = null;
                 if (profile.RecordsOutput)
                 {

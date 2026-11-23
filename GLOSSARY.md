@@ -12,8 +12,16 @@ authentication choices, terminal settings, and session-logging settings.
 A set of connection profiles that share a group name.
 
 **Profile registration**:
-A local entry for a profile file in TabTty's profile list. An externally moved
-file is registered as a new profile rather than continuing its old registration.
+A local entry for a file directly in a connection profile folder. A
+registration appears in the profile list when its folder is selected.
+
+**Profile import**:
+Adding a profile to the selected folder's registrations. A file outside that
+folder is registered by its new copy.
+
+**Profile name**:
+The name of the opened profile file without its `.ttty` extension. The
+registration uses that same name.
 
 **Profile trust**:
 Permission remembered for the current user on this PC to connect with a particular

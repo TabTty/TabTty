@@ -67,15 +67,21 @@ and click the star at the start of a row to change its favorite status.
 Profiles with a blank group name appear under **Ungrouped** and directly in
 the + menu. Named groups appear as submenus in the + menu.
 
+Choose **Import file** in profile management to add a file to your list. TabTty
+copies external files into your configured profile folder and keeps the original.
+The default folder is `TabTty\Profiles` in Windows Documents. The filename
+without `.ttty` becomes the profile name.
+
 Choose **File → Open profile…** to connect from an existing file. In Windows,
 associate `.ttty` and `.tttykey` with TabTty to use these File Explorer commands.
 
-- For `.ttty`, choose **Open**, double-click, or press Enter to register the
-  profile and connect. A multi-selection starts one connection tab per file
+- For `.ttty`, choose **Open**, double-click, or press Enter to connect.
+  For an unregistered file, choose **Connect once** or **Import and connect**.
+  A multi-selection starts one connection tab per file
   in the most recently active terminal window.
 - Choose **Edit** for `.ttty` to open one editor window per selected file.
-  Save writes to the opened profile. Renaming a registered profile in the
-  configured save folder also renames its file. Look under **Show more options** for Edit.
+  When you change a profile's name and save, TabTty renames its file in the
+  same folder. Look under **Show more options** for Edit.
 - For `.tttykey`, choose **Open** or **Edit**, or double-click a single file
   to open its vault editor. The selected vault uses the same unlock state in
   the standalone window, the TabTty management tab, and connections.

@@ -2,7 +2,7 @@ using System.Security.Cryptography;
 
 namespace TabTty.Core;
 
-internal enum FilePublicationStatus { Verified, Unchanged, Conflict, UnverifiedPreservation }
+internal enum FilePublicationStatus { Verified, Unchanged, Conflict, UnverifiedPreservation, Occupied }
 internal enum FileImageStatus { Missing, Candidate, Original, Other, Unavailable }
 
 internal sealed record FilePublicationResult(FilePublicationStatus Status, FileImageStatus Target,
@@ -18,7 +18,7 @@ internal sealed class FilePublicationException(string message, FilePublicationRe
 internal sealed record FilePublicationRequest(string Target, byte[] Candidate, byte[]? OriginalDigest,
     string? Preservation, int MaximumBytes, Func<string, FileStream>? Create = null, Action<string>? Validate = null,
     bool Recovery = false, bool CreateDirectory = false, Action<string, string, string?>? Issue = null,
-    bool RemovePreservationOnVerified = false);
+    bool RemovePreservationOnVerified = false, bool ExclusiveCreate = false);
 
 internal enum FilePublicationPhase { Preparing, MutationIssued, Retired }
 
@@ -464,7 +464,7 @@ internal static class VerifiedFilePublication
     private static FilePublicationResult PublishAdmitted(Admission admitted, CancellationToken token)
     {
         var (target, image, originalDigest, preservation, maxBytes, create, validate, recovery, createDirectory, issue,
-            removePreservationOnVerified) = admitted.Request;
+            removePreservationOnVerified, exclusiveCreate) = admitted.Request;
         string staged = admitted.Stage;
         var lease = admitted.Namespace;
         Guid operationId = admitted.Observation.Id;
@@ -494,7 +494,8 @@ internal static class VerifiedFilePublication
             var before = Inspect(target, expected, originalDigest, maxBytes, out var originalIdentity);
             if (before != (originalDigest is null ? FileImageStatus.Missing : FileImageStatus.Original) ||
                 !targetNames.AsSpan().SequenceEqual(FileObjectIdentity.NamespaceKeys(target)))
-                return new(FilePublicationStatus.Conflict, before, FileImageStatus.Unavailable,
+                return new(exclusiveCreate && Path.Exists(target) ? FilePublicationStatus.Occupied : FilePublicationStatus.Conflict,
+                    before, FileImageStatus.Unavailable,
                     target, preservation, staged, null, operationId);
             token.ThrowIfCancellationRequested();
             prepared?.Dispose();
@@ -515,7 +516,7 @@ internal static class VerifiedFilePublication
 
             var evidence = new Evidence(operationId, target, preservation, staged, expected, originalDigest?.ToArray(),
                 maxBytes, error, lease.Names, [.. targetNames, FileKey(created!.Value)], created.Value,
-                CandidateLength: image.LongLength,
+                RequireInstalledIdentity: exclusiveCreate, CandidateLength: image.LongLength,
                 RemovablePreservationIdentity: removePreservationOnVerified ? originalIdentity : null);
             FilePublicationResult result;
             if (evidence.RemovablePreservationIdentity is not null)
@@ -527,12 +528,17 @@ internal static class VerifiedFilePublication
                     result = RemoveVerifiedPreservation(evidence, result);
             }
             else result = Observe(evidence);
-            if (result.Status == FilePublicationStatus.Unchanged && result.Candidate == FileImageStatus.Candidate)
+            bool occupied = exclusiveCreate && result.Target != FileImageStatus.Candidate &&
+                error is IOException collision && (collision.HResult & 0xffff) is 80 or 183;
+            if ((result.Status == FilePublicationStatus.Unchanged || occupied) && result.Candidate == FileImageStatus.Candidate)
             {
                 try
                 {
-                    FileObjectIdentity.DeleteIfSame(staged, created.Value);
+                    FileObjectIdentity.DeleteIfSame(staged, created.Value, expectedDigest: occupied ? expected : null,
+                        maximumBytes: maxBytes);
                     result = result with { Candidate = Inspect(staged, evidence, isStage: true) };
+                    if (occupied && result.Candidate == FileImageStatus.Missing)
+                        return result with { Status = FilePublicationStatus.Occupied };
                 }
                 catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException)
                 {

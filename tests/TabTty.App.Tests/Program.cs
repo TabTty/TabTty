@@ -764,7 +764,7 @@ internal static partial class Program
         string directory = Directory.CreateTempSubdirectory("TabTty-editor-test-").FullName;
         try
         {
-            string path = Path.Combine(directory, "fixture.ttty");
+            string path = Path.Combine(directory, "Initial.ttty");
             var profile = ConnectionProfile.CreateTelnet("Initial", "localhost");
             await profile.SaveNewAsync(path);
             var form = new FormView();
@@ -810,6 +810,9 @@ internal static partial class Program
             {
                 name.Text = revision;
                 await ClickSave();
+                string renamed = Path.Combine(directory, revision + ".ttty");
+                if (File.Exists(path)) throw new InvalidOperationException("The old profile name was not removed.");
+                path = renamed;
                 if (form.HasUnsavedChanges || completed is not null ||
                     (await ConnectionProfile.LoadAsync(path)).DisplayName != revision)
                     throw new InvalidOperationException("Saving did not advance the saved revision while keeping the tab open.");
@@ -1803,7 +1806,7 @@ internal static partial class Program
                     logDefaults: originalLogDefaults);
         }
 
-        static void CheckTabHeader(TabItem tab, bool disconnected, string caption = "Close test", string? warning = null)
+        static void CheckTabHeader(TabItem tab, bool disconnected, string caption = "auto-close", string? warning = null)
         {
             var header = (DockPanel)tab.Header;
             var icon = header.Children.OfType<System.Windows.Shapes.Path>().Single(path => path.Name == "DisconnectedIndicator");
@@ -2056,7 +2059,7 @@ internal static partial class Program
                 NetworkStream wire = peer.GetStream();
                 await wire.ReadExactlyAsync(new byte[15], deadline.Token);
                 await connected.Task.WaitAsync(deadline.Token);
-                Equal(caption, "Input test");
+                Equal(caption, "input");
 
                 var surface = FindControls<TerminalSurface>(tab).Single();
                 var scroller = surface.Scroller;
@@ -2089,7 +2092,7 @@ internal static partial class Program
                 Equal(Encoding.ASCII.GetString(command.ToArray()), "sudo -i");
                 peer.Client.Shutdown(SocketShutdown.Send);
                 await tab.Completion.WaitAsync(deadline.Token);
-                Equal(caption, "Input test");
+                Equal(caption, "input");
                 await CheckTabSwitchingAfterDisconnect();
 
                 async Task CheckTabSwitchingAfterDisconnect()
