@@ -194,7 +194,7 @@ internal sealed class VaultController(App app) : IDisposable
     private void BuildManagement(FormView form, Func<VaultFileController> target)
     {
         form.CanDismissBusyView = () => target().CanDismissMasterChange(form.OwnerWindow);
-        var list = new ListView();
+        var list = new ListView { SelectionMode = SelectionMode.Extended };
         var columns = new DetailsColumns(list);
         columns.Add("ProfileListName", nameof(VaultEntryInfo.Name), 220);
         var kindColumn = columns.Add("VaultEntryType", nameof(VaultEntryInfo.PublicType), 160);
@@ -226,8 +226,8 @@ internal sealed class VaultController(App app) : IDisposable
 
         var menu = new ContextMenu();
         list.ContextMenu = menu;
-        (VaultFileController File, VaultEntryInfo Entry)? menuTarget = null;
-        AddEntryAction("VaultEditEntry", static (file, window, entry) => file.EditEntryAsync(window, entry));
+        (VaultFileController File, VaultEntryInfo[] Entries)? menuTarget = null;
+        MenuItem editEntry = AddEntryAction("VaultEditEntry", static (file, window, entry) => file.EditEntryAsync(window, entry));
         MenuItem copyMacroReference = AddEntryAction("CopyMacroReference", static (file, _, entry) =>
         {
             if (entry.Kind == "password")
@@ -235,7 +235,14 @@ internal sealed class VaultController(App app) : IDisposable
             return Task.CompletedTask;
         });
         menu.Items.Add(new Separator());
-        AddEntryAction("VaultDeleteEntry", DeleteEntryAsync);
+        var deleteEntries = new MenuItem();
+        form.AddLocalizedUpdate(() => deleteEntries.Header = Text("VaultDeleteEntry"));
+        deleteEntries.Click += async (_, _) =>
+        {
+            if (menuTarget is { } selected)
+                await RunAction(selected.File, (file, window) => file.DeleteEntriesAsync(window, selected.Entries, form));
+        };
+        menu.Items.Add(deleteEntries);
 
         form.AddActionRow(() =>
         {
@@ -273,7 +280,7 @@ internal sealed class VaultController(App app) : IDisposable
             AutomationProperties.SetName(list, Text("VaultEntries"));
             UpdateEntriesAndStatus(refreshLabels: true);
         });
-        search.TextChanged += (_, _) => RefreshList((list.SelectedItem as VaultEntryInfo)?.Name);
+        search.TextChanged += (_, _) => RefreshList(SelectedNames());
         list.ContextMenuOpening += (_, args) =>
         {
             VaultEntryInfo? entry = args.CursorLeft == -1 ? list.SelectedItem as VaultEntryInfo
@@ -283,14 +290,20 @@ internal sealed class VaultController(App app) : IDisposable
                 args.Handled = true;
                 return;
             }
-            list.SelectedItem = entry;
-            (list.ItemContainerGenerator.ContainerFromItem(entry) as ListViewItem)?.Focus();
+            if (!list.SelectedItems.Contains(entry))
+            {
+                list.SelectedItem = entry;
+                (list.ItemContainerGenerator.ContainerFromItem(entry) as ListViewItem)?.Focus();
+            }
         };
         menu.Opened += (_, _) =>
         {
-            menuTarget = listedFile is { Unlocked: not null } file && list.SelectedItem is VaultEntryInfo entry
-                ? (file, entry) : null;
-            copyMacroReference.Visibility = menuTarget?.Entry.Kind == "password" ? Visibility.Visible : Visibility.Collapsed;
+            var entries = list.SelectedItems.Cast<VaultEntryInfo>().ToArray();
+            menuTarget = listedFile is { Unlocked: not null } file && entries.Length != 0 ? (file, entries) : null;
+            editEntry.IsEnabled = menuTarget is { Entries.Length: 1 };
+            deleteEntries.IsEnabled = menuTarget is not null;
+            copyMacroReference.Visibility = menuTarget is { Entries: [{ Kind: "password" }] }
+                ? Visibility.Visible : Visibility.Collapsed;
         };
         list.PreviewMouseLeftButtonDown += async (_, args) =>
         {
@@ -302,9 +315,11 @@ internal sealed class VaultController(App app) : IDisposable
         list.PreviewKeyDown += async (_, args) =>
         {
             if (args.Key != Key.Delete || args.KeyboardDevice.Modifiers != ModifierKeys.None ||
-                listedFile is not { Unlocked: not null } file || list.SelectedItem is not VaultEntryInfo entry) return;
+                listedFile is not { Unlocked: not null } file || list.SelectedItems.Count == 0) return;
             args.Handled = true;
-            if (!args.IsRepeat) await RunEntryAction(file, entry, DeleteEntryAsync);
+            if (args.IsRepeat) return;
+            var entries = list.SelectedItems.Cast<VaultEntryInfo>().ToArray();
+            await RunAction(file, (current, window) => current.DeleteEntriesAsync(window, entries, form));
         };
         form.Loaded += (_, _) => { ManagementChanged += UpdateEntries; UpdateEntries(); };
         form.Unloaded += (_, _) => ManagementChanged -= UpdateEntries;
@@ -322,22 +337,23 @@ internal sealed class VaultController(App app) : IDisposable
             form.AddLocalizedUpdate(() => item.Header = Text(key));
             item.Click += async (_, _) =>
             {
-                if (menuTarget is { } selected) await RunEntryAction(selected.File, selected.Entry, action);
+                if (menuTarget is { Entries: [var entry] } selected)
+                    await RunEntryAction(selected.File, entry, action);
             };
             menu.Items.Add(item);
             return item;
         }
 
         Task RunEntryAction(VaultFileController file, VaultEntryInfo entry,
-            Func<VaultFileController, Window, VaultEntryInfo, Task> action) => form.RunAsync(() =>
+            Func<VaultFileController, Window, VaultEntryInfo, Task> action) =>
+            RunAction(file, (current, window) => action(current, window, entry));
+
+        Task RunAction(VaultFileController file, Func<VaultFileController, Window, Task> action) => form.RunAsync(() =>
         {
             if (!ReferenceEquals(file, target()) || file.Unlocked is null) return Task.CompletedTask;
             Window window = form.OwnerWindow;
-            return file.RunAsync(window, () => action(file, window, entry));
+            return file.RunAsync(window, () => action(file, window));
         });
-
-        Task DeleteEntryAsync(VaultFileController file, Window owner, VaultEntryInfo entry) =>
-            file.DeleteEntryAsync(owner, entry, form);
 
         void UpdateEntries() => UpdateEntriesAndStatus(refreshLabels: false);
 
@@ -353,7 +369,7 @@ internal sealed class VaultController(App app) : IDisposable
                 listedFile = file;
                 listedEntries = file.ManagementEntries;
                 listedUnlocked = unlocked;
-                RefreshList(sameFile ? (list.SelectedItem as VaultEntryInfo)?.Name : null);
+                RefreshList(sameFile ? SelectedNames() : null);
             }
             int revision = ++statusRevision;
             foreach (Button action in requiresVault) action.IsEnabled = true;
@@ -364,7 +380,10 @@ internal sealed class VaultController(App app) : IDisposable
             }
         }
 
-        void RefreshList(string? selection)
+        HashSet<string> SelectedNames() =>
+            list.SelectedItems.Cast<VaultEntryInfo>().Select(entry => entry.Name).ToHashSet(StringComparer.Ordinal);
+
+        void RefreshList(HashSet<string>? selection)
         {
             if (listedEntries is null) return;
             string query = search.Text;
@@ -375,7 +394,9 @@ internal sealed class VaultController(App app) : IDisposable
                 entry.Fingerprint?.Contains(query, StringComparison.OrdinalIgnoreCase) == true).ToArray();
             list.ItemsSource = visible;
             columns.ApplySort();
-            list.SelectedItem = visible.FirstOrDefault(entry => entry.Name == selection);
+            if (selection is not null)
+                foreach (VaultEntryInfo entry in visible.Where(entry => selection.Contains(entry.Name)))
+                    list.SelectedItems.Add(entry);
             if (listedFile?.Unlocked is not null)
                 form.SetStatusMessage(visible.Length != 0 ? "" : Text(listedEntries.Count == 0 ? "VaultEntriesEmpty" : "NoSearchMatch"));
         }

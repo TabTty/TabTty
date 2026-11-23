@@ -166,9 +166,58 @@ internal static partial class Program
                 throw new InvalidOperationException("Rename only also changed the registered profile.");
             Console.WriteLine("PASS VaultRenameUpdatesOnlyReviewedRegisteredProfiles");
 
+            const string another = "Another password";
+            _ = host.Dispatcher.BeginInvoke(() => Click(host, "AddVaultPassword"));
+            var add = await FindDialogAsync("AddVaultPassword", form: true);
+            FindControls<TextBox>(add).Single().Text = another;
+            FindControls<PasswordBox>(add).Single().Password = "fixture secret";
+            Click(add, "Save");
+            await WaitIdleAsync();
+            if (list.SelectionMode != SelectionMode.Extended || list.Items.Count != 2)
+                throw new InvalidOperationException("The vault list did not allow multiple entries to be selected.");
+            list.SelectAll();
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                ContextMenu menu = await OpenMenuAsync();
+                MenuItem editAction = EntryAction(menu, "VaultEditEntry");
+                MenuItem deleteAction = EntryAction(menu, "VaultDeleteEntry");
+                if (editAction.IsEnabled || !deleteAction.IsEnabled)
+                    throw new InvalidOperationException("The vault menu offered the wrong actions for multiple entries.");
+                _ = host.Dispatcher.BeginInvoke(() => deleteAction.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent)));
+                var delete = await FindDialogAsync("Vault", form: false);
+                if (!FindControls<TextBlock>(delete).Any(block => block.Text.Contains("Final password") &&
+                    block.Text.Contains(another)))
+                    throw new InvalidOperationException("The confirmation did not identify both selected vault entries.");
+                Click(delete, attempt == 0 ? "No" : "Yes");
+                await WaitIdleAsync();
+                if (list.Items.Count != (attempt == 0 ? 2 : 0))
+                    throw new InvalidOperationException("The vault bulk deletion did not follow the confirmation.");
+            }
+            Console.WriteLine("PASS VaultManagementDeletesMultipleSelectedEntries");
+
             async Task<(Window Edit, Window Confirm)> OpenRenameAsync(string newName)
             {
                 list.SelectedIndex = 0;
+                var editAction = EntryAction(await OpenMenuAsync(), "VaultEditEntry");
+                _ = host.Dispatcher.BeginInvoke(() => editAction.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent, editAction)));
+                var edit = await FindDialogAsync("EditCredential", form: true);
+                AssertSaveRequiresExplicitActivation((FormView)edit.Content, "OK");
+                if (FindControls<CheckBox>(edit).Single().Content is not TextBlock caption ||
+                    caption.Text != App.Text("ReplacePassword"))
+                    throw new InvalidOperationException("The password replacement checkbox did not display its caption inline.");
+                var name = FindControls<TextBox>(edit).Single();
+                if (name.Text != ((VaultEntryInfo)list.SelectedItem).Name)
+                    throw new InvalidOperationException("The vault editor did not show the selected credential name.");
+                name.Text = newName;
+                _ = edit.Dispatcher.BeginInvoke(() => Click(edit, "OK"));
+                return (edit, await FindDialogAsync("EditCredential", form: false));
+            }
+
+            static MenuItem EntryAction(ContextMenu menu, string key) =>
+                menu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, App.Text(key)));
+
+            async Task<ContextMenu> OpenMenuAsync()
+            {
                 ContextMenu menu = list.ContextMenu;
                 var opened = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 RoutedEventHandler onOpened = (_, _) => opened.TrySetResult();
@@ -184,19 +233,7 @@ internal static partial class Program
                     menu.Opened -= onOpened;
                     menu.IsOpen = false;
                 }
-                var editAction = menu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, App.Text("VaultEditEntry")));
-                _ = host.Dispatcher.BeginInvoke(() => editAction.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent, editAction)));
-                var edit = await FindDialogAsync("EditCredential", form: true);
-                AssertSaveRequiresExplicitActivation((FormView)edit.Content, "OK");
-                if (FindControls<CheckBox>(edit).Single().Content is not TextBlock caption ||
-                    caption.Text != App.Text("ReplacePassword"))
-                    throw new InvalidOperationException("The password replacement checkbox did not display its caption inline.");
-                var name = FindControls<TextBox>(edit).Single();
-                if (name.Text != ((VaultEntryInfo)list.SelectedItem).Name)
-                    throw new InvalidOperationException("The vault editor did not show the selected credential name.");
-                name.Text = newName;
-                _ = edit.Dispatcher.BeginInvoke(() => Click(edit, "OK"));
-                return (edit, await FindDialogAsync("EditCredential", form: false));
+                return menu;
             }
         }
         finally

@@ -320,6 +320,8 @@
   <data name="EditCredential" xml:space="preserve"><value>Edit credential</value></data>
   <data name="DeleteCredential" xml:space="preserve"><value>Delete credential</value></data>
   <data name="ReplacePassword" xml:space="preserve"><value>Replace password</value></data>
+  <data name="ReplacePrivateKey" xml:space="preserve"><value>Replace private key</value></data>
+  <data name="DeleteCredentialsWarning" xml:space="preserve"><value>Delete the {0} selected credentials? Referring profiles will require another credential before their next authentication.</value></data>
   <data name="DeleteCredentialWarning" xml:space="preserve"><value>Delete this credential? Referring profiles will require another credential before their next authentication.</value></data>
   <data name="UpdateCredentialWarning" xml:space="preserve"><value>Update this shared credential for future authentication?</value></data>
   <data name="AddSshMethod" xml:space="preserve"><value>Add authentication method</value></data>

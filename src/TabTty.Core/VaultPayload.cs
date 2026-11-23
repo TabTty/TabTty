@@ -67,9 +67,9 @@ internal static class VaultPayload
     }
 
     public static byte[] UpdateEntry(byte[] payload, Guid vaultId, string originalName, string name,
-        ReadOnlySpan<byte> password, bool changePassword)
+        ReadOnlySpan<byte> secret, bool replaceSecret, VaultEntryInfo? replacementKey = null)
     {
-        var entries = Read(payload, vaultId, originalName, out byte[]? oldSecret, out _);
+        var entries = Read(payload, vaultId, replaceSecret ? null : originalName, out byte[]? oldSecret, out _);
         try
         {
             var entry = entries.SingleOrDefault(entry => entry.Name == originalName)
@@ -77,19 +77,19 @@ internal static class VaultPayload
             ValidateName(name);
             if (name != originalName && entries.Any(candidate => candidate.Name == name))
                 throw new DuplicateCredentialNameException();
-            if (changePassword)
+            if (replaceSecret)
             {
-                if (entry.Kind != "password") throw new ArgumentException("The selected entry is not a password.");
-                ValidatePassword(password);
+                string expectedKind = replacementKey is null ? "password" : "privateKey";
+                if (entry.Kind != expectedKind) throw new ArgumentException("The selected entry has the wrong credential type.");
+                if (replacementKey is null) ValidatePassword(secret);
             }
             var (start, end) = Locate(payload, originalName);
-            var buffer = new OwnedBuffer(payload.Length + 16384 + Base64.GetMaxEncodedToUtf8Length(password.Length));
+            var buffer = new OwnedBuffer(payload.Length + 16384 + Base64.GetMaxEncodedToUtf8Length(secret.Length));
             try
             {
                 buffer.Append(payload.AsSpan(0, start));
                 using (var writer = new Utf8JsonWriter(buffer))
-                    WriteEntry(writer, entry with { Name = name },
-                        changePassword ? password : oldSecret!);
+                    WriteEntry(writer, (replacementKey ?? entry) with { Name = name }, replaceSecret ? secret : oldSecret!);
                 buffer.Append(payload.AsSpan(end));
                 return buffer.Written.ToArray();
             }
@@ -101,24 +101,33 @@ internal static class VaultPayload
         }
     }
 
-    public static byte[] DeleteEntry(byte[] payload, Guid vaultId, string originalName)
+    public static byte[] DeleteEntries(byte[] payload, Guid vaultId, IReadOnlySet<string> names)
     {
-        if (!Read(payload, vaultId, null, out _, out _).Any(entry => entry.Name == originalName))
+        var entries = Read(payload, vaultId, null, out _, out _);
+        if (entries.Count(entry => names.Contains(entry.Name)) != names.Count)
             throw new KeyNotFoundException("The credential entry is missing.");
-        var (start, end) = Locate(payload, originalName);
-        int before = start;
-        while (before > 0 && payload[before - 1] is 9 or 10 or 13 or 32) before--;
-        if (before > 0 && payload[before - 1] == ',') start = before - 1;
-        else
+        var reader = new Utf8JsonReader(payload);
+        while (reader.Read() && reader.TokenType != JsonTokenType.StartArray) { }
+        var buffer = new OwnedBuffer(payload.Length);
+        try
         {
-            int after = end;
-            while (after < payload.Length && payload[after] is 9 or 10 or 13 or 32) after++;
-            if (after < payload.Length && payload[after] == ',') end = after + 1;
+            buffer.Append(payload.AsSpan(0, (int)reader.BytesConsumed));
+            bool first = true;
+            foreach (VaultEntryInfo entry in entries)
+            {
+                reader.Read();
+                int start = (int)reader.TokenStartIndex;
+                reader.Skip();
+                if (names.Contains(entry.Name)) continue;
+                if (!first) buffer.Append(","u8);
+                buffer.Append(payload.AsSpan(start, (int)reader.BytesConsumed - start));
+                first = false;
+            }
+            reader.Read();
+            buffer.Append(payload.AsSpan((int)reader.TokenStartIndex));
+            return buffer.Written.ToArray();
         }
-        byte[] result = new byte[payload.Length - end + start];
-        payload.AsSpan(0, start).CopyTo(result);
-        payload.AsSpan(end).CopyTo(result.AsSpan(start));
-        return result;
+        finally { buffer.Clear(); }
     }
 
     private static (int Start, int End) Locate(ReadOnlySpan<byte> payload, string originalName)

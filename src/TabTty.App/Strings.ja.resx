@@ -320,6 +320,8 @@
   <data name="EditCredential" xml:space="preserve"><value>認証情報を編集</value></data>
   <data name="DeleteCredential" xml:space="preserve"><value>認証情報を削除</value></data>
   <data name="ReplacePassword" xml:space="preserve"><value>パスワードを置き換える</value></data>
+  <data name="ReplacePrivateKey" xml:space="preserve"><value>秘密鍵を置き換える</value></data>
+  <data name="DeleteCredentialsWarning" xml:space="preserve"><value>選択した {0} 件の認証情報を削除しますか。参照するプロファイルは、次回認証時に別の認証情報が必要になります。</value></data>
   <data name="DeleteCredentialWarning" xml:space="preserve"><value>この認証情報を削除しますか。参照するプロファイルは、次回認証時に別の認証情報が必要になります。</value></data>
   <data name="UpdateCredentialWarning" xml:space="preserve"><value>今後の接続に使う共有認証情報を更新しますか。</value></data>
   <data name="AddSshMethod" xml:space="preserve"><value>認証方式を追加</value></data>

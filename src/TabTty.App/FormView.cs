@@ -555,10 +555,10 @@ internal sealed class FormView : DockPanel
         return text;
     }
 
-    public void AddButtons(Action save, string acceptKey = "Save", bool cancelDefault = false, string cancelKey = "Cancel") =>
+    public Button AddButtons(Action save, string acceptKey = "Save", bool cancelDefault = false, string cancelKey = "Cancel") =>
         AddAsyncButtons(() => { save(); return Task.FromResult(true); }, acceptKey, cancelDefault, cancelKey);
 
-    public void AddAsyncButtons(Func<Task<bool>> save, string acceptKey = "Save", bool cancelDefault = false,
+    public Button AddAsyncButtons(Func<Task<bool>> save, string acceptKey = "Save", bool cancelDefault = false,
         string cancelKey = "Cancel", bool acceptOnEnter = true) =>
         AddButtonRow(save, acceptKey, cancelDefault, cancelKey, () => Cancel(), acceptOnEnter: acceptOnEnter);
 
@@ -591,7 +591,7 @@ internal sealed class FormView : DockPanel
             updateEditorButtons?.Invoke();
     }
 
-    private void AddButtonRow(Func<Task<bool>> save, string acceptKey, bool cancelDefault, string cancelKey,
+    private Button AddButtonRow(Func<Task<bool>> save, string acceptKey, bool cancelDefault, string cancelKey,
         Action cancelAction, Func<bool>? isCreating = null, bool acceptOnEnter = true)
     {
         var buttons = new StackPanel
@@ -654,6 +654,7 @@ internal sealed class FormView : DockPanel
             Children.Insert(0, footer);
         }
         else fields.Children.Add(buttons);
+        return apply;
     }
 
     internal async Task RunAsync(Func<Task> action)

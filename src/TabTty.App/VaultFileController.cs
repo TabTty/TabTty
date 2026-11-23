@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using Microsoft.Win32;
 using TabTty.Core;
 using static TabTty.App.App;
@@ -412,11 +413,22 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
                 .Select(entry => new CredentialChoice(entry)).ToArray(),
             MinHeight = 120, MaxHeight = 350 };
         form.AddField("VaultEntries", list);
-        form.AddButtons(() =>
+        Button accept = form.AddButtons(() =>
         {
             if (list.SelectedItem is not CredentialChoice) throw new ArgumentException(Text(title));
         }, acceptKey: request is null ? title : "Authenticate", cancelDefault: request is not null,
             cancelKey: request is null ? "Cancel" : "CancelSshConnection");
+        if (request is null)
+        {
+            list.PreviewMouseLeftButtonDown += (_, args) =>
+            {
+                if (args.ClickCount != 2 || args.OriginalSource is not DependencyObject origin ||
+                    ItemsControl.ContainerFromElement(list, origin) is not ListBoxItem { Content: CredentialChoice choice }) return;
+                args.Handled = true;
+                list.SelectedItem = choice;
+                accept.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            };
+        }
         return (form, list);
     }
 
@@ -424,59 +436,65 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
     {
         if (await UnlockFileAsync(owner) is not { } unlocked || !owner.IsLoaded) return;
         long revision = unlocked.Revision;
-        var dialog = new OpenFileDialog { Title = Text("ImportPrivateKey"), Multiselect = false };
-        if (app.Modal(() => dialog.ShowDialog(owner)) != true) return;
+        if (SelectPrivateKeyFile(owner, "ImportPrivateKey") is not { } path) return;
         var form = new MainWindow.FormWindow(owner, Text("ImportPrivateKey"), WindowIcons.Vault);
-        var name = new TextBox { Text = Path.GetFileName(dialog.FileName), MaxLength = 512 };
+        var name = new TextBox { Text = Path.GetFileName(path), MaxLength = 512 };
         form.AddField("CredentialName", name);
         form.AddAsyncButtons(async () =>
         {
             ValidateCredentialName(unlocked, name.Text);
-            using var source = await Task.Run(() => CredentialVault.ReadPrivateKeySource(dialog.FileName));
-            return await ImportAsync(source);
-        });
-        async Task<bool> ImportAsync(CredentialVault.PrivateKeySource source)
-        {
             string keyName = name.Text;
-            try { await ImportReviewedAsync(); }
-            catch (PrivateKeyPassphraseRequiredException)
-            {
-                var prompt = new MainWindow.FormWindow(form, Text("SourceKeyPassphrase"), WindowIcons.Vault);
-                var password = new PasswordBox { MaxLength = 16 * 1024 };
-                prompt.AddField("SourceKeyPassphrase", password);
-                prompt.Loaded += (_, _) => password.Focus();
-                prompt.AddButtons(() => { }, acceptKey: "ImportPrivateKey");
-                try
-                {
-                    if (app.Modal(prompt.ShowDialog) != true) return false;
-                    char[] characters = ReadPassword(password);
-                    try
-                    {
-                        byte[] bytes = new byte[StrictUtf8.GetByteCount(characters)];
-                        try
-                        {
-                            StrictUtf8.GetBytes(characters, bytes);
-                            Array.Clear(characters);
-                            await ImportReviewedAsync(bytes);
-                        }
-                        finally { CryptographicOperations.ZeroMemory(bytes); }
-                    }
-                    finally { Array.Clear(characters); }
-                }
-                finally { password.Clear(); }
-            }
-            RefreshManagement();
-            return true;
-
-            async Task ImportReviewedAsync(ReadOnlyMemory<byte>? passphrase = null)
+            if (!await ImportKeyFileAsync(form, path, "ImportPrivateKey", async (source, passphrase) =>
             {
                 if (!ReferenceEquals(vault, unlocked) || unlocked.Revision != revision)
                     throw new InvalidOperationException(Text("ManagementTabOutdated"));
                 using var progress = management?.BeginProgress("SavingChanges");
                 await unlocked.ImportPrivateKeySourceAsync(keyName, source, passphrase, revision);
-            }
-        }
+            })) return false;
+            RefreshManagement();
+            return true;
+        });
         app.Modal(form.ShowDialog);
+    }
+
+    private string? SelectPrivateKeyFile(Window owner, string actionKey)
+    {
+        var picker = new OpenFileDialog { Title = Text(actionKey), Multiselect = false };
+        return app.Modal(() => picker.ShowDialog(owner)) == true ? picker.FileName : null;
+    }
+
+    private async Task<bool> ImportKeyFileAsync(Window owner, string path, string actionKey,
+        Func<CredentialVault.PrivateKeySource, ReadOnlyMemory<byte>?, Task> import)
+    {
+        using var source = await Task.Run(() => CredentialVault.ReadPrivateKeySource(path));
+        try { await import(source, null); }
+        catch (PrivateKeyPassphraseRequiredException)
+        {
+            var prompt = new MainWindow.FormWindow(owner, Text("SourceKeyPassphrase"), WindowIcons.Vault);
+            var password = new PasswordBox { MaxLength = 16 * 1024 };
+            prompt.AddField("SourceKeyPassphrase", password);
+            prompt.Loaded += (_, _) => password.Focus();
+            prompt.AddButtons(() => { }, acceptKey: actionKey);
+            try
+            {
+                if (app.Modal(prompt.ShowDialog) != true) return false;
+                char[] characters = ReadPassword(password);
+                try
+                {
+                    byte[] bytes = new byte[StrictUtf8.GetByteCount(characters)];
+                    try
+                    {
+                        StrictUtf8.GetBytes(characters, bytes);
+                        Array.Clear(characters);
+                        await import(source, bytes);
+                    }
+                    finally { CryptographicOperations.ZeroMemory(bytes); }
+                }
+                finally { Array.Clear(characters); }
+            }
+            finally { password.Clear(); }
+        }
+        return true;
     }
 
     private async Task<CredentialVault?> UnlockFileAsync(Window owner, CancellationToken token = default, bool sshPrompt = false,
@@ -654,13 +672,18 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         return entry.Name;
     }
 
-    public async Task DeleteEntryAsync(Window owner, VaultEntryInfo entry, FormView? form = null)
+    public async Task DeleteEntriesAsync(Window owner, IReadOnlyList<VaultEntryInfo> entries, FormView form)
     {
-        var (unlocked, revision) = CurrentEntry(entry);
-        if (await ConfirmImpactAsync(owner, unlocked, entry, "DeleteCredentialWarning"))
+        if (entries.Count == 0) return;
+        var (unlocked, revision) = CurrentEntry(entries[0]);
+        foreach (VaultEntryInfo entry in entries.Skip(1)) CurrentEntry(entry);
+        string warning = entries.Count == 1 ? Text("DeleteCredentialWarning") :
+            $"{string.Format(Text("DeleteCredentialsWarning"), entries.Count)}\n\n" +
+            string.Join("\n", entries.Select(entry => PermissionDisplay.Literal(entry.Name)));
+        if (await ConfirmImpactAsync(owner, unlocked, entries, warning))
         {
-            using (form?.BeginProgress("SavingChanges"))
-                await unlocked.DeleteEntryAsync(entry.Name, revision);
+            using (form.BeginProgress("SavingChanges"))
+                await unlocked.DeleteEntriesAsync(entries.Select(entry => entry.Name), revision);
             RefreshManagement();
         }
     }
@@ -673,53 +696,77 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         var name = new TextBox { Text = entry.Name, MaxLength = 512 };
         var replace = new CheckBox { Margin = new Thickness(0, 10, 0, 3) };
         var password = new PasswordBox { MaxLength = 16 * 1024, IsEnabled = false };
-        replace.Checked += (_, _) => password.IsEnabled = true;
-        replace.Unchecked += (_, _) => { password.Clear(); password.IsEnabled = false; };
+        var keyFile = new TextBox { IsReadOnly = true };
         form.AddField("CredentialName", name);
         if (entry.Kind == "password")
         {
+            replace.Checked += (_, _) => password.IsEnabled = true;
+            replace.Unchecked += (_, _) => { password.Clear(); password.IsEnabled = false; };
             form.AddField("ReplacePassword", replace, inlineCheckBox: true);
             form.AddField("VaultPassword", password);
+        }
+        else
+        {
+            form.AddField("ReplacePrivateKey", keyFile, actionKey: "BrowsePath", action: () =>
+            {
+                if (SelectPrivateKeyFile(form, "ReplacePrivateKey") is { } path) keyFile.Text = path;
+                return Task.CompletedTask;
+            });
         }
         form.AddAsyncButtons(async () =>
         {
             string newName = name.Text;
             ValidateCredentialName(unlocked, newName, entry.Name);
             bool passwordChanged = replace.IsChecked == true;
+            string? replacementPath = keyFile.Text.Length == 0 ? null : keyFile.Text;
+            bool secretChanged = passwordChanged || replacementPath is not null;
             ProfileCatalog.CredentialImpact? update = null;
             if (newName != entry.Name)
             {
                 long epoch = app.Vault.SelectionEpoch;
                 bool selected = app.Vault.IsSelected(this);
-                var impact = await FindImpactAsync(entry);
+                var impact = await FindImpactAsync([entry]);
                 if (!form.IsLoaded) return false;
                 string warning = string.Format(Text("RenameCredentialWarning"),
                     PermissionDisplay.Literal(entry.Name), PermissionDisplay.Literal(newName));
                 if (selected) warning += "\n\n" + Text("RenameCredentialProfileScope");
-                if (passwordChanged) warning += "\n\n" + Text("UpdateCredentialWarning");
+                if (secretChanged) warning += "\n\n" + Text("UpdateCredentialWarning");
                 MessageBoxResult choice = ConfirmRename(form, selected ? ImpactMessage(warning, impact) : warning, selected);
                 if (choice == MessageBoxResult.Cancel) return false;
                 if (selected != app.Vault.IsSelected(this) || selected && !IsCurrentSelection(epoch))
                     throw new InvalidOperationException(Text("ManagementTabOutdated"));
                 if (choice == MessageBoxResult.Yes) update = impact;
             }
-            else if (passwordChanged && !await ConfirmImpactAsync(form, unlocked, entry, "UpdateCredentialWarning"))
+            else if (secretChanged && !await ConfirmImpactAsync(form, unlocked, [entry], Text("UpdateCredentialWarning")))
                 return false;
-            char[] characters = replace.IsChecked == true ? ReadPassword(password) : [];
-            byte[]? bytes = null;
-            try
+            if (replacementPath is not null)
             {
-                if (replace.IsChecked == true) bytes = StrictUtf8.GetBytes(characters);
-                Array.Clear(characters);
-                using (form.BeginProgress("SavingChanges"))
-                    await unlocked.UpdateEntryAsync(entry.Name, newName,
-                        bytes is null ? null : new ReadOnlyMemory<byte>(bytes), revision);
+                if (!await ImportKeyFileAsync(form, replacementPath, "ReplacePrivateKey", async (source, passphrase) =>
+                {
+                    if (!ReferenceEquals(vault, unlocked) || unlocked.Revision != revision)
+                        throw new InvalidOperationException(Text("ManagementTabOutdated"));
+                    using var progress = form.BeginProgress("SavingChanges");
+                    await unlocked.ReplacePrivateKeySourceAsync(entry.Name, newName, source, passphrase, revision);
+                })) return false;
             }
-            finally
+            else
             {
-                Array.Clear(characters);
-                if (bytes is not null) CryptographicOperations.ZeroMemory(bytes);
-                password.Clear();
+                char[] characters = passwordChanged ? ReadPassword(password) : [];
+                byte[]? bytes = null;
+                try
+                {
+                    if (passwordChanged) bytes = StrictUtf8.GetBytes(characters);
+                    Array.Clear(characters);
+                    using (form.BeginProgress("SavingChanges"))
+                        await unlocked.UpdateEntryAsync(entry.Name, newName,
+                            bytes is null ? null : new ReadOnlyMemory<byte>(bytes), revision);
+                }
+                finally
+                {
+                    Array.Clear(characters);
+                    if (bytes is not null) CryptographicOperations.ZeroMemory(bytes);
+                    password.Clear();
+                }
             }
             RefreshManagement();
             if (update is not null)
@@ -768,8 +815,8 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
             throw new ArgumentException(Text("DuplicateCredentialName"));
     }
 
-    private Task<ProfileCatalog.CredentialImpact> FindImpactAsync(VaultEntryInfo entry) => app.Vault.IsSelected(this)
-        ? app.Profiles.FindCredentialReferencesAsync(entry)
+    private Task<ProfileCatalog.CredentialImpact> FindImpactAsync(IReadOnlyList<VaultEntryInfo> entries) => app.Vault.IsSelected(this)
+        ? app.Profiles.FindCredentialReferencesAsync(entries)
         : Task.FromResult(ProfileCatalog.CredentialImpact.Empty);
 
     private static string ImpactMessage(string warning, ProfileCatalog.CredentialImpact impact)
@@ -783,17 +830,19 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         return message;
     }
 
-    private async Task<bool> ConfirmImpactAsync(Window owner, CredentialVault unlocked, VaultEntryInfo entry,
+    private async Task<bool> ConfirmImpactAsync(Window owner, CredentialVault unlocked, IReadOnlyList<VaultEntryInfo> entries,
         string warning)
     {
         long revision = unlocked.Revision;
-        var impact = await FindImpactAsync(entry);
+        long selectionEpoch = app.Vault.SelectionEpoch;
+        var impact = await FindImpactAsync(entries);
         if (!owner.IsLoaded) return false;
-        string message = ImpactMessage(Text(warning), impact);
+        string message = ImpactMessage(warning, impact);
         if (app.Modal(() => ThemedMessageBox.ShowVault(owner, message, Text("Vault"), MessageBoxButton.YesNo,
             MessageBoxImage.Warning, MessageBoxResult.No)) != MessageBoxResult.Yes) return false;
-        var current = await FindImpactAsync(entry);
+        var current = await FindImpactAsync(entries);
         if (!ReferenceEquals(vault, unlocked) || unlocked.Revision != revision ||
+            app.Vault.SelectionEpoch != selectionEpoch ||
             current.Unavailable != impact.Unavailable || !current.Paths.SequenceEqual(impact.Paths, StringComparer.Ordinal))
             throw new InvalidOperationException(Text("ManagementTabOutdated"));
         return owner.IsLoaded;

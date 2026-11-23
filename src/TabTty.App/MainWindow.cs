@@ -1205,8 +1205,9 @@ internal sealed partial class MainWindow : Window
         }
 
         public Button AddAction(string key, Action action) => form.AddAction(key, action);
-        public void AddField(string key, Control control, bool inlineCheckBox = false) =>
-            form.AddField(key, control, inlineCheckBox: inlineCheckBox);
+        public void AddField(string key, Control control, bool inlineCheckBox = false,
+            string? actionKey = null, Func<Task>? action = null) =>
+            form.AddField(key, control, actionKey: actionKey, action: action, inlineCheckBox: inlineCheckBox);
         public void AddPrompt(string caption, Control control) => form.AddPrompt(caption, control);
         public void AddNotice(string key) => form.AddNotice(key);
         internal void AddStatusBar() => form.AddStatusBar();
@@ -1217,7 +1218,7 @@ internal sealed partial class MainWindow : Window
             DockPanel.SetDock(notice, Dock.Top);
             form.Children.Insert(0, notice);
         }
-        public void AddButtons(Action save, string acceptKey = "Save", bool cancelDefault = false, string cancelKey = "Cancel") =>
+        public Button AddButtons(Action save, string acceptKey = "Save", bool cancelDefault = false, string cancelKey = "Cancel") =>
             form.AddButtons(save, acceptKey, cancelDefault, cancelKey);
         public void AddAsyncButtons(Func<Task<bool>> save, string acceptKey = "Save", bool cancelDefault = false,
             bool acceptOnEnter = true) => form.AddAsyncButtons(save, acceptKey, cancelDefault, acceptOnEnter: acceptOnEnter);

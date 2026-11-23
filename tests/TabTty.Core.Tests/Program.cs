@@ -45,6 +45,7 @@ try
     {
         await VaultEditsUseNamesAndRestoreAnOlderPasswordGeneration();
         await VaultImportsAnIndependentEd25519Key();
+        await VaultReplacesKeysAndDeletesSelectedEntries();
         Console.WriteLine("PASS VaultEditsAndKeyImport");
         if (args.Length == 2)
         {
@@ -214,6 +215,8 @@ try
         Console.WriteLine("PASS VaultInitializesAnEmptyFileAndArchivesItsEncryptedContents");
         await VaultImportsAnIndependentEd25519Key();
         Console.WriteLine("PASS VaultImportsAnIndependentEd25519Key");
+        await VaultReplacesKeysAndDeletesSelectedEntries();
+        Console.WriteLine("PASS VaultReplacesKeysAndDeletesSelectedEntries");
         if (Environment.GetEnvironmentVariable("TABTTY_OPENSSH_FIXTURE") is { } openSshFixture)
         {
             await VaultImportsAnEncryptedOpenSshKey(openSshFixture);
@@ -793,6 +796,65 @@ static async Task VaultImportsAnEncryptedIndependentPrivateKey(string fixture)
         SHA256.HashData(await File.ReadAllBytesAsync(fixture + ".pubblob"))).TrimEnd('=');
     if (imported.Fingerprint != expected || material.Bytes.IsEmpty)
         throw new InvalidOperationException("Encrypted-key import lost its independent public identity.");
+}
+
+static async Task VaultReplacesKeysAndDeletesSelectedEntries()
+{
+    using var folder = new TemporaryDirectory();
+    string path = Path.Combine(folder.Path, "edit.tttykey");
+    string source = Path.Combine(folder.Path, "key.der");
+    const string master = "Portable key test passphrase";
+    // RFC 8032 section 7.1 test seeds in RFC 8410 PrivateKeyInfo envelopes.
+    byte[] original = Convert.FromHexString(
+        "302E020100300506032B6570042204209D61B19DEFFD5A60BA844AF492EC2CC44449C5697B326919703BAC031CAE7F60");
+    byte[] replacement = Convert.FromHexString(
+        "302E020100300506032B6570042204204CCD089B28FF96DA9DB6C346EC114E0F5B8A319F35ABA624DA8CF6ED4FB8A6FB");
+    await File.WriteAllBytesAsync(source, original);
+    using var vault = await CredentialVault.CreateAsync(path, master.AsMemory());
+    await vault.AddPasswordAsync("First", "first"u8.ToArray());
+    string keyName = await vault.ImportPrivateKeyAsync("Shared key", source);
+    var before = (await vault.ListEntriesAsync()).Single(entry => entry.Name == keyName);
+    await vault.AddPasswordAsync("Keep", "keep"u8.ToArray());
+    await vault.AddPasswordAsync("Last", "last"u8.ToArray());
+    long revision = vault.Revision;
+
+    await File.WriteAllBytesAsync(source, "invalid key"u8.ToArray());
+    using (var invalid = CredentialVault.ReadPrivateKeySource(source))
+    {
+        try
+        {
+            await vault.ReplacePrivateKeySourceAsync(keyName, keyName, invalid, null, revision);
+            throw new InvalidOperationException("An invalid replacement key was accepted.");
+        }
+        catch (Exception error) when (error is InvalidDataException or CryptographicException) { }
+    }
+    using (VaultSecret saved = await vault.GetPrivateKeyAsync(keyName))
+        ExpectBytes(saved.Bytes.ToArray(), original);
+    if (vault.Revision != revision) throw new InvalidOperationException("Invalid replacement published a new revision.");
+
+    await File.WriteAllBytesAsync(source, replacement);
+    using (var acquired = CredentialVault.ReadPrivateKeySource(source))
+        await vault.ReplacePrivateKeySourceAsync(keyName, keyName, acquired, null, revision);
+    File.Delete(source);
+    var after = (await vault.ListEntriesAsync()).Single(entry => entry.Name == keyName);
+    if (after.Kind != before.Kind || after.PublicType != before.PublicType || after.Fingerprint == before.Fingerprint)
+        throw new InvalidOperationException("Key replacement left the wrong public metadata.");
+    using (var reopened = await CredentialVault.UnlockAsync(path, master.AsMemory()))
+    using (VaultSecret saved = await reopened.GetPrivateKeyAsync(keyName))
+        ExpectBytes(saved.Bytes.ToArray(), replacement);
+
+    revision = vault.Revision;
+    try
+    {
+        await vault.DeleteEntriesAsync(["First", "Missing"], revision);
+        throw new InvalidOperationException("Deletion accepted a missing entry.");
+    }
+    catch (KeyNotFoundException) { }
+    if (vault.Revision != revision || (await vault.ListEntriesAsync()).Count != 4)
+        throw new InvalidOperationException("A failed deletion changed part of the selected set.");
+    await vault.DeleteEntriesAsync(["First", keyName, "Last"], revision);
+    if (vault.Revision != revision + 1 || (await vault.ListEntriesAsync()).Single().Name != "Keep")
+        throw new InvalidOperationException("Bulk deletion did not remove exactly the selected set in one revision.");
 }
 
 static async Task VaultImportsAnIndependentEd25519Key()

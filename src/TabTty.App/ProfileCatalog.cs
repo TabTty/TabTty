@@ -46,8 +46,9 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
         internal IEnumerable<string> Paths => Profiles.Select(profile => profile.Path);
     }
 
-    internal async Task<CredentialImpact> FindCredentialReferencesAsync(VaultEntryInfo entry)
+    internal async Task<CredentialImpact> FindCredentialReferencesAsync(IReadOnlyList<VaultEntryInfo> entries)
     {
+        var selected = entries.Select(entry => (entry.Name, entry.Kind)).ToHashSet();
         var matches = new List<CredentialProfileMatch>();
         int unavailable = 0;
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -59,7 +60,9 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 using var itemTimeout = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
                 itemTimeout.CancelAfter(TimeSpan.FromSeconds(1));
                 ConnectionProfile profile = await ConnectionProfile.LoadAsync(registration.Path, itemTimeout.Token);
-                if (profile.Type == "ssh" && (entry.Kind == "password" ? profile.SshPassword : profile.SshPrivateKey)?.Name == entry.Name)
+                if (profile.Type == "ssh" &&
+                    (profile.SshPassword is { } password && selected.Contains((password.Name, "password")) ||
+                     profile.SshPrivateKey is { } key && selected.Contains((key.Name, "privateKey"))))
                     matches.Add(new(registration.Id, registration.Path, profile.TrustVersion));
             }
             catch (Exception exception) when (IsFileProblem(exception) || exception is OperationCanceledException)

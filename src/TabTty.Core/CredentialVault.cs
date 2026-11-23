@@ -328,8 +328,14 @@ public sealed class CredentialVault : IDisposable
         ReadOnlyMemory<byte>? passphrase = null, long? expectedRevision = null, CancellationToken cancellationToken = default) =>
         WithSecretInputAsync(passphrase, owned => ImportOwnedAsync(name, source, owned, expectedRevision, cancellationToken));
 
+    internal Task<string> ReplacePrivateKeySourceAsync(string originalName, string name, PrivateKeySource source,
+        ReadOnlyMemory<byte>? passphrase, long expectedRevision, CancellationToken cancellationToken = default) =>
+        WithSecretInputAsync(passphrase, owned => ImportOwnedAsync(name, source, owned, expectedRevision, cancellationToken,
+            originalName));
+
     private async Task<string> ImportOwnedAsync(string name, PrivateKeySource source,
-        ReadOnlyMemory<byte>? passphrase, long? expectedRevision, CancellationToken cancellationToken)
+        ReadOnlyMemory<byte>? passphrase, long? expectedRevision, CancellationToken cancellationToken,
+        string? originalName = null)
     {
         using var request = DerivationCapacity.Reserve(1);
         await DerivationWorker.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -344,7 +350,10 @@ public sealed class CredentialVault : IDisposable
                 try
                 {
                     var entry = new VaultEntryInfo(name, "privateKey", key.Algorithm, key.Fingerprint);
-                    byte[] payload = VaultPayload.AddEntry(plaintext, Id, entry, pkcs8);
+                    byte[] payload = originalName is null
+                        ? VaultPayload.AddEntry(plaintext, Id, entry, pkcs8)
+                        : VaultPayload.UpdateEntry(plaintext, Id, originalName, name, pkcs8, replaceSecret: true,
+                            replacementKey: entry);
                     try { CommitEntries(payload, token); }
                     finally { CryptographicOperations.ZeroMemory(payload); }
                     return name;
@@ -411,14 +420,22 @@ public sealed class CredentialVault : IDisposable
         DeleteEntryAsync(originalName, null, cancellationToken);
 
     internal Task DeleteEntryAsync(string originalName, long? expectedRevision, CancellationToken cancellationToken = default) =>
-        UseAsync((plaintext, token) =>
+        DeleteEntriesAsync([originalName], expectedRevision, cancellationToken);
+
+    internal Task DeleteEntriesAsync(IEnumerable<string> names, long? expectedRevision,
+        CancellationToken cancellationToken = default)
+    {
+        var selected = names.ToHashSet(StringComparer.Ordinal);
+        if (selected.Count == 0) return Task.CompletedTask;
+        return UseAsync((plaintext, token) =>
         {
             RequireRevision(expectedRevision);
-            byte[] updated = VaultPayload.DeleteEntry(plaintext, Id, originalName);
+            byte[] updated = VaultPayload.DeleteEntries(plaintext, Id, selected);
             try { CommitEntries(updated, token); }
             finally { CryptographicOperations.ZeroMemory(updated); }
             return true;
         }, cancellationToken);
+    }
 
     private void RequireRevision(long? expected)
     {
