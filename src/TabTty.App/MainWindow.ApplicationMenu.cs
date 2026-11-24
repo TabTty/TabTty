@@ -60,6 +60,8 @@ internal sealed partial class MainWindow
             else if (Mouse.Captured == mainMenu && args.ChangedButton == MouseButton.Left)
             {
                 CloseApplicationMenu();
+                if (menuButton.CaptureMouse())
+                    captionMenuPress = (menuButton, args.GetPosition(this), true);
                 args.Handled = true;
             }
         };

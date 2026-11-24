@@ -113,6 +113,7 @@ internal static partial class Program
                     case "authentication": AuthenticationDialogsIdentifyTheRecipient(application); break;
                     case "keyboard": MainMenuAcceptsKeyboardCommands(); break;
                     case "menu-pointer": MainMenuOpensNestedSubmenusWithMouse(); break;
+                    case "caption-menu-drag": CheckCaptionMenuDrag(application); break;
                     case "tab-scroll": TabStripOverflowButtons(application); break;
                     case "tab-preview": CheckTabPreviewLayout(application); break;
                     case "tab-click": CheckTabHeaderClicks(application); break;

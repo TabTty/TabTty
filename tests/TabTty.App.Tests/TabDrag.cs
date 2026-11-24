@@ -15,6 +15,95 @@ using TabTty.Core;
 
 internal static partial class Program
 {
+    private static void CheckCaptionMenuDrag(App app)
+    {
+        RequireDesktopInput();
+        var window = new MainWindow(app)
+        {
+            Width = 760, Height = 480, ShowInTaskbar = false, Topmost = true,
+            WindowStartupLocation = WindowStartupLocation.CenterScreen,
+        };
+        GetCursorPos(out var original);
+        try
+        {
+            window.AddTerminalTab(new TerminalTab("caption-drag-fixture.ttty"));
+            window.Show();
+            window.Activate();
+            DrainInput();
+            var group = (TabControl)window.FindName("tabs");
+            var tabList = (Button)group.Template.FindName("tabListButton", group);
+            var hamburger = (Button)window.FindName("menuButton");
+            var applicationMenu = (Menu)window.FindName("mainMenu");
+            var normalPosition = new Point(window.Left, window.Top);
+
+            CheckButton(tabList, () => tabList.ContextMenu?.IsOpen == true);
+            CheckButton(hamburger, () => applicationMenu.IsVisible);
+
+            ClickTabBarElement(hamburger);
+            WaitForTabBarInput(() => applicationMenu.IsVisible, "Clicking did not open the application menu.");
+            ((MenuItem)applicationMenu.Items[0]).IsSubmenuOpen = true;
+            DrainInput();
+            Drag(hamburger, () => !applicationMenu.IsVisible &&
+                Math.Abs(window.Top - normalPosition.Y) > 20);
+
+            void CheckButton(Button button, Func<bool> isOpen)
+            {
+                ClickTabBarElement(button);
+                WaitForTabBarInput(isOpen, "Clicking did not open the menu.");
+                PressTabBarKey(Key.Escape);
+                WaitForTabBarInput(() => !isOpen(), "Escape did not close the menu.");
+                button.Focus();
+                PressTabBarKey(Key.Space);
+                WaitForTabBarInput(isOpen, "Space did not open the menu.");
+                PressTabBarKey(Key.Escape);
+                WaitForTabBarInput(() => !isOpen(), "Escape did not close the keyboard-opened menu.");
+
+                Drag(button, () => Math.Abs(window.Top - normalPosition.Y) > 20);
+                if (isOpen()) throw new InvalidOperationException("Dragging opened a menu.");
+                window.WindowState = WindowState.Maximized;
+                DrainInput();
+                Drag(button, () => window.WindowState == WindowState.Normal);
+                if (isOpen()) throw new InvalidOperationException("Dragging from maximized opened a menu.");
+                window.Left = normalPosition.X;
+                window.Top = normalPosition.Y;
+                DrainInput();
+            }
+
+            void Drag(Button button, Func<bool> moved)
+            {
+                MovePointerToTabBarElement(button);
+                if (!GetCursorPos(out var start))
+                    throw new InvalidOperationException("The test could not locate the pointer.");
+                MouseEvent(0x0002, 0, 0, 0, 0);
+                try
+                {
+                    DrainInput();
+                    // The native move loop can hold the dispatcher until the mouse is released.
+                    var input = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            SetCursorPos(start.X, start.Y + 30);
+                            await Task.Delay(180);
+                            SetCursorPos(start.X, start.Y + 130);
+                            await Task.Delay(100);
+                        }
+                        finally { MouseEvent(0x0004, 0, 0, 0, 0); }
+                    });
+                    WaitForTabBarInput(() => input.IsCompleted && moved(),
+                        $"Dragging {button.Name} did not move or restore the window.");
+                    input.GetAwaiter().GetResult();
+                }
+                finally { MouseEvent(0x0004, 0, 0, 0, 0); }
+            }
+        }
+        finally
+        {
+            window.Close();
+            SetCursorPos(original.X, original.Y);
+        }
+    }
+
     private static void CheckTabHeaderClicks(App app)
     {
         RequireDesktopInput();

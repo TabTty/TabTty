@@ -30,6 +30,12 @@
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="shell:WindowChrome.IsHitTestVisibleInChrome" Value="True" />
         </Style>
+        <Style x:Key="CaptionMenuButton" TargetType="Button" BasedOn="{StaticResource WindowButton}">
+            <EventSetter Event="PreviewMouseLeftButtonDown" Handler="OnCaptionMenuPressed" />
+            <EventSetter Event="PreviewMouseMove" Handler="OnCaptionMenuMoved" />
+            <EventSetter Event="PreviewMouseLeftButtonUp" Handler="OnCaptionMenuReleased" />
+            <EventSetter Event="LostMouseCapture" Handler="OnCaptionMenuLostCapture" />
+        </Style>
         <Style x:Key="CaptionButton" TargetType="Button" BasedOn="{StaticResource WindowButton}">
             <Setter Property="Width" Value="46" />
             <Setter Property="Height" Value="32" />
@@ -119,7 +125,7 @@
                                 </StackPanel>
                                 <DockPanel x:Name="headerCommands" Margin="6,5,14,0" HorizontalAlignment="Left" LastChildFill="False">
                                     <Button x:Name="tabListButton" DockPanel.Dock="Left"
-                                            Style="{StaticResource WindowButton}" Width="36" VerticalAlignment="Top"
+                                            Style="{StaticResource CaptionMenuButton}" Width="36" VerticalAlignment="Top"
                                             ToolTip="{DynamicResource TabListLabel}" AutomationProperties.Name="{DynamicResource TabListLabel}"
                                             IsEnabled="{Binding HasItems, RelativeSource={RelativeSource TemplatedParent}}"
                                             Click="OpenTabListMenu">
@@ -194,7 +200,7 @@
             </StackPanel>
         </DockPanel>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
-            <Button x:Name="menuButton" Style="{StaticResource WindowButton}" Margin="0,5,0,0"
+            <Button x:Name="menuButton" Style="{StaticResource CaptionMenuButton}" Margin="0,5,0,0"
                     VerticalAlignment="Top">
                 <TextBlock Style="{StaticResource WindowGlyph}" Text="&#xE700;" />
             </Button>

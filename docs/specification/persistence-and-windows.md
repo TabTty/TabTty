@@ -699,6 +699,11 @@ or as the first tab of an empty group. Unused space after the last header
 accepts an append. Tab-bar command buttons keep their own hit areas.
 Starting a drag on blank title-bar space still moves the whole window.
 
+The tab list arrow and application menu button retain their normal click and
+keyboard actions. When a primary-button press on either button crosses the
+Windows drag threshold, dismiss any open menu and start a native title-bar move.
+The move also restores a maximized window as a title-bar drag does.
+
 TabTty handles a tab drag inside the application. Over the desktop, File
 Explorer or another application, keep the ordinary arrow and the floating
 tab header. External windows receive no drag or drop notifications. Explorer
