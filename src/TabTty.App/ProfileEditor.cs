@@ -21,6 +21,7 @@ internal sealed class ProfileEditor
     private readonly bool fromExplorer;
     private System.Windows.FrameworkElement names;
     private readonly Dictionary<string, TransportFields> transports = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Action<string?>> credentialSetters = new(StringComparer.Ordinal);
     private readonly JsonObject commonConnection;
     private string selectedProtocol;
     private TextBox profileName = null!;
@@ -249,6 +250,12 @@ internal sealed class ProfileEditor
     }
 
     public void UseSavedRevision(ConnectionProfile profile) => original = profile;
+    internal void UseSavedCredentialReference(ConnectionProfile profile, string kind)
+    {
+        UseSavedRevision(profile);
+        var reference = kind == "password" ? profile.SshPassword : profile.SshPrivateKey;
+        if (credentialSetters.TryGetValue(kind, out var set)) set(reference?.Name);
+    }
 
     internal static ConnectionProfile NewProfile(string type) => type switch
     {
@@ -469,6 +476,7 @@ internal sealed class ProfileEditor
             else await app.Vault.ChoosePrivateKeyAsync(form.OwnerWindow, SetReference);
         }, descriptionKey: password ? "SshSavedPasswordDestinationNotice" : null, reset: () => SetReference(null));
         form.TrackValue(() => auth[kind]?.GetValue<string>(), SetReference);
+        credentialSetters[kind] = SetReference;
         form.AddLocalizedUpdate(UpdateValue);
 
         void SetReference(string? reference)

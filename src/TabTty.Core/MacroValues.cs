@@ -70,16 +70,29 @@ internal sealed class MacroList(MacroType element, IEnumerable<object> values)
 
 internal static class MacroLimits
 {
+    internal readonly record struct ArgumentProblem(string Code, long Excess = 0, int Row = 0);
+
+    internal static ArgumentProblem? CheckArguments(IReadOnlyList<string> arguments)
+    {
+        const int countLimit = 64, rowLimit = 4096, totalLimit = 16384;
+        if (arguments.Count > countLimit) return new("MacroArgumentCountLimit", arguments.Count - countLimit);
+        long total = 0;
+        for (int index = 0; index < arguments.Count; index++)
+        {
+            string argument = arguments[index];
+            if (argument is null) return new("MacroArgumentInvalid", Row: index + 1);
+            if (argument.Length > rowLimit) return new("MacroArgumentRowLimit", argument.Length - rowLimit, index + 1);
+            try { Unicode(argument); }
+            catch (MacroError) { return new("MacroArgumentInvalid", Row: index + 1); }
+            total += argument.Length;
+        }
+        return total > totalLimit ? new("MacroArgumentTotalLimit", total - totalLimit) : null;
+    }
+
     internal static void ValidateArguments(IReadOnlyList<string> arguments)
     {
-        if (arguments.Count > 64 || arguments.Any(argument => argument.Length > 4096) ||
-            arguments.Sum(argument => argument.Length) > 16384)
-            throw new MacroSourceException("ArgumentLimit", new(1, 1));
-        foreach (string argument in arguments)
-        {
-            try { Unicode(argument); }
-            catch (MacroError) { throw new MacroSourceException("InvalidArgument", new(1, 1)); }
-        }
+        if (CheckArguments(arguments) is { } problem)
+            throw new MacroSourceException(problem.Excess == 0 ? "InvalidArgument" : "ArgumentLimit", new(1, 1));
     }
 
     public const int SourceBytes = 1024 * 1024, StringUnits = 1024 * 1024, ListItems = 65536,

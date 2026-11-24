@@ -24,7 +24,7 @@ internal sealed partial class ProfileCatalog
             SelectImportedProfile(location, connecting: false);
             return profile;
         }
-        ValidatePostConnectionSource(profile);
+        using (CompilePostConnectionSource(profile)) { }
         if (!await ReviewProfileRegistrationAsync(owner, location, profile, token))
             throw new SshInteractionCancelledException();
         await registrationChanges.WaitAsync(token);

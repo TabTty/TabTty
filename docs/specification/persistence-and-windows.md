@@ -272,6 +272,23 @@ for the same vault unlock share its result under the
 | lastWindow | Normal bounds in DIPs, monitor identity/work-area/DPI observations, maximized flag; never restore minimized |
 | host-keys.json | Versioned host records defined in the transport contract, independent of vault and portable settings |
 
+A settings draft retains the revision at which editing began. Callers supply
+only the preferences they change. One explicit **Save** validates all edits
+from the settings form together. The form parses input text, and both draft
+validation and file loading use the same value ranges. An invalid value keeps
+all edits in the draft and leaves the effective settings intact. If another
+window has saved a newer revision, preserve the stale draft and require review
+before saving. The existing settings file operation verifies the write before
+the application adopts the revision and applies effects such as a theme or
+selected vault change.
+
+Preserve omitted optional fields and unknown optional properties at every
+object level when saving a supported version. For example, an omitted **Copy**
+shortcut uses the default binding. Saving a theme change leaves the shortcut
+omitted. Explicitly disabling **Copy** records that choice and preserves the
+other shortcut properties, including unknown ones. Continue to perform
+documented save-time migrations such as the legacy log filename options.
+
 Clarified whole-codebase architecture Q26 retains `maxPasteTextBytes` as an
 application-wide user setting independent of connection profiles, alongside
 shared immutable source storage in the existing resource budgets. It measures
@@ -725,6 +742,20 @@ inside the same tab are views of that session, not additional tab/group owners
 deferred opens. Committed final
 exit rejects new opens and cancels pending requests, without a hidden tray run.
 
+Keep the identity of the tab when scheduling tab-specific work. At delivery,
+use that tab's current committed window and group. For example, if a terminal
+disconnects after its tab moves, the destination window applies the automatic
+close setting to that tab. A cancelled or failed move leaves the source
+responsible. A command directed at a particular window or group keeps its
+original scope. A queued request to return focus to the source group can run
+only while its original focus conditions still hold there.
+
+An open modeless reconnect destination-change notice follows its terminal tab
+when a move commits. Even if moving the last tab closes the source window,
+the user can still read and acknowledge the single notice at the destination.
+Moving an acknowledged notice's tab does not show it again. The notice and
+its transfer leave terminal input focus undisturbed.
+
 The [transfer window](file-transfer.md#transfer-window-and-operation-ownership)
 is associated with its SSH terminal tab and current connection generation.
 Detaching or moving that tab preserves its transfer window and work. Include
@@ -804,6 +835,19 @@ Recheck after a group is resized or its tab headers change. Verify that closing
 or moving a tab, or widening the group just enough to fit all headers without
 the buttons, hides both buttons and returns their space to the headers.
 In a split window, scrolling one group affects only that group's tab bar.
+
+Use the committed headers to decide whether the arrows and edge fades are
+needed. When the headers fit exactly, dragging a tab from another group over
+the bar shows the insertion gap and keeps both arrows and fades hidden.
+Recheck with the added header when the drop commits.
+
+Within each group, the latest explicit selection or scroll command determines
+which headers are visible. For example, select the rightmost tab from the tab
+list, then press the left scroll arrow. Keep the rightmost tab selected and
+the bar at the position reached by the arrow, even if the earlier request to
+reveal the selected header finishes later. A resize keeps that position
+within the new scroll range. Choosing the rightmost tab from the list again
+brings its header back into view.
 
 ## File Explorer and editors
 

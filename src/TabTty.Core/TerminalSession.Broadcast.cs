@@ -116,52 +116,28 @@ public sealed partial class TerminalSession
                 memory.Resize(prepared.echo.LongLength + bound * (!IsTelnet ? 1 : 3));
                 return new PreparedInput(unit, memory, async cancellation =>
                 {
-                    await manualInputOrder.WaitAsync(cancellation).ConfigureAwait(false);
-                    try
+                    var result = await SubmitOrderedManualInputAsync(() =>
                     {
                         var (payload, echo) = prepared;
-                        bool localEcho;
-                        ValueTask<TransportSendResult> submission;
-                        await state.WaitAsync(cancellation).ConfigureAwait(false);
-                        try
+                        if (mouseGeneration is { } generation)
                         {
-                            EnsureConnected();
-                            EnsureManualInput();
-                            if (pasteActive) throw new InvalidOperationException("A paste is in progress.");
-                            if (mouseGeneration is { } generation)
-                            {
-                                byte[] report = terminal.EncodeBroadcastMouse(input.Mouse with { Generation = generation });
-                                if (report.Length == 0) return false;
-                                payload = report;
-                            }
-                            else if (input.Kind == TerminalInputKind.Key)
-                            {
-                                (payload, echo) = EncodeOperation(input);
-                            }
-                            memory.Resize(echo.LongLength + payload.LongLength * (!IsTelnet ? 1 : 3));
-                            localEcho = echo.Length > 0 && LocalEcho;
-                            submission = SubmitInputAsync(payload, cancellation, mouseGeneration is not null ? null : () =>
-                            {
-                                if (!AcceptsInput || pasteActive)
-                                    throw new TransportAdmissionRejectedException("The terminal is no longer eligible for broadcast input.");
-                            });
+                            payload = terminal.EncodeBroadcastMouse(input.Mouse with { Generation = generation });
+                            if (payload.Length == 0)
+                                return ValueTask.FromResult<(byte[], byte[])?>(null);
                         }
-                        finally { state.Release(); }
-                        var result = await submission.ConfigureAwait(false);
-                        if (localEcho)
+                        else if (input.Kind == TerminalInputKind.Key)
                         {
-                            await state.WaitAsync().ConfigureAwait(false);
-                            try
-                            {
-                                await EchoSubmittedInputAsync(echo, ConfirmedInputEchoLength(result, payload, echo,
-                                    input.Kind == TerminalInputKind.Text ? input.Text : null, input.Alt)).ConfigureAwait(false);
-                            }
-                            finally { state.Release(); }
+                            (payload, echo) = EncodeOperation(input);
                         }
-                        if (result.Error is { } error) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(error);
-                        return true;
-                    }
-                    finally { manualInputOrder.Release(); }
+                        memory.Resize(echo.LongLength + payload.LongLength * (!IsTelnet ? 1 : 3));
+                        return ValueTask.FromResult<(byte[], byte[])?>(new(payload, echo));
+                    }, cancellation, text: input.Kind == TerminalInputKind.Text ? input.Text : null, altPrefix: input.Alt,
+                        admit: mouseGeneration is not null ? null : () =>
+                        {
+                            if (!AcceptsInput || pasteActive)
+                                throw new TransportAdmissionRejectedException("The terminal is no longer eligible for broadcast input.");
+                        }).ConfigureAwait(false);
+                    return result.Sent;
                 }, mouseGeneration);
             }
             finally { state.Release(); }

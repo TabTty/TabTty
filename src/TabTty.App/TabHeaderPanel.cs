@@ -7,11 +7,62 @@ namespace TabTty.App;
 
 internal sealed class TabStripScroller : ScrollViewer
 {
+    private const double ScrollTolerance = 0.01;
+    private long scrollCommand;
+
     protected override Size MeasureOverride(Size constraint)
     {
         // The scroll presenter measures its content with infinite width.
         if (Content is TabHeaderPanel headers) headers.SetAvailableWidth(constraint.Width);
         return base.MeasureOverride(constraint);
+    }
+
+    internal void RevealSelection(TabControl group, TabItem tab)
+    {
+        long command = ++scrollCommand;
+        _ = Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, new Action(() =>
+        {
+            if (scrollCommand == command && group.SelectedItem == tab && group.Items.Contains(tab))
+                tab.BringIntoView();
+        }));
+    }
+
+    internal void ScrollHeaders(bool left)
+    {
+        ++scrollCommand;
+        if (Content is not TabHeaderPanel headers) return;
+        double maximum = Math.Max(0, headers.CommittedWidth - ViewportWidth);
+        double offset = Math.Clamp(HorizontalOffset, 0, maximum);
+        ScrollToHorizontalOffset(Math.Clamp(headers.NextOffset(offset, ViewportWidth, left), 0, maximum));
+    }
+
+    internal void UpdateEdges(Button left, Button right)
+    {
+        if (Content is not TabHeaderPanel headers) return;
+        double available = ViewportWidth;
+        if (left.Visibility == Visibility.Visible) available += left.ActualWidth + right.ActualWidth;
+        bool overflow = headers.CommittedWidth - available > ScrollTolerance;
+        left.Visibility = right.Visibility = overflow ? Visibility.Visible : Visibility.Collapsed;
+        left.IsEnabled = overflow && HorizontalOffset > ScrollTolerance;
+        right.IsEnabled = overflow && headers.CommittedWidth - ViewportWidth - HorizontalOffset > ScrollTolerance;
+        if ((!left.IsEnabled && !right.IsEnabled) || ViewportWidth <= 0)
+        {
+            OpacityMask = null;
+            return;
+        }
+
+        double fade = Math.Min(18 / ViewportWidth, 0.5);
+        OpacityMask = new LinearGradientBrush
+        {
+            StartPoint = new Point(0, 0), EndPoint = new Point(1, 0),
+            GradientStops =
+            [
+                new GradientStop(left.IsEnabled ? Colors.Transparent : Colors.Black, 0),
+                new GradientStop(Colors.Black, fade),
+                new GradientStop(Colors.Black, 1 - fade),
+                new GradientStop(right.IsEnabled ? Colors.Transparent : Colors.Black, 1),
+            ],
+        };
     }
 }
 
@@ -27,7 +78,17 @@ internal sealed class TabHeaderPanel : TabPanel
     private TabItem? before;
     private Size gapSize;
     internal Rect? GapBounds { get; private set; }
-    internal double AddedPreviewWidth => held is null ? gapSize.Width : 0;
+    internal double CommittedWidth { get; private set; }
+
+    internal double NextOffset(double offset, double viewport, bool left)
+    {
+        if (tabWidth <= 0) return 0;
+        const double tolerance = 0.01;
+        double boundary = left ? offset : offset + viewport;
+        double next = left ? Math.Floor((boundary - tolerance) / tabWidth) * tabWidth
+            : Math.Ceiling((boundary + tolerance) / tabWidth) * tabWidth - viewport;
+        return offset + Math.Clamp(next - offset, -viewport, viewport);
+    }
 
     internal void SetAvailableWidth(double width)
     {
@@ -71,7 +132,8 @@ internal sealed class TabHeaderPanel : TabPanel
             header.Measure(new Size(tabWidth, constraint.Height));
             height = Math.Max(height, header.DesiredSize.Height);
         }
-        return new Size(tabWidth * count + AddedPreviewWidth, height);
+        CommittedWidth = tabWidth * count;
+        return new Size(CommittedWidth + (held is null ? gapSize.Width : 0), height);
     }
 
     protected override Size ArrangeOverride(Size arrangeSize)

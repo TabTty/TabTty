@@ -9,6 +9,7 @@ internal static partial class MacroContracts
     private static async Task NamedCallsAndReceiveBoundaryAsync()
     {
         await QueuedSubmissionBoundaryAsync();
+        await ReceiveWhileMacroWriteIsPendingAsync();
         foreach (string kind in new[] { "Line", "Prompt" })
         foreach (bool multi in new[] { false, true })
         foreach (string timeout in new[] { "", ", 0", ", 2000" })
@@ -133,6 +134,53 @@ internal static partial class MacroContracts
             var editor = new MacroEditorSymbols();
             MacroProgram.AnalyzeForEditor("test.tttym", text, new Dictionary<string, string>(), editor, null);
             Check(editor.Error?.Code == code && editor.Error.Position == position, "Wrong editor diagnostic in " + source);
+        }
+    }
+
+    private static async Task ReceiveWhileMacroWriteIsPendingAsync()
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(6));
+        var host = new Host();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.Wire.OnWrite = () =>
+        {
+            started.TrySetResult();
+            return new ValueTask(release.Task.WaitAsync(deadline.Token));
+        };
+        using var run = new MacroRun(Parse("""
+            Connect("profile.ttty");
+            WriteLine("request", markReceiveBoundary: true);
+            var reply = WaitLine(Literal("OK"), 2000);
+            Dialog("", reply.Text, DialogButtons.OK);
+            """), [], host);
+        try
+        {
+            run.Start();
+            await started.Task.WaitAsync(deadline.Token);
+            var session = host.Session!;
+            host.Wire.Incoming = "OK\r\n"u8.ToArray();
+            Check(await session.ProcessOutputAsync(deadline.Token), "The held macro write prevented a receive batch.");
+            var beforeEcho = await session.GetOutputAsync(deadline.Token);
+            Check(beforeEcho.Contains("OK") && !beforeEcho.Contains("request"), "Input echoed before confirmation.");
+            await session.SetLocalEchoAsync("off", deadline.Token);
+            release.SetResult();
+            await run.Completion.WaitAsync(deadline.Token);
+            Check(run.Status.State == MacroRunState.Completed && host.Dialogs.Single().Message == "OK",
+                "The macro lost the response received during its write.");
+            var afterEcho = await session.GetOutputAsync(deadline.Token);
+            Check(Array.IndexOf(afterEcho.ToArray(), "OK") >= 0 && afterEcho.Contains("request"),
+                "The confirmed portion did not use its dispatch-time echo setting.");
+            long observations = Interlocked.Read(ref NativeTerminalCoreDiagnostics.MacroObservations);
+            host.Wire.Incoming = "after\r\n"u8.ToArray();
+            Check(await session.ProcessOutputAsync(deadline.Token) && (await session.GetOutputAsync(deadline.Token)).Contains("after")
+                && observations == Interlocked.Read(ref NativeTerminalCoreDiagnostics.MacroObservations),
+                "A completed macro left native receive observations installed.");
+        }
+        finally
+        {
+            release.TrySetResult();
+            await host.CloseAsync();
         }
     }
 

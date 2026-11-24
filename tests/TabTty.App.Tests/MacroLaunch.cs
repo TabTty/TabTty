@@ -26,6 +26,12 @@ internal static partial class Program
             }
             """;
         var launch = InstanceLaunch.Parse(["--macro", source, "--", "A B", "", "一\n二", "<U+000A>", "\"名\u202E"]).Single();
+        var maximum = Enumerable.Repeat(new string('x', 4096), 4).Append("").ToArray();
+        CheckMacroLaunch(InstanceLaunch.Parse(["--macro", source, "--", .. maximum]).Single().Arguments.SequenceEqual(maximum),
+            "Activation did not preserve the empty argument at the exact total limit.");
+        maximum[^1] = "x";
+        CheckMacroLaunch(MacroLimits.CheckArguments(maximum) is { Code: "MacroArgumentTotalLimit", Excess: 1 } &&
+            !InstanceLaunch.Valid([new InstanceLaunch(source, maximum)]), "Forwarding accepted the first aggregate excess.");
         File.WriteAllText(source, program);
         using var forwarded = JsonDocument.Parse(InstanceActivation.EncodeRequests([launch]));
         CheckMacroLaunch(forwarded.RootElement.ValueKind == JsonValueKind.Object &&
@@ -37,6 +43,8 @@ internal static partial class Program
         try
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(6));
+            foreach (string action in new[] { "RunMacro", "MacroFindArguments" })
+                await CheckArgumentDialogAsync(app, window, action, timeout.Token);
             var associated = InstanceLaunch.Parse([source]);
             CheckMacroLaunch(app.Activate(associated), "File association was rejected.");
             await DecideMacroRequest(app, window, source, App.Text("MacroNoArguments"));
@@ -75,6 +83,40 @@ internal static partial class Program
             foreach (TerminalTab tab in window.TerminalTabs) tab.Macro?.Stop();
             foreach (TerminalTab tab in window.TerminalTabs) await tab.Completion.WaitAsync(TimeSpan.FromSeconds(5));
             window.Close();
+        }
+    }
+
+    private static async Task CheckArgumentDialogAsync(App app, MainWindow owner, string action, CancellationToken token)
+    {
+        var read = typeof(MainWindow).GetMethod("ReadMacroArguments",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var request = owner.Dispatcher.InvokeAsync(() => (string[]?)read.Invoke(owner, [owner, action]));
+        MainWindow.FormWindow? dialog;
+        while ((dialog = app.Windows.OfType<MainWindow.FormWindow>().SingleOrDefault(window =>
+            window.Title == App.Text("MacroArguments"))) is null)
+            await Task.Delay(10, token);
+        Click("MacroAddArgument", 5);
+        var fields = FindControls<TextBox>(dialog).ToArray();
+        if (fields.Length != 5) throw new InvalidOperationException("The dialog lost an argument row.");
+        string exact = new('a', 4096);
+        foreach (var field in fields.Take(4)) field.Text = exact;
+        fields[4].Text = "x";
+        Click(action);
+        string message = string.Format(App.Text("MacroArgumentTotalLimit"), 1);
+        while (!FindControls<TextBlock>(dialog).Any(text => text.IsVisible && text.Text == message))
+            await Task.Delay(10, token);
+        if (!fields.Select(field => field.Text).SequenceEqual([exact, exact, exact, exact, "x"]) || request.Task.IsCompleted)
+            throw new InvalidOperationException("An invalid submission closed the argument dialog or altered its rows.");
+        fields[4].Text = "";
+        Click(action);
+        if (await request.Task.WaitAsync(token) is not { } args || !args.SequenceEqual([exact, exact, exact, exact, ""]))
+            throw new InvalidOperationException("Correcting one row did not preserve the finalized arguments.");
+
+        void Click(string label, int count = 1)
+        {
+            var button = FindControls<Button>(dialog!).Single(item => Equals(item.Content, App.Text(label)));
+            for (int index = 0; index < count; index++)
+                button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, button));
         }
     }
 

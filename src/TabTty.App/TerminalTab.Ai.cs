@@ -17,8 +17,7 @@ internal sealed partial class TerminalTab
     private long aiAuthorityRevision;
     internal AiCollaboration.Sharing? AiSharing { get; set; }
     internal TerminalSession? AiSession => removed ? null : session ?? retainedAiSession;
-    internal MainWindow? AiHost => Application.Current.Windows.OfType<MainWindow>()
-        .FirstOrDefault(window => window.TerminalTabs.Contains(this));
+    internal MainWindow? AiHost => tabHost?.Invoke();
     internal (int Columns, int Rows) AiGrid => snapshot is { } view ? (view.Columns, view.ScreenRows) : appliedGrid;
     internal bool HasAiHighlightRules => ((App)Application.Current).Highlights.Find(highlightSetId) is { Enabled: true, Rules.Count: > 0 };
     internal (long Id, long Revision, TerminalHighlightSpan[] Spans)? CaptureAiHighlightRow(int row) =>

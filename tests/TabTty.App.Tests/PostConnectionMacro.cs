@@ -43,9 +43,7 @@ internal static partial class Program
 
         try
         {
-            await app.SaveSettingsAsync(app.LanguageChoice, app.ThemeChoice, app.BellChoice, app.TerminalFontFamily,
-                app.TerminalFontSize, app.RetainedRows, false, app.VaultPath, app.SettingsRevision,
-                profileSaveDirectory: folder);
+            await app.SaveSettingsAsync(app.SettingsRevision, new(AutoClose: false, ProfileDirectory: folder));
             var import = app.Profiles.ImportFileAsync(owner, path, token);
             var review = await FindWindow("PostConnectionMacroRegistration", import);
             CheckMacroLaunch(FindControls<TextBox>(review).Single().Text.Contains("WaitAnyPrompt", StringComparison.Ordinal),
@@ -63,11 +61,14 @@ internal static partial class Program
 
             await ComposeAndSaveAsync();
 
+            long compilations = MacroProgram.PostConnectionCompilations;
             CheckMacroLaunch(app.Activate([new InstanceLaunch(path, [])]), "The profile file activation was rejected.");
             review = await FindWindow("ProfileTrustReview");
             var tab = owner.TerminalTabs.Single();
             Click(review, "ProfileConnectOnce");
             await VerifyConnectionAsync(tab, null);
+            CheckMacroLaunch(MacroProgram.PostConnectionCompilations == compilations + 1,
+                "A reviewed manual connection compiled its embedded body more than once.");
             Console.WriteLine("PASS PostConnectionMacroTelnetWithoutPassword");
 
             foreach (string secret in new[] { "first-local-value", "other-local-value" })
@@ -76,11 +77,13 @@ internal static partial class Program
                 const string master = "post connection testing master password";
                 using (var vault = await CredentialVault.CreateAsync(vaultPath, master.AsMemory(), token))
                     await vault.AddPasswordAsync("Enable secret", Encoding.UTF8.GetBytes(secret), token);
-                await app.SaveSettingsAsync(app.LanguageChoice, app.ThemeChoice, app.BellChoice, app.TerminalFontFamily,
-                    app.TerminalFontSize, app.RetainedRows, app.AutoCloseDisconnectedTabs, vaultPath, app.SettingsRevision);
+                await app.SaveSettingsAsync(app.SettingsRevision, new(VaultPath: vaultPath));
                 CheckMacroLaunch(tab.CanReconnect, "The completed macro prevented reconnect.");
+                compilations = MacroProgram.PostConnectionCompilations;
                 tab.Start();
                 await VerifyConnectionAsync(tab, secret, master);
+                CheckMacroLaunch(MacroProgram.PostConnectionCompilations == compilations + 1,
+                    "A reconnect did not compile exactly one body for its attempt.");
             }
             Console.WriteLine("PASS PostConnectionMacroTelnetWithNamedVaultEntries");
 
@@ -151,8 +154,7 @@ internal static partial class Program
         async Task CheckEditorAsync(ConnectionProfile profile, string language, string theme,
             string heading, string description)
         {
-            await app.SaveSettingsAsync(language, theme, app.BellChoice, app.TerminalFontFamily,
-                app.TerminalFontSize, app.RetainedRows, false, app.VaultPath, app.SettingsRevision);
+            await app.SaveSettingsAsync(app.SettingsRevision, new(Language: language, Theme: theme, AutoClose: false));
             var editor = new ProfileEditorWindow(app, "EditProfile", profile.OpenedPath, profile, creating: false);
             editor.Show();
             try

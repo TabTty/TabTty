@@ -89,61 +89,87 @@ internal sealed partial class ProfileCatalog
     }
 
     internal sealed record OnceApproval(string Location, string Version);
-    internal sealed record Admission(ConnectionProfile Profile, OnceApproval? Once);
+    internal sealed class Admission(ConnectionProfile profile, OnceApproval? once, MacroProgram? program) : IDisposable
+    {
+        internal ConnectionProfile Profile { get; } = profile;
+        internal OnceApproval? Once { get; } = once;
+        internal MacroProgram? Program { get; private set; } = program;
+        internal MacroProgram? TakeProgram()
+        {
+            var value = Program;
+            Program = null;
+            return value;
+        }
+        public void Dispose() => TakeProgram()?.Dispose();
+    }
 
-    internal async Task<ConnectionProfile> AdmitAsync(Window? owner, string path, string? macroName, CancellationToken token) =>
-        (await AdmitAsync(owner, path, macroName, token, reconnect: false, previousOnce: null)).Profile;
+    internal async Task<ConnectionProfile> AdmitAsync(Window? owner, string path, string? macroName, CancellationToken token)
+    {
+        using var admission = await AdmitAsync(owner, path, macroName, token, reconnect: false, previousOnce: null);
+        return admission.Profile;
+    }
 
     internal async Task<Admission> AdmitAsync(Window? owner, string path, string? macroName, CancellationToken token,
-        bool reconnect, OnceApproval? previousOnce)
+        bool reconnect, OnceApproval? previousOnce, MacroRun? caller = null)
     {
         ConnectionProfile profile = await LoadForUseAsync(owner, path, token, macroName);
-        ValidatePostConnectionSource(profile);
         string location = await ProfileLocationAsync(profile, token);
         string version = profile.TrustVersion;
         var once = new OnceApproval(location, version);
-        while (true)
+        MacroProgram? program = CompilePostConnectionSource(profile, caller);
+        try
         {
-            token.ThrowIfCancellationRequested();
-            string folder = app.ProfileSaveDirectory;
-            var before = ReadTrust(location);
-            bool unregistered = macroName is null && (before.Registration is null || Path.GetDirectoryName(location) != ActiveFolder);
-            if (unregistered && previousOnce == once)
-                return new(profile, once);
-            if (!unregistered && before.Version == version)
-                return new(profile, null);
-
-            string details = Describe(location, profile, macroName,
-                before.Version is not null || previousOnce is not null);
-            if (unregistered && Path.GetDirectoryName(location) != ActiveFolder)
-                details += "\n\n" + Text("ProfileImportLogDirectory") + "\n" + PermissionDisplay.Literal(folder);
-            var choice = await AskAsync(owner, "ProfileTrustReview", details,
-                "ProfileConnectOnce", unregistered ? "ProfileImportAndConnect" : "ProfileTrustAndConnect", token);
-            if (choice == ProfileAnswer.Cancel) throw new SshInteractionCancelledException();
-            token.ThrowIfCancellationRequested();
-            if (ReadTrust(location) != before || folder != app.ProfileSaveDirectory) continue;
-            if (choice == ProfileAnswer.Once)
-                return new(profile, unregistered && (!reconnect || previousOnce is not null) ? once : null);
-            if (!unregistered)
+            while (true)
             {
-                LocalState.Change(state => StoreVersion(state, location, version));
-                return new(profile, null);
-            }
+                token.ThrowIfCancellationRequested();
+                string folder = app.ProfileSaveDirectory;
+                var before = ReadTrust(location);
+                bool unregistered = macroName is null && (before.Registration is null || Path.GetDirectoryName(location) != ActiveFolder);
+                if (unregistered && previousOnce == once)
+                    return Complete(profile, once);
+                if (!unregistered && before.Version == version)
+                    return Complete(profile, null);
 
-            await registrationChanges.WaitAsync(token);
-            try
-            {
+                string details = Describe(location, profile, macroName,
+                    before.Version is not null || previousOnce is not null);
+                if (unregistered && Path.GetDirectoryName(location) != ActiveFolder)
+                    details += "\n\n" + Text("ProfileImportLogDirectory") + "\n" + PermissionDisplay.Literal(folder);
+                var choice = await AskAsync(owner, "ProfileTrustReview", details,
+                    "ProfileConnectOnce", unregistered ? "ProfileImportAndConnect" : "ProfileTrustAndConnect", token);
+                if (choice == ProfileAnswer.Cancel) throw new SshInteractionCancelledException();
+                token.ThrowIfCancellationRequested();
                 if (ReadTrust(location) != before || folder != app.ProfileSaveDirectory) continue;
-                var imported = await ImportRevisionAsync(profile, location, folder, before, used: true, token);
-                if (imported is not null) return new(imported, null);
+                if (choice == ProfileAnswer.Once)
+                    return Complete(profile, unregistered && (!reconnect || previousOnce is not null) ? once : null);
+                if (!unregistered)
+                {
+                    LocalState.Change(state => StoreVersion(state, location, version));
+                    return Complete(profile, null);
+                }
+
+                await registrationChanges.WaitAsync(token);
+                try
+                {
+                    if (ReadTrust(location) != before || folder != app.ProfileSaveDirectory) continue;
+                    var imported = await ImportRevisionAsync(profile, location, folder, before, used: true, token);
+                    if (imported is not null) return Complete(imported, null);
+                }
+                finally { registrationChanges.Release(); }
             }
-            finally { registrationChanges.Release(); }
+        }
+        finally { program?.Dispose(); }
+
+        Admission Complete(ConnectionProfile admitted, OnceApproval? approval)
+        {
+            var result = new Admission(admitted, approval, program);
+            program = null;
+            return result;
         }
     }
 
-    private static void ValidatePostConnectionSource(ConnectionProfile profile)
+    private static MacroProgram? CompilePostConnectionSource(ConnectionProfile profile, MacroRun? caller = null)
     {
-        try { using var macro = profile.CompilePostConnectionMacro(); }
+        try { return caller is null ? profile.CompilePostConnectionMacro() : caller.CompilePostConnection(profile); }
         catch (MacroSourceException error) { throw new InvalidDataException(TerminalTab.PostConnectionSourceError(error), error); }
     }
 

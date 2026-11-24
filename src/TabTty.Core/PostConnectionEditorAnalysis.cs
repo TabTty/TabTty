@@ -142,17 +142,18 @@ internal sealed class PostConnectionCursor(int caret)
 
     private static PostConnectionSignature? Signature(MacroEditorCall call)
     {
-        if (!PostConnectionMacro.Calls.TryGetValue(call.Name, out var definition)) return null;
-        var types = MacroApi.Signatures[call.Name][^1].Parameters;
+        if (!PostConnectionMacro.Calls.TryGetValue(call.Name, out int required)) return null;
+        var signature = MacroApi.Signatures[call.Name][^1];
+        var types = signature.Parameters;
         int index = call.NamedSlot ?? call.Parameter;
         if (index >= types.Length) return null;
         string[] parameters = new string[types.Length];
         for (int i = 0; i < types.Length; i++)
         {
-            string name = definition.ParameterNames[i];
+            string name = signature.ParameterNames[i];
             string parameter = types[i] == MacroApi.Alternatives ? "[name: pattern, ...]" :
                 MacroApi.NamedSignature(call.Name) is not null && i > 0 ? name + ": " + types[i] : types[i] + " " + name;
-            parameters[i] = i < definition.Required ? parameter : "[" + parameter + "]";
+            parameters[i] = i < required ? parameter : "[" + parameter + "]";
         }
         return new(call.Name, parameters, index);
     }

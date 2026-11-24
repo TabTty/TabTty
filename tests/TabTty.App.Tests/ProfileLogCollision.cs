@@ -80,8 +80,6 @@ internal static partial class Program
         finally { await SetLanguage(originalLanguage); }
         Console.WriteLine("PASS ProfileLogCollisionSaveReopenConnectEnglishAndJapanese");
 
-        Task SetLanguage(string language) => app.SaveSettingsAsync(language, app.ThemeChoice, app.BellChoice,
-            app.TerminalFontFamily, app.TerminalFontSize, app.RetainedRows, app.AutoCloseDisconnectedTabs,
-            app.VaultPath, app.SettingsRevision);
+        Task SetLanguage(string language) => app.SaveSettingsAsync(app.SettingsRevision, new(Language: language));
     }
 }

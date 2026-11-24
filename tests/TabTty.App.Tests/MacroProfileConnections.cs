@@ -139,6 +139,8 @@ internal static partial class Program
                 WriteLine("unexpected embedded continuation");
                 """;
             await WriteBody(embedded);
+            long compilations = MacroProgram.PostConnectionCompilations;
+            long beforeLaunch = MacroLimits.ApplicationMemory.Used;
             var tab = await Launch(caller, approveLaunch: true);
             var review = await Review(caller);
             CheckMacroLaunch(FindControls<TextBox>(review).Single().Text.Contains("unexpected embedded continuation", StringComparison.Ordinal),
@@ -165,6 +167,9 @@ internal static partial class Program
                 tab.Disconnect();
             }
             await tab.Completion.WaitAsync(token);
+            CheckMacroLaunch(MacroProgram.PostConnectionCompilations == compilations + 1 &&
+                MacroLimits.ApplicationMemory.Used == beforeLaunch,
+                "External Connect compiled the embedded body more than once or retained its launch reservation.");
             CheckMacroLaunch(Directory.EnumerateFiles(logs, "handoff*.raw.tttylog").Count() == 1,
                 "The two phases did not share one recording.");
 
@@ -250,8 +255,7 @@ internal static partial class Program
             await tab.Completion.WaitAsync(token);
         }
 
-        Task SetLanguage(string choice) => app.SaveSettingsAsync(choice, app.ThemeChoice, app.BellChoice, app.TerminalFontFamily,
-            app.TerminalFontSize, app.RetainedRows, app.AutoCloseDisconnectedTabs, app.VaultPath, app.SettingsRevision);
+        Task SetLanguage(string choice) => app.SaveSettingsAsync(app.SettingsRevision, new(Language: choice));
 
         static void Select(Window review, string label) => FindControls<Button>(review)
             .Single(button => Equals(button.Content, label)).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));

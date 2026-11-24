@@ -15,6 +15,24 @@ internal sealed record MacroConstantsDeclaration(string Alias, string Path, Macr
 }
 internal sealed record MacroConstantsBinding(string Alias, MacroConstantsFile File);
 
+internal sealed class MacroConstantsBudget
+{
+    private readonly HashSet<string> measuredPaths = new(StringComparer.Ordinal);
+    private long knownBytes;
+    internal int RemainingBytes => (int)Math.Max(0, MacroLimits.SourceBytes - knownBytes);
+    internal int RemainingMembers { get; private set; } = MacroConstantsFile.MaxMembers;
+
+    internal bool CrossedByteLimit(string path, int? byteCount)
+    {
+        if (byteCount is not >= 0 || !measuredPaths.Add(path)) return false;
+        bool wasWithinLimit = knownBytes <= MacroLimits.SourceBytes;
+        knownBytes += byteCount.Value;
+        return wasWithinLimit && knownBytes > MacroLimits.SourceBytes;
+    }
+
+    internal void AddDefinitions(MacroConstantsFile file) => RemainingMembers -= file.Values.Count;
+}
+
 internal sealed record MacroConstantsFile(string FullPath, string Digest, string Source, IReadOnlyDictionary<string, object> Values)
 {
     internal const int MaxDeclarations = 16;

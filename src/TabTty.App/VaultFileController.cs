@@ -666,6 +666,14 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         return (unlocked, managementRevision);
     }
 
+    internal bool HasCurrentSelection(IReadOnlyList<VaultEntryInfo> selection)
+    {
+        if (vault is not { HasUnverifiedPublication: false } current || current.Revision != managementRevision)
+            return false;
+        var identities = ManagementEntries.ToHashSet(ReferenceEqualityComparer.Instance);
+        return selection.Count != 0 && selection.All(identities.Contains);
+    }
+
     internal string CurrentCredentialName(VaultEntryInfo entry)
     {
         CurrentEntry(entry);

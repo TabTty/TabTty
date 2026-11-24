@@ -35,6 +35,27 @@ internal static class MacroConstantsLoadTests
         {
             if (exact.Constants.Count != 2) throw new Exception("Aggregate byte limit rejected an exact fit.");
         }
+        var buffers = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [first] = "bool First = true;",
+            [second] = "bool Second = false;",
+        };
+        var sizes = new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            [first] = maxBytes / 2,
+            [second] = maxBytes / 2,
+        };
+        const string alias = "#constants Alias \"./first.tttyc\"\n";
+        string source = header + alias + both + "#constants Unsaved \"unsaved.tttyc\"\n";
+        buffers[Path.Combine(directory.Path, "unsaved.tttyc")] = "bool Extra = true;";
+        var successfulEditor = new MacroEditorSymbols(null);
+        MacroProgram.AnalyzeForEditor(macro, source, buffers, successfulEditor, null, sizes);
+        if (successfulEditor.DependencyErrors.Count != 0) throw new Exception("Editor rejected an exact byte fit with an unknown size.");
+        sizes[second]++;
+        var overBudgetEditor = new MacroEditorSymbols(null);
+        MacroProgram.AnalyzeForEditor(macro, source, buffers, overBudgetEditor, null, sizes);
+        if (overBudgetEditor.DependencyErrors.Single() is not { Code: "ConstantsLimit", Position.Line: 4 })
+            throw new Exception("The editor did not report the first directive that exceeded the known byte budget.");
         await File.AppendAllTextAsync(second, " ");
         await RejectAsync(macro, "ConstantsLimit", second);
 

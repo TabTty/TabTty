@@ -566,6 +566,12 @@
   <data name="MacroFiles" xml:space="preserve"><value>TabTty マクロ (*.tttym)|*.tttym</value></data>
   <data name="MacroArguments" xml:space="preserve"><value>引数</value></data>
   <data name="MacroArgument" xml:space="preserve"><value>引数</value></data>
+  <data name="CredentialRenameReviewProfile" xml:space="preserve"><value>編集中に金庫の名前変更によってこのプロファイルが更新されました。保存済みの認証情報名を確認し、この版に下書きを上書きするか選んでください。</value></data>
+  <data name="VaultEntrySelectionChanged" xml:space="preserve"><value>選択した項目が変わりました。現在の一覧から項目を選び直してください。</value></data>
+  <data name="MacroArgumentCountLimit" xml:space="preserve"><value>引数の数が上限の64件を{0}件超えています。</value></data>
+  <data name="MacroArgumentRowLimit" xml:space="preserve"><value>{1}番目の引数が上限の4,096 UTF-16コード単位を{0}単位超えています。</value></data>
+  <data name="MacroArgumentTotalLimit" xml:space="preserve"><value>引数の合計が上限の16,384 UTF-16コード単位を{0}単位超えています。</value></data>
+  <data name="MacroArgumentInvalid" xml:space="preserve"><value>{1}番目の引数にNULまたは無効なUnicode文字が含まれています。</value></data>
   <data name="MacroAddArgument" xml:space="preserve"><value>引数を追加</value></data>
   <data name="MacroRemoveArgument" xml:space="preserve"><value>削除</value></data>
   <data name="MacroPause" xml:space="preserve"><value>マクロを一時停止</value></data>

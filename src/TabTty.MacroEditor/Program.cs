@@ -39,7 +39,7 @@ static object ReadLocal(string path)
             offset += count;
         }
         var (encoding, skip) = MacroProgram.DetectEncoding(bytes);
-        return new { status = "ok", text = encoding.GetString(bytes, skip, bytes.Length - skip) };
+        return new { status = "ok", text = encoding.GetString(bytes, skip, bytes.Length - skip), byteCount = bytes.Length };
     }
     catch (FileNotFoundException) { return new { status = "missing" }; }
     catch (DirectoryNotFoundException) { return new { status = "missing" }; }
@@ -82,7 +82,7 @@ static object Analyze(EditorRequest request)
         else
         {
             symbols = MacroProgram.AnalyzeForEditor(request.Path, request.Source,
-                request.Constants ?? new Dictionary<string, string>(), editor, request.Offset);
+                request.Constants ?? new Dictionary<string, string>(), editor, request.Offset, request.KnownConstantBytes);
             diagnostic = editor.Error;
         }
     }
@@ -100,6 +100,7 @@ static object Analyze(EditorRequest request)
             return pair.Value.Select(signature => new {
                 Result = signature.Result.ToString(),
                 NamedParameters = namedParameters,
+                signature.ParameterNames,
                 Parameters = signature.Parameters.Select(parameter => parameter.ToString()).ToArray()
             }).ToArray();
         });
@@ -113,4 +114,5 @@ static object Analyze(EditorRequest request)
 }
 
 internal sealed record EditorRequest(string Path, string Source, bool ConstantsFile,
-    Dictionary<string, string>? Constants, string? Operation, int? Offset, string[]? Candidates);
+    Dictionary<string, string>? Constants, string? Operation, int? Offset, string[]? Candidates,
+    Dictionary<string, int>? KnownConstantBytes);

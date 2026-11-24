@@ -81,6 +81,16 @@ extension.activate(context);
     assert(completion.some(item => item.label === 'before'));
     const signature = await providers.signature.provideSignatureHelp(doc, position);
     assert(signature.signatures[0].label.includes('WaitPattern pattern'));
+    assert(!signature.signatures[0].label.includes('timeoutMs'));
+    assert(signature.signatures[1].label.includes('long timeoutMs'));
+    async function parameters(call) {
+        doc.text = '#tttym 1\n' + call;
+        const help = await providers.signature.provideSignatureHelp(doc, doc.positionAt(doc.text.length));
+        return help.signatures[help.activeSignature].parameters.map(parameter => parameter.label);
+    }
+    assert.deepStrictEqual(await parameters('WritePasswordLine('), ['string name']);
+    assert.deepStrictEqual(await parameters('Replace('), ['string text', 'string oldValue', 'string newValue']);
+    assert.deepStrictEqual(await parameters('WaitAnyPrompt('), ['[name: pattern, ...]']);
     doc.text = '#tttym 1\nWriteLine("command", mark';
     const writeOptions = await providers.completion.provideCompletionItems(doc, doc.positionAt(doc.text.length));
     assert.deepStrictEqual(writeOptions.map(item => [item.label, item.detail, item.insertText]),
@@ -202,7 +212,7 @@ extension.activate(context);
     await checkVariable('i', positionOf('WaitPrompt(i', 12), undefined, undefined);
     for (const [source, name, parameter, parameterName] of [
         ['WaitAnyPrompt([a: Literal("A"), b: Literal("B|")], 1000);', 'Literal', 0, 'text'],
-        ['WaitAnyPrompt([a: Literal("A"), |b: Literal("B")], 1000);', 'WaitAnyPrompt', 0, 'patterns'],
+        ['WaitAnyPrompt([a: Literal("A"), |b: Literal("B")], 1000);', 'WaitAnyPrompt', 0, '[name: pattern, ...]'],
         ['WaitAnyPrompt([a: Literal("A")],|', 'WaitAnyPrompt', 1, 'timeoutMs'],
         ['Sleep((|1 + 2));', 'Sleep', 0, 'milliseconds'],
         ['WriteLine($"{{n}},| {FormatNumber(n, "D")}");', 'WriteLine', 0, 'text'],
@@ -219,7 +229,8 @@ extension.activate(context);
         const signature = help?.signatures[help.activeSignature];
         assert(signature?.label.includes(' ' + name + '('), source + ': ' + signature?.label);
         assert.strictEqual(help.activeParameter, parameter, source);
-        assert(signature.parameters[parameter].label.endsWith(' ' + parameterName), source);
+        const label = signature.parameters[parameter].label;
+        assert(label === parameterName || label.endsWith(' ' + parameterName), source);
     }
     for (const expression of ['"ready" /*keep*/ + ">"', '( "ready" + ">" )', 'Trim(" ready> ")']) {
         const line = 'WaitPrompt( ' + expression + ' , 1000);';

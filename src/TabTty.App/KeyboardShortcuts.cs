@@ -46,13 +46,6 @@ internal sealed class KeyboardShortcuts
     internal ShortcutAction? Match(KeyEventArgs e) =>
         actions.TryGetValue((e.Key, e.KeyboardDevice.Modifiers), out var action) ? action : null;
 
-    internal JsonObject ToJson()
-    {
-        var result = new JsonObject();
-        foreach (var command in Commands) result[command.Action.ToString()] = this[command.Action];
-        return result;
-    }
-
     internal static KeyboardShortcuts Read(JsonObject settings)
     {
         if (settings.TryGetPropertyValue(SettingsKey, out var stored))
