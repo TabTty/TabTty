@@ -9,7 +9,7 @@ namespace TabTty.App;
 internal sealed partial class TerminalTab
 {
     private bool sendMouseToHost = true;
-    private bool mouseNoticeShown;
+    private bool mouseNoticeShownForCurrentRouting;
     private readonly TextBlock mouseStatus = new() { Visibility = Visibility.Collapsed };
     private readonly TextBlock mouseNoticeText = new() { TextWrapping = TextWrapping.Wrap };
     private readonly Border mouseNotice = new()
@@ -57,7 +57,6 @@ internal sealed partial class TerminalTab
 
     private void ResetMouseRouting()
     {
-        mouseNoticeShown = false;
         foreach (var pane in panes.Keys) pane.ResetMouseTracking();
         SetMouseRouting(send: true);
     }
@@ -75,14 +74,15 @@ internal sealed partial class TerminalTab
             mouseStatus.Visibility = requested ? Visibility.Visible : Visibility.Collapsed;
         }
 
+        if (!remote) mouseNoticeShownForCurrentRouting = false;
         if (!remote || !output.IsPresentationActive)
         {
             HideMouseNotice();
             return;
         }
         mouseNoticeText.Text = Text("MouseSentToHostNotice");
-        if (mouseNoticeShown) return;
-        mouseNoticeShown = true;
+        if (mouseNoticeShownForCurrentRouting) return;
+        mouseNoticeShownForCurrentRouting = true;
         mouseNotice.Visibility = Visibility.Visible;
         mouseNoticeTimer.Start();
         System.Windows.Automation.Peers.UIElementAutomationPeer.CreatePeerForElement(mouseNoticeText)?

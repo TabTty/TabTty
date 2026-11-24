@@ -275,9 +275,10 @@ With local routing, right-click opens the local menu and the wheel scrolls any
 available local history. Scrollbars and retained-output browsing stay local.
 
 When the host requests mouse tracking, the status bar shows the active pane's
-mouse destination. The first time a visible pane routes mouse input to the host
-during a connection, briefly display a non-interactive message explaining how
-to change it from the tab context menu. Keep keyboard focus on its current target.
+mouse destination. Each time mouse routing switches to the host, show a brief
+non-interactive message once the active pane is visible. The message explains
+how to change routing from the tab context menu. Keep keyboard focus on its
+current target.
 Menu-based zoom has no new Ctrl+wheel binding.
 
 Mouse 9 sends presses only; 1000 adds release/wheel; 1002 adds drag motion;

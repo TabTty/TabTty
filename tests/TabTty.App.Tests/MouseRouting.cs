@@ -10,7 +10,7 @@ internal static partial class Program
 {
     private static async Task CheckMouseRoutingAsync(App app, string directory)
     {
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var token = deadline.Token;
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -52,8 +52,20 @@ internal static partial class Program
             if (surface.CanReportMouse || FindCommand(tabMenu, "SendMouseToHost") is null)
                 throw new InvalidOperationException("A tracking-mode change discarded the tab's local preference.");
             Invoke(paneMenu, "SendMouseToHost");
-            if (!surface.CanReportMouse || !Shows("MouseDestinationHost") || Shows("MouseSentToHostNotice"))
-                throw new InvalidOperationException("The pane menu did not restore host routing without repeating the notice.");
+            if (!surface.CanReportMouse || !Shows("MouseDestinationHost") || !Shows("MouseSentToHostNotice"))
+                throw new InvalidOperationException("The pane menu did not restore host routing and show its notice.");
+
+            while (Shows("MouseSentToHostNotice")) await Task.Delay(20, token);
+            tab.UpdateLabels();
+            if (Shows("MouseSentToHostNotice"))
+                throw new InvalidOperationException("An update repeated the notice while host routing was still active.");
+
+            await stream.WriteAsync("\u001b[?1000l"u8.ToArray(), token);
+            await WaitForTrackingAsync(false);
+            await stream.WriteAsync("\u001b[?1000h"u8.ToArray(), token);
+            await WaitForTrackingAsync(true);
+            if (!surface.CanReportMouse || !Shows("MouseSentToHostNotice"))
+                throw new InvalidOperationException("The notice did not reappear when the host re-enabled mouse tracking.");
 
             async Task WaitForTrackingAsync(bool enabled)
             {
