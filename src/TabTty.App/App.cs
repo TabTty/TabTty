@@ -393,6 +393,8 @@ public sealed class App : Application
             throw new InvalidOperationException(Text("ManagementTabOutdated"));
         if (settingsReadOnly)
             throw new InvalidOperationException(Text("RestoreSettings"));
+        if (!ValidTerminalDefaults(edits.FontSize ?? TerminalFontSize, edits.RetainedRows ?? RetainedRows))
+            throw new InvalidDataException(Text("InvalidTerminalDefaults"));
         string priorVaultPath = VaultPath;
         string vaultPath = edits.VaultPath is { } selectedVault ? NormalizeVaultPath(selectedVault) : priorVaultPath;
         bool vaultChanged = !string.Equals(priorVaultPath, vaultPath, StringComparison.Ordinal);
@@ -567,8 +569,7 @@ public sealed class App : Application
             string.IsNullOrWhiteSpace(font["family"]?.GetValue<string>()) ||
             font["family"]!.GetValue<string>().EnumerateRunes().Count() > 256 ||
             font["family"]!.GetValue<string>().Any(char.IsControl) ||
-            font["sizePoints"]?.GetValue<double>() is not (>= 6 and <= 72) ||
-            parsed["defaultRetainedRows"]?.GetValue<int>() is not (>= 100 and <= 100000) ||
+            !ValidTerminalDefaults(font["sizePoints"]?.GetValue<double>(), parsed["defaultRetainedRows"]?.GetValue<int>()) ||
             (parsed.ContainsKey("maxPasteTextBytes") &&
                 (parsed["maxPasteTextBytes"] is not JsonValue maxPaste || !maxPaste.TryGetValue<long>(out long maximum) ||
                  maximum <= 0)) ||
@@ -604,4 +605,7 @@ public sealed class App : Application
             parsed[key] is JsonValue value && value.TryGetValue<string>(out string? text) &&
             text is not null && text.Length <= maximum && !text.Contains('\0');
     }
+
+    private static bool ValidTerminalDefaults(double? size, int? rows) =>
+        size is >= 6 and <= 72 && rows is >= 100 and <= 100_000;
 }
