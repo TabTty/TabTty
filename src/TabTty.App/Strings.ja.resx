@@ -276,11 +276,11 @@
   <data name="UngroupedProfiles" xml:space="preserve"><value>グループなし</value></data>
   <data name="SearchProfiles" xml:space="preserve"><value>検索</value></data>
   <data name="ImportProfileFile" xml:space="preserve"><value>ファイルを取り込み</value></data>
-  <data name="RemoveRegistration" xml:space="preserve"><value>登録解除</value></data>
+  <data name="RemoveRegistration" xml:space="preserve"><value>登録を解除</value></data>
   <data name="EditProfile" xml:space="preserve"><value>編集…</value></data>
   <data name="EditProfileWindowTitle" xml:space="preserve"><value>接続プロファイル編集</value></data>
   <data name="EditNamedProfile" xml:space="preserve"><value>"{0}" の編集…</value></data>
-  <data name="DuplicateProfile" xml:space="preserve"><value>複製…</value></data>
+  <data name="DuplicateProfile" xml:space="preserve"><value>コピー…</value></data>
   <data name="ConnectProfile" xml:space="preserve"><value>接続</value></data>
   <data name="ConnectSelectedProfiles" xml:space="preserve"><value>選択した{0}件に接続</value></data>
   <data name="ProfileGroupCount" xml:space="preserve"><value>{0}（{1}件）</value></data>
@@ -373,7 +373,7 @@
   <data name="NoPrivateKeySelected" xml:space="preserve"><value>未選択</value></data>
   <data name="ProfilePrivateKeyRequired" xml:space="preserve"><value>公開鍵認証を使うには、秘密鍵を選択してください。</value></data>
   <data name="MissingHighlightSet" xml:space="preserve"><value>強調セットが見つかりません</value></data>
-  <data name="RecycleProfile" xml:space="preserve"><value>完全削除</value></data>
+  <data name="RecycleProfile" xml:space="preserve"><value>完全に削除</value></data>
   <data name="RecycleProfileConfirm" xml:space="preserve"><value>このプロファイルファイルをごみ箱へ移動しますか。vault 内の認証情報と接続中のセッションは保持されます。</value></data>
   <data name="RecycleProfileFailed" xml:space="preserve"><value>プロファイルをごみ箱へ移動できませんでした。保存場所と利用可能な状態を確認してください。</value></data>
   <data name="RecoverStores" xml:space="preserve"><value>アプリの保存ファイルを復旧…</value></data>
