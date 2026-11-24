@@ -146,6 +146,11 @@ internal sealed class MacroLexer(string source, MacroPosition origin, bool allow
     {
         if (++stringDepth > 128) throw Error("NestingLimit", at);
         try { return ReadStringParts(at, start, interpolated, verbatim); }
+        catch (MacroSourceException)
+        {
+            editor?.PostConnection?.String(start, offset, closed: false);
+            throw;
+        }
         finally { stringDepth--; }
     }
 
@@ -161,6 +166,7 @@ internal sealed class MacroLexer(string source, MacroPosition origin, bool allow
             if (c == '"')
             {
                 if (verbatim && Peek() == '"') { Take(); text.Append('"'); continue; }
+                editor?.PostConnection?.String(start, offset, closed: true);
                 return Finish();
             }
             if (!verbatim && c is '\r' or '\n') throw Error("StringNewline", at);
@@ -208,6 +214,7 @@ internal sealed class MacroLexer(string source, MacroPosition origin, bool allow
             else text.Append(c);
         }
         var unfinished = Error("UnterminatedString", at);
+        editor?.PostConnection?.String(start, offset, closed: false);
         if (!interpolated || editor?.Recover(unfinished) != true) throw unfinished;
         return Finish();
 
@@ -322,9 +329,10 @@ internal sealed class MacroParser
         {
             token = lexer.Next();
             tokens.Add(token);
-            if (tokens.Count == 3) editor?.CheckVersion(tokens);
+            if (tokens.Count == 3 && editor?.PostConnection is null) editor?.CheckVersion(tokens);
         } while (token.Kind != "end");
-        editor?.VersionHeader(tokens, lexer.FirstTokenOffset, source.Length);
+        if (editor?.PostConnection is { } embedded) embedded.Tokens = tokens;
+        else editor?.VersionHeader(tokens, lexer.FirstTokenOffset, source.Length);
     }
 
     // Fragment tokens already carry positions and offsets in the original document.
@@ -336,7 +344,7 @@ internal sealed class MacroParser
         tokens = fragment;
     }
 
-    public (MacroBlock Body, Dictionary<string, MacroFunction> Functions) ParseFile()
+    private void ParseHeader()
     {
         int directiveStart = Current.Offset;
         const string header = "#tttym 1";
@@ -360,6 +368,11 @@ internal sealed class MacroParser
                 while (Current.Kind != "end" && OnSameDirectiveLine(previous, Current));
             }
         }
+    }
+
+    public (MacroBlock Body, Dictionary<string, MacroFunction> Functions) ParseFile(bool embedded = false)
+    {
+        if (!embedded) ParseHeader();
         var statements = new List<MacroStatement>();
         var functions = new Dictionary<string, MacroFunction>(StringComparer.Ordinal);
         while (Current.Kind != "end")
@@ -367,13 +380,14 @@ internal sealed class MacroParser
             int start = cursor;
             try
             {
-                if (!TryFunction(functions)) statements.Add(Statement());
+                if (embedded || !TryFunction(functions)) statements.Add(Statement());
             }
             catch (MacroSourceException error) when (editor?.Recover(error) == true)
             {
                 RecoverStatement(start, inBlock: false);
             }
         }
+        OfferFollowingStatement();
         return (Add(new MacroBlock(statements.ToArray(), new(1, 1))), functions);
     }
 
@@ -456,12 +470,18 @@ internal sealed class MacroParser
         try
         {
             var at = Current.Position;
+            Offer(PostConnectionSite.Statement);
             if (Current.Text == "{") return Block();
             if (Eat("if"))
             {
-                Expect("("); var condition = Expression(); Expect(")"); var yes = Block();
+                Expect("("); var condition = Expression(expected: MacroType.Bool); Expect(")"); var yes = Block();
                 MacroStatement? no = null;
-                if (Eat("else")) no = Current.Text == "if" ? Statement() : Block();
+                Offer(PostConnectionSite.Else);
+                if (Eat("else"))
+                {
+                    Offer(PostConnectionSite.AfterElse);
+                    no = Current.Text == "if" ? Statement() : Block();
+                }
                 return Add(new MacroIf(condition, yes, no, at));
             }
             if (Eat("while"))
@@ -494,7 +514,7 @@ internal sealed class MacroParser
             if (Current.Text is "return" or "break" or "continue" or "throw")
             {
                 string kind = Take().Text;
-                var value = kind == "return" && Current.Text != ";" ? Expression() : null;
+                var value = kind == "return" && Current.Text != ";" ? Expression(offerCompletions: false) : null;
                 Expect(";"); return Add(new MacroFlow(kind, value, at));
             }
             var statement = Simple(); Expect(";"); return statement;
@@ -515,7 +535,7 @@ internal sealed class MacroParser
             MacroExpression value;
             try
             {
-                value = Expression();
+                value = Expression(expected: type);
                 if (editor is not null && Current.Text != ";") Fail("ExpectedToken");
             }
             catch (MacroSourceException error) when (editor?.Recover(error) == true)
@@ -524,11 +544,11 @@ internal sealed class MacroParser
                 while (Current.Kind != "end" && Current.Text is not (";" or "}")) Take();
                 value = Add(new MacroMissingExpression(error.Position));
             }
-            var declaration = Add(new MacroDeclaration(name, type, value, at));
+            var declaration = Add(new MacroDeclaration(name, type, value, at, nameToken.Position));
             editor?.Name(declaration, nameToken, Current.Offset + 1);
             return declaration;
         }
-        var target = Expression();
+        var target = Expression(offerCompletions: false);
         if (Current.Text is "=" or "+=" or "-=" or "*=" or "/=" or "%=" or "++" or "--")
         {
             string op = Take().Text;
@@ -548,6 +568,7 @@ internal sealed class MacroParser
             catch (MacroSourceException error) when (editor?.Recover(error) == true)
             { RecoverStatement(start, inBlock: true); }
         }
+        OfferFollowingStatement();
         int end = Current.Offset + 1;
         if (!Eat("}"))
         {
@@ -583,30 +604,48 @@ internal sealed class MacroParser
         var result = Expression(); if (Current.Kind != "end") Fail("ExpressionExpected"); return result;
     }
 
-    private MacroExpression Expression(int minimum = 1)
+    private void OfferFollowingStatement()
+    {
+        if (cursor == 0 || tokens[cursor - 1].Text is ";" or "}" or "{")
+            Offer(PostConnectionSite.Statement);
+    }
+
+    private void Offer(PostConnectionSite site, MacroType? expected = null, MacroExpression? operand = null)
+    {
+        editor?.PostConnection?.Offer(site, cursor > 0 ? tokens[cursor - 1] : null, Current, expected, operand);
+    }
+
+    private MacroExpression Expression(int minimum = 1, MacroType? expected = null, bool offerCompletions = true,
+        MacroExpression? operand = null)
     {
         Enter();
         try
         {
-            MacroExpression left = Prefix();
+            if (offerCompletions && editor?.PostConnection is not null)
+                Offer(expected == MacroType.Bool && minimum <= Precedence("==") ? PostConnectionSite.Condition :
+                    PostConnectionSite.Expression, expected, operand);
+            MacroExpression left = Prefix(expected);
             while (Precedence(Current.Text) >= minimum)
             {
                 MacroToken op = Take();
-                left = Add(new MacroBinary(op.Text, left, Expression(Precedence(op.Text) + 1), op.Position));
+                MacroType? rightType = op.Text is "&&" or "||" ? MacroType.Bool : null;
+                left = Add(new MacroBinary(op.Text, left, Expression(Precedence(op.Text) + 1, rightType,
+                    operand: op.Text is "==" or "!=" ? left : null), op.Position));
             }
             return left;
         }
         finally { budget.Depth--; }
     }
 
-    private MacroExpression Prefix()
+    private MacroExpression Prefix(MacroType? expected)
     {
         var token = Take(); MacroExpression expression;
         if (token.Text is "!" or "+" or "-")
         {
             if (token.Text == "-" && Current.RequiresDirectMinus)
                 return Add(new MacroLiteral(Take().LiteralValue(negative: true), token.Position));
-            return Add(new MacroUnary(token.Text, Expression(7), token.Position));
+            return Add(new MacroUnary(token.Text, Expression(7, token.Text == "!" ? MacroType.Bool : MacroType.Long,
+                offerCompletions: token.Text == "!"), token.Position));
         }
         if (token.Text == "(")
         {
@@ -614,7 +653,7 @@ internal sealed class MacroParser
             {
                 var type = ParseType(); Expect(")"); return Add(new MacroCast(type, Expression(7), token.Position));
             }
-            expression = Expression(); Expect(")");
+            expression = Expression(expected: expected); Expect(")");
         }
         else if (token.Text == "[")
         {
@@ -655,6 +694,7 @@ internal sealed class MacroParser
             if (Current.Text == ".")
             {
                 var dot = Take();
+                Offer(PostConnectionSite.Member, operand: expression);
                 editor?.QualifiedMember(expression, dot, Current);
                 var member = Current;
                 expression = Add(new MacroMember(expression, Identifier(), member.Position));
@@ -688,8 +728,11 @@ internal sealed class MacroParser
         List<MacroBoundArgument>? bound = signature is null ? null : [];
         for (int index = 0; ; index++)
         {
+            var embeddedType = editor?.PostConnection is null ? null :
+                PostConnectionMacro.Signature(name.Text)?.Parameters.ElementAtOrDefault(index);
             if (Current.Text == ")" && index == 0)
             {
+                Offer(PostConnectionSite.Expression, embeddedType);
                 editor?.CallArgument(name.Text, open, index, argumentStart, Current.Offset, bound, null);
                 break;
             }
@@ -705,13 +748,13 @@ internal sealed class MacroParser
                 {
                     parameter = index == 0 ? parameters[0] : ParseNamedOption(parameters, bound!);
                     var valueStart = Current.Position;
-                    value = Expression();
+                    value = Expression(expected: parameter.Type);
                     bound!.Add(new(value, parameter, valueStart));
                 }
                 else
                 {
                     value = index == 0 && name.Text is "WaitAnyLine" or "WaitAnyPrompt"
-                        ? ParseAlternatives() : Expression();
+                        ? ParseAlternatives() : Expression(expected: embeddedType);
                     positional!.Add(value);
                 }
             }
@@ -747,6 +790,7 @@ internal sealed class MacroParser
     private MacroAlternatives ParseAlternatives()
     {
         var opening = Current;
+        Offer(PostConnectionSite.Expression, MacroApi.Alternatives);
         Expect("[");
         var names = new List<string>();
         var unique = new HashSet<string>(StringComparer.Ordinal);
@@ -761,7 +805,7 @@ internal sealed class MacroParser
                 throw new MacroSourceException("DuplicateAlternative", label.Position, length: label.Text.Length);
             Take(); Take();
             names.Add(label.Text);
-            patterns.Add(Expression());
+            patterns.Add(Expression(expected: MacroApi.WaitPattern));
         } while (Eat(",") && Current.Text != "]");
         Expect("]");
         return Add(new MacroAlternatives(names.ToArray(), patterns.ToArray(), opening.Position));

@@ -9,6 +9,12 @@ internal static partial class MacroContracts
     {
         RejectsBeforeEffects();
         Console.WriteLine("PASS MacroRejectsInvalidUnusedCodeBeforeEffects");
+        await PostConnectionSerialAsync();
+        Console.WriteLine("PASS PostConnectionMacroSubsetAndQuietSerial");
+        CheckPostConnectionEditor();
+        Console.WriteLine("PASS PostConnectionEditorUsesEmbeddedGrammarAndScope");
+        await PostConnectionSudoAsync();
+        Console.WriteLine("PASS PostConnectionMacroSudoWithAndWithoutPassword");
         await FilePathPartsAsync();
         Console.WriteLine("PASS MacroFilePathParts");
         await SourceEncodingsAsync();

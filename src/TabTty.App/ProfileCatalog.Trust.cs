@@ -98,6 +98,7 @@ internal sealed partial class ProfileCatalog
         bool reconnect, OnceApproval? previousOnce)
     {
         ConnectionProfile profile = await LoadForUseAsync(owner, path, token, macroName);
+        ValidatePostConnectionSource(profile);
         string location = await ProfileLocationAsync(profile, token);
         string version = profile.TrustVersion;
         var once = new OnceApproval(location, version);
@@ -139,6 +140,17 @@ internal sealed partial class ProfileCatalog
             finally { registrationChanges.Release(); }
         }
     }
+
+    private static void ValidatePostConnectionSource(ConnectionProfile profile)
+    {
+        try { using var macro = profile.CompilePostConnectionMacro(); }
+        catch (MacroSourceException error) { throw new InvalidDataException(TerminalTab.PostConnectionSourceError(error), error); }
+    }
+
+    private static async Task<bool> ReviewProfileRegistrationAsync(Window owner, string path,
+        ConnectionProfile profile, CancellationToken token) =>
+        !profile.HasPostConnectionMacro || await AskAsync(owner, "PostConnectionMacroRegistration",
+            Describe(path, profile, null, false), "PostConnectionMacroTrustProfile", null, token) == ProfileAnswer.Once;
 
     internal async Task ApproveRecordingDestinationAsync(Window? owner, RecordingDestination destination, CancellationToken token)
     {
@@ -209,6 +221,11 @@ internal sealed partial class ProfileCatalog
         {
             var formats = new[] { (profile.RecordRaw, "Raw"), (profile.RecordText, "Text"), (profile.RecordTerminal, "Terminal") };
             lines.Add(string.Join(", ", formats.Where(format => format.Item1).Select(format => format.Item2)));
+        }
+        if (profile.HasPostConnectionMacro)
+        {
+            lines.Add(Text("PostConnectionMacroDescription"));
+            lines.Add(PermissionDisplay.PastePage(profile.PostConnectionSource.AsSpan()));
         }
         return string.Join("\n", lines);
     }

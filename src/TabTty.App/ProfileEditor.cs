@@ -38,9 +38,9 @@ internal sealed class ProfileEditor
         var terminal = draft["terminal"]!.AsObject();
         var logging = draft["logging"]!.AsObject();
         selectedProtocol = profile.Type;
-        var navigation = form.AddNavigation(("ProfileConnectionGroup", BuildConnection),
+        var navigation = form.AddNavigation("PostConnectionMacro", ("ProfileConnectionGroup", BuildConnection),
             ("ProfileAuthenticationGroup", BuildAuthentication), ("ProfileTerminalGroup", BuildTerminal),
-            ("ProfileLoggingGroup", BuildLogging));
+            ("ProfileLoggingGroup", BuildLogging), ("PostConnectionMacro", BuildPostConnectionMacro));
         var sshOption = (RadioButton)form.FindName("ProtocolSSH");
         var authenticationMenu = navigation.Items.OfType<ListBoxItem>().Single(item => Equals(item.Tag, "ProfileAuthenticationGroup"));
         authenticationMenu.SetBinding(UIElement.VisibilityProperty, new Binding(nameof(ToggleButton.IsChecked))
@@ -51,6 +51,24 @@ internal sealed class ProfileEditor
         {
             if (authenticationMenu.IsSelected) navigation.SelectedIndex = 0;
         };
+
+        void BuildPostConnectionMacro()
+        {
+            form.AddPageDescription("PostConnectionMacroDescription");
+            var editor = new PostConnectionEditor(form, profile.PostConnectionSource);
+            TextBox input = editor.Source;
+            var routines = PostConnectionRoutineMenu.Create(form, input, app, () => selectedProtocol == "ssh" &&
+                transports["ssh"].Connection["authentication"]?["password"] is not null);
+            DockPanel.SetDock(routines, Dock.Top);
+            form.AddDisplay("PostConnectionInsertRoutine", routines);
+            form.AddDisplay("PostConnectionMacro", editor);
+            form.TrackValue(() => input.Text, value => input.Text = value);
+            apply.Add(() =>
+            {
+                if (string.IsNullOrWhiteSpace(input.Text)) draft.Remove("postConnectionMacro");
+                else draft["postConnectionMacro"] = new JsonObject { ["version"] = 1, ["source"] = input.Text };
+            });
+        }
 
         void BuildConnection()
         {
@@ -199,6 +217,8 @@ internal sealed class ProfileEditor
         void Validate()
         {
             timer.Stop();
+            // This page checks the source on a worker. The complete draft is always checked on save.
+            if (navigation.SelectedItem is ListBoxItem { Tag: "PostConnectionMacro" }) return;
             updating = true;
             try { _ = GetDraft(); validation.Clear(); }
             catch (Exception exception) when (ProfileCatalog.IsFileProblem(exception))
@@ -223,7 +243,8 @@ internal sealed class ProfileEditor
         foreach (string key in new[] { "advertisedType", "enter", "backspace", "localEcho" })
             terminal[key] = selected.Terminal[key]!.DeepClone();
         ConnectionProfile profile = original.Edit(draft.ToJsonString());
-        profile.ValidateEditorSettings();
+        try { profile.ValidateEditorSettings(); }
+        catch (MacroSourceException error) { throw new InvalidDataException(TerminalTab.PostConnectionSourceError(error), error); }
         return profile;
     }
 

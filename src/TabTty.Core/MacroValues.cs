@@ -146,7 +146,8 @@ internal sealed record MacroListLiteral(MacroExpression[] Values, MacroPosition 
 internal sealed record MacroInterpolation(MacroExpression[] Parts, MacroPosition At) : MacroExpression(At);
 internal abstract record MacroStatement(MacroPosition Position) : MacroNode(Position);
 internal sealed record MacroBlock(MacroStatement[] Statements, MacroPosition At) : MacroStatement(At);
-internal sealed record MacroDeclaration(string Name, MacroType? Declared, MacroExpression Value, MacroPosition At) : MacroStatement(At)
+internal sealed record MacroDeclaration(string Name, MacroType? Declared, MacroExpression Value, MacroPosition At,
+    MacroPosition NamePosition) : MacroStatement(At)
 {
     public MacroType Type { get; set; } = MacroType.Unknown;
 }

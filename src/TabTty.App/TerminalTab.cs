@@ -198,15 +198,15 @@ internal sealed partial class TerminalTab : UserControl
     public bool IsRunning { get; private set; } = true;
     private enum ConnectionEnd { Pending, Normal, InitialCancelled, FailedBeforeConnect, FailedAfterConnect }
     private ConnectionEnd connectionEnd;
-    public bool IsDisconnected => !IsRunning && (Macro is null
+    public bool IsDisconnected => !IsRunning && (!IsExternalMacro
         ? connectionEnd != ConnectionEnd.Pending : statusKey == "Disconnected" || connectedName is not null);
     internal bool CanReconnect => IsDisconnected && CanStartConnection;
     internal bool CloseAfterInitialCancellation => connectionEnd == ConnectionEnd.InitialCancelled;
     internal bool CanAutoCloseOnDisconnect => connectionEnd == ConnectionEnd.Normal;
     internal string ConnectionStatus => status.Text;
-    public bool ShowDisconnectedIndicator => Macro is null ? !IsRunning && connectionEnd == ConnectionEnd.Normal
+    public bool ShowDisconnectedIndicator => !IsExternalMacro ? !IsRunning && connectionEnd == ConnectionEnd.Normal
         : statusKey == "Disconnected" || IsDisconnected;
-    internal string? ConnectionWarning => Macro is not null || IsRunning ? null : connectionEnd switch
+    internal string? ConnectionWarning => IsExternalMacro || IsRunning ? null : connectionEnd switch
     {
         ConnectionEnd.FailedBeforeConnect => "ConnectionAttemptFailed",
         ConnectionEnd.FailedAfterConnect => "ConnectionLost",
@@ -228,7 +228,7 @@ internal sealed partial class TerminalTab : UserControl
     internal FileTransferWindow? TransferWindow => transferWindow;
     internal bool ClosePending { get; set; }
     private bool removed;
-    private bool CanStartConnection => !removed && !ClosePending && Macro is null && connectionCompletion.IsCompleted;
+    private bool CanStartConnection => !removed && !ClosePending && !IsExternalMacro && connectionCompletion.IsCompleted;
 
     public async void OpenFileTransfer()
     {
@@ -255,6 +255,7 @@ internal sealed partial class TerminalTab : UserControl
     public void Start(Action<ConnectionProfile>? opened = null)
     {
         if (!CanStartConnection) return;
+        ClearPostConnectionMacro();
         AiCollaboration.EndSharing(this);
         bool reconnect = !IsRunning;
         if (reconnect)
@@ -282,6 +283,8 @@ internal sealed partial class TerminalTab : UserControl
         pendingFrame = null;
         ResetMouseRouting();
         bool established = false;
+        MacroRun? postConnection = null;
+        bool postConnectionStarted = false;
         lastRecordingStatus = null;
         try
         {
@@ -336,19 +339,29 @@ internal sealed partial class TerminalTab : UserControl
                 hasAdmission = true;
                 previousOnce = admission.Once;
                 attemptPath = path = profile.OpenedPath;
+                if (profile.HasPostConnectionMacro && !IsExternalMacro)
+                {
+                    using var program = profile.CompilePostConnectionMacro()!;
+                    PrepareMacro(program, []);
+                    postConnection = Macro!;
+                }
+                using var embeddedStartup = postConnection is null ? null :
+                    CancellationTokenSource.CreateLinkedTokenSource(startup.Token, postConnection.AttemptToken);
+                CancellationToken startupToken = embeddedStartup?.Token ?? startup.Token;
                 RecordingSettings? logging = null;
                 if (profile.RecordsOutput)
                 {
                     try
                     {
-                        logging = RecordingSettings.Resolve(attemptPath, profile, Macro?.BaseName, logDefaults, recordingOverrides);
-                        await app.Profiles.ApproveRecordingDestinationAsync(MacroWindow ?? Window.GetWindow(this), logging.Destination, startup.Token);
+                        logging = RecordingSettings.Resolve(attemptPath, profile, Macro?.RecordingMacroName,
+                            logDefaults, recordingOverrides);
+                        await app.Profiles.ApproveRecordingDestinationAsync(MacroWindow ?? Window.GetWindow(this), logging.Destination, startupToken);
                     }
                     catch (Exception failure) when (failure is not RecordingStartException &&
                         failure is (IOException or ArgumentException or UnauthorizedAccessException or InvalidDataException or NotSupportedException))
                     { throw new RecordingStartException(failure.Message, failure); }
                 }
-                session = await TerminalSession.ConnectReviewedAsync(attemptPath, profile, Macro, startup.Token, interaction,
+                session = await TerminalSession.ConnectReviewedAsync(attemptPath, profile, Macro, startupToken, interaction,
                     Opened, retention, Viewport, logging);
             }
             session.Bell += () =>
@@ -387,6 +400,11 @@ internal sealed partial class TerminalTab : UserControl
             Interlocked.Exchange(ref receivedRevision, 1);
             ScheduleFrame(immediately: true);
             ScheduleResize();
+            if (postConnection is not null)
+            {
+                postConnection.Start(session);
+                postConnectionStarted = true;
+            }
             ready?.TrySetResult(session);
             try
             {
@@ -405,7 +423,8 @@ internal sealed partial class TerminalTab : UserControl
                     SetStatus(statusKey, problem);
             }));
         }
-        catch (OperationCanceledException exception) when (stop.IsCancellationRequested || exception is SshInteractionCancelledException)
+        catch (OperationCanceledException exception) when (stop.IsCancellationRequested ||
+            postConnection?.AttemptToken.IsCancellationRequested == true || exception is SshInteractionCancelledException)
         {
             ready?.TrySetException(exception);
             connectionEnd = established || reconnect ? ConnectionEnd.Normal : ConnectionEnd.InitialCancelled;
@@ -414,7 +433,7 @@ internal sealed partial class TerminalTab : UserControl
         catch (Exception exception) when (exception is IOException or SocketException or NotSupportedException
             or UnauthorizedAccessException or ArgumentException or InvalidOperationException or OperationCanceledException
             or InvalidDataException or CryptographicException or DllNotFoundException or EntryPointNotFoundException
-            or FormatException or System.Text.Json.JsonException or KeyNotFoundException or MacroError)
+            or FormatException or System.Text.Json.JsonException or KeyNotFoundException or MacroError or MacroSourceException)
         {
             ready?.TrySetException(exception);
             if (stop.IsCancellationRequested && session?.RecordingStartFailure is null)
@@ -437,7 +456,9 @@ internal sealed partial class TerminalTab : UserControl
                     RecordingStartException recording => LogStartError(recording.Message),
                     OperationCanceledException => Text("TimedOut"),
                     DllNotFoundException or EntryPointNotFoundException => Text("VaultCryptoUnavailable"),
-                    _ => Macro is null ? exception.Message : Text("MacroErrorConnectionFailed"),
+                    MacroSourceException macroError => PostConnectionSourceError(macroError),
+                    MacroError macroError when macroError.DisplayDetail is { } detail => detail,
+                    _ => !IsExternalMacro ? exception.Message : Text("MacroErrorConnectionFailed"),
                 }));
                 if (credentialError is not null && (MacroWindow ?? Window.GetWindow(this)) is { IsVisible: true } owner)
                     ((App)Application.Current).Modal(() => ThemedMessageBox.ShowVault(owner, credentialError,
@@ -446,6 +467,8 @@ internal sealed partial class TerminalTab : UserControl
         }
         finally
         {
+            if (postConnectionStarted) postConnection!.Stop("Disconnected");
+            else if (postConnection is not null) ClearPostConnectionMacro();
             destinationNotice?.Close();
             AiCollaboration.EndControl(this);
             transferWindow?.ConnectionEnded();
@@ -482,6 +505,7 @@ internal sealed partial class TerminalTab : UserControl
                 else if (closing.RecordingError is { } problem) SetStatus(statusKey, problem);
             }
             resizeTimer.Stop();
+            if (postConnectionStarted) await postConnection!.Completion;
             foreach (var pane in panes.Keys) pane.SetConnected(false);
             IsRunning = false;
             stop.Dispose();

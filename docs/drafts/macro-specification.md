@@ -304,10 +304,20 @@ regardless of the macro base directory.
 
 Attach receive/alternate-screen observation before transport startup can produce
 terminal data. SSH early terminal data is eligible while connection startup is
-pending. `Connect` returns only at existing transport readiness: SSH shell/PTY
-startup complete, Telnet TCP ready, or serial open/configuration complete.
+pending. The terminal is ready when SSH shell/PTY startup completes, the
+Telnet TCP connection opens, or serial port configuration completes.
 Telnet readiness does not prove account login. The macro cannot send terminal
 input until readiness, but startup history is available to its first wait.
+
+If the approved profile contains a post-connection macro, execute its
+statement body after readiness and finish it before returning from `Connect`.
+The embedded body uses its own variables. Both phases share a single tab,
+connection, recording, input owner, and receive history and cursor. The caller
+inherits the submission boundary, the suffix of any partially consumed line,
+and later unread output. Stop or any error in the embedded body ends both
+phases and reports the embedded location. A caller catch cannot resume that
+run. A healthy terminal remains usable manually after send cleanup. A blank
+body lets `Connect` return at transport readiness.
 
 The optional [named connection recording options](macro-language.md#connection-recording-options)
 follow `profilePath`. See the [recording contract](receive-logging-issue.md#log-filename-template-redesign)

@@ -15,11 +15,22 @@ internal sealed partial class ProfileCatalog
         long reset = trustReset;
         var profile = await LoadForUseAsync(owner, path, token);
         string location = await ProfileLocationAsync(profile, token);
+        var before = ReadTrust(location);
+        token.ThrowIfCancellationRequested();
+        if (folder != app.ProfileSaveDirectory || reset != before.Reset)
+            throw new IOException(Text("ProfileTrustWriteFailed"));
+        if (before.Registration is not null && Path.GetDirectoryName(location) == ActiveFolder)
+        {
+            SelectImportedProfile(location, connecting: false);
+            return profile;
+        }
+        ValidatePostConnectionSource(profile);
+        if (!await ReviewProfileRegistrationAsync(owner, location, profile, token))
+            throw new SshInteractionCancelledException();
         await registrationChanges.WaitAsync(token);
         try
         {
-            var before = ReadTrust(location);
-            if (before.Reset == reset && app.ProfileSaveDirectory == folder &&
+            if (app.ProfileSaveDirectory == folder &&
                 await ImportRevisionAsync(profile, location, folder, before, used: false, token) is { } imported)
                 return imported;
             throw new IOException(Text("ProfileTrustWriteFailed"));

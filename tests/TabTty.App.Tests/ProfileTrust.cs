@@ -179,8 +179,28 @@ internal static partial class Program
             admission = app.Profiles.AdmitAsync(owner, path, null, token);
             await AnswerAsync("ProfileTrustAndConnect", "ProfileTrustAndConnect");
             await admission;
+            var changedProfile = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(path, token))!;
+            changedProfile["postConnectionMacro"] = new System.Text.Json.Nodes.JsonObject
+                { ["version"] = 1, ["source"] = "return;" };
+            await File.WriteAllTextAsync(path, changedProfile.ToJsonString(), token);
+            var existing = await app.Profiles.ImportFileAsync(owner, path, token).WaitAsync(TimeSpan.FromSeconds(2), token);
+            CheckMacroLaunch(existing.PostConnectionSource == "return;", "Reimport did not select the existing profile.");
+            admission = app.Profiles.AdmitAsync(owner, path, null, token);
+            await AnswerAsync("ProfileTrustAndConnect", "Cancel");
+            try { await admission; throw new InvalidOperationException("Selecting an existing profile renewed its trust."); }
+            catch (SshInteractionCancelledException) { }
             list.SelectedIndex = 0;
             await ClickProfileActionAsync(list, "RemoveRegistration");
+            var pendingImport = app.Profiles.ImportFileAsync(owner, path, token);
+            var importReview = await ImportReviewAsync();
+            var secondImport = app.Profiles.ImportFileAsync(owner, path, token);
+            Click(await ImportReviewAsync(importReview), "PostConnectionMacroTrustProfile");
+            await secondImport;
+            list.SelectedIndex = 0;
+            await ClickProfileActionAsync(list, "RemoveRegistration");
+            Click(importReview, "PostConnectionMacroTrustProfile");
+            try { await pendingImport; throw new InvalidOperationException("A stale import recreated the removed registration."); }
+            catch (IOException error) when (error.Message == App.Text("ProfileTrustWriteFailed")) { }
             CheckMacroLaunch(app.Profiles.ReadRegistrations().Count == 0, "The registration was not removed.");
             admission = app.Profiles.AdmitAsync(owner, path, "Fixture macro", token);
             await AnswerAsync("ProfileTrustAndConnect", "Cancel");
@@ -210,6 +230,17 @@ internal static partial class Program
             catch (SshInteractionCancelledException) { }
         }
         finally { owner.Close(); }
+
+        async Task<Window> ImportReviewAsync(Window? other = null)
+        {
+            while (true)
+            {
+                var found = app.Windows.OfType<Window>().FirstOrDefault(window => window != other &&
+                    window.IsLoaded && window.Title == App.Text("PostConnectionMacroRegistration"));
+                if (found is not null) return found;
+                await Task.Delay(10, token);
+            }
+        }
 
         Task SetProfileFolderAsync(string folder) => app.SaveSettingsAsync(app.LanguageChoice, app.ThemeChoice, app.BellChoice,
             app.TerminalFontFamily, app.TerminalFontSize, app.RetainedRows, app.AutoCloseDisconnectedTabs,

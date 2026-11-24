@@ -9,6 +9,8 @@ internal sealed record MacroEditorCall(string Name, int Parameter, int[] UsedSlo
 // Filled by the shared parser only for editor requests. Positions refer to the current source.
 internal sealed partial class MacroEditorSymbols(int? cursorOffset = null)
 {
+    internal PostConnectionCursor? PostConnection { get; init; }
+    internal bool InsideComment => insideComment;
     private readonly Dictionary<object, (MacroToken Token, int VisibleFrom)> names =
         new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<MacroBlock, (int Start, int End)> blocks =

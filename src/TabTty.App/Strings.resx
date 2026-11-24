@@ -606,7 +606,7 @@
   <data name="MacroErrorUncertainDelivery" xml:space="preserve"><value>Some input may have reached the remote side. Check its state before resending.</value></data>
   <data name="MacroErrorConnectionFailed" xml:space="preserve"><value>The connection attempt failed.</value></data>
   <data name="MacroErrorVaultStale" xml:space="preserve"><value>The vault changed. Restart TabTty before using it again.</value></data>
-  <data name="MacroErrorExpectedToken" xml:space="preserve"><value>The file has unexpected syntax or an unsupported version header.</value></data>
+  <data name="MacroErrorExpectedToken" xml:space="preserve"><value>A required word or symbol is missing or out of place.</value></data>
   <data name="MacroErrorTypeMismatch" xml:space="preserve"><value>The value type does not match the operation.</value></data>
   <data name="MacroErrorNamedOptionExpected" xml:space="preserve"><value>A named option is required here.</value></data>
   <data name="MacroErrorUnknownOption" xml:space="preserve"><value>This option is not defined for this call.</value></data>
@@ -718,4 +718,53 @@ The host can send keys and multiple lines of commands without asking again, with
   <data name="ProfileListLastUsed" xml:space="preserve"><value>Last used</value></data>
   <data name="ProfileImportLogDirectory" xml:space="preserve"><value>Importing uses this folder as the base for relative recording paths.</value></data>
   <data name="ProfileImportRecovery" xml:space="preserve"><value>The import could not be verified. Check the following path before trying again.</value></data>
+  <data name="PostConnectionMacro" xml:space="preserve"><value>Post-connection macro</value></data>
+  <data name="PostConnectionMacroDescription" xml:space="preserve"><value>This macro runs automatically in this tab after connection.</value></data>
+  <data name="PostConnectionMacroRegistration" xml:space="preserve"><value>Review profile automation</value></data>
+  <data name="PostConnectionMacroTrustProfile" xml:space="preserve"><value>Trust and register</value></data>
+  <data name="PostConnectionInsertRoutine" xml:space="preserve"><value>Insert routine</value></data>
+  <data name="PostConnectionRoutineCommands" xml:space="preserve"><value>Run commands in sequence</value></data>
+  <data name="PostConnectionRoutineSudo" xml:space="preserve"><value>Linux sudo -i</value></data>
+  <data name="PostConnectionRoutineEnable" xml:space="preserve"><value>Switch enable</value></data>
+  <data name="PostConnectionRoutineWaitFirst" xml:space="preserve"><value>Wait for the initial prompt</value></data>
+  <data name="PostConnectionRoutineWaitFirstHelp" xml:space="preserve"><value>Clear this option if the preceding statements already matched this prompt.</value></data>
+  <data name="PostConnectionRoutineNormalPrompt" xml:space="preserve"><value>Normal prompt</value></data>
+  <data name="PostConnectionRoutinePrivilegedPrompt" xml:space="preserve"><value>Privileged prompt</value></data>
+  <data name="PostConnectionRoutinePasswordPrompt" xml:space="preserve"><value>Password request</value></data>
+  <data name="PostConnectionRoutineCommandLines" xml:space="preserve"><value>Commands, one per line</value></data>
+  <data name="PostConnectionRoutineUseProfilePassword" xml:space="preserve"><value>Use the profile’s saved password</value></data>
+  <data name="PostConnectionRoutineVaultEntry" xml:space="preserve"><value>Vault password entry name</value></data>
+  <data name="PostConnectionRoutinePromptRequired" xml:space="preserve"><value>Enter the prompt text to match.</value></data>
+  <data name="PostConnectionRoutineCommandRequired" xml:space="preserve"><value>Enter at least one command.</value></data>
+  <data name="PostConnectionRoutineVaultEntryRequired" xml:space="preserve"><value>Enter a valid vault password entry name.</value></data>
+  <data name="PostConnectionRoutineInsert" xml:space="preserve"><value>Insert</value></data>
+  <data name="MacroErrorPostConnectionSubset" xml:space="preserve"><value>This operation or syntax is unavailable in a post-connection macro. Prompt waits require a timeout.</value></data>
+  <data name="PostConnectionCompletionKeys" xml:space="preserve"><value>Ctrl+Space shows completions. Use Up or Down to select, Tab or Enter to insert, and Esc to dismiss.</value></data>
+  <data name="PostConnectionCompletions" xml:space="preserve"><value>Completion suggestions</value></data>
+  <data name="PostConnectionCurrentArgument" xml:space="preserve"><value>{0}. Current argument is {1}.</value></data>
+  <data name="MacroErrorExpressionExpected" xml:space="preserve"><value>Enter an expression here.</value></data>
+  <data name="MacroErrorStatementExpected" xml:space="preserve"><value>Enter a statement here.</value></data>
+  <data name="MacroErrorIdentifierExpected" xml:space="preserve"><value>Enter a name here.</value></data>
+  <data name="MacroErrorBlockExpected" xml:space="preserve"><value>Close the block with a right brace.</value></data>
+  <data name="MacroErrorTypeExpected" xml:space="preserve"><value>Enter a supported type name.</value></data>
+  <data name="MacroErrorUnknownName" xml:space="preserve"><value>This name is not defined in the current scope.</value></data>
+  <data name="MacroErrorUnknownMember" xml:space="preserve"><value>This value has no member with that name.</value></data>
+  <data name="MacroErrorUnknownFunction" xml:space="preserve"><value>This function is not defined.</value></data>
+  <data name="MacroErrorReservedName" xml:space="preserve"><value>Choose a name that is not reserved by the macro language.</value></data>
+  <data name="MacroErrorDuplicateLocal" xml:space="preserve"><value>A local with this name is already in scope.</value></data>
+  <data name="MacroErrorCallArguments" xml:space="preserve"><value>Check the number and types of arguments for this call.</value></data>
+  <data name="MacroErrorUnterminatedString" xml:space="preserve"><value>Close the string with a double quote.</value></data>
+  <data name="MacroErrorUnterminatedComment" xml:space="preserve"><value>Close the comment with */.</value></data>
+  <data name="MacroErrorStringPrefix" xml:space="preserve"><value>The string prefix is invalid.</value></data>
+  <data name="MacroErrorStringExpected" xml:space="preserve"><value>A string literal must begin with a double quote.</value></data>
+  <data name="MacroErrorStringNewline" xml:space="preserve"><value>Close the string before the end of the line or use a verbatim string.</value></data>
+  <data name="MacroErrorUnexpectedCharacter" xml:space="preserve"><value>This character is unexpected here.</value></data>
+  <data name="MacroErrorInterpolationBrace" xml:space="preserve"><value>Check the braces in the interpolated string.</value></data>
+  <data name="MacroErrorUnterminatedInterpolation" xml:space="preserve"><value>Close the interpolation with a right brace.</value></data>
+  <data name="MacroErrorSourceLimit" xml:space="preserve"><value>The macro source exceeds the size limit.</value></data>
+  <data name="MacroErrorSyntaxLimit" xml:space="preserve"><value>The macro exceeds the syntax size limit.</value></data>
+  <data name="MacroErrorNestingLimit" xml:space="preserve"><value>The macro exceeds the nesting limit.</value></data>
+  <data name="MacroErrorParameterLimit" xml:space="preserve"><value>This call or declaration has too many parameters.</value></data>
+  <data name="MacroErrorTypeNestingLimit" xml:space="preserve"><value>This type exceeds the nesting limit.</value></data>
+  <data name="MacroErrorLocalLimit" xml:space="preserve"><value>The macro declares too many local variables.</value></data>
 </root>

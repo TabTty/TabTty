@@ -40,7 +40,7 @@ internal static partial class Program
         string settingsDirectory = Directory.CreateTempSubdirectory("TabTty-settings-test-").FullName;
         LocalState.UseTestDirectory(settingsDirectory);
         MacroTrust.UseTestStore();
-        if (args is not ["--profile-trust" or "--macro-profile-connect"])
+        if (args is not ["--profile-trust" or "--macro-profile-connect" or "--post-connection-macro"])
             AcceptFixtureProfileReviews();
         string settingsPath = Path.Combine(settingsDirectory, "settings.json");
         var settingsFixture = args is ["--file-editors"] ? new FilePublicationFixture() : null;
@@ -154,7 +154,8 @@ internal static partial class Program
             }
             if (args is ["--visual-bell" or "--native-utf8-baseline" or "--disconnected-tabs" or "--terminal-tab-close" or "--broadcast-splits" or
                 "--tab-interactions" or "--profile-editor-heading" or "--profile-log-collision" or "--macro-profile-connect" or
-                "--macro-launch" or "--macro-network" or "--macro-cloud" or "--profile-trust" or "--vault-first-use" or "--vault-rename"] or
+                    "--macro-launch" or "--macro-network" or "--macro-cloud" or "--profile-trust" or "--vault-first-use" or "--vault-rename" or
+                    "--post-connection-macro" or "--post-connection-editor"] or
                 ["--transfer-window-close" or "--fullscreen-vim" or "--overload-controls" or "--sftp-batch", _] or
                 ["--macro-reset-relaunch", _, _])
             {
@@ -175,6 +176,8 @@ internal static partial class Program
                     "--macro-cloud" => SharedConstantsCloudAsync(application, settingsDirectory),
                     "--profile-trust" => CheckProfileTrustAsync(application, settingsDirectory),
                     "--macro-profile-connect" => CheckMacroProfileConnectionsAsync(application, settingsDirectory),
+                    "--post-connection-macro" => CheckPostConnectionMacroAsync(application, settingsDirectory),
+                    "--post-connection-editor" => CheckPostConnectionEditorAsync(application, settingsDirectory),
                     "--vault-first-use" => CheckVaultFirstUseAsync(application, settingsDirectory),
                     "--vault-rename" => CheckVaultRenameAsync(application, settingsDirectory),
                     "--fullscreen-vim" => CheckFullScreenApplicationAsync(application, settingsDirectory, args[1]),
@@ -835,7 +838,7 @@ internal static partial class Program
             CheckActions(changed: false);
             name.Text = "Modified";
             CheckActions(changed: true);
-            var navigation = FindControls<ListBox>(form).Single();
+            var navigation = FormNavigation(form);
             navigation.SelectedIndex = 2;
             navigation.SelectedIndex = 0;
             if (name.Text != "Modified" || !form.HasUnsavedChanges)
@@ -1354,7 +1357,7 @@ internal static partial class Program
             {
                 var form = (FormView)editor.Content;
                 AssertNavigation(form, "ProfileConnectionGroup", "ProfileAuthenticationGroup",
-                    "ProfileTerminalGroup", "ProfileLoggingGroup");
+                    "ProfileTerminalGroup", "ProfileLoggingGroup", "PostConnectionMacro");
                 if (Environment.GetEnvironmentVariable("TABTTY_MANAGEMENT_RENDER_DIR") is { } preview)
                 {
                     form.Measure(new Size(940, 660));
@@ -1411,7 +1414,7 @@ internal static partial class Program
 
     private static void AssertNavigation(FormView form, params string[] titles)
     {
-        var navigation = FindControls<ListBox>(form).Single();
+        var navigation = FormNavigation(form);
         var layout = (Grid)LogicalTreeHelper.GetParent(navigation);
         var heading = FindControls<TextBlock>(form).Single(text =>
             AutomationProperties.GetHeadingLevel(text) == AutomationHeadingLevel.Level1);
@@ -1422,7 +1425,7 @@ internal static partial class Program
             Grid.GetRow(navigation) != 1 || Grid.GetColumn(navigation) != 0 ||
             Grid.GetRow(scroller) != 1 || Grid.GetColumn(scroller) != 1)
             throw new InvalidOperationException("The page title did not span the navigation and settings columns.");
-        var pages = FormFields(form).Children.OfType<StackPanel>().ToArray();
+        var pages = FormFields(form).Children.OfType<Panel>().Concat(layout.Children.OfType<DockPanel>()).ToArray();
         if (!navigation.Items.OfType<ListBoxItem>().Select(item => ((TextBlock)item.Content).Text)
             .SequenceEqual(titles.Select(App.Text)) || pages.Length != titles.Length)
             throw new InvalidOperationException("The settings categories did not match the available pages.");
@@ -1435,6 +1438,9 @@ internal static partial class Program
         }
         navigation.SelectedIndex = 0;
     }
+
+    private static ListBox FormNavigation(FormView form) => FindControls<ListBox>(form)
+        .Single(list => AutomationProperties.GetName(list) == App.Text("SettingsCategories"));
 
     private static IEnumerable<T> FindControls<T>(DependencyObject parent) where T : DependencyObject
     {
@@ -2405,7 +2411,7 @@ internal static partial class Program
         using var parsed = System.Text.Json.JsonDocument.Parse(original.ToEditorJson());
         var form = new FormView();
         var editor = new ProfileEditor(form, original, app);
-        var navigation = FindControls<ListBox>(form).Single();
+        var navigation = FormNavigation(form);
         var authenticationMenu = navigation.Items.OfType<ListBoxItem>()
             .Single(item => Equals(item.Tag, "ProfileAuthenticationGroup"));
         if (authenticationMenu.Visibility != Visibility.Collapsed)

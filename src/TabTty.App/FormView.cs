@@ -260,7 +260,10 @@ internal sealed class FormView : DockPanel
         };
     }
 
-    public ListBox AddNavigation(params (string Title, Action Build)[] sections)
+    public ListBox AddNavigation(params (string Title, Action Build)[] sections) =>
+        AddNavigation(null, sections);
+
+    internal ListBox AddNavigation(string? fillingPage, params (string Title, Action Build)[] sections)
     {
         hasNavigation = true;
         var navigation = new ListBox
@@ -271,7 +274,8 @@ internal sealed class FormView : DockPanel
         };
         ScrollViewer.SetHorizontalScrollBarVisibility(navigation, ScrollBarVisibility.Disabled);
         SetText("SettingsCategories", value => AutomationProperties.SetName(navigation, value));
-        var pages = new List<StackPanel>();
+        var pages = new List<Panel>();
+        DockPanel? fill = null;
         foreach (var (key, build) in sections)
         {
             var title = new TextBlock { TextWrapping = TextWrapping.Wrap };
@@ -280,13 +284,20 @@ internal sealed class FormView : DockPanel
             {
                 Tag = key, Content = title, MinHeight = 36, Padding = new Thickness(10, 6, 10, 6),
             });
-            var page = new StackPanel { Visibility = Visibility.Collapsed, MaxWidth = 620, HorizontalAlignment = HorizontalAlignment.Left };
-            page.SetBinding(WidthProperty, new Binding(nameof(ActualWidth)) { Source = fields });
-            fields.Children.Add(page);
+            Panel page;
+            if (key == fillingPage)
+                page = fill = new DockPanel { Visibility = Visibility.Collapsed, Margin = new Thickness(14, 0, 14, 14) };
+            else
+            {
+                page = new StackPanel { Visibility = Visibility.Collapsed, MaxWidth = 620, HorizontalAlignment = HorizontalAlignment.Left };
+                page.SetBinding(WidthProperty, new Binding(nameof(ActualWidth)) { Source = fields });
+                fields.Children.Add(page);
+            }
             var heading = new TextBlock { FontSize = 18, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, 0, 0, 8) };
             AutomationProperties.SetHeadingLevel(heading, AutomationHeadingLevel.Level2);
             SetText(key, value => heading.Text = value);
+            SetDock(heading, Dock.Top);
             page.Children.Add(heading);
             BuildIn(page, build);
             pages.Add(page);
@@ -294,8 +305,10 @@ internal sealed class FormView : DockPanel
         navigation.SelectionChanged += (_, args) =>
         {
             if (args.Source != navigation || navigation.SelectedIndex < 0) return;
-            foreach (StackPanel page in pages) page.Visibility = Visibility.Collapsed;
-            pages[navigation.SelectedIndex].Visibility = Visibility.Visible;
+            foreach (Panel page in pages) page.Visibility = Visibility.Collapsed;
+            Panel selected = pages[navigation.SelectedIndex];
+            selected.Visibility = Visibility.Visible;
+            scroller.Visibility = selected == fill ? Visibility.Collapsed : Visibility.Visible;
             scroller.ScrollToTop();
         };
         navigation.SelectedIndex = 0;
@@ -328,6 +341,12 @@ internal sealed class FormView : DockPanel
         layout.Children.Add(navigation);
         layout.Children.Add(separator);
         layout.Children.Add(scroller);
+        if (fill is not null)
+        {
+            Grid.SetRow(fill, 1);
+            Grid.SetColumn(fill, 1);
+            layout.Children.Add(fill);
+        }
         Children.Add(layout);
         layout.SizeChanged += (_, args) =>
             layout.ColumnDefinitions[0].Width = new GridLength(args.NewSize.Width < 650 ? 146 : 190);
@@ -345,6 +364,14 @@ internal sealed class FormView : DockPanel
     {
         SetText(key, value => AutomationProperties.SetName(element, value));
         (section ?? fields).Children.Add(element);
+    }
+
+    internal void AddPageDescription(string key)
+    {
+        var description = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 8) };
+        SetText(key, value => description.Text = value);
+        SetDock(description, Dock.Top);
+        (section ?? fields).Children.Add(description);
     }
 
     internal void AddFillingDisplay(string key, FrameworkElement element, Action? buildFooter = null)

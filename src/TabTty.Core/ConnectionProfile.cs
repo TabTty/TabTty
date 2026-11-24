@@ -26,11 +26,12 @@ public sealed class ConnectionProfile
     private JsonElement Terminal => document.GetProperty("terminal");
     private JsonElement Logging => document.GetProperty("logging");
 
-    private ConnectionProfile(JsonElement document, string? groupName, LogCollisionPolicy logCollision)
+    private ConnectionProfile(JsonElement document, string? groupName, LogCollisionPolicy logCollision, string postConnectionSource)
     {
         this.document = document;
         GroupName = groupName;
         LogCollision = logCollision;
+        PostConnectionSource = postConnectionSource;
     }
 
     public string DisplayName => sourcePath is null ? unsavedName ?? "" : Path.GetFileNameWithoutExtension(sourcePath);
@@ -38,6 +39,8 @@ public sealed class ConnectionProfile
     internal byte[] SnapshotBytes => sourceBytes ?? throw new InvalidOperationException("Profile has no verified file revision.");
     internal string? RetainedSaveBackup { get; private set; }
     public string? GroupName { get; }
+    internal string PostConnectionSource { get; }
+    internal bool HasPostConnectionMacro => !string.IsNullOrWhiteSpace(PostConnectionSource);
     public Guid Id => document.GetProperty("profileId").GetGuid();
     public string Type => Connection.GetProperty("type").GetString()!;
     public string Host => Connection.GetProperty("host").GetString()!;
@@ -84,10 +87,14 @@ public sealed class ConnectionProfile
 
     public void ValidateEditorSettings()
     {
+        using var macro = CompilePostConnectionMacro();
         if (!string.IsNullOrWhiteSpace(LogDirectory))
             _ = OrdinaryWindowsPath.Resolve(LogDirectory, sourcePath is null ? Environment.CurrentDirectory : Path.GetDirectoryName(sourcePath)!);
         if (!string.IsNullOrWhiteSpace(LogFilenameTemplate)) RecordingNameTemplate.Parse(LogFilenameTemplate, macro: true);
     }
+
+    internal MacroProgram? CompilePostConnectionMacro(ResourceQuota? runMemory = null) => HasPostConnectionMacro
+        ? MacroProgram.ParsePostConnection(sourcePath ?? "profile.ttty", PostConnectionSource, runMemory) : null;
 
     public ConnectionProfile Edit(string json)
     {
@@ -183,7 +190,7 @@ public sealed class ConnectionProfile
         finally { ApplicationResources.FilePreparations.Release(); }
     }
 
-    internal string TrustVersion => "1:" + Convert.ToHexString(
+    internal string TrustVersion => (HasPostConnectionMacro ? "2:" : "1:") + Convert.ToHexString(
         System.Security.Cryptography.SHA256.HashData(sourceBytes ??
             throw new InvalidOperationException("Profile has no verified file revision.")));
 
@@ -368,6 +375,13 @@ public sealed class ConnectionProfile
         }
 
         Uuid(Text(root, "profileId", 36));
+        string postConnectionSource = "";
+        if (root.TryGetProperty("postConnectionMacro", out _))
+        {
+            var macro = Field(root, "postConnectionMacro", JsonValueKind.Object);
+            _ = Integer(macro, "version", 1, 1);
+            postConnectionSource = Field(macro, "source", JsonValueKind.String).GetString()!;
+        }
         if (root.TryGetProperty("displayName", out _))
             throw new InvalidDataException("The retired displayName profile property is unsupported.");
         string? groupName = root.TryGetProperty("groupName", out var group) && group.ValueKind != JsonValueKind.Null
@@ -476,7 +490,7 @@ public sealed class ConnectionProfile
         if (logging.TryGetProperty("collision", out var collision) &&
             (collision.ValueKind != JsonValueKind.String || !LogCollisionPolicies.TryParse(collision.GetString(), out policy)))
             throw new InvalidDataException("Invalid profile field: collision.");
-        return new ConnectionProfile(root, groupName, policy);
+        return new ConnectionProfile(root, groupName, policy, postConnectionSource);
 
         void OptionalLogText(string key, int maximum)
         {

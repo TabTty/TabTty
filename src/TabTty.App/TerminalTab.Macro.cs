@@ -12,17 +12,22 @@ internal sealed partial class TerminalTab
     private readonly TextBlock macroStatus = new() { TextWrapping = TextWrapping.Wrap };
     private readonly Dictionary<string, Button> macroButtons = [];
     private MacroDialogWindow? macroDialog;
+    private StackPanel? macroControls;
     private int macroRefreshPending;
     internal MacroRun? Macro { get; private set; }
     internal MainWindow? MacroWindow { get; set; }
     internal bool HasActiveMacro => Macro?.IsActive == true;
+    internal bool IsExternalMacro => Macro is { IsPostConnection: false };
 
     internal void PrepareMacro(MacroProgram program, IReadOnlyList<string> arguments)
     {
         Macro = new MacroRun(program, arguments, new MacroHost(this));
-        IsRunning = false;
-        status.Visibility = Visibility.Collapsed;
-        var controls = new StackPanel { Margin = new Thickness(8, 4, 8, 4) };
+        if (IsExternalMacro)
+        {
+            IsRunning = false;
+            status.Visibility = Visibility.Collapsed;
+        }
+        var controls = macroControls = new StackPanel { Margin = new Thickness(8, 4, 8, 4) };
         controls.Children.Add(macroStatus);
         var actions = new WrapPanel();
         controls.Children.Add(actions);
@@ -52,6 +57,20 @@ internal sealed partial class TerminalTab
         run.Dispose();
     }
 
+    private void ClearPostConnectionMacro()
+    {
+        if (Macro is not { IsPostConnection: true }) return;
+        DisposeMacro();
+        if (macroControls is { } controls)
+        {
+            controls.Children.Clear();
+            panel.Children.Remove(controls);
+        }
+        macroControls = null;
+        macroButtons.Clear();
+        Macro = null;
+    }
+
     private void QueueMacroRefresh()
     {
         if (Interlocked.Exchange(ref macroRefreshPending, 1) != 0) return;
@@ -69,6 +88,7 @@ internal sealed partial class TerminalTab
         if (Macro is not { } run) return;
         MacroRunStatus state = run.Status;
         string label = Text("MacroState" + state.State);
+        if (state.PostConnection) label = Text("PostConnectionMacro") + " · " + label;
         if (state.Operation.Length != 0) label += " · " + MacroOperationLabel(state.Operation);
         if (state.Result is { } result)
             label += "\n" + (state.Position.Line > 0
@@ -107,6 +127,10 @@ internal sealed partial class TerminalTab
     internal static string MacroErrorLabel(string code) =>
         LocalizedText("MacroError" + code) ?? string.Format(Text("MacroErrorCode"), code);
 
+    internal static string PostConnectionSourceError(MacroSourceException error) =>
+        Text("PostConnectionMacro") + " · " +
+        string.Format(Text("MacroLocation"), error.Position.Line, error.Position.Column, MacroErrorLabel(error.Code));
+
     private static string MacroOperationLabel(string operation) => Text(operation switch
     {
         "Connect" => "Connecting",
@@ -131,14 +155,23 @@ internal sealed partial class TerminalTab
                 tab.SetStatus("Connecting");
                 tab.connectionCompletion = tab.ConnectAsync(null, ready, token, recording);
             }, DispatcherPriority.Normal, token);
-            return await ready.Task.ConfigureAwait(false);
+            try { return await ready.Task.ConfigureAwait(false); }
+            catch (InvalidDataException error) when (error.InnerException is MacroSourceException)
+            {
+                throw new MacroError(MacroErrorCode.ConnectionFailed, error.Message);
+            }
+            catch (MacroSourceException error)
+            {
+                throw new MacroError(MacroErrorCode.ConnectionFailed, PostConnectionSourceError(error));
+            }
         }
 
         public Task<VaultSecret?> ReadPasswordAsync(CredentialReference reference, CancellationToken token) =>
             tab.Dispatcher.InvokeAsync(async () =>
             {
-                var owner = tab.MacroWindow ?? throw new MacroError(MacroErrorCode.OperationUnavailable);
-                owner.RestoreMacroHost();
+                var owner = (Window?)tab.MacroWindow ?? Window.GetWindow(tab)
+                    ?? throw new MacroError(MacroErrorCode.OperationUnavailable);
+                if (owner is MainWindow main) main.RestoreMacroHost();
                 return await ((App)Application.Current).Vault.ReadMacroPasswordAsync(owner, reference, token);
             }, DispatcherPriority.Normal, token).Task.Unwrap();
 

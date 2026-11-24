@@ -141,7 +141,7 @@ internal sealed partial class MainWindow : Window
 
     private void OnTerminalDisconnected(WindowTab item)
     {
-        if (!closing && item.Content is TerminalTab { Macro: null } terminal &&
+        if (!closing && item.Content is TerminalTab { IsExternalMacro: false } terminal &&
             (terminal.CloseAfterInitialCancellation || app.AutoCloseDisconnectedTabs && terminal.CanAutoCloseOnDisconnect))
             terminalClosure.CloseAutomatically(item);
     }
@@ -382,7 +382,7 @@ internal sealed partial class MainWindow : Window
             if (terminal is not null)
             {
                 terminal.MacroWindow = target;
-                if (this != target && terminal.Macro is null) terminal.BroadcastChecked = true;
+                if (this != target && !terminal.IsExternalMacro) terminal.BroadcastChecked = true;
             }
             if (item.Content is FormView moved) moved.TabOwner = target;
             target.ActivateGroup(destinationGroup);

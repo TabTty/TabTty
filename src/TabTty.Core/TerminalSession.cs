@@ -87,7 +87,7 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
     public bool RecordsOutput => profile.RecordsOutput;
     internal bool IsSsh => transport.IsSsh;
     public bool IsSerial => transport.IsSerial;
-    public bool CanTransfer => !disconnected && (!ended || macro is not null) && transport.IsSsh;
+    public bool CanTransfer => !disconnected && (!ended || HasExternalMacro) && transport.IsSsh;
 
     public Task<SftpClient> OpenFileTransferAsync(CancellationToken cancellationToken = default)
     {
@@ -136,6 +136,8 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
             error is IOException or UnauthorizedAccessException or ArgumentException or InvalidDataException or
                 System.Text.Json.JsonException or OperationCanceledException)
         { throw new MacroError(MacroErrorCode.ProfileLoad); }
+        if (profile.HasPostConnectionMacro && macro is null)
+            throw new InvalidOperationException("This connection cannot run the configured post-connection macro.");
         macro?.ProfileLoaded(profile);
         opened?.Invoke(profile);
         if (profile.Type == "ssh" && ssh is null)
@@ -369,11 +371,14 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
     {
         if (!transport.IsSsh)
         {
-            await WaitForMacroPeerCloseAsync(token).ConfigureAwait(false);
+            if (HasExternalMacro)
+                await Task.Delay(Timeout.Infinite, token).ConfigureAwait(false);
+            else if (macro is not null)
+                await macro.Completion.WaitAsync(token).ConfigureAwait(false);
             return;
         }
         await transport.PeerClosed.WaitAsync(token).ConfigureAwait(false);
-        if (macro is null && transport.PeerCloseFailure is { } failure)
+        if (!HasExternalMacro && transport.PeerCloseFailure is { } failure)
             throw new IOException(failure.Message, failure);
     }
 
@@ -810,7 +815,7 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
     }
 
     private bool SendDirectionAvailable => !disconnected &&
-        (!ended || macro is not null || transport.CanSendAfterEof);
+        (!ended || HasExternalMacro || transport.CanSendAfterEof);
 
     private void EnsureConnected()
     {

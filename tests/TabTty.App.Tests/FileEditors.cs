@@ -295,7 +295,7 @@ internal static partial class Program
                 throw new InvalidOperationException("The recovery action was not immediately above Save.");
             var laterGroup = (TextBox)reopenedForm.FindName("ProfileGroupName");
             laterGroup.Text = "Newer unsaved group";
-            FindControls<ListBox>(reopenedForm).Single().SelectedIndex = 2;
+            FormNavigation(reopenedForm).SelectedIndex = 2;
             recheck.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             await UntilAsync(() => !reopenedForm.IsBusy);
             if (VerifiedFilePublication.IsUnresolved(first) ||

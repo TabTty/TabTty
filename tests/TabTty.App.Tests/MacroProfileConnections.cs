@@ -78,6 +78,8 @@ internal static partial class Program
             CheckMacroLaunch(app.Profiles.ReadRegistrations().Count == 0,
                 "A macro connection registered the reviewed profile.");
 
+            await CheckEmbeddedHandoffAsync();
+
             var ssh = ConnectionProfile.CreateSsh("Saved password", "127.0.0.1", "operator",
                 password: new("Macro default", "password"), methods: ["publicKey"], privateKey: new("Login key", "privateKey"));
             await File.WriteAllTextAsync(path, ssh.ToEditorJson(), token);
@@ -111,6 +113,106 @@ internal static partial class Program
                 await DecideMacroRequest(app, owner, macroPath, App.Text("MacroNoArguments"), "MacroAlwaysAllow");
             await request.WaitAsync(token);
             return owner.TerminalTabs.Single(tab => !prior.Contains(tab));
+        }
+
+        async Task CheckEmbeddedHandoffAsync()
+        {
+            await SetLanguage("en");
+            string caller = Path.Combine(Path.GetDirectoryName(first)!, "handoff.tttym");
+            await File.WriteAllTextAsync(caller, """
+                #tttym 1
+                var message = "external";
+                try { Connect("../profiles/reviewed.ttty", logFilenameTemplate: "handoff", logCollision: "append"); }
+                catch (MacroError failure) { WriteLine("unexpected recovery"); return; }
+                try { WaitPrompt(Literal("ready"), 0); return; }
+                catch (MacroError failure) { }
+                WaitPrompt(Regex(@"(?<=ready):suffix"), 5000);
+                WaitPrompt(Literal("following"), 5000);
+                WriteLine(message);
+                """, token);
+            const string embedded = """
+                var message = "embedded";
+                WaitPrompt(Literal("boot"), 5000);
+                WriteLine(message, markReceiveBoundary: true);
+                WaitPrompt(Literal("ready"), 5000);
+                return;
+                WriteLine("unexpected embedded continuation");
+                """;
+            await WriteBody(embedded);
+            var tab = await Launch(caller, approveLaunch: true);
+            var review = await Review(caller);
+            CheckMacroLaunch(FindControls<TextBox>(review).Single().Text.Contains("unexpected embedded continuation", StringComparison.Ordinal),
+                "The profile trust review omitted the embedded source.");
+            Select(review, App.Text("ProfileConnectOnce"));
+            using (var peer = await listener.AcceptTcpClientAsync(token))
+            {
+                var wire = peer.GetStream();
+                await wire.WriteAsync("boot"u8.ToArray(), token);
+                await ConsumeNegotiation(wire);
+                using var lines = new StreamReader(wire, leaveOpen: true);
+                CheckMacroLaunch(await lines.ReadLineAsync(token) == "embedded" && tab.InputSession is null,
+                    "External Connect sent out of order or relinquished ownership during the embedded phase.");
+                tab.Macro!.Pause();
+                await wire.WriteAsync("\r\nready:suffix\r\nfollowing"u8.ToArray(), token);
+                peer.Client.Shutdown(SocketShutdown.Send);
+                while (tab.AiSession?.AiConnectionEnded != true) await Task.Delay(10, token);
+                tab.Macro.Resume();
+                CheckMacroLaunch(await lines.ReadLineAsync(token) == "external",
+                    "External Connect lost the shared cursor, unread suffix, or caller locals.");
+                await tab.Macro!.Completion.WaitAsync(token);
+                CheckMacroLaunch(tab.Macro.Status is { State: MacroRunState.Completed, PostConnection: false },
+                    "The external macro did not finish after the embedded phase.");
+                tab.Disconnect();
+            }
+            await tab.Completion.WaitAsync(token);
+            CheckMacroLaunch(Directory.EnumerateFiles(logs, "handoff*.raw.tttylog").Count() == 1,
+                "The two phases did not share one recording.");
+
+            foreach (string result in new[] { "WaitTimeout", "Stopped", "Disconnected" })
+            {
+                long wait = result == "WaitTimeout" ? 100 : 5000;
+                await WriteBody($"WaitPrompt(Literal(\"absent\"), {wait});");
+                tab = await Launch(caller);
+                Select(await Review(caller), App.Text("ProfileConnectOnce"));
+                using (var peer = await listener.AcceptTcpClientAsync(token))
+                {
+                    var wire = peer.GetStream();
+                    await ConsumeNegotiation(wire);
+                    if (result != "WaitTimeout")
+                    {
+                        while (!tab.Macro!.Status.PostConnection) await Task.Delay(10, token);
+                        if (result == "Stopped") tab.Macro.Stop();
+                        else tab.Disconnect();
+                    }
+                    await tab.Macro!.Completion.WaitAsync(token);
+                    CheckMacroLaunch(tab.Macro.Status.PostConnection &&
+                        tab.Macro.Status.Result == result &&
+                        (tab.InputSession is not null) == (result != "Disconnected") && !wire.DataAvailable,
+                        "The embedded failure leaked to the caller or failed to restore manual input.");
+                    tab.Disconnect();
+                }
+                await tab.Completion.WaitAsync(token);
+            }
+            await WriteBody("\nif (false) { Connect(\"other.ttty\"); }");
+            tab = await Launch(first);
+            await tab.Macro!.Completion.WaitAsync(token);
+            string sourceError = TerminalTab.PostConnectionSourceError(new MacroSourceException("PostConnectionSubset", new(2, 14)));
+            CheckMacroLaunch(tab.Macro.Status.DisplayDetail == sourceError && !listener.Pending(),
+                "External Connect hid the embedded source error or opened a transport.");
+            await File.WriteAllBytesAsync(path, reviewed, token);
+            Console.WriteLine("PASS ExternalMacroHandoffSharesCursorRecordingAndInput");
+
+            Task WriteBody(string source)
+            {
+                draft["postConnectionMacro"] = new JsonObject { ["version"] = 1, ["source"] = source };
+                return File.WriteAllTextAsync(path, draft.ToJsonString(), token);
+            }
+
+            Task ConsumeNegotiation(NetworkStream wire)
+            {
+                byte[] negotiation = new byte[new TelnetProtocol("xterm", 80, 24).Start().Length];
+                return wire.ReadExactlyAsync(negotiation, token).AsTask();
+            }
         }
 
         async Task<Window> FindReview(string title)

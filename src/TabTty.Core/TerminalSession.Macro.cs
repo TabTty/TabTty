@@ -7,6 +7,7 @@ namespace TabTty.Core;
 public sealed partial class TerminalSession
 {
     internal bool IsMacroOwned => macro?.IsActive == true;
+    private bool HasExternalMacro => macro is { IsPostConnection: false };
 
     internal Task<bool> SendMacroTextAsync(string text, bool appendEnter, bool markReceiveBoundary, MacroRun owner, CancellationToken token) =>
         SendMacroAsync(text.AsMemory(), appendEnter, false, markReceiveBoundary, owner, token);
@@ -106,8 +107,4 @@ public sealed partial class TerminalSession
         }
         finally { Array.Clear(characters); }
     }
-
-    internal Task WaitForMacroPeerCloseAsync(CancellationToken token) =>
-        macro is null ? Task.CompletedTask : transport.IsSsh ? transport.PeerClosed.WaitAsync(token) :
-            Task.Delay(Timeout.Infinite, token);
 }

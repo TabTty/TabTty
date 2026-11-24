@@ -40,10 +40,11 @@ internal sealed partial class MacroRun
                     catch (Exception error) when (error is IOException or UnauthorizedAccessException or
                         ArgumentException or InvalidOperationException or System.Text.Json.JsonException or CryptographicException or
                         System.Net.Sockets.SocketException or InvalidDataException or NotSupportedException or
-                        DllNotFoundException or EntryPointNotFoundException or FormatException or KeyNotFoundException ||
+                        DllNotFoundException or EntryPointNotFoundException or FormatException or KeyNotFoundException or MacroSourceException ||
                         error is OperationCanceledException && !stop.IsCancellationRequested)
                     { throw new MacroError(MacroErrorCode.ConnectionFailed); }
                 }, finishing: true).ConfigureAwait(false);
+                await ExecutePostConnectionAsync().ConfigureAwait(false);
                 return VoidValue;
             case "SetBaseDirectory": baseDirectory = ResolvePath(S(0)); return VoidValue;
             case "ResetBaseDirectory": baseDirectory = Path.GetDirectoryName(Program.FullPath)!; return VoidValue;

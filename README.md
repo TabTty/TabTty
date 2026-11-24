@@ -164,6 +164,58 @@ Right-click a password entry and choose **Copy macro reference** in vault manage
 to copy the quoted name. See the
 [macro language reference](docs/drafts/macro-language.md).
 
+### Post-connection macros
+
+Open **Post-connection macro** in a connection profile and enter the statements to run in that tab. Leave the field blank for an ordinary connection. SSH starts the macro once the shell is ready. Telnet and COM start it when the transport is usable, so the body can wait for a login prompt or explicitly send an initial Enter.
+
+Start typing a name, or press **Ctrl+Space** to see completions at the caret.
+Choose with **↑** or **↓**, insert with **Tab** or **Enter**, and dismiss with
+**Esc**. For example, type `WaitPrompt(` to see its arguments. After the pattern
+and comma, the hint highlights the timeout argument. If the body contains an
+error, the editor underlines its location and shows the reason, line and column
+below the field. You can check and correct the draft before connecting.
+
+Review the body before trusting or importing a received profile. The `.ttty` contains the full body. On another PC, prepare any password entries it names in the selected vault. While the macro owns input, use **Pause** or **Stop** in the terminal tab. A timeout ends the macro and returns a healthy terminal to manual input. An explicit reconnect starts the body again after profile review.
+
+Choose **Insert routine → Run commands in sequence**, enter `sw01>` and put
+`show clock` and `terminal length 0` on separate lines. At the end of the
+generated text, choose **Insert routine → Switch enable**. Enter `sw01>`,
+`sw01#`, `Password:` and the vault entry name `Switch enable`. Use the
+prompts from your switch. The command sequence leaves the final prompt for
+the enable routine. If you append a routine after a preceding block has
+already matched the required prompt, clear **Wait for the initial prompt**.
+
+The following hand-written body performs the same sequence.
+
+```csharp
+var prompt = Literal("sw01>");
+var privileged = Literal("sw01#");
+var timeout = 10000;
+
+WaitPrompt(prompt, timeout);
+WriteLine("show clock", markReceiveBoundary: true);
+WaitPrompt(prompt, timeout);
+WriteLine("terminal length 0", markReceiveBoundary: true);
+WaitPrompt(prompt, timeout);
+WriteLine("enable", markReceiveBoundary: true);
+
+var reply = WaitAnyPrompt([password: Literal("Password:"), ready: privileged], timeout);
+if (reply.AlternativeName == "password")
+{
+    WritePasswordLine("Switch enable");
+    WaitPrompt(privileged, timeout);
+}
+```
+
+For Linux `sudo -i`, use the same conditional pattern with the user's shell prompt, the sudo password prompt, and the root prompt. On SSH, `WritePasswordLine()` uses the profile's saved password reference. An explicit name selects a separate vault password. Telnet and COM require an explicit name and display the unencrypted-transport notice before a password send.
+
+The body uses the [macro language](docs/drafts/macro-language.md) subset for line sends, prompt waits with timeouts, local declarations and `if` branches. It starts at line 1 with a statement or comment. Connection settings and shared constants are available in external macros.
+
+An external macro's `Connect` returns after the post-connection macro succeeds.
+The caller shares its receive cursor, so it can match unread text after the
+last match. Stop, a timeout or any embedded error ends both phases. The tab
+reports the embedded location and a healthy connection returns to manual use.
+
 ## Broadcast input
 
 Right-click a terminal tab and choose **Broadcast Input → Start Broadcast**, or

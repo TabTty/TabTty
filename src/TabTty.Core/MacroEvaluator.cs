@@ -11,6 +11,43 @@ internal sealed partial class MacroRun
     private async Task ExecuteProgramAsync()
     { await ExecuteBlockAsync(Program.Body).ConfigureAwait(false); }
 
+    private async Task ExecutePostConnectionAsync()
+    {
+        MacroProgram? embedded;
+        lock (gate)
+        {
+            embedded = pendingPostConnection;
+            if (embedded is null) return;
+            pendingPostConnection = null;
+            executingPostConnection = true;
+            position = new(1, 1);
+        }
+        Notify();
+        using (embedded)
+        {
+            var caller = Program;
+            var callerScopes = scopes;
+            programSnapshot = embedded;
+            scopes = [];
+            try
+            {
+                await ExecuteProgramAsync().ConfigureAwait(false);
+                await CheckpointAsync(position).ConfigureAwait(false);
+            }
+            finally
+            {
+                programSnapshot = caller;
+                scopes = callerScopes;
+            }
+        }
+        lock (gate)
+        {
+            stop.Token.ThrowIfCancellationRequested();
+            executingPostConnection = false;
+        }
+        Notify();
+    }
+
     private async ValueTask<Flow?> ExecuteBlockAsync(MacroBlock block)
     {
         PushScope();
@@ -106,7 +143,7 @@ internal sealed partial class MacroRun
                     break;
                 case MacroTry attempt:
                     try { return await ExecuteBlockAsync(attempt.Body).ConfigureAwait(false); }
-                    catch (MacroError error)
+                    catch (MacroError error) when (!executingPostConnection)
                     {
                         await CheckpointAsync(attempt.Position).ConfigureAwait(false);
                         PushScope();

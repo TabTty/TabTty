@@ -671,6 +671,8 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 if (path is null)
                 {
                     attemptedPath = ProfilePathFor(app.ProfileSaveDirectory, editor.ProfileName);
+                    if (!await ReviewProfileRegistrationAsync(form.OwnerWindow, attemptedPath, draft, CancellationToken.None))
+                        return false;
                     using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
                     {
                         string location = await NormalizeLocationAsync(attemptedPath, timeout.Token);
@@ -820,7 +822,8 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
         ? string.Format(Text("ProfileBackupCleanupFailed"), PermissionDisplay.Literal(path)) : null;
 
     internal static bool IsFileProblem(Exception exception) => exception is IOException or InvalidDataException
-        or JsonException or ArgumentException or FormatException or OverflowException or InvalidOperationException or UnauthorizedAccessException;
+        or JsonException or ArgumentException or FormatException or OverflowException or InvalidOperationException
+        or UnauthorizedAccessException or MacroSourceException;
 
     internal sealed record Registration(Guid Id, string Path, string Name, string? GroupName, bool Favorite,
         DateTimeOffset? LastUsed, string? Protocol, string? Target, bool Unavailable)

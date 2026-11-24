@@ -8,7 +8,7 @@ internal enum MacroRunState { Running, Waiting, PauseRequested, Paused, Stopping
 [Flags]
 internal enum MacroHold { None = 0, UserPause = 1, RecordingFailure = 2, RecordingReady = 4, HistoryLoss = 8, CloseReview = 16 }
 internal sealed record MacroRunStatus(MacroRunState State, MacroHold Holds, string Operation, MacroPosition Position,
-    string? Result, long HistoryLossRevision, bool PlaintextNotice, string? DisplayDetail);
+    string? Result, long HistoryLossRevision, bool PlaintextNotice, string? DisplayDetail, bool PostConnection);
 
 internal interface IMacroHost
 {
@@ -64,6 +64,7 @@ internal sealed partial class MacroRun : IDisposable
         try { initialMemory = program.AdmitRun(out memory); }
         catch { MacroLimits.Runs.Release(); throw new MacroSourceException("MemoryLimit", new(1, 1)); }
         programSnapshot = program;
+        IsPostConnection = program.IsPostConnection;
         FullPath = program.FullPath;
         this.host = host; clock = time ?? TimeProvider.System; started = clock.GetTimestamp();
         baseDirectory = Path.GetDirectoryName(program.FullPath)!;
@@ -73,23 +74,32 @@ internal sealed partial class MacroRun : IDisposable
     }
 
     private MacroProgram? programSnapshot;
+    private MacroProgram? pendingPostConnection;
+    private bool executingPostConnection;
     private MacroProgram Program => programSnapshot!;
     public string FullPath { get; }
+    internal bool IsPostConnection { get; }
     public string RunId { get; } = Guid.NewGuid().ToString("N");
     public string BaseName => GetFileBaseName(FullPath);
+    internal string? RecordingMacroName => IsPostConnection ? null : BaseName;
     public Task Completion { get; private set; } = Task.CompletedTask;
     public event Action? Changed;
     public MacroRunStatus Status
     {
-        get { lock (gate) return new(state, holds, operation, position, state is MacroRunState.Failed or MacroRunState.Stopped ? reason : null, history.LossRevision, plaintextNotice, displayDetail); }
+        get { lock (gate) return new(state, holds, operation, position, state is MacroRunState.Failed or MacroRunState.Stopped ? reason : null,
+            history.LossRevision, plaintextNotice, displayDetail, IsPostConnection || executingPostConnection); }
     }
     public bool IsActive { get { lock (gate) return state is not (MacroRunState.Completed or MacroRunState.Stopped or MacroRunState.Failed); } }
     public CancellationToken StopToken => stop.Token;
-    public void Start()
+    internal CancellationToken AttemptToken => attemptStop.Token;
+    public void Start(TerminalSession? connected = null)
     {
         lock (gate)
         {
             if (startedExecution) throw new InvalidOperationException("The macro has already started.");
+            if (IsPostConnection && (connected is null || session != connected))
+                throw new InvalidOperationException("The post-connection macro must own the connected terminal.");
+            if (connected is not null) ready = true;
             startedExecution = true; Completion = Task.Run(ExecuteAsync);
         }
     }
@@ -134,6 +144,8 @@ internal sealed partial class MacroRun : IDisposable
                 operation = "";
                 inFlight = false;
                 history.Clear();
+                pendingPostConnection?.Dispose();
+                pendingPostConnection = null;
                 programSnapshot = null;
                 arguments.Items.Clear();
                 arguments.Items.TrimExcess();
@@ -209,7 +221,13 @@ internal sealed partial class MacroRun : IDisposable
 
     internal void ProfileLoaded(ConnectionProfile profile)
     {
-        lock (gate) { transport = profile.Type; profilePassword = profile.Type == "ssh" ? profile.SshPassword : null; }
+        var embedded = IsPostConnection ? null : profile.CompilePostConnectionMacro(memory);
+        lock (gate)
+        {
+            transport = profile.Type;
+            profilePassword = profile.Type == "ssh" ? profile.SshPassword : null;
+            pendingPostConnection = embedded;
+        }
     }
     internal void ObserveSession(TerminalSession value) { lock (gate) session = value; }
     internal void Receive(TerminalReceiveSource source, Rune character, bool literal)

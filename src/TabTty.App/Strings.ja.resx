@@ -604,7 +604,7 @@
   <data name="MacroErrorUncertainDelivery" xml:space="preserve"><value>入力の一部が接続先に届いた可能性があります。再送信する前に接続先の状態を確認してください。</value></data>
   <data name="MacroErrorConnectionFailed" xml:space="preserve"><value>接続に失敗しました。</value></data>
   <data name="MacroErrorVaultStale" xml:space="preserve"><value>vault が変更されました。再度使用するには TabTty を再起動してください。</value></data>
-  <data name="MacroErrorExpectedToken" xml:space="preserve"><value>構文またはバージョンヘッダーが正しくありません。</value></data>
+  <data name="MacroErrorExpectedToken" xml:space="preserve"><value>必要な語や記号が不足しているか、位置が正しくありません。</value></data>
   <data name="MacroErrorTypeMismatch" xml:space="preserve"><value>値の型が操作に適合しません。</value></data>
   <data name="MacroErrorNamedOptionExpected" xml:space="preserve"><value>名前付きオプションを指定してください。</value></data>
   <data name="MacroErrorUnknownOption" xml:space="preserve"><value>この呼び出しでは使用できないオプションです。</value></data>
@@ -716,4 +716,53 @@ AI アプリは個別の確認なしでキーや複数行のコマンドを入�
   <data name="ProfileListLastUsed" xml:space="preserve"><value>最終使用日時</value></data>
   <data name="ProfileImportLogDirectory" xml:space="preserve"><value>取り込むと、相対ログパスの基準は次のフォルダーに変わります。</value></data>
   <data name="ProfileImportRecovery" xml:space="preserve"><value>取り込みを確認できませんでした。再試行の前に次のパスを確認してください。</value></data>
+  <data name="PostConnectionMacro" xml:space="preserve"><value>接続後マクロ</value></data>
+  <data name="PostConnectionMacroDescription" xml:space="preserve"><value>接続後、このタブで自動的に実行するマクロです。</value></data>
+  <data name="PostConnectionMacroRegistration" xml:space="preserve"><value>プロファイルの自動処理を確認</value></data>
+  <data name="PostConnectionMacroTrustProfile" xml:space="preserve"><value>信頼して登録</value></data>
+  <data name="PostConnectionInsertRoutine" xml:space="preserve"><value>定型処理を挿入</value></data>
+  <data name="PostConnectionRoutineCommands" xml:space="preserve"><value>コマンドを順番に実行</value></data>
+  <data name="PostConnectionRoutineSudo" xml:space="preserve"><value>Linux で sudo -i</value></data>
+  <data name="PostConnectionRoutineEnable" xml:space="preserve"><value>スイッチで enable</value></data>
+  <data name="PostConnectionRoutineWaitFirst" xml:space="preserve"><value>最初のプロンプトを待つ</value></data>
+  <data name="PostConnectionRoutineWaitFirstHelp" xml:space="preserve"><value>直前の処理でこのプロンプトに一致済みの場合は、チェックを外してください。</value></data>
+  <data name="PostConnectionRoutineNormalPrompt" xml:space="preserve"><value>通常時のプロンプト</value></data>
+  <data name="PostConnectionRoutinePrivilegedPrompt" xml:space="preserve"><value>昇格後のプロンプト</value></data>
+  <data name="PostConnectionRoutinePasswordPrompt" xml:space="preserve"><value>パスワード要求の文字列</value></data>
+  <data name="PostConnectionRoutineCommandLines" xml:space="preserve"><value>コマンド（1行に1つ）</value></data>
+  <data name="PostConnectionRoutineUseProfilePassword" xml:space="preserve"><value>プロファイルの保存済みパスワードを使う</value></data>
+  <data name="PostConnectionRoutineVaultEntry" xml:space="preserve"><value>vault のパスワード項目名</value></data>
+  <data name="PostConnectionRoutinePromptRequired" xml:space="preserve"><value>照合するプロンプトを入力してください。</value></data>
+  <data name="PostConnectionRoutineCommandRequired" xml:space="preserve"><value>コマンドを1つ以上入力してください。</value></data>
+  <data name="PostConnectionRoutineVaultEntryRequired" xml:space="preserve"><value>有効な vault のパスワード項目名を入力してください。</value></data>
+  <data name="PostConnectionRoutineInsert" xml:space="preserve"><value>挿入</value></data>
+  <data name="MacroErrorPostConnectionSubset" xml:space="preserve"><value>接続後マクロでは、この操作または構文を使えません。プロンプト待機にはタイムアウトが必要です。</value></data>
+  <data name="PostConnectionCompletionKeys" xml:space="preserve"><value>Ctrl+Space で補完候補を表示します。上下キーで選択し、Tab または Enter で挿入、Esc で候補を閉じます。</value></data>
+  <data name="PostConnectionCompletions" xml:space="preserve"><value>補完候補</value></data>
+  <data name="PostConnectionCurrentArgument" xml:space="preserve"><value>{0}。現在の引数は {1} です。</value></data>
+  <data name="MacroErrorExpressionExpected" xml:space="preserve"><value>ここに式を入力してください。</value></data>
+  <data name="MacroErrorStatementExpected" xml:space="preserve"><value>ここに文を入力してください。</value></data>
+  <data name="MacroErrorIdentifierExpected" xml:space="preserve"><value>ここに名前を入力してください。</value></data>
+  <data name="MacroErrorBlockExpected" xml:space="preserve"><value>ブロックの末尾に閉じ波括弧を入力してください。</value></data>
+  <data name="MacroErrorTypeExpected" xml:space="preserve"><value>使用できる型名を入力してください。</value></data>
+  <data name="MacroErrorUnknownName" xml:space="preserve"><value>この名前は現在のスコープに定義されていません。</value></data>
+  <data name="MacroErrorUnknownMember" xml:space="preserve"><value>この値にその名前のメンバーはありません。</value></data>
+  <data name="MacroErrorUnknownFunction" xml:space="preserve"><value>この関数は定義されていません。</value></data>
+  <data name="MacroErrorReservedName" xml:space="preserve"><value>マクロ言語の予約名以外を指定してください。</value></data>
+  <data name="MacroErrorDuplicateLocal" xml:space="preserve"><value>同じ名前のローカル変数が既に定義されています。</value></data>
+  <data name="MacroErrorCallArguments" xml:space="preserve"><value>この呼び出しに指定した引数の数と型を確認してください。</value></data>
+  <data name="MacroErrorUnterminatedString" xml:space="preserve"><value>文字列の末尾に閉じ二重引用符を入力してください。</value></data>
+  <data name="MacroErrorUnterminatedComment" xml:space="preserve"><value>コメントの末尾に */ を入力してください。</value></data>
+  <data name="MacroErrorStringPrefix" xml:space="preserve"><value>文字列の接頭辞が正しくありません。</value></data>
+  <data name="MacroErrorStringExpected" xml:space="preserve"><value>文字列リテラルの先頭に二重引用符を入力してください。</value></data>
+  <data name="MacroErrorStringNewline" xml:space="preserve"><value>行末の前に文字列を閉じるか、逐語的文字列を使用してください。</value></data>
+  <data name="MacroErrorUnexpectedCharacter" xml:space="preserve"><value>ここではこの文字を使用できません。</value></data>
+  <data name="MacroErrorInterpolationBrace" xml:space="preserve"><value>補間文字列の波括弧を確認してください。</value></data>
+  <data name="MacroErrorUnterminatedInterpolation" xml:space="preserve"><value>文字列内の補間式の末尾に閉じ波括弧を入力してください。</value></data>
+  <data name="MacroErrorSourceLimit" xml:space="preserve"><value>マクロ本文のサイズが上限を超えています。</value></data>
+  <data name="MacroErrorSyntaxLimit" xml:space="preserve"><value>マクロの構文要素数が上限を超えています。</value></data>
+  <data name="MacroErrorNestingLimit" xml:space="preserve"><value>マクロの入れ子の深さが上限を超えています。</value></data>
+  <data name="MacroErrorParameterLimit" xml:space="preserve"><value>引数の数が上限を超えています。</value></data>
+  <data name="MacroErrorTypeNestingLimit" xml:space="preserve"><value>型の入れ子の深さが上限を超えています。</value></data>
+  <data name="MacroErrorLocalLimit" xml:space="preserve"><value>ローカル変数の宣言数が上限を超えています。</value></data>
 </root>

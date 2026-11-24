@@ -343,7 +343,8 @@ const server = new Server({ hostKeys: [key], algorithms }, client => {
           return;
         }
         channel.once('data', data => {
-          if (data.toString() !== 'go') throw Error('Unexpected terminal input.');
+          const expected = process.env.TABTTY_INTEROP_POST_CONNECTION ? 'go\r' : 'go';
+          if (data.toString() !== expected) throw Error('Unexpected terminal input.');
           channel.write(Buffer.from([0x82, 0xa0]));
           client.rekey(error => {
             if (error) throw error;

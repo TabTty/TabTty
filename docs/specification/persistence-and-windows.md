@@ -32,6 +32,13 @@ file access.
 
 ## Profile v1 fields
 
+Macro-enabled builds accept the optional root object `postConnectionMacro` with
+integer `version: 1` and string `source`. The string contains the editable
+statement body. An omitted object or a blank body leaves an ordinary connection.
+The editor removes the object when the body is cleared. Its normal save, discard
+and validation behavior applies to the new page. See
+[post-connection macros](#post-connection-macros).
+
 All fields in this table are emitted by the editor and required unless stated
 otherwise. Defaults describe newly created profiles, not missing-field repair.
 
@@ -138,6 +145,49 @@ Encoding IDs: `utf-8`, `cp932`, `euc-jp`, `jis`, `cp949`, `cp936`, `cp950`,
 `koi8-r`, lowercase `cp` plus the accepted OEM/Windows number, or `iso-8859-`
 plus one of 1-11, 13-15. These are the 47 supported identities.
 Profile IDs are content identifiers, distinct from local registration identity.
+
+## Post-connection macros
+
+The approved snapshot supplies both the connection settings and the complete
+macro body. Validate the body before preparing logs or opening the transport.
+Configure observation before startup output arrives. In a manual connection
+attempt, run the body once after shell/PTY readiness for SSH, TCP terminal
+readiness for Telnet, or successful port open/configuration for COM. An explicit
+reconnect starts a fresh run using the newly admitted snapshot. Moving a tab
+preserves its current session and run. Stop, a timeout or an ordinary macro
+failure releases input after cleanup and leaves a healthy terminal connected.
+
+The body accepts line and password-line sends, finite prompt waits, named prompt
+alternatives, literal/regex patterns, initialized locals, boolean conditions,
+blocks and early return. It uses the terminal's Enter and encoding settings.
+Source diagnostics point into the body, starting at line one. The existing
+macro input ownership, receive bounds, pause and recording rules apply.
+
+Each password send resolves the named entry in the selected vault when reached.
+The no-argument form uses the SSH profile's saved reference. Telnet and COM
+use explicit names and display the existing plaintext notice. Profile files
+carry the source and its references. Vault encryption and secret handling
+follow the [authentication contract](transports-and-authentication.md).
+
+An external macro's `Connect` runs the approved body before returning. The
+body has its own locals and uses the same terminal, recording, input owner and
+receive cursor. The caller sees the unread suffix and later output, and matches
+stay consumed. Stop, failure and timeout in the body end the entire run. A
+healthy terminal becomes available for manual input after cleanup. An empty
+body lets `Connect` return at terminal readiness with the original receive
+history available.
+
+**Insert routine** puts editable statements at the caret. It can generate a
+prompt-paced command sequence, Linux `sudo -i`, or switch `enable`. The
+command sequence waits before each command, leaving the final prompt for the
+next routine. Privilege routines confirm the privileged prompt. Set the next
+routine's initial wait according to whether that prompt was already matched.
+
+The profile editor uses the shared macro parser for completion, argument hints
+and live source checks. Candidates depend on the caret position, the embedded
+language subset and the locals in scope. An unfinished call shows its current
+argument. An error is underlined in the body and explained below it with its
+one-based line and column. Editing and checking require no session or vault.
 
 ## Connecting multiple profiles
 

@@ -7,7 +7,7 @@ with macro support.
 
 ## Connection decisions
 
-Ask for profile trust only when a connection is requested. Read one bounded,
+Evaluate profile trust when a connection is requested. Read one bounded,
 validated snapshot and check the current registration and trust for its opened
 location. Apply the following table to each file independently.
 
@@ -52,7 +52,8 @@ manually still presents the registration choice.
   registered. This includes **Import file** in the profile manager,
   **Import and connect**, and a verified new-profile or duplicate save that
   creates a registration. **Import file** completes without starting a
-  connection. There is no second trust confirmation.
+  connection. A nonblank post-connection macro requires the registration
+  review described below. The connection review covers **Import and connect**.
   Receiving a file activation or reserving its tab does not register it.
 - The main window's editor may advance trust on a verified save of a profile
   whose exact starting version was trusted. For an existing unreviewed or
@@ -60,7 +61,8 @@ manually still presents the registration choice.
   decided at the next connection. An editor opened by Explorer or external
   activation can save normally and grants no trust through that save.
   Reactivating an existing editor from another route does not elevate its
-  save authority. Do not prompt about profile trust on edit, save or close.
+  save authority. Editing, saving or closing an existing profile needs no
+  separate trust review.
 - Registration is a transition from unregistered to registered. Looking up
   an existing entry, refreshing its display name or usage, opening the list
   and loading saved registrations do not renew trust. Versions without trust
@@ -71,6 +73,14 @@ manually still presents the registration choice.
   independent. Explicit re-registration trusts the version registered then.
 
 ## What a decision covers
+
+A nonblank post-connection macro is executable profile content. A connection
+review and an import or new-save registration review show that it runs
+automatically and expose the complete body as inert text with display controls
+escaped. Import itself performs no run. Use the exact approved snapshot.
+Scope trust to the interpretation that includes the executable body, so a
+trust record for the same bytes interpreted as inert cannot authorize execution.
+The ordinary verified-save and trust-location rules apply.
 
 Scope a trusted version to the current Windows user on this PC, the normalized
 opened location, SHA-256 of the exact file bytes and the version of the rules

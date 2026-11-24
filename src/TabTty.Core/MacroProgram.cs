@@ -28,6 +28,7 @@ internal sealed class MacroProgram : IDisposable
     internal MacroBlock Body { get; }
     internal Dictionary<string, MacroFunction> Functions { get; }
     internal int NodeCount { get; }
+    internal bool IsPostConnection { get; private init; }
     internal string? SourceDigest { get; private set; }
     internal IReadOnlyList<MacroConstantsBinding> Constants { get; private set; } = [];
 
@@ -110,6 +111,33 @@ internal sealed class MacroProgram : IDisposable
         return program;
     }
 
+    internal static MacroProgram ParsePostConnection(string path, string source, ResourceQuota? runMemory = null)
+    {
+        var quota = runMemory ?? NewQuota();
+        using var retained = quota.Reserve(0);
+        try
+        {
+            var program = ParseSource(path, source, quota, retained, out _, embedded: true);
+            PostConnectionMacro.Check(program.Body);
+            new MacroChecker(program).Check();
+            program.snapshotBytes = retained.Size;
+            program.pendingMemory = retained.Separate(retained.Size);
+            return program;
+        }
+        catch (ResourceLimitException) { throw new MacroSourceException("MemoryLimit", new(1, 1), path); }
+    }
+
+    internal static List<MacroEditorSymbol> AnalyzePostConnection(string source, MacroEditorSymbols editor, int offset)
+    {
+        var quota = NewQuota();
+        using var retained = quota.Reserve(0);
+        using var program = ParseSource("", source, quota, retained, out _, editor, embedded: true);
+        try { PostConnectionMacro.Check(program.Body); }
+        catch (MacroSourceException error) when (editor.Recover(error)) { }
+        new MacroChecker(program, editor).Check();
+        return editor.At(program, offset);
+    }
+
     internal static List<MacroEditorSymbol> AnalyzeForEditor(string path, string source,
         IReadOnlyDictionary<string, string> constants, MacroEditorSymbols editor, int? offset)
     {
@@ -122,16 +150,17 @@ internal sealed class MacroProgram : IDisposable
 
     private static MacroProgram ParseSource(string path, string source, ResourceQuota quota,
         ResourceReservation? retained, out IReadOnlyList<MacroConstantsDeclaration> declarations,
-        MacroEditorSymbols? editor = null)
+        MacroEditorSymbols? editor = null, bool embedded = false)
     {
-        if (source.Length > MacroLimits.StringUnits) throw new MacroSourceException("SourceLimit", new(1, 1), path);
+        if (source.Length > MacroLimits.StringUnits || embedded && Encoding.UTF8.GetByteCount(source) > MacroLimits.SourceBytes)
+            throw new MacroSourceException("SourceLimit", new(1, 1), path);
         using var tokens = quota.Reserve(512 + source.Length * 4L);
         retained?.Add(source.Length * 2L);
         var budget = new MacroSyntaxBudget(tokens, retained);
         var parser = new MacroParser(source, new(1, 1), budget, editor);
-        var (body, functions) = parser.ParseFile();
+        var (body, functions) = parser.ParseFile(embedded);
         declarations = parser.ConstantsDeclarations;
-        return new(path, source, body, functions, budget.Nodes, quota);
+        return new(path, source, body, functions, budget.Nodes, quota) { IsPostConnection = embedded };
     }
 
     internal static string ResolveSourcePath(string path)

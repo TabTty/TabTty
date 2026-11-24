@@ -13,6 +13,7 @@ internal static class MacroApi
     internal static readonly MacroBuiltinParameter LogCollision = new("logCollision", MacroType.String, 3);
     internal static readonly MacroBuiltinParameter MarkReceiveBoundary = new("markReceiveBoundary", MacroType.Bool, 1);
     internal static readonly MacroType Alternatives = new("NamedWaitAlternatives");
+    internal static readonly MacroType WaitPattern = new("WaitPattern");
     internal static readonly Dictionary<string, MacroSignature[]> Signatures = Build();
 
     internal static MacroSignature? NamedSignature(string name) =>
@@ -25,7 +26,7 @@ internal static class MacroApi
         var v = MacroType.Void; var s = MacroType.String; var n = MacroType.Long;
         var d = MacroType.Double; var b = MacroType.Bool; var t = new MacroType("T");
         var list = MacroType.List(t); var strings = MacroType.List(s);
-        var pattern = new MacroType("WaitPattern"); var match = new MacroType("WaitMatch");
+        var pattern = WaitPattern; var match = new MacroType("WaitMatch");
         var instant = new MacroType("Instant");
         var result = new Dictionary<string, MacroSignature[]>(StringComparer.Ordinal);
         void Add(string name, MacroSignature first, MacroSignature? second = null) =>
@@ -170,15 +171,16 @@ internal sealed class MacroChecker(MacroProgram program, MacroEditorSymbols? edi
                     if (declaration.Value is not MacroMissingExpression)
                     {
                         declaration.Type = Expression(declaration.Value, declaration.Declared);
+                        MacroNode initializer = program.IsPostConnection ? declaration.Value : declaration;
                         if (declaration.Declared is { } declared)
-                        { Require(declared.Accepts(declaration.Type), declaration); declaration.Type = declared; }
-                        Require(declaration.Type != MacroType.Void && !declaration.Type.Name.StartsWith('$') && declaration.Type != MacroType.Meta, declaration);
+                        { Require(declared.Accepts(declaration.Type), initializer); declaration.Type = declared; }
+                        Require(declaration.Type != MacroType.Void && !declaration.Type.Name.StartsWith('$') && declaration.Type != MacroType.Meta, initializer);
                     }
                     else declaration.Type = declaration.Declared ?? MacroType.Unknown;
                 }
                 catch (MacroSourceException error) when (editor?.Recover(error) == true)
                 { declaration.Type = declaration.Declared ?? MacroType.Unknown; }
-                Declare(declaration.Name, declaration.Type, declaration.Position, declaration); break;
+                Declare(declaration.Name, declaration.Type, program.IsPostConnection ? declaration.NamePosition : declaration.Position, declaration); break;
             case MacroAssignment assignment:
                 MacroType target = Expression(assignment.Target);
                 CheckAssignmentTarget(assignment.Target);
@@ -187,7 +189,7 @@ internal sealed class MacroChecker(MacroProgram program, MacroEditorSymbols? edi
                 Require(target.Accepts(assigned), assignment); break;
             case MacroInvocation invocation: Expression(invocation.Call); break;
             case MacroIf branch:
-                Require(Expression(branch.Condition) == MacroType.Bool, branch);
+                Require(Expression(branch.Condition) == MacroType.Bool, program.IsPostConnection ? branch.Condition : branch);
                 CheckBlock(branch.Yes); if (branch.No is { } no) CheckStatement(no); break;
             case MacroWhile loop:
                 Require(Expression(loop.Condition) == MacroType.Bool, loop);
@@ -227,6 +229,8 @@ internal sealed class MacroChecker(MacroProgram program, MacroEditorSymbols? edi
         MacroType result;
         switch (expression)
         {
+            case MacroMissingExpression when editor is not null:
+                throw new MacroSourceException("ExpressionExpected", expression.Position);
             case MacroLiteral literal:
                 result = ScalarType(literal.Value); break;
             case MacroName name:
@@ -339,10 +343,10 @@ internal sealed class MacroChecker(MacroProgram program, MacroEditorSymbols? edi
                     if (parameter.Name == "List" && parameter.Element?.Name == "T")
                     { Require(argument.Name == "List", call); generic = argument.Element; parameter = argument; }
                     else if (parameter.Name == "T") { generic ??= argument; parameter = generic; }
-                    if (editor is not null && call.Name == "WaitPrompt" && i == 0 && argument == MacroType.String)
+                    if (editor is not null && !program.IsPostConnection && call.Name == "WaitPrompt" && i == 0 && argument == MacroType.String)
                         throw new MacroSourceException("TypeMismatch", call.Position)
                             { WaitPatternFix = editor.FirstArgumentRange(call.Arguments[i]) };
-                    Require(parameter.Accepts(argument), call);
+                    Require(parameter.Accepts(argument), program.IsPostConnection ? call.Arguments[i] : call);
                 }
                 return Replace(signature.Result, generic);
             }

@@ -248,8 +248,9 @@ internal sealed class RecordingLifecycle(TerminalOutput terminal, SemaphoreSlim 
     {
         int number = 1;
         if (!profile.RecordsOutput) return (null, number);
-        var prepared = await PreparePartAsync(activation => SessionRecording.Open(path, profile, macro?.BaseName,
-            settings: settings ?? RecordingSettings.Resolve(path, profile, macro?.BaseName, overrides: overrides), token: activation), token)
+        string? macroName = macro?.RecordingMacroName;
+        var prepared = await PreparePartAsync(activation => SessionRecording.Open(path, profile, macroName,
+            settings: settings ?? RecordingSettings.Resolve(path, profile, macroName, overrides: overrides), token: activation), token)
             .ConfigureAwait(false);
         return (prepared, number);
     }

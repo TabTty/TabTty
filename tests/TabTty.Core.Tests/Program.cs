@@ -29,6 +29,12 @@ try
         Console.WriteLine("PASS NativeBundleProbe");
         return 0;
     }
+    if (args is ["--post-connection-ssh", var postConnectionPort])
+    {
+        await MacroContracts.PostConnectionSshEarlyDataAsync(int.Parse(postConnectionPort));
+        Console.WriteLine("PASS PostConnectionMacroReceivesRealSshStartupData");
+        return 0;
+    }
     if (args is ["--single-byte-mappings", var referenceDirectory])
     {
         SingleByteMappings.Run(referenceDirectory);
