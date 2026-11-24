@@ -160,6 +160,7 @@ internal sealed partial class TerminalTab : UserControl
         terminalArea.Children.Add(output.Scroller);
         terminalArea.Children.Add(terminalOverlays);
         InitializeAiControls();
+        InitializeMouseRoutingControls();
         ConfigureStatusIndicator(highlightStatus);
         ConfigureStatusIndicator(broadcastTabStatus);
         DockPanel.SetDock(highlightStatus, Dock.Right);
@@ -278,6 +279,8 @@ internal sealed partial class TerminalTab : UserControl
         CancellationToken attempt = default, RecordingOverrides recordingOverrides = default, bool reconnect = false)
     {
         var generation = stop;
+        pendingFrame = null;
+        ResetMouseRouting();
         bool established = false;
         lastRecordingStatus = null;
         try
@@ -447,6 +450,7 @@ internal sealed partial class TerminalTab : UserControl
             AiCollaboration.EndControl(this);
             transferWindow?.ConnectionEnded();
             stop.Cancel();
+            UpdateMouseRouting();
             mouseInput.Writer.TryComplete();
             await mousePump;
             if (session is { } closing)
@@ -491,6 +495,7 @@ internal sealed partial class TerminalTab : UserControl
         removed = true;
         frameTimer.Stop();
         searchRefreshTimer.Stop();
+        HideMouseNotice();
         searchWork?.Cancel();
         searchMatches = [];
         searchMemory.Dispose();
@@ -832,6 +837,7 @@ internal sealed partial class TerminalTab : UserControl
         UpdateMacroControls();
         UpdateAiControls();
         UpdateStatusText();
+        UpdateMouseRouting();
         CaptionChanged?.Invoke();
         UpdateHighlightStatus();
         AutomationProperties.SetName(searchQuery, Text("Search"));
@@ -863,9 +869,11 @@ internal sealed partial class TerminalTab : UserControl
         var resumeHighlight = new MenuItem { Header = Text("ResumeHighlighting") };
         resumeHighlight.Click += (_, _) => panes[pane].Highlight.Resume();
         menu.Items.Add(resumeHighlight);
+        int fixedItemCount = menu.Items.Count;
         menu.Opened += (_, _) =>
         {
-            while (menu.Items.Count > 5) menu.Items.RemoveAt(5);
+            while (menu.Items.Count > fixedItemCount) menu.Items.RemoveAt(fixedItemCount);
+            AddMouseRoutingCommand(menu, pane);
             var splits = new MenuItem { Header = Text("TerminalPanes") };
             FillPaneCommands(splits, pane);
             menu.Items.Add(splits);
@@ -1063,6 +1071,7 @@ internal sealed partial class TerminalTab : UserControl
             }
             surface.SetSearch(pane.CurrentMatch, searchMatches, scroll: false);
         }
+        UpdateMouseRouting();
         if (searchBar.Visibility == Visibility.Visible)
         {
             if (snapshot?.IsAlternateScreen == true)

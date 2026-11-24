@@ -110,6 +110,11 @@
   <data name="StopPaste" xml:space="preserve"><value>貼り付けを停止</value></data>
   <data name="Copy" xml:space="preserve"><value>コピー</value></data>
   <data name="Paste" xml:space="preserve"><value>貼り付け</value></data>
+  <data name="SendMouseToHost" xml:space="preserve"><value>マウス操作を接続先に送る</value></data>
+  <data name="UseMouseInTabTty" xml:space="preserve"><value>マウス操作を TabTty で使う</value></data>
+  <data name="MouseDestinationHost" xml:space="preserve"><value>マウス操作先：接続先</value></data>
+  <data name="MouseDestinationTabTty" xml:space="preserve"><value>マウス操作先：TabTty</value></data>
+  <data name="MouseSentToHostNotice" xml:space="preserve"><value>マウス操作は接続先に送られます。タブの右クリックから変更できます。</value></data>
   <data name="PastePreview" xml:space="preserve"><value>複数行の貼り付けプレビュー</value></data>
   <data name="PasteCounts" xml:space="preserve"><value>{0}文字、{1}行。{2}</value></data>
   <data name="PasteCountsLabel" xml:space="preserve"><value>貼り付け内容の概要</value></data>

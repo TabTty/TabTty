@@ -265,19 +265,31 @@ or enhanced keyboard protocols initially. Accepted local commands take priority.
 Enter/Backspace and local shortcuts retain Q88 and the interaction draft's
 protocol defaults; fixed SSH echo Off and temporary Telnet/serial behavior
 remain. Ctrl+Shift+C/V are local copy/paste; Ctrl+C/V remain remote input.
-Right-click opens the local menu only while remote reporting is off or Shift
-selected local gesture ownership; otherwise report it remotely. Menu-based
-zoom has no new Ctrl+wheel binding.
+Each connection defaults to sending eligible mouse input when the host requests
+tracking. During a connection, the tab context menu offers one action to switch
+between **Use the mouse in TabTty** and **Send mouse input to the host**. The
+choice covers clicks, drags, pointer motion, and the wheel across the tab's panes
+and resets on reconnect. A pane's local context menu also offers **Send mouse
+input to the host** when the host requests tracking and the choice is TabTty.
+With local routing, right-click opens the local menu and the wheel scrolls any
+available local history. Scrollbars and retained-output browsing stay local.
+
+When the host requests mouse tracking, the status bar shows the active pane's
+mouse destination. The first time a visible pane routes mouse input to the host
+during a connection, briefly display a non-interactive message explaining how
+to change it from the tab context menu. Keep keyboard focus on its current target.
+Menu-based zoom has no new Ctrl+wheel binding.
 
 Mouse 9 sends presses only; 1000 adds release/wheel; 1002 adds drag motion;
 1003 adds all cell motion. Latest enabled tracking mode wins; disabling it
 leaves tracking off. 1006 chooses SGR format and never enables tracking alone.
 Classic reports are CSI M plus encoded button/x/y, one-based cells clamped to
 223; SGR is CSI <button;x;y M, with m for release. Add standard Shift/Alt/Ctrl
-bits 4/8/16, motion 32, wheel 64/65. Coalesce motion within one cell. Apply the
-accepted Shift local-selection override at gesture start, retain that owner,
-and cancel the remote gesture on protocol mode/generation change; never invent
-an old-mode release in a new mode. No pixel/urxvt/UTF-8-coordinate extensions.
+bits 4/8/16, motion 32, wheel 64/65. Coalesce motion within one cell. Shift is
+a mouse report modifier. Preserve matching releases for presses already sent
+when routing changes. Cancel a remote gesture on protocol mode or generation
+change and send releases only within the matching mode and generation.
+Pixel, urxvt, and UTF-8-coordinate extensions are unsupported.
 
 Broadcast Q182/Q190 amend coordinate handling: skip unsupported or out-of-grid
 press/motion and clamp matching release only at actual button-up. Do not end

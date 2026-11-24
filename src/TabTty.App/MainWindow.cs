@@ -1075,6 +1075,7 @@ internal sealed partial class MainWindow : Window
                     if (Host is not { } host || host.GroupOf(this) is not { } group) return;
                     if (host.CanReconnectTab(this, terminal))
                         menu.Items.Add(MenuAction("Reconnect", () => Host?.ReconnectTab(this)));
+                    terminal.AddMouseRoutingCommand(menu);
                     terminal.FillAiMenu(menu);
                     menu.Items.Add(host.BroadcastCommands());
                     menu.Items.Add(host.GroupCommands(group));

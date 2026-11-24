@@ -325,6 +325,9 @@ suppression from interpreted text while preserving every Raw byte.
 
 ## Confirmed remote mouse routing (Q73 accepted)
 
+The current [mouse routing contract](../specification/terminal-and-encodings.md#keyboard-and-mouse)
+supersedes the Shift override recorded in this interview.
+
 - When the remote application enables supported mouse reporting, send
   unmodified terminal mouse interactions to it.
 - Holding Shift instead performs local selection/context-menu actions and,

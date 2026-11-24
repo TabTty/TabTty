@@ -28,6 +28,8 @@ internal sealed class TerminalSurface : FrameworkElement
     private IReadOnlyDictionary<int, TerminalHighlightSpan[]> highlights = new Dictionary<int, TerminalHighlightSpan[]>();
     private (int Row, int Offset)? dragStart;
     private bool connected;
+    private bool mouseSnapshotCurrent = true;
+    private bool sendMouseToHost = true;
     private bool remoteGesture => remoteButtons.Count != 0;
     private readonly List<int> remoteButtons = [];
     private bool movingHost;
@@ -67,6 +69,7 @@ internal sealed class TerminalSurface : FrameworkElement
     public bool UsesFontFallback { get; private set; }
     public bool IsPresentationActive => presentationEnabled && IsVisible;
     public event Action? PresentationChanged;
+    internal event Action? InputAvailabilityChanged;
     public event Action<bool>? ViewportChanged;
     public event Action<TerminalMouseInput>? MouseInput;
     private long mouseCapture;
@@ -115,12 +118,13 @@ internal sealed class TerminalSurface : FrameworkElement
         updateBlink = UpdateBlink;
         PreviewMouseDown += (_, e) =>
         {
-            suppressContext = false;
-            if ((!remoteGesture && Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)) || dragStart is not null || !CanReportMouse()) return;
+            if (e.ChangedButton == MouseButton.Right) suppressContext = false;
+            if (dragStart is not null || !CanReportMouse) return;
             Point point = e.GetPosition(this);
             if (!remoteGesture && !IsActiveScreenPoint(point)) return;
             int button = Button(e.ChangedButton);
             if (button < 0) return;
+            if (e.ChangedButton == MouseButton.Right) suppressContext = true;
             Focus();
             if (!remoteGesture && !CaptureMouse())
             {
@@ -137,7 +141,6 @@ internal sealed class TerminalSurface : FrameworkElement
             remoteButtons.Add(button);
             gestureGeneration = snapshot!.Mouse.Generation;
             lastMouseCell = null;
-            suppressContext = e.ChangedButton == MouseButton.Right;
             ReportMouse(point, button, release: false, motion: false);
             e.Handled = true;
         };
@@ -166,8 +169,8 @@ internal sealed class TerminalSurface : FrameworkElement
         };
         ContextMenuOpening += (_, e) =>
         {
-            if (suppressContext || CanReportMouse() && !Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
-                e.Handled = true;
+            if (e.CursorLeft < 0 || !suppressContext) return;
+            e.Handled = true;
             suppressContext = false;
         };
         InputMethod.SetIsInputMethodEnabled(this, true);
@@ -250,6 +253,7 @@ internal sealed class TerminalSurface : FrameworkElement
         selection = selection is { } selected && snapshot is { } old ? value.MapMatchFrom(old, selected) : null;
         if (!ReferenceEquals(snapshot, value)) snapshotVersion++;
         snapshot = value;
+        mouseSnapshotCurrent = true;
         if (UIElementAutomationPeer.FromElement(this) is TerminalAutomationPeer automation) automation.SetDocument(value);
         updateBlink();
         InvalidateMeasure();
@@ -376,11 +380,22 @@ internal sealed class TerminalSurface : FrameworkElement
 
     public void SetConnected(bool value)
     {
+        bool changed = connected != value;
         connected = value;
         updateBlink();
         if (!value) CancelComposition();
         if (!value) CancelRemoteGesture(notify: true);
         InvalidateVisual();
+        if (changed) InputAvailabilityChanged?.Invoke();
+    }
+
+    internal void ResetMouseTracking() => mouseSnapshotCurrent = false;
+
+    internal void SetMouseRouting(bool sendToHost)
+    {
+        sendMouseToHost = sendToHost;
+        lastMouseCell = null;
+        // Presses already sent retain their matching physical releases.
     }
 
     public void SetSearch(TerminalMatch? value, IReadOnlyList<TerminalMatch> matches, bool scroll)
@@ -657,8 +672,7 @@ internal sealed class TerminalSurface : FrameworkElement
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
-        if (CanReportMouse() && dragStart is null &&
-            (remoteGesture || !Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)))
+        if (CanReportMouse && dragStart is null)
         {
             Point point = e.GetPosition(this);
             if (snapshot!.Mouse.Tracking is 1002 or 1003 && (remoteGesture || IsActiveScreenPoint(point)))
@@ -688,7 +702,7 @@ internal sealed class TerminalSurface : FrameworkElement
     protected override void OnMouseWheel(MouseWheelEventArgs e)
     {
         Point point = e.GetPosition(this);
-        if (CanReportMouse() && IsActiveScreenPoint(point) && !Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
+        if (CanReportMouse && IsActiveScreenPoint(point))
         {
             int count = Math.Max(1, Math.Abs(e.Delta) / 120);
             for (int index = 0; index < count; index++)
@@ -699,9 +713,10 @@ internal sealed class TerminalSurface : FrameworkElement
         base.OnMouseWheel(e);
     }
 
-    private bool CanReportMouse() => connected && snapshot is { Mouse.Tracking: > 0 } view &&
-        (remoteGesture || view.IsAlternateScreen || FollowsEnd ||
-            VisibleRows().First >= view.ScreenStartRow);
+    internal bool MouseTrackingRequested => connected && mouseSnapshotCurrent && snapshot is { Mouse.Tracking: > 0 };
+
+    internal bool CanReportMouse => sendMouseToHost && MouseTrackingRequested &&
+        (remoteGesture || snapshot!.IsAlternateScreen || FollowsEnd || VisibleRows().First >= snapshot.ScreenStartRow);
 
     private bool IsActiveScreenPoint(Point point) => snapshot is { } view && viewportClip.Rect.Contains(point) &&
         point.Y >= view.ScreenStartRow * rowHeight;

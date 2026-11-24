@@ -109,6 +109,7 @@ internal static partial class Program
 
     private static async Task BroadcastAndSplitViews(App app, string directory)
     {
+        await CheckMouseRoutingAsync(app, directory);
         await CheckBroadcastReconnectAsync(app, directory);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         using var listener = new TcpListener(IPAddress.Loopback, 0);

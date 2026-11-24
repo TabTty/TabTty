@@ -323,8 +323,10 @@ paste wrapper when the connection remains usable. The initial defaults are zero
 delay with remembering disabled.
 
 Use the terminal context menu and keyboard shortcuts for copy, paste and literal
-search. Search covers normal retained output. Shift allows local selection when
-the remote application owns mouse reports. Named highlight sets style only regex
+search. Search covers normal retained output. To select text while the host
+receives mouse input, right-click the tab and choose **Use the mouse in TabTty**.
+To return mouse input to the host, use the tab or terminal context menu.
+Named highlight sets style only regex
 matches, with earlier rules taking precedence. A timed-out rule is suspended for
 that tab and can be resumed explicitly.
 

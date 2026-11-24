@@ -244,7 +244,7 @@ handoff through production/test adapters.
 
 ## Mouse coordinates and capture
 
-Determine local/remote gesture ownership at the source, honoring Shift and
+Determine local/remote gesture ownership at the source, honoring the tab's mouse routing and
 source reporting mode. Use logical terminal cell coordinates, including the
 source pane's view offset, rather than coordinates relative to the small pane.
 Local scrollbars and retained-history browsing never generate remote mouse

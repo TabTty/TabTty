@@ -90,6 +90,8 @@ internal sealed partial class TerminalTab
         pane.SetPresentationEnabled(presentationEnabled);
         pane.ConfigureFont(baseFontFamily, zoomFontSize);
         pane.SetConnected(InputSession is not null);
+        pane.SetMouseRouting(sendMouseToHost);
+        pane.InputAvailabilityChanged += UpdateMouseRouting;
         pane.RemoteGestureStarted += capture => Broadcast.StartMouse(Window.GetWindow(this) as MainWindow, this, pane, capture);
         pane.RemoteGestureEnded += capture => Broadcast.StopMouse(pane, capture);
         pane.UnclampedMouse = () => Broadcast.UsesBroadcastMouse(Window.GetWindow(this) as MainWindow, pane);
@@ -108,7 +110,11 @@ internal sealed partial class TerminalTab
                 Disconnect();
             }
         };
-        pane.ViewportChanged += _ => { if (searchWork is null) ScheduleSearchRefresh(); };
+        pane.ViewportChanged += _ =>
+        {
+            if (pane == output) UpdateMouseRouting();
+            if (searchWork is null) ScheduleSearchRefresh();
+        };
         pane.PreviewTextInput += OnTextInput;
         pane.PreviewKeyDown += OnKeyDown;
         pane.Scroller.PreviewMouseDown += (_, _) =>
@@ -119,6 +125,7 @@ internal sealed partial class TerminalTab
         pane.Scroller.SizeChanged += (_, _) => { if (paneLayout is null) ScheduleResize(); };
         pane.PresentationChanged += () =>
         {
+            if (pane == output) UpdateMouseRouting();
             if (!pane.IsPresentationActive) return;
             ScheduleFrame(immediately: true);
             ScheduleResize();
@@ -143,6 +150,7 @@ internal sealed partial class TerminalTab
         if (pane == output || !panes.ContainsKey(pane)) return;
         output.CancelComposition();
         output = pane;
+        UpdateMouseRouting();
         LabelPanes();
         ScheduleFrame();
     }
@@ -266,6 +274,7 @@ internal sealed partial class TerminalTab
         panes[pane].Highlight.Detach();
         panes.Remove(pane);
         if (output == pane) output = OrderedPanes.First();
+        UpdateMouseRouting();
         if (panes.Count == 1) RestoreSinglePane(output);
         LabelPanes();
         output.Focus();
