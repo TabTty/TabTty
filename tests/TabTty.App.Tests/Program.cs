@@ -43,8 +43,24 @@ internal static partial class Program
         if (args is not ["--profile-trust" or "--macro-profile-connect" or "--post-connection-macro"])
             AcceptFixtureProfileReviews();
         string settingsPath = Path.Combine(settingsDirectory, "settings.json");
+        if (args is ["--settings-draft"])
+            File.WriteAllText(settingsPath, """
+                {
+                  "schemaVersion": 1,
+                  "requiredFeatures": [],
+                  "language": "en",
+                  "theme": "light",
+                  "bell": "visual",
+                  "defaultTerminalFont": { "family": "Consolas", "sizePoints": 12, "futureFont": 1 },
+                  "defaultRetainedRows": 5000,
+                  "keyboardShortcuts": { "futureShortcut": { "key": "F7" } },
+                  "futureSettings": { "enabled": true },
+                  "logNameIncludeDate": false,
+                  "logNameIncludeSequence": false
+                }
+                """);
         var settingsFixture = args is ["--file-editors"] ? new FilePublicationFixture() : null;
-        var profileFixture = args is ["--file-editors"] ? new FilePublicationFixture() : null;
+        var profileFixture = args is ["--file-editors" or "--credential-profile-write"] ? new FilePublicationFixture() : null;
         var otherStoreFixture = args is ["--store-publication-faults"] ? new FilePublicationFixture() : null;
         var vaultFaults = args is ["--vault-file-faults"] ? new VaultFileFaultFixture() : null;
         bool standaloneVault = args is ["--vault-last-editor"];
@@ -60,28 +76,44 @@ internal static partial class Program
 #pragma warning restore WPF0001
         try
         {
+            if (args is ["--dispatcher-scenarios"])
+            {
+                CheckDispatcherScenarios(application.Dispatcher);
+                Console.WriteLine("PASS DispatcherScenarios");
+                return 0;
+            }
+            if (args is ["--settings-draft"])
+            {
+                RunScenario(application.Dispatcher, () => CheckSettingsDraftAsync(application, settingsPath));
+                Console.WriteLine("PASS SettingsDraft");
+                return 0;
+            }
+            if (args is ["--credential-profile-write"])
+            {
+                RunScenario(application.Dispatcher, () => CheckCredentialProfileWriteAsync(application, settingsDirectory, profileFixture!));
+                Console.WriteLine("PASS CredentialProfileWrite");
+                return 0;
+            }
+            if (args is ["--terminal-search-moves"])
+            {
+                RunScenario(application.Dispatcher, CheckTerminalSearchMovesAsync);
+                Console.WriteLine("PASS TerminalSearchMoves");
+                return 0;
+            }
             if (otherStoreFixture is not null)
             {
-                var storeFrame = new DispatcherFrame();
-                Task run = application.Dispatcher.InvokeAsync(async () =>
+                RunScenario(application.Dispatcher, async () =>
                 {
                     var owner = new MainWindow(application);
                     owner.Show();
                     await CheckHighlightAndHostTrustPublicationAsync(application, owner, otherStoreFixture);
-                }).Task.Unwrap();
-                _ = run.ContinueWith(_ => storeFrame.Continue = false, TaskScheduler.Default);
-                Dispatcher.PushFrame(storeFrame);
-                run.GetAwaiter().GetResult();
+                });
                 return 0;
             }
             if (vaultFaults is not null)
             {
-                var vaultFileFrame = new DispatcherFrame();
-                Task run = application.Dispatcher.InvokeAsync(() =>
-                    CheckVaultFilesAsync(application, settingsDirectory, vaultFaults)).Task.Unwrap();
-                _ = run.ContinueWith(_ => vaultFileFrame.Continue = false, TaskScheduler.Default);
-                Dispatcher.PushFrame(vaultFileFrame);
-                run.GetAwaiter().GetResult();
+                RunScenario(application.Dispatcher, () =>
+                    CheckVaultFilesAsync(application, settingsDirectory, vaultFaults));
                 return 0;
             }
             if (masterFixture is not null)
@@ -92,12 +124,8 @@ internal static partial class Program
             }
             if (clipboardFixture)
             {
-                var clipboardFrame = new DispatcherFrame();
-                Task run = application.Dispatcher.InvokeAsync(() =>
-                    CheckClipboardAndSftpAsync(application, settingsDirectory, int.Parse(args[1]), nativeClipboard)).Task.Unwrap();
-                _ = run.ContinueWith(_ => clipboardFrame.Continue = false, TaskScheduler.Default);
-                Dispatcher.PushFrame(clipboardFrame);
-                run.GetAwaiter().GetResult();
+                RunScenario(application.Dispatcher, () =>
+                    CheckClipboardAndSftpAsync(application, settingsDirectory, int.Parse(args[1]), nativeClipboard));
                 Console.WriteLine(nativeClipboard ? "PASS IsolatedNativeClipboardAndSftp" : "PASS ClipboardBlockAndSftp");
                 return 0;
             }
@@ -127,24 +155,16 @@ internal static partial class Program
             if (args is ["--background-memory", var count, var memoryReport] &&
                 int.TryParse(count, out int receivers) && receivers is >= 1 and <= 6)
             {
-                var memoryFrame = new DispatcherFrame();
-                Task run = application.Dispatcher.InvokeAsync(() =>
-                    BackgroundReceiveMemory(settingsDirectory, receivers, memoryReport)).Task.Unwrap();
-                _ = run.ContinueWith(_ => memoryFrame.Continue = false, TaskScheduler.Default);
-                Dispatcher.PushFrame(memoryFrame);
-                run.GetAwaiter().GetResult();
+                RunScenario(application.Dispatcher, () =>
+                    BackgroundReceiveMemory(settingsDirectory, receivers, memoryReport));
                 return 0;
             }
             if (args is ["--architecture-workload", var port, var seconds, var report] &&
                 int.TryParse(port, out int fixturePort) && int.TryParse(seconds, out int duration) &&
                 duration is >= 3 and <= 1800)
             {
-                var workloadFrame = new DispatcherFrame();
-                Task run = application.Dispatcher.InvokeAsync(() =>
-                    ArchitectureWorkload(application, settingsDirectory, fixturePort, duration, report)).Task.Unwrap();
-                _ = run.ContinueWith(_ => workloadFrame.Continue = false, TaskScheduler.Default);
-                Dispatcher.PushFrame(workloadFrame);
-                run.GetAwaiter().GetResult();
+                RunScenario(application.Dispatcher, () =>
+                    ArchitectureWorkload(application, settingsDirectory, fixturePort, duration, report));
                 return 0;
             }
             if (args.SequenceEqual(["--file-operations"]))
@@ -159,8 +179,7 @@ internal static partial class Program
                 ["--transfer-window-close" or "--fullscreen-vim" or "--overload-controls" or "--sftp-batch", _] or
                 ["--macro-reset-relaunch", _, _])
             {
-                var integrationFrame = new DispatcherFrame();
-                Task run = application.Dispatcher.InvokeAsync(() => args[0] switch
+                RunScenario(application.Dispatcher, () => args[0] switch
                 {
                     "--visual-bell" => TerminalBellFlashesTheWholeStatusBar(settingsDirectory),
                     "--native-utf8-baseline" => TerminalReceivesWhilePresentationIsPaused(verifyNativeResidency: true),
@@ -184,10 +203,7 @@ internal static partial class Program
                     "--overload-controls" => CheckOverloadControlsAsync(application, settingsDirectory, args[1]),
                     "--sftp-batch" => SftpBatchCopiesFolderTrees(int.Parse(args[1]), settingsDirectory),
                     _ => CheckTransferWindowClose(settingsDirectory, int.Parse(args[1])),
-                }).Task.Unwrap();
-                _ = run.ContinueWith(_ => integrationFrame.Continue = false, TaskScheduler.Default);
-                Dispatcher.PushFrame(integrationFrame);
-                run.GetAwaiter().GetResult();
+                });
                 Console.WriteLine($"PASS {args[0]}");
                 return 0;
             }
@@ -198,18 +214,14 @@ internal static partial class Program
             }
             if (args.SequenceEqual(["--file-editors"]))
             {
-                var editorActivationFrame = new DispatcherFrame();
-                Task run = application.Dispatcher.InvokeAsync(async () =>
+                RunScenario(application.Dispatcher, async () =>
                 {
                     await CheckProfileEditorHeadingAsync(application, settingsDirectory);
                     Console.WriteLine("PASS CheckProfileEditorHeading");
                     await EditorKeepsSavedRevisionAndRestoresDraft(application);
                     Console.WriteLine("PASS EditorKeepsSavedRevisionAndRestoresDraft");
                     await CheckFileEditors(application, settingsDirectory, settingsFixture!, profileFixture!);
-                }).Task.Unwrap();
-                _ = run.ContinueWith(_ => editorActivationFrame.Continue = false, TaskScheduler.Default);
-                Dispatcher.PushFrame(editorActivationFrame);
-                run.GetAwaiter().GetResult();
+                });
                 return 0;
             }
             CheckFileOperations(settingsDirectory).GetAwaiter().GetResult();
@@ -221,8 +233,7 @@ internal static partial class Program
             Console.WriteLine("PASS TextProviderMovesByPinnedUnicodeCharacters");
             bool visualChecksPassed = true;
             RunVisualCheck(nameof(TerminalSurfaceRendersItsCellSnapshot), TerminalSurfaceRendersItsCellSnapshot);
-            var highlightFrame = new DispatcherFrame();
-            Task highlightTest = application.Dispatcher.InvokeAsync(async () =>
+            RunScenario(application.Dispatcher, async () =>
             {
                 await CheckManagementStatusBarAsync();
                 Console.WriteLine("PASS ManagementStatusBarKeepsLayout");
@@ -230,10 +241,7 @@ internal static partial class Program
                 Console.WriteLine("PASS HighlightWaitsForIdleOrViewportChange");
                 await TerminalBellFlashesTheWholeStatusBar(settingsDirectory);
                 Console.WriteLine("PASS TerminalBellFlashesTheWholeStatusBar");
-            }).Task.Unwrap();
-            _ = highlightTest.ContinueWith(_ => highlightFrame.Continue = false, TaskScheduler.Default);
-            Dispatcher.PushFrame(highlightFrame);
-            highlightTest.GetAwaiter().GetResult();
+            });
             ProfileEditorKeepsUnchangedOptionsAndEditsTypedFields(application);
             Console.WriteLine("PASS ProfileEditorKeepsUnchangedOptionsAndEditsTypedFields");
             AuthenticationDialogsIdentifyTheRecipient(application);
@@ -254,77 +262,41 @@ internal static partial class Program
             Dispatcher.PushFrame(macroFrame);
             macroTest.GetAwaiter().GetResult();
             Console.WriteLine("PASS MacroLaunchAndDialog");
-            var frame = new DispatcherFrame();
-            Task inputTest = application.Dispatcher.InvokeAsync(TerminalSendsSpacesAndSwitchesTabsAfterDisconnect).Task.Unwrap();
-            _ = inputTest.ContinueWith(_ => frame.Continue = false, TaskScheduler.Default);
-            Dispatcher.PushFrame(frame);
-            inputTest.GetAwaiter().GetResult();
+            RunScenario(application.Dispatcher, TerminalSendsSpacesAndSwitchesTabsAfterDisconnect);
             Console.WriteLine("PASS TerminalSendsSpacesAndSwitchesTabsAfterDisconnect");
-            var presentationFrame = new DispatcherFrame();
-            Task presentationTest = application.Dispatcher.InvokeAsync(() => TerminalReceivesWhilePresentationIsPaused(verifyNativeResidency: false)).Task.Unwrap();
-            _ = presentationTest.ContinueWith(_ => presentationFrame.Continue = false, TaskScheduler.Default);
-            Dispatcher.PushFrame(presentationFrame);
-            presentationTest.GetAwaiter().GetResult();
+            RunScenario(application.Dispatcher, () => TerminalReceivesWhilePresentationIsPaused(verifyNativeResidency: false));
             Console.WriteLine("PASS TerminalReceivesWhilePresentationIsPaused");
 
             {
-                var nativePresentationFrame = new DispatcherFrame();
-                Task nativePresentationTest = application.Dispatcher.InvokeAsync(() => TerminalReceivesWhilePresentationIsPaused(verifyNativeResidency: true)).Task.Unwrap();
-                _ = nativePresentationTest.ContinueWith(_ => nativePresentationFrame.Continue = false, TaskScheduler.Default);
-                Dispatcher.PushFrame(nativePresentationFrame);
-                nativePresentationTest.GetAwaiter().GetResult();
+                RunScenario(application.Dispatcher, () => TerminalReceivesWhilePresentationIsPaused(verifyNativeResidency: true));
                 Console.WriteLine("PASS NativeTerminalReceivesWhilePresentationIsPaused");
             }
             RunVisualCheck(nameof(MainMenuOpensAndReusesManagementTabs), () => MainMenuOpensAndReusesManagementTabs(application));
             RunVisualCheck(nameof(MainMenuAcceptsKeyboardCommands), MainMenuAcceptsKeyboardCommands);
             ManagementPagesShareResponsiveLayout(application);
             Console.WriteLine("PASS ManagementPagesShareResponsiveLayout");
-            var closeFrame = new DispatcherFrame();
-            Task closeTest = application.Dispatcher.InvokeAsync(() => DisconnectedTabsRespectSettingsAndBulkClose(application, settingsPath)).Task.Unwrap();
-            _ = closeTest.ContinueWith(_ => closeFrame.Continue = false, TaskScheduler.Default);
-            Dispatcher.PushFrame(closeFrame);
-            closeTest.GetAwaiter().GetResult();
+            RunScenario(application.Dispatcher, () => DisconnectedTabsRespectSettingsAndBulkClose(application, settingsPath));
             Console.WriteLine("PASS DisconnectedTabsRespectSettingsAndBulkClose");
-            var tabCloseFrame = new DispatcherFrame();
-            Task tabCloseTest = application.Dispatcher.InvokeAsync(() => CheckTerminalClosure(application, settingsDirectory)).Task.Unwrap();
-            _ = tabCloseTest.ContinueWith(_ => tabCloseFrame.Continue = false, TaskScheduler.Default);
-            Dispatcher.PushFrame(tabCloseFrame);
-            tabCloseTest.GetAwaiter().GetResult();
+            RunScenario(application.Dispatcher, () => CheckTerminalClosure(application, settingsDirectory));
             Console.WriteLine("PASS CheckTerminalTabClose");
-            var broadcastFrame = new DispatcherFrame();
-            Task broadcastTest = application.Dispatcher.InvokeAsync(() => BroadcastAndSplitViews(application, settingsDirectory)).Task.Unwrap();
-            _ = broadcastTest.ContinueWith(_ => broadcastFrame.Continue = false, TaskScheduler.Default);
-            Dispatcher.PushFrame(broadcastFrame);
-            broadcastTest.GetAwaiter().GetResult();
+            RunScenario(application.Dispatcher, () => BroadcastAndSplitViews(application, settingsDirectory));
             Console.WriteLine("PASS BroadcastAndSplitViews");
             RunAiCollaboration();
-            var settingsFrame = new DispatcherFrame();
-            Task settingsTest = application.Dispatcher.InvokeAsync(() => SettingsSwitchLanguageAndThemeInOpenWindows(application)).Task.Unwrap();
-            _ = settingsTest.ContinueWith(_ => settingsFrame.Continue = false, TaskScheduler.Default);
-            Dispatcher.PushFrame(settingsFrame);
-            settingsTest.GetAwaiter().GetResult();
+            RunScenario(application.Dispatcher, () => SettingsSwitchLanguageAndThemeInOpenWindows(application));
             Console.WriteLine("PASS SettingsSwitchLanguageAndThemeInOpenWindows");
-            var editorFrame = new DispatcherFrame();
-            Task editorTest = application.Dispatcher.InvokeAsync(() => EditorKeepsSavedRevisionAndRestoresDraft(application)).Task.Unwrap();
-            _ = editorTest.ContinueWith(_ => editorFrame.Continue = false, TaskScheduler.Default);
-            Dispatcher.PushFrame(editorFrame);
-            editorTest.GetAwaiter().GetResult();
+            RunScenario(application.Dispatcher, () => EditorKeepsSavedRevisionAndRestoresDraft(application));
             Console.WriteLine("PASS EditorKeepsSavedRevisionAndRestoresDraft");
             MessageBoxesUseTheApplicationThemeAndSafeDefault(application);
             Console.WriteLine("PASS MessageBoxesUseTheApplicationThemeAndSafeDefault");
             if (Environment.GetEnvironmentVariable("TABTTY_INTEROP_SFTP") is not null &&
                 int.TryParse(Environment.GetEnvironmentVariable("TABTTY_INTEROP_SSH_PORT"), out int sshPort))
             {
-                var transferFrame = new DispatcherFrame();
-                Task transferTest = application.Dispatcher.InvokeAsync(async () =>
+                RunScenario(application.Dispatcher, async () =>
                 {
                     await SftpBatchCopiesFolderTrees(sshPort, settingsDirectory);
                     Console.WriteLine("PASS SftpBatchCopiesFolderTrees");
                     await CheckTransferWindowClose(settingsDirectory, sshPort);
-                }).Task.Unwrap();
-                _ = transferTest.ContinueWith(_ => transferFrame.Continue = false, TaskScheduler.Default);
-                Dispatcher.PushFrame(transferFrame);
-                transferTest.GetAwaiter().GetResult();
+                });
                 Console.WriteLine("PASS CheckTransferWindowClose");
             }
             return visualChecksPassed ? 0 : 1;
@@ -365,13 +337,102 @@ internal static partial class Program
 
         void RunAiCollaboration()
         {
-            var aiFrame = new DispatcherFrame();
-            Task aiTest = application.Dispatcher.InvokeAsync(() => AiSharesAnExistingTerminal(application, settingsDirectory)).Task.Unwrap();
-            _ = aiTest.ContinueWith(_ => aiFrame.Continue = false, TaskScheduler.Default);
-            Dispatcher.PushFrame(aiFrame);
-            aiTest.GetAwaiter().GetResult();
+            RunScenario(application.Dispatcher, () => AiSharesAnExistingTerminal(application, settingsDirectory));
             Console.WriteLine("PASS AiSharesAnExistingTerminal");
         }
+    }
+
+    private static void RunScenario(Dispatcher dispatcher, Func<Task> scenario)
+    {
+        dispatcher.VerifyAccess();
+        var frame = new DispatcherFrame();
+        Task run = dispatcher.InvokeAsync(scenario).Task.Unwrap();
+        _ = run.ContinueWith(_ => frame.Continue = false, TaskScheduler.Default);
+        Dispatcher.PushFrame(frame);
+        run.GetAwaiter().GetResult();
+    }
+
+    private static void CheckDispatcherScenarios(Dispatcher dispatcher)
+    {
+        var expected = new InvalidOperationException("Fixture failure after await.");
+        bool visited = false;
+        RunScenario(dispatcher, async () =>
+        {
+            await Dispatcher.Yield(DispatcherPriority.Background);
+            dispatcher.VerifyAccess();
+            visited = true;
+        });
+        if (!visited) throw new InvalidOperationException("The runner returned before the scenario completed.");
+
+        try
+        {
+            RunScenario(dispatcher, async () =>
+            {
+                await Task.Yield();
+                throw expected;
+            });
+            throw new InvalidOperationException("The runner did not propagate the scenario failure.");
+        }
+        catch (InvalidOperationException error) when (ReferenceEquals(error, expected)) { }
+
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        try
+        {
+            RunScenario(dispatcher, () => Task.FromCanceled(cancellation.Token));
+            throw new InvalidOperationException("The runner did not propagate cancellation.");
+        }
+        catch (OperationCanceledException error) when (error.CancellationToken == cancellation.Token) { }
+    }
+
+    private static async Task CheckSettingsDraftAsync(App app, string path)
+    {
+        app.ReadSavedSettings();
+        byte[] before = await File.ReadAllBytesAsync(path);
+        int revision = app.SettingsRevision;
+        try
+        {
+            await app.SaveSettingsAsync(revision, new(Theme: "dark", FontSize: 90));
+            throw new Exception("The invalid font size was accepted.");
+        }
+        catch (InvalidDataException) { }
+        byte[] afterInvalid = await File.ReadAllBytesAsync(path);
+        if (app.ThemeChoice != "light" || !before.AsSpan().SequenceEqual(afterInvalid))
+            throw new InvalidOperationException("An invalid draft applied one of its edits.");
+
+        await app.SaveSettingsAsync(revision, new(Theme: "dark"));
+        byte[] saved = await File.ReadAllBytesAsync(path);
+        using (var settings = System.Text.Json.JsonDocument.Parse(saved))
+        {
+            var root = settings.RootElement;
+            var shortcuts = root.GetProperty("keyboardShortcuts");
+            if (shortcuts.TryGetProperty("Copy", out _) || app.Shortcuts[ShortcutAction.Copy] != "Ctrl+Shift+C" ||
+                !shortcuts.TryGetProperty("futureShortcut", out _) ||
+                root.GetProperty("defaultTerminalFont").GetProperty("futureFont").GetInt32() != 1 ||
+                !root.GetProperty("futureSettings").GetProperty("enabled").GetBoolean() ||
+                root.TryGetProperty("logNameIncludeDate", out _) ||
+                !root.TryGetProperty("defaultLogFilenameTemplate", out _))
+                throw new InvalidOperationException("An unrelated save lost unknown settings or changed an omitted shortcut.");
+        }
+
+        try
+        {
+            await app.SaveSettingsAsync(revision, new(Theme: "system"));
+            throw new Exception("The old revision was accepted.");
+        }
+        catch (InvalidOperationException) { }
+        byte[] afterStale = await File.ReadAllBytesAsync(path);
+        if (app.ThemeChoice != "dark" || !saved.AsSpan().SequenceEqual(afterStale))
+            throw new InvalidOperationException("An older draft changed the verified settings.");
+
+        await app.SaveSettingsAsync(app.SettingsRevision,
+            new(Shortcuts: new Dictionary<ShortcutAction, string?> { [ShortcutAction.Copy] = null }));
+        using var disabled = System.Text.Json.JsonDocument.Parse(await File.ReadAllBytesAsync(path));
+        var persisted = disabled.RootElement.GetProperty("keyboardShortcuts");
+        if (app.Shortcuts[ShortcutAction.Copy] is not null ||
+            persisted.GetProperty("Copy").ValueKind != System.Text.Json.JsonValueKind.Null ||
+            !persisted.TryGetProperty("futureShortcut", out _))
+            throw new InvalidOperationException("Explicitly disabling Copy was not preserved independently.");
     }
 
     private static async Task SftpBatchCopiesFolderTrees(int port, string root)
@@ -1522,8 +1583,7 @@ internal static partial class Program
         }
         finally
         {
-            await app.SaveSettingsAsync(originalLanguage, originalTheme, app.BellChoice, app.TerminalFontFamily, app.TerminalFontSize,
-                app.RetainedRows, app.AutoCloseDisconnectedTabs, app.VaultPath, app.SettingsRevision);
+            await app.SaveSettingsAsync(app.SettingsRevision, new(Language: originalLanguage, Theme: originalTheme));
             window.Close();
         }
     }
@@ -1635,6 +1695,8 @@ internal static partial class Program
 
         void ExpectFades(bool left, bool right)
         {
+            root.UpdateLayout();
+            root.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
             root.UpdateLayout();
             var stops = (strip.OpacityMask as LinearGradientBrush)?.GradientStops;
             if ((stops?[0].Color.A == 0) != left || (stops?[^1].Color.A == 0) != right)
@@ -1859,9 +1921,7 @@ internal static partial class Program
             host.Close();
             if (!finalHost.IsClosing) finalHost.Close();
             if (app.LogDefaults != originalLogDefaults)
-                await app.SaveSettingsAsync(app.LanguageChoice, app.ThemeChoice, app.BellChoice, app.TerminalFontFamily,
-                    app.TerminalFontSize, app.RetainedRows, app.AutoCloseDisconnectedTabs, app.VaultPath, app.SettingsRevision,
-                    logDefaults: originalLogDefaults);
+                await app.SaveSettingsAsync(app.SettingsRevision, new(LogDirectory: originalLogDefaults.Directory, LogTemplate: originalLogDefaults.ProfileTemplate, MacroLogTemplate: originalLogDefaults.MacroTemplate));
         }
 
         static void CheckTabHeader(TabItem tab, bool disconnected, string caption = "auto-close", string? warning = null)
@@ -2960,6 +3020,77 @@ internal static partial class Program
             double top = label.TranslatePoint(new Point(), footer).Y;
             if (Math.Abs(top * 2 + label.ActualHeight - footer.ActualHeight) > 0.01)
                 throw new InvalidOperationException("The status text was not centered vertically.");
+        }
+    }
+
+    private static async Task CheckTerminalSearchMovesAsync()
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        var tab = new TerminalTab("search-moves-fixture.ttty");
+        var host = new Window { Content = tab, Width = 640, Height = 350, ShowInTaskbar = false };
+        try
+        {
+            host.Show();
+            host.UpdateLayout();
+            var menu = new MenuItem();
+            tab.FillPaneCommands(menu);
+            menu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, App.Text("SplitPanesSide")))
+                .RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            host.UpdateLayout();
+            var panes = FindControls<TerminalSurface>(tab).ToArray();
+            var rows = Enumerable.Range(0, 100).Select(index => new TerminalSnapshot.Row(
+                index, index, 0, index is 55 or 59 or 90 ? "match" : "row", false, default, null, null, 0)).ToArray();
+            var snapshot = new TerminalSnapshot(rows, false, 0, 0, 80, 24, 0, false, TerminalCursorShape.Block, false, default);
+            typeof(TerminalTab).GetMethod("Render",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
+                [typeof(IReadOnlyList<string>)])!.Invoke(tab, [snapshot]);
+            panes[0].Scroller.ScrollToTop();
+            panes[1].Scroller.ScrollToTop();
+            host.UpdateLayout();
+            panes[0].Focus();
+            tab.ShowSearch();
+            var query = FindControls<TextBox>(tab).Single(field => field.MaxLength == 1024);
+            var next = FindControls<Button>(tab).Single(button => Equals(button.Content, App.Text("NextMatch")));
+            var previous = FindControls<Button>(tab).Single(button => Equals(button.Content, App.Text("PreviousMatch")));
+            var close = FindControls<Button>(tab).Single(button => Equals(button.Content, App.Text("CloseSearch")));
+            var searchField = typeof(TerminalSurface).GetField("search",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+            int? CurrentRow(TerminalSurface pane) => (searchField.GetValue(pane) as TerminalMatch?)?.StartRow;
+
+            query.Text = "match";
+            Click(next);
+            Click(next);
+            panes[1].Focus();
+            await Until(() => CurrentRow(panes[0]) == 59);
+            if (CurrentRow(panes[1]) is not null)
+                throw new InvalidOperationException("A queued search move changed panes after focus moved.");
+            panes[0].Focus();
+            Click(previous);
+            await Until(() => CurrentRow(panes[0]) == 55);
+            await host.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+            double prior = panes[0].Scroller.VerticalOffset;
+            Click(next);
+            query.Text = "row";
+            await Until(() => CurrentRow(panes[0]) is null);
+            await host.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+            if (panes[0].Scroller.VerticalOffset != prior || CurrentRow(panes[1]) is not null)
+                throw new InvalidOperationException("A query change scrolled a pane or retained the old move.");
+            Click(next);
+            Click(close);
+            await host.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+            if (CurrentRow(panes[0]) is not null || CurrentRow(panes[1]) is not null)
+                throw new InvalidOperationException("A pending move survived closing the search bar.");
+
+            static void Click(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, button));
+            async Task Until(Func<bool> condition)
+            {
+                while (!condition()) await Task.Delay(10, deadline.Token);
+            }
+        }
+        finally
+        {
+            await tab.ReleaseRemovedOutputAsync();
+            host.Close();
         }
     }
 

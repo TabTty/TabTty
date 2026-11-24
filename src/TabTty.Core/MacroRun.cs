@@ -7,8 +7,11 @@ namespace TabTty.Core;
 internal enum MacroRunState { Running, Waiting, PauseRequested, Paused, Stopping, Completed, Stopped, Failed }
 [Flags]
 internal enum MacroHold { None = 0, UserPause = 1, RecordingFailure = 2, RecordingReady = 4, HistoryLoss = 8, CloseReview = 16 }
+[Flags]
+internal enum MacroAction { None = 0, Pause = 1, Resume = 2, Stop = 4, RetryRecording = 8, ContinueAfterHistoryLoss = 16 }
 internal sealed record MacroRunStatus(MacroRunState State, MacroHold Holds, string Operation, MacroPosition Position,
-    string? Result, long HistoryLossRevision, bool PlaintextNotice, string? DisplayDetail, bool PostConnection);
+    string? Result, long HistoryLossRevision, bool PlaintextNotice, string? DisplayDetail, bool PostConnection,
+    MacroAction Actions);
 
 internal interface IMacroHost
 {
@@ -76,6 +79,7 @@ internal sealed partial class MacroRun : IDisposable
     private MacroProgram? programSnapshot;
     private MacroProgram? pendingPostConnection;
     private bool executingPostConnection;
+    private bool retryingRecording;
     private MacroProgram Program => programSnapshot!;
     public string FullPath { get; }
     internal bool IsPostConnection { get; }
@@ -87,8 +91,16 @@ internal sealed partial class MacroRun : IDisposable
     public MacroRunStatus Status
     {
         get { lock (gate) return new(state, holds, operation, position, state is MacroRunState.Failed or MacroRunState.Stopped ? reason : null,
-            history.LossRevision, plaintextNotice, displayDetail, IsPostConnection || executingPostConnection); }
+            history.LossRevision, plaintextNotice, displayDetail, IsPostConnection || executingPostConnection, AvailableActions); }
     }
+    private MacroAction AvailableActions =>
+        state is MacroRunState.Stopping or MacroRunState.Stopped or MacroRunState.Completed or MacroRunState.Failed
+            ? MacroAction.None
+            : MacroAction.Stop
+              | (holds.HasFlag(MacroHold.UserPause) ? MacroAction.None : MacroAction.Pause)
+              | ((holds & (MacroHold.UserPause | MacroHold.RecordingReady)) != 0 ? MacroAction.Resume : MacroAction.None)
+              | (holds.HasFlag(MacroHold.RecordingFailure) && !retryingRecording ? MacroAction.RetryRecording : MacroAction.None)
+              | (holds.HasFlag(MacroHold.HistoryLoss) ? MacroAction.ContinueAfterHistoryLoss : MacroAction.None);
     public bool IsActive { get { lock (gate) return state is not (MacroRunState.Completed or MacroRunState.Stopped or MacroRunState.Failed); } }
     public CancellationToken StopToken => stop.Token;
     internal CancellationToken AttemptToken => attemptStop.Token;
@@ -138,6 +150,9 @@ internal sealed partial class MacroRun : IDisposable
         finally
         {
             ReleaseWorker();
+            TerminalSession? observed;
+            lock (gate) observed = session;
+            if (observed is not null) await observed.ReleaseMacroObservationsAsync(this).ConfigureAwait(false);
             lock (gate)
             {
                 currentWait = null;
@@ -156,17 +171,42 @@ internal sealed partial class MacroRun : IDisposable
         }
     }
 
-    public void Pause() => SetHold(MacroHold.UserPause, true);
+    public void Pause() => ChangeUserHolds(MacroAction.Pause, MacroHold.UserPause, MacroHold.None);
     public void Resume()
     {
-        lock (gate) ChangeHolds(holds & ~(MacroHold.UserPause | MacroHold.RecordingReady));
-        Notify();
+        ChangeUserHolds(MacroAction.Resume, MacroHold.None, MacroHold.UserPause | MacroHold.RecordingReady);
     }
     public void SetCloseReview(bool reviewing) => SetHold(MacroHold.CloseReview, reviewing);
     public void ContinueAfterHistoryLoss()
     {
-        lock (gate) { ChangeHolds(holds & ~MacroHold.HistoryLoss); generation++; Pulse(); }
+        ChangeUserHolds(MacroAction.ContinueAfterHistoryLoss, MacroHold.None, MacroHold.HistoryLoss);
+    }
+
+    private void ChangeUserHolds(MacroAction action, MacroHold add, MacroHold remove)
+    {
+        lock (gate)
+        {
+            if (!AvailableActions.HasFlag(action)) return;
+            CaptureDeadline();
+            ChangeHolds((holds & ~remove) | add);
+        }
         Notify();
+    }
+
+    internal async Task RetryRecordingAsync(Func<Task> retry)
+    {
+        lock (gate)
+        {
+            if (!AvailableActions.HasFlag(MacroAction.RetryRecording)) return;
+            retryingRecording = true;
+        }
+        Notify();
+        try { await retry().ConfigureAwait(false); }
+        finally
+        {
+            lock (gate) retryingRecording = false;
+            Notify();
+        }
     }
     public void Stop(string result = "Stopped")
     {
@@ -219,14 +259,23 @@ internal sealed partial class MacroRun : IDisposable
         Pulse();
     }
 
+    internal MacroProgram? CompilePostConnection(ConnectionProfile profile) => profile.CompilePostConnectionMacro(memory);
+
+    internal void SetPostConnectionProgram(MacroProgram? program)
+    {
+        lock (gate)
+        {
+            pendingPostConnection?.Dispose();
+            pendingPostConnection = program;
+        }
+    }
+
     internal void ProfileLoaded(ConnectionProfile profile)
     {
-        var embedded = IsPostConnection ? null : profile.CompilePostConnectionMacro(memory);
         lock (gate)
         {
             transport = profile.Type;
             profilePassword = profile.Type == "ssh" ? profile.SshPassword : null;
-            pendingPostConnection = embedded;
         }
     }
     internal void ObserveSession(TerminalSession value) { lock (gate) session = value; }
@@ -476,8 +525,15 @@ internal sealed partial class MacroRun : IDisposable
     {
         if (disposed) return;
         disposed = true; Stop();
-        if (!startedExecution) ReleaseAdmission();
-        _ = Task.WhenAll(Completion, cancellation).ContinueWith(task =>
+        Task release = Task.CompletedTask;
+        if (!startedExecution)
+        {
+            TerminalSession? observed;
+            lock (gate) { observed = session; session = null; }
+            if (observed is not null) release = observed.ReleaseMacroObservationsAsync(this);
+            ReleaseAdmission();
+        }
+        _ = Task.WhenAll(Completion, cancellation, release).ContinueWith(task =>
         {
             _ = task.Exception;
             stop.Dispose();

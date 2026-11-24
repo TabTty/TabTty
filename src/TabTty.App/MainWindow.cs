@@ -131,17 +131,25 @@ internal sealed partial class MainWindow : Window
 
     private WindowTab CreateTerminalTab(TerminalTab terminal)
     {
-        terminal.MacroWindow = this;
         var item = new WindowTab(terminal) { Host = this };
+        terminal.ResolveTabHost(() => item.Host);
         item.UpdateTerminalCaption(terminal);
         terminal.CaptionChanged += () => { item.UpdateTerminalCaption(terminal); app.Broadcast.Refresh(); };
-        terminal.Disconnected += () => item.Host?.OnTerminalDisconnected(item);
+        terminal.Disconnected += () =>
+        {
+            object generation = terminal.ConnectionGeneration;
+            _ = Dispatcher.BeginInvoke(() =>
+            {
+                if (ReferenceEquals(terminal.ConnectionGeneration, generation))
+                    item.Host?.OnTerminalDisconnected(item);
+            });
+        };
         return item;
     }
 
     private void OnTerminalDisconnected(WindowTab item)
     {
-        if (!closing && item.Content is TerminalTab { IsExternalMacro: false } terminal &&
+        if (!closing && GroupOf(item) is not null && item.Content is TerminalTab { IsExternalMacro: false } terminal &&
             (terminal.CloseAfterInitialCancellation || app.AutoCloseDisconnectedTabs && terminal.CanAutoCloseOnDisconnect))
             terminalClosure.CloseAutomatically(item);
     }
@@ -381,7 +389,7 @@ internal sealed partial class MainWindow : Window
             if (item is WindowTab movedTab) movedTab.Host = target;
             if (terminal is not null)
             {
-                terminal.MacroWindow = target;
+                terminal.RefreshNoticeOwner();
                 if (this != target && !terminal.IsExternalMacro) terminal.BroadcastChecked = true;
             }
             if (item.Content is FormView moved) moved.TabOwner = target;
@@ -473,7 +481,7 @@ internal sealed partial class MainWindow : Window
                 if (!group.Items.Contains(tab)) return;
                 if (tab.IsSelected)
                 {
-                    tab.BringIntoView();
+                    RevealTabHeader(group, tab);
                     ScheduleSelectedTerminalFocus(group);
                 }
                 else group.SelectedItem = tab;
@@ -548,62 +556,28 @@ internal sealed partial class MainWindow : Window
 
     private void OnScrollTabsRight(object sender, RoutedEventArgs args) => ScrollTabHeaders((Button)sender, left: false);
 
-    private static void ScrollTabHeaders(Button button, bool left)
-    {
-        if (!button.IsEnabled || button.TemplatedParent is not TabControl group ||
-            group.Template.FindName("tabStripScroller", group) is not ScrollViewer strip) return;
+    private static TabStripScroller? HeaderStrip(TabControl group) =>
+        group.Template?.FindName("tabStripScroller", group) as TabStripScroller;
 
-        var tabs = group.Items.OfType<TabItem>();
-        foreach (TabItem tab in left ? tabs.Reverse() : tabs)
-        {
-            double start = tab.TranslatePoint(new Point(), (UIElement)strip.Content).X - strip.HorizontalOffset;
-            double hidden = left ? -start : start + tab.ActualWidth - strip.ViewportWidth;
-            if (hidden <= TabScrollTolerance) continue;
-            double distance = Math.Min(hidden, strip.ViewportWidth);
-            strip.ScrollToHorizontalOffset(strip.HorizontalOffset + (left ? -distance : distance));
-            return;
-        }
-        if (left) strip.ScrollToLeftEnd();
-        else strip.ScrollToRightEnd();
+    private static void RevealTabHeader(TabControl group, TabItem tab)
+    {
+        if (HeaderStrip(group) is { } strip) strip.RevealSelection(group, tab);
+        else tab.BringIntoView();
     }
 
-    private const double TabScrollTolerance = 0.01;
+    private static void ScrollTabHeaders(Button button, bool left)
+    {
+        if (button.IsEnabled && button.TemplatedParent is TabControl group)
+            HeaderStrip(group)?.ScrollHeaders(left);
+    }
 
     private void OnTabStripScrollChanged(object sender, ScrollChangedEventArgs args)
     {
-        if (sender != args.OriginalSource) return;
-        var strip = (ScrollViewer)sender;
-        var group = (TabControl)strip.TemplatedParent;
-        var leftButton = (Button)group.Template.FindName("scrollTabsLeftButton", group);
-        var rightButton = (Button)group.Template.FindName("scrollTabsRightButton", group);
-        // Use the width available with the arrows hidden so they cannot sustain overflow themselves.
-        double available = strip.ViewportWidth +
-            (leftButton.Visibility == Visibility.Visible ? leftButton.ActualWidth + rightButton.ActualWidth : 0);
-        var headers = (TabHeaderPanel)strip.Content;
-        double headerWidth = strip.ExtentWidth - headers.AddedPreviewWidth;
-        leftButton.Visibility = rightButton.Visibility =
-            headerWidth - available > TabScrollTolerance ? Visibility.Visible : Visibility.Collapsed;
-        bool left = strip.HorizontalOffset > TabScrollTolerance;
-        bool right = strip.ScrollableWidth - strip.HorizontalOffset > TabScrollTolerance;
-        leftButton.IsEnabled = left;
-        rightButton.IsEnabled = right;
-        if ((!left && !right) || strip.ViewportWidth <= 0)
-        {
-            strip.OpacityMask = null;
+        if (sender != args.OriginalSource || sender is not TabStripScroller { TemplatedParent: TabControl group } strip)
             return;
-        }
-        double fade = Math.Min(18 / strip.ViewportWidth, 0.5);
-        strip.OpacityMask = new LinearGradientBrush
-        {
-            StartPoint = new Point(0, 0), EndPoint = new Point(1, 0),
-            GradientStops =
-            [
-                new GradientStop(left ? Colors.Transparent : Colors.Black, 0),
-                new GradientStop(Colors.Black, fade),
-                new GradientStop(Colors.Black, 1 - fade),
-                new GradientStop(right ? Colors.Transparent : Colors.Black, 1),
-            ],
-        };
+        var left = (Button)group.Template.FindName("scrollTabsLeftButton", group);
+        var right = (Button)group.Template.FindName("scrollTabsRightButton", group);
+        strip.UpdateEdges(left, right);
     }
 
     private void OpenNewTabMenu(object sender, RoutedEventArgs args)
@@ -806,26 +780,41 @@ internal sealed partial class MainWindow : Window
             }));
         form.AddEditorButtons(async () =>
         {
+            if (revision != app.SettingsRevision)
+                throw new InvalidOperationException(Text("ManagementTabOutdated"));
             if (string.IsNullOrWhiteSpace(fontFamily.Text) ||
                 !double.TryParse(fontSize.Text, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out double size) ||
-                !double.IsFinite(size) || size is < 6 or > 72 ||
-                !int.TryParse(retained.Text, NumberStyles.None, CultureInfo.InvariantCulture, out int rows) ||
-                rows is < 100 or > 100_000)
+                !int.TryParse(retained.Text, NumberStyles.None, CultureInfo.InvariantCulture, out int rows))
                 throw new ArgumentException(Text("InvalidTerminalDefaults"));
-            if (!long.TryParse(maxPaste.Text, NumberStyles.None, CultureInfo.InvariantCulture, out long maxPasteBytes) ||
-                maxPasteBytes <= 0)
+            if (!long.TryParse(maxPaste.Text, NumberStyles.None, CultureInfo.InvariantCulture, out long maxPasteBytes))
                 throw new ArgumentException(Text("InvalidPasteSourceMaximum"));
-            await app.SaveSettingsAsync(languages[language.SelectedIndex], themes[theme.SelectedIndex], bells[bell.SelectedIndex],
-                fontFamily.Text, size, rows, autoClose.IsChecked == true, vaultPath.Text, revision,
-                broadcastScope.IsChecked == true, maxPasteBytes,
-                profileDirectory.Text == app.ProfileSaveDirectory ? null : profileDirectory.Text,
-                new RecordingDefaults(logDirectory.Text, logTemplate.Text, macroLogTemplate.Text),
-                new KeyboardShortcuts(shortcutChoices.Select(choice => choice.SelectedItem as string)));
+            bool close = autoClose.IsChecked == true;
+            bool broadcast = broadcastScope.IsChecked == true;
+            var logging = app.LogDefaults;
+            var shortcuts = new KeyboardShortcuts(shortcutChoices.Select(choice => choice.SelectedItem as string));
+            await app.SaveSettingsAsync(revision, new App.SettingsChanges(
+                Language: Change(languages[language.SelectedIndex], app.LanguageChoice),
+                Theme: Change(themes[theme.SelectedIndex], app.ThemeChoice),
+                Bell: Change(bells[bell.SelectedIndex], app.BellChoice),
+                FontFamily: Change(fontFamily.Text, app.TerminalFontFamily),
+                FontSize: size == app.TerminalFontSize ? null : size,
+                RetainedRows: rows == app.RetainedRows ? null : rows,
+                AutoClose: close == app.AutoCloseDisconnectedTabs ? null : close,
+                VaultPath: Change(vaultPath.Text, app.VaultPath),
+                Broadcast: broadcast == app.BroadcastAcrossWindows ? null : broadcast,
+                PasteMaximum: maxPasteBytes == app.MaxPasteTextBytes ? null : maxPasteBytes,
+                ProfileDirectory: Change(profileDirectory.Text, app.ProfileSaveDirectory),
+                LogDirectory: Change(logDirectory.Text, logging.Directory),
+                LogTemplate: Change(logTemplate.Text, logging.ProfileTemplate),
+                MacroLogTemplate: Change(macroLogTemplate.Text, logging.MacroTemplate),
+                Shortcuts: app.ChangedShortcuts(shortcuts)));
             revision = app.SettingsRevision;
             vaultPath.Text = app.VaultPath;
             profileDirectory.Text = app.ProfileSaveDirectory;
             return true;
         });
+
+        static string? Change(string draft, string saved) => draft == saved ? null : draft;
 
         Task BrowseVaultPathAsync()
         {

@@ -15,7 +15,7 @@ internal sealed partial class TerminalTab
     private StackPanel? macroControls;
     private int macroRefreshPending;
     internal MacroRun? Macro { get; private set; }
-    internal MainWindow? MacroWindow { get; set; }
+    internal MainWindow? MacroWindow => tabHost?.Invoke();
     internal bool HasActiveMacro => Macro?.IsActive == true;
     internal bool IsExternalMacro => Macro is { IsPostConnection: false };
 
@@ -100,12 +100,12 @@ internal sealed partial class TerminalTab
         if (state.PlaintextNotice) label += "\n" + Text("MacroPlaintextNotice");
         macroStatus.Text = label;
         foreach (var (key, button) in macroButtons) button.Content = Text(key);
-        bool active = run.IsActive && state.State != MacroRunState.Stopping;
-        macroButtons["MacroPause"].IsEnabled = active && !state.Holds.HasFlag(MacroHold.UserPause);
-        macroButtons["MacroResume"].IsEnabled = active && (state.Holds & (MacroHold.UserPause | MacroHold.RecordingReady)) != 0;
-        macroButtons["MacroStop"].IsEnabled = active;
-        ShowWhen("MacroRetry", active && state.Holds.HasFlag(MacroHold.RecordingFailure));
-        ShowWhen("MacroContinue", active && state.Holds.HasFlag(MacroHold.HistoryLoss));
+        macroButtons["MacroPause"].IsEnabled = state.Actions.HasFlag(MacroAction.Pause);
+        macroButtons["MacroResume"].IsEnabled = state.Actions.HasFlag(MacroAction.Resume);
+        macroButtons["MacroStop"].IsEnabled = state.Actions.HasFlag(MacroAction.Stop);
+        ShowWhen("MacroRetry", state.Holds.HasFlag(MacroHold.RecordingFailure) && state.Actions.HasFlag(MacroAction.Stop));
+        macroButtons["MacroRetry"].IsEnabled = state.Actions.HasFlag(MacroAction.RetryRecording);
+        ShowWhen("MacroContinue", state.Actions.HasFlag(MacroAction.ContinueAfterHistoryLoss));
         macroDialog?.UpdateLabels();
 
         void ShowWhen(string key, bool visible) => macroButtons[key].Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
@@ -113,8 +113,8 @@ internal sealed partial class TerminalTab
 
     private async Task RetryMacroRecordingAsync()
     {
-        if (session is not { } active) return;
-        try { await active.RetryRecordingAsync(stop.Token); }
+        if (session is not { } active || Macro is not { } run) return;
+        try { await run.RetryRecordingAsync(() => active.RetryRecordingAsync(stop.Token)); }
         catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or
             ArgumentException or InvalidDataException or NotSupportedException or OperationCanceledException)

@@ -10,7 +10,7 @@ internal sealed class NativeTerminalExecutionException(Exception cause)
 
 internal static class NativeTerminalCoreDiagnostics
 {
-    public static long FedBytes, EchoBytes, FeedBatches, SnapshotExports, UnsupportedErrors;
+    public static long FedBytes, EchoBytes, FeedBatches, SnapshotExports, UnsupportedErrors, MacroObservations;
     public static long CreatedModels, ClosedModels;
     public static long NativePreflightElapsedTicks;
     public static long CompactSnapshotRows, MaterializedCellRows, MaterializedCells;
@@ -690,6 +690,7 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
         if (replies is not null) foreach (byte[] reply in replies) replySink!(reply);
         if (bell is not null)
             for (uint bells = effects.ModeFlags >> 8; bells != 0; bells--) bell();
+        if (observations.Length != 0) Interlocked.Add(ref NativeTerminalCoreDiagnostics.MacroObservations, observations.Length);
         foreach (var observation in observations)
         {
             if ((observation.Flags & 4) != 0) AlternateObserver?.Invoke();

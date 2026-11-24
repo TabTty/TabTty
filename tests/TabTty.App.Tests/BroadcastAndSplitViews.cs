@@ -52,8 +52,7 @@ internal static partial class Program
             await SetAutoClose(autoClose);
         }
 
-        Task SetAutoClose(bool enabled) => app.SaveSettingsAsync(app.LanguageChoice, app.ThemeChoice, app.BellChoice,
-            app.TerminalFontFamily, app.TerminalFontSize, app.RetainedRows, enabled, app.VaultPath, app.SettingsRevision);
+        Task SetAutoClose(bool enabled) => app.SaveSettingsAsync(app.SettingsRevision, new(AutoClose: enabled));
 
         async Task CheckConnection(TcpListener endpoint, bool selected, TcpListener? previous = null)
         {
@@ -94,6 +93,16 @@ internal static partial class Program
                         if (!input.AsSpan().SequenceEqual("ab"u8) || !notice.IsVisible)
                             throw new InvalidOperationException("The open notification interrupted terminal or broadcast input.");
                         app.Broadcast.Stop(window);
+                        var source = window;
+                        var destination = new MainWindow(app);
+                        destination.Show();
+                        var move = FindMenu(source, "WindowMenu", "MoveTab");
+                        OpenSubmenu(move);
+                        Click(move.Items.OfType<MenuItem>().Last());
+                        if (!source.IsClosing || !destination.TerminalTabs.Contains(tab) || notice.Owner != destination ||
+                            !notice.IsVisible || notice.IsActive || destination.OwnedWindows.OfType<Window>().Count(w => w.IsVisible) != 1)
+                            throw new InvalidOperationException("The reconnect notice did not follow the last tab to its destination.");
+                        window = destination;
                         FindControls<Button>(notice).Single().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                         if (notice.IsVisible || !tab.BroadcastChecked)
                             throw new InvalidOperationException("Acknowledging the notification changed broadcast selection.");
@@ -531,9 +540,7 @@ internal static partial class Program
                 throw new InvalidOperationException("A two-character paste unexpectedly opened a preview.");
         }
 
-        Task SaveScope(bool acrossWindows) => app.SaveSettingsAsync(app.LanguageChoice, app.ThemeChoice, app.BellChoice,
-            app.TerminalFontFamily, app.TerminalFontSize, app.RetainedRows, app.AutoCloseDisconnectedTabs,
-            app.VaultPath, app.SettingsRevision, acrossWindows);
+        Task SaveScope(bool acrossWindows) => app.SaveSettingsAsync(app.SettingsRevision, new(Broadcast: acrossWindows));
 
         async Task WaitForStart(MainWindow window)
         {
@@ -542,11 +549,6 @@ internal static partial class Program
             while (!Child(commands, "BroadcastStart").IsEnabled);
         }
 
-        static MenuItem Child(ItemsControl menu, string key) => menu.Items.OfType<MenuItem>()
-            .Single(item => Equals(item.Header, App.Text(key)));
-        static MenuItem FindMenu(MainWindow window, string top, string child) =>
-            Child(Child((Menu)window.FindName("mainMenu"), top), child);
-        static void Click(MenuItem menu) => menu.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent, menu));
         static void ClickButton(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, button));
         static Button SplitButton(TabControl group, string name, string labelKey)
         {
@@ -560,8 +562,14 @@ internal static partial class Program
                 throw new InvalidOperationException("A tab-group button omitted its icon or localized label.");
             return button;
         }
-        static void OpenSubmenu(MenuItem menu) => menu.RaiseEvent(new RoutedEventArgs(MenuItem.SubmenuOpenedEvent, menu));
     }
+
+    private static MenuItem Child(ItemsControl menu, string key) => menu.Items.OfType<MenuItem>()
+        .Single(item => Equals(item.Header, App.Text(key)));
+    private static MenuItem FindMenu(MainWindow window, string top, string child) =>
+        Child(Child((Menu)window.FindName("mainMenu"), top), child);
+    private static void Click(MenuItem menu) => menu.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent, menu));
+    private static void OpenSubmenu(MenuItem menu) => menu.RaiseEvent(new RoutedEventArgs(MenuItem.SubmenuOpenedEvent, menu));
 
     private sealed class DeferredComposition(TerminalSurface source,
         TextCompositionAutoComplete completion = TextCompositionAutoComplete.Off) :

@@ -10,6 +10,8 @@ internal sealed class MacroProgram : IDisposable
     private ResourceReservation? pendingMemory;
     private HashSet<string>? capturedStrings;
     private long snapshotBytes;
+    private static long postConnectionCompilations;
+    internal static long PostConnectionCompilations => Interlocked.Read(ref postConnectionCompilations);
 
     private MacroProgram(string fullPath, string source, MacroBlock body,
         Dictionary<string, MacroFunction> functions, int nodes, ResourceQuota memory)
@@ -50,8 +52,7 @@ internal sealed class MacroProgram : IDisposable
             var program = ParseSource(path, macro.Text, quota, retained, out var declarations);
             program.SourceDigest = macro.Digest;
 
-            int bytesRemaining = MacroLimits.SourceBytes;
-            int membersRemaining = MacroConstantsFile.MaxMembers;
+            var budget = new MacroConstantsBudget();
             var files = new Dictionary<string, MacroConstantsFile>(StringComparer.Ordinal);
             var bindings = new List<MacroConstantsBinding>(declarations.Count);
             foreach (var declaration in declarations)
@@ -64,23 +65,24 @@ internal sealed class MacroProgram : IDisposable
                     CapturedText? captured;
                     try
                     {
-                        captured = await CaptureAsync(fullPath, false, confirmRead, bytesRemaining,
+                        captured = await CaptureAsync(fullPath, false, confirmRead, budget.RemainingBytes,
                             "ConstantsLimit", quota, retained, token).ConfigureAwait(false);
                     }
                     catch (Exception error) when (error is not ResourceLimitException &&
                         error is IOException or UnauthorizedAccessException or NotSupportedException)
                     { throw new MacroSourceException("ConstantsRead", new(1, 1), fullPath); }
                     if (captured is null) return null;
-                    bytesRemaining -= captured.ByteCount;
+                    if (budget.CrossedByteLimit(fullPath, captured.ByteCount))
+                        throw new MacroSourceException("ConstantsLimit", declaration.Position, path);
 
                     // Reserve for temporary lexer tokens and string decoding. Retained
                     // string values and names fit in the original UTF-16 character count.
                     using var scratch = quota.Reserve(512 + captured.Text.Length * 6L);
                     retained.Add(128 + captured.Text.Length * 2L);
                     file = MacroConstantsFile.Parse(fullPath, captured.Digest, captured.Text,
-                        membersRemaining, () => retained.Add(224));
+                        budget.RemainingMembers, () => retained.Add(224));
                     files.Add(fullPath, file);
-                    membersRemaining -= file.Values.Count;
+                    budget.AddDefinitions(file);
                     foreach (var value in file.Values.Values)
                     {
                         if (value is string text)
@@ -113,6 +115,7 @@ internal sealed class MacroProgram : IDisposable
 
     internal static MacroProgram ParsePostConnection(string path, string source, ResourceQuota? runMemory = null)
     {
+        Interlocked.Increment(ref postConnectionCompilations);
         var quota = runMemory ?? NewQuota();
         using var retained = quota.Reserve(0);
         try
@@ -139,10 +142,11 @@ internal sealed class MacroProgram : IDisposable
     }
 
     internal static List<MacroEditorSymbol> AnalyzeForEditor(string path, string source,
-        IReadOnlyDictionary<string, string> constants, MacroEditorSymbols editor, int? offset)
+        IReadOnlyDictionary<string, string> constants, MacroEditorSymbols editor, int? offset,
+        IReadOnlyDictionary<string, int>? knownConstantBytes = null)
     {
         using var program = ParseSource(Path.GetFullPath(path), source, NewQuota(), null, out var declarations, editor);
-        program.Constants = editor.BindConstants(program.FullPath, declarations, constants);
+        program.Constants = editor.BindConstants(program.FullPath, declarations, constants, knownConstantBytes);
         try { new MacroChecker(program, editor).Check(); }
         catch (MacroSourceException error) when (editor.Recover(error)) { }
         return offset.HasValue ? editor.At(program, offset.Value) : [];

@@ -4,6 +4,14 @@ internal static class TerminalSearch
 {
     internal const int Limit = 10_000;
 
+    internal static TerminalMatch? FindNext(TerminalSnapshot snapshot, string query, bool matchCase,
+        TerminalMatch? anchor, bool backwards, CancellationToken token)
+    {
+        foreach (var match in OrderedMatches(snapshot, query, matchCase, anchor, backwards, token))
+            return match;
+        return null;
+    }
+
     internal static async Task<(int Count, TerminalMatch[] Matches)> ScanAsync(TerminalSnapshot snapshot,
         string query, bool matchCase, TerminalMatch? anchor, bool backwards, (int First, int End)[] viewports,
         Func<TerminalMatch?, Task>? navigate, CancellationToken token)
@@ -11,7 +19,7 @@ internal static class TerminalSearch
         var visible = new List<TerminalMatch>();
         var offscreen = new List<TerminalMatch>();
         int count = 0;
-        foreach (TerminalMatch match in Scan())
+        foreach (TerminalMatch match in OrderedMatches(snapshot, query, matchCase, navigate is null ? null : anchor, backwards, token))
         {
             if (navigate is not null)
             {
@@ -30,30 +38,32 @@ internal static class TerminalSearch
         if (navigate is not null) await navigate(null).ConfigureAwait(false);
         return (count, [.. visible, .. offscreen]);
 
-        IEnumerable<TerminalMatch> Scan()
-        {
-            var all = backwards ? snapshot.FindMatchesBackwards(query, matchCase, token)
-                : snapshot.FindMatches(query, matchCase, token);
-            if (navigate is null || anchor is not { } from)
-            {
-                foreach (var match in all) yield return match;
-                yield break;
-            }
+    }
 
-            bool BeyondAnchor(TerminalMatch match)
-            {
-                int relation = (match.StartRow, match.StartOffset).CompareTo((from.StartRow, from.StartOffset));
-                return backwards ? relation < 0 : relation > 0;
-            }
-            var near = backwards ? snapshot.FindMatchesBackwards(query, matchCase, token, from.StartRow)
-                : snapshot.FindMatchesFrom(query, matchCase, from.StartRow, token);
-            foreach (var match in near)
-                if (BeyondAnchor(match)) yield return match;
-            foreach (var match in all)
-            {
-                if (BeyondAnchor(match)) yield break;
-                yield return match;
-            }
+    private static IEnumerable<TerminalMatch> OrderedMatches(TerminalSnapshot snapshot, string query, bool matchCase,
+        TerminalMatch? anchor, bool backwards, CancellationToken token)
+    {
+        var all = backwards ? snapshot.FindMatchesBackwards(query, matchCase, token)
+            : snapshot.FindMatches(query, matchCase, token);
+        if (anchor is not { } from)
+        {
+            foreach (var match in all) yield return match;
+            yield break;
+        }
+
+        bool BeyondAnchor(TerminalMatch match)
+        {
+            int relation = (match.StartRow, match.StartOffset).CompareTo((from.StartRow, from.StartOffset));
+            return backwards ? relation < 0 : relation > 0;
+        }
+        var near = backwards ? snapshot.FindMatchesBackwards(query, matchCase, token, from.StartRow)
+            : snapshot.FindMatchesFrom(query, matchCase, from.StartRow, token);
+        foreach (var match in near)
+            if (BeyondAnchor(match)) yield return match;
+        foreach (var match in all)
+        {
+            if (BeyondAnchor(match)) yield break;
+            yield return match;
         }
     }
 }

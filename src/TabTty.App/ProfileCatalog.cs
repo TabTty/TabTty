@@ -20,7 +20,8 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
     private readonly Dictionary<string, ProfileDetails> metadata = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim registrationChanges = new(1);
     private readonly Dictionary<string, PendingProfileSave> pendingSaves = new(StringComparer.Ordinal);
-    private sealed record PendingProfileSave(string? Original, string Attempted, ProfileEdit? Edit, long Reset, long Removal)
+    private sealed record PendingProfileSave(string? Original, string Attempted, ProfileEdit? Edit, long Reset, long Removal,
+        string? CredentialKind = null)
     {
         internal ConnectionProfile? Saved { get; set; }
         internal FilePublicationResult? Publication { get; set; }
@@ -28,6 +29,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
         internal string? CompletedPath { get; set; }
     }
     private event Action? SaveRecoveryChanged;
+    private event Action<string, string, ConnectionProfile>? CredentialReferenceSaved;
     private event Action? ProfileSaved;
     private event Action? CatalogFolderChanged;
     private event Action? RegistrationUsed;
@@ -82,6 +84,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
         foreach (var match in impact.Profiles)
         {
             string path = PermissionDisplay.Literal(match.Path);
+            await registrationChanges.WaitAsync();
             try
             {
                 ConnectionProfile profile;
@@ -91,20 +94,33 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                     throw new IOException(Text("CredentialRenameUnregistered"));
                 if (profile.TrustVersion != match.Version)
                     throw new IOException(Text("CredentialRenameProfileChanged"));
-                if (app.Windows.OfType<ProfileEditorWindow>().Any(window => window.TitleKey == "EditProfile" &&
+                if (pendingSaves.ContainsKey(match.Path) || app.Windows.OfType<ProfileEditorWindow>().Any(window => window.TitleKey == "EditProfile" &&
                     window.HasPendingEdits && string.Equals(window.Identity, match.Path, StringComparison.Ordinal)))
                     throw new IOException(Text("CredentialRenamePendingProfileEdits"));
 
                 var draft = JsonNode.Parse(profile.ToEditorJson())!.AsObject();
                 draft["connection"]!["authentication"]![kind] = newName;
                 ConnectionProfile edited = profile.Edit(draft.ToJsonString());
-                await edited.BeginSaveEdit(issueProfiles, validateProfileStage).ObserveAsync();
+                var operation = edited.BeginSaveEdit(issueProfiles, validateProfileStage);
+                try { await operation.ObserveAsync(); }
+                catch (FilePublicationException exception) when (exception.Result.OperationId == operation.Id &&
+                    VerifiedFilePublication.CanReconcile(exception.Result))
+                {
+                    pendingSaves[match.Path] = new(match.Path, match.Path, null, trustReset,
+                        removals.GetValueOrDefault(match.Path), kind) { Publication = exception.Result };
+                    throw;
+                }
+                CredentialReferenceSaved?.Invoke(match.Path, kind, edited);
                 updated++;
                 if (BackupCleanupWarning(edited) is { } warning) problems.Add(warning);
             }
             catch (FilePublicationException exception)
             {
-                problems.Add($"{path}\n{JsonStoreRecovery.DescribeFailure(exception.Result)}");
+                string details = JsonStoreRecovery.DescribeFailure(exception.Result);
+                if (pendingSaves.TryGetValue(match.Path, out var pending) &&
+                    pending.Publication?.OperationId == exception.Result.OperationId)
+                    details = Text("ProfileSaveResultUnknown") + "\n" + details;
+                problems.Add($"{path}\n{details}");
             }
             catch (OperationCanceledException)
             {
@@ -113,6 +129,11 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
             catch (Exception exception) when (IsFileProblem(exception))
             {
                 problems.Add($"{path}\n{exception.Message}");
+            }
+            finally
+            {
+                registrationChanges.Release();
+                SaveRecoveryChanged?.Invoke();
             }
         }
         if (updated != 0) ProfileSaved?.Invoke();
@@ -610,6 +631,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
         Action<string, string>? onSaved = null, bool fromExplorer = false)
     {
         var editor = new ProfileEditor(form, profile, app, creating, fromExplorer);
+        ConnectionProfile? changedByRename = null;
         PendingProfileSave? ownRequest = null;
         Action? savedBaseline = null;
         form.DescribeUnresolvedPublication = () => CurrentRecovery() is { } pending
@@ -642,6 +664,15 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                         return;
                     }
                     pending.Saved = committed;
+                    if (pending.CredentialKind is { } kind)
+                    {
+                        RetirePendingSave(pending);
+                        CredentialReferenceSaved?.Invoke(pending.Attempted, kind, committed);
+                        ProfileSaved?.Invoke();
+                        progress.Dispose();
+                        ShowCleanupWarning(committed, pending.Attempted);
+                        return;
+                    }
                     pending.Publication = null;
                     SaveRecoveryChanged?.Invoke();
                 }
@@ -662,6 +693,18 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
             {
                 if (CurrentRecovery() is { } recovery)
                     throw new IOException(Text(RecoveryLabels(recovery).Message));
+                if (changedByRename is { } verified)
+                {
+                    string[] references = new[] { verified.SshPassword?.Name, verified.SshPrivateKey?.Name }
+                        .OfType<string>().Select(PermissionDisplay.Literal).ToArray();
+                    if (app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow,
+                        Text("CredentialRenameReviewProfile") + "\n\n" + string.Join("\n", references),
+                        Text("EditProfile"), MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No)) !=
+                        MessageBoxResult.Yes) return false;
+                    profile = verified;
+                    editor.UseSavedRevision(verified);
+                    changedByRename = null;
+                }
                 ConnectionProfile draft = editor.GetDraft();
                 Action baseline = form.CaptureSaveBaseline();
                 using var progress = form.BeginProgress("SavingChanges");
@@ -726,10 +769,30 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
         form.Loaded += (_, _) =>
         {
             SaveRecoveryChanged += refreshRecovery;
+            CredentialReferenceSaved += AdoptCredentialReference;
             refreshRecovery();
         };
-        form.Unloaded += (_, _) => SaveRecoveryChanged -= refreshRecovery;
+        form.Unloaded += (_, _) =>
+        {
+            SaveRecoveryChanged -= refreshRecovery;
+            CredentialReferenceSaved -= AdoptCredentialReference;
+        };
         form.AddStatusBar();
+
+        void AdoptCredentialReference(string location, string kind, ConnectionProfile verified)
+        {
+            if (!string.Equals(path, location, StringComparison.Ordinal)) return;
+            if (form.HasUnsavedChanges)
+            {
+                changedByRename = verified;
+                form.SetStatusMessage(Text("CredentialRenameProfileChanged"));
+                return;
+            }
+            changedByRename = null;
+            profile = verified;
+            editor.UseSavedCredentialReference(verified, kind);
+            form.CaptureSaveBaseline()();
+        }
 
         PendingProfileSave? CurrentRecovery()
         {

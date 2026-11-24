@@ -53,6 +53,8 @@ internal static partial class ArchitectureOwnershipContracts
         await TelnetConsumerFailureSettlesOnlyItsOriginalDeliveryAsync();
         await OrdinarySendsReportTheirDefinitePrefixAsync();
         await OrdinaryTextEchoKeepsOnlyDefiniteCompleteUnitsAsync();
+        await QueuedKeysUseTheirTargetModeAsync(broadcast: false);
+        await QueuedKeysUseTheirTargetModeAsync(broadcast: true);
         await PendingTerminalInputLeavesReceiveAvailableAsync(ai: false);
         await PendingTerminalInputLeavesReceiveAvailableAsync(ai: true);
         await CancelledSerialOpenRetainsTheDeviceUntilItClosesAsync();
@@ -197,6 +199,30 @@ internal static partial class ArchitectureOwnershipContracts
             return ValueTask.FromResult(First.Length);
         }
         public void Dispose() { }
+    }
+
+    private static async Task QueuedKeysUseTheirTargetModeAsync(bool broadcast)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(6));
+        var token = deadline.Token;
+        using var wire = new HeldWriteWire("\u001b[?1h"u8.ToArray());
+        var profile = ConnectionProfile.CreateTelnet("Queued key", "127.0.0.1");
+        await using var session = new TerminalSession(wire, profile, null, 100);
+        var first = session.SendTextAsync("x", token);
+        await wire.WriteStarted.Task.WaitAsync(token);
+        try
+        {
+            using var key = broadcast ? await session.PrepareInputAsync(
+                new TerminalInput(TerminalInputKind.Key, Key: TerminalKey.Up), null, token) : null;
+            Task second = broadcast ? key!.SendAsync(token) : session.SendKeyAsync(TerminalKey.Up, cancellationToken: token);
+            if (!await session.ProcessOutputAsync(token) || second.IsCompleted)
+                throw new InvalidOperationException("A queued key ran before receive changed the target mode.");
+            wire.ReleaseWrite.SetResult();
+            await Task.WhenAll(first, second).WaitAsync(token);
+            if (!wire.Written.ToArray().AsSpan().SequenceEqual("x\u001bOA"u8))
+                throw new InvalidOperationException("A queued Up key used the target's old cursor-key mode.");
+        }
+        finally { wire.ReleaseWrite.TrySetResult(); }
     }
 
     private static async Task PendingTerminalInputLeavesReceiveAvailableAsync(bool ai)

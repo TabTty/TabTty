@@ -48,12 +48,11 @@ internal sealed record InstanceLaunch(string Path, string[] Arguments, bool Edit
     }
 
     public static bool Valid(InstanceLaunch[]? launches) => launches is { Length: <= MaximumPending } &&
-        launches.All(launch => launch is { Path.Length: > 0 and <= 32760, Arguments.Length: <= 64 } &&
+        launches.All(launch => launch is { Path.Length: > 0 and <= 32760, Arguments: not null } &&
             ValidPath(launch.Path) &&
             (launch.HasExtension(".ttty") || launch.IsVault || (launch.IsMacro && !launch.Edit)) &&
             (launch.IsMacro ? ValidMacroText(launch.Path) : launch.Arguments.Length == 0) &&
-            launch.Arguments.All(arg => arg is { Length: <= 4096 } && ValidMacroText(arg)) &&
-            launch.Arguments.Sum(arg => arg.Length) <= 16384) &&
+            MacroLimits.CheckArguments(launch.Arguments) is null) &&
         (launches.Length <= 1 || !launches.Any(launch => launch.IsVault));
 
     private static bool ValidPath(string path) => System.IO.Path.IsPathFullyQualified(path) &&

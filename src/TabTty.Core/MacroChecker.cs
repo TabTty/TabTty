@@ -3,6 +3,7 @@ namespace TabTty.Core;
 internal sealed record MacroBuiltinParameter(string Name, MacroType Type, int Index);
 internal sealed record MacroSignature(MacroType Result, params MacroType[] Parameters)
 {
+    internal string[] ParameterNames { get; init; } = [];
     internal MacroBuiltinParameter[]? NamedParameters { get; init; }
 }
 
@@ -29,41 +30,57 @@ internal static class MacroApi
         var pattern = WaitPattern; var match = new MacroType("WaitMatch");
         var instant = new MacroType("Instant");
         var result = new Dictionary<string, MacroSignature[]>(StringComparer.Ordinal);
-        void Add(string name, MacroSignature first, MacroSignature? second = null) =>
-            result.Add(name, second is null ? [first] : [first, second]);
+        void Add(string name, MacroSignature first, MacroSignature? second = null, string[]? names = null)
+        {
+            MacroSignature Describe(MacroSignature signature) =>
+                signature with { ParameterNames = (names ?? []).Take(signature.Parameters.Length).ToArray() };
+            result.Add(name, second is null ? [Describe(first)] : [Describe(first), Describe(second)]);
+        }
         void AddWithOptions(string name, MacroType returns, params MacroBuiltinParameter[] parameters)
         {
             Array.Sort(parameters, (left, right) => left.Index.CompareTo(right.Index));
             Add(name, new(returns, parameters[0].Type),
-                new(returns, parameters.Select(p => p.Type).ToArray()) { NamedParameters = parameters });
+                new(returns, parameters.Select(p => p.Type).ToArray()) { NamedParameters = parameters },
+                parameters.Select(p => p.Name).ToArray());
         }
         AddWithOptions("Connect", v, new("profilePath", s, 0), LogDirectory, LogFilenameTemplate, LogCollision);
-        Add("SetBaseDirectory", new(v, s));
+        Add("SetBaseDirectory", new(v, s), names: ["path"]);
         Add("ResetBaseDirectory", new(v)); Add("BaseDirectory", new(s));
-        Add("GetParentDirectory", new(s, s)); Add("GetFileBaseName", new(s, s)); Add("GetFileExtension", new(s, s));
-        Add("Write", new(v, s));
+        foreach (var name in new[] { "GetParentDirectory", "GetFileBaseName", "GetFileExtension" })
+            Add(name, new(s, s), names: ["path"]);
+        Add("Write", new(v, s), names: ["text"]);
         AddWithOptions("WriteLine", v, new("text", s, 0), MarkReceiveBoundary);
-        Add("WritePassword", new(v), new(v, s)); Add("WritePasswordLine", new(v), new(v, s));
+        foreach (var name in new[] { "WritePassword", "WritePasswordLine" })
+            Add(name, new(v), new(v, s), ["name"]);
         Add("MarkReceiveBoundary", new(v));
-        Add("Literal", new(pattern, s), new(pattern, s, b)); Add("Regex", new(pattern, s), new(pattern, s, b));
-        foreach (string name in new[] { "WaitLine", "WaitPrompt" }) Add(name, new(match, pattern), new(match, pattern, n));
+        Add("Literal", new(pattern, s), new(pattern, s, b), ["text", "ignoreCase"]);
+        Add("Regex", new(pattern, s), new(pattern, s, b), ["pattern", "ignoreCase"]);
+        foreach (string name in new[] { "WaitLine", "WaitPrompt" })
+            Add(name, new(match, pattern), new(match, pattern, n), ["pattern", "timeoutMs"]);
         foreach (string name in new[] { "WaitAnyLine", "WaitAnyPrompt" })
-            Add(name, new(match, Alternatives), new(match, Alternatives, n));
-        Add("Sleep", new(v, n)); Add("MinimizeWindow", new(v)); Add("RestoreWindow", new(v));
+            Add(name, new(match, Alternatives), new(match, Alternatives, n), ["alternatives", "timeoutMs"]);
+        Add("Sleep", new(v, n), names: ["milliseconds"]); Add("MinimizeWindow", new(v)); Add("RestoreWindow", new(v));
         Add("Dialog", new(new("DialogResult"), s, s, new("DialogButtons")),
-            new(new("DialogResult"), s, s, new("DialogButtons"), b, s));
-        Add("Length", new(n, s)); Add("Count", new(n, list)); Add("Substring", new(s, s, n, n));
-        foreach (string name in new[] { "Contains", "StartsWith", "EndsWith" }) Add(name, new(b, s, s), new(b, s, s, b));
-        Add("IndexOf", new(n, s, s), new(n, s, s, b)); Add("Replace", new(s, s, s, s));
-        Add("Split", new(strings, s, s)); Add("Join", new(s, s, strings));
-        foreach (string name in new[] { "Trim", "ToUpperInvariant", "ToLowerInvariant" }) Add(name, new(s, s));
-        Add("Add", new(v, list, t)); Add("Insert", new(v, list, n, t));
-        Add("RemoveAt", new(v, list, n)); Add("Clear", new(v, list)); Add("Clone", new(list, list));
-        Add("ParseLong", new(n, s)); Add("ParseDouble", new(d, s));
-        Add("FormatNumber", new(s, n, s), new(s, d, s));
+            new(new("DialogResult"), s, s, new("DialogButtons"), b, s), ["title", "message", "buttons", "inputEnabled", "initialText"]);
+        Add("Length", new(n, s), names: ["text"]); Add("Count", new(n, list), names: ["items"]);
+        Add("Substring", new(s, s, n, n), names: ["text", "start", "length"]);
+        foreach (string name in new[] { "Contains", "StartsWith", "EndsWith" })
+            Add(name, new(b, s, s), new(b, s, s, b), ["text", "value", "ignoreCase"]);
+        Add("IndexOf", new(n, s, s), new(n, s, s, b), ["text", "value", "ignoreCase"]);
+        Add("Replace", new(s, s, s, s), names: ["text", "oldValue", "newValue"]);
+        Add("Split", new(strings, s, s), names: ["text", "separator"]);
+        Add("Join", new(s, s, strings), names: ["separator", "items"]);
+        foreach (string name in new[] { "Trim", "ToUpperInvariant", "ToLowerInvariant" })
+            Add(name, new(s, s), names: ["text"]);
+        Add("Add", new(v, list, t), names: ["items", "value"]);
+        Add("Insert", new(v, list, n, t), names: ["items", "index", "value"]);
+        Add("RemoveAt", new(v, list, n), names: ["items", "index"]);
+        Add("Clear", new(v, list), names: ["items"]); Add("Clone", new(list, list), names: ["items"]);
+        Add("ParseLong", new(n, s), names: ["text"]); Add("ParseDouble", new(d, s), names: ["text"]);
+        Add("FormatNumber", new(s, n, s), new(s, d, s), ["value", "format"]);
         Add("Now", new(instant)); Add("UtcNow", new(instant));
-        Add("FormatTime", new(s, instant), new(s, instant, s));
-        Add("UnixMilliseconds", new(n, instant)); Add("ElapsedMilliseconds", new(n));
+        Add("FormatTime", new(s, instant), new(s, instant, s), ["value", "format"]);
+        Add("UnixMilliseconds", new(n, instant), names: ["value"]); Add("ElapsedMilliseconds", new(n));
         return result;
     }
 

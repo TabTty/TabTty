@@ -211,8 +211,8 @@ internal static partial class Program
             var headers = (TabHeaderPanel)strip.Content;
             headers.Preview(null, (TabItem)group.Items[0], new Size(240, 34));
             root.UpdateLayout();
-            if (left.Visibility != Visibility.Collapsed || right.Visibility != Visibility.Collapsed)
-                throw new InvalidOperationException("A provisional insertion gap brought up scroll buttons during a drag.");
+            if (left.Visibility != Visibility.Collapsed || right.Visibility != Visibility.Collapsed || strip.OpacityMask is not null)
+                throw new InvalidOperationException("A provisional insertion gap brought up arrows or edge fades during a drag.");
             headers.Preview(null, null, default);
             root.UpdateLayout();
             Layout(fitWidth - 1);
@@ -224,6 +224,27 @@ internal static partial class Program
             ExpectEdges(false, false);
             ExpectWidths(240);
             Layout(narrowWidth);
+            strip.ScrollToRightEnd();
+            root.UpdateLayout();
+            double rightEnd = strip.HorizontalOffset;
+            var rightmost = (TabItem)group.Items[^1];
+            group.SelectedItem = rightmost;
+            var scroller = (TabStripScroller)strip;
+            scroller.RevealSelection(group, rightmost);
+            left.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, left));
+            root.UpdateLayout();
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            root.UpdateLayout();
+            if (group.SelectedItem != rightmost || strip.HorizontalOffset >= rightEnd)
+                throw new InvalidOperationException("An earlier tab reveal overrode a later scroll command.");
+            scroller.RevealSelection(group, rightmost);
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            root.UpdateLayout();
+            if (Math.Abs(rightEnd - strip.HorizontalOffset) > 0.5)
+                throw new InvalidOperationException("Selecting the same hidden tab again did not reveal its header.");
+            group.SelectedIndex = 0;
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            root.UpdateLayout();
 
             var split = (Button)group.Template.FindName("splitGroupsSideButton", group);
             split.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, split));

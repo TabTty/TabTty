@@ -511,6 +511,7 @@ internal static partial class MacroContracts
         public List<byte> Bytes { get; } = [];
         public bool FailAfterFirstWrite { get; set; }
         public Func<ValueTask>? OnWrite { get; set; }
+        public byte[]? Incoming { get; set; }
         public int ReturnZeroOnSubmission { get; set; }
         private int submissions;
         public async ValueTask<int> WriteSomeAsync(ReadOnlyMemory<byte> buffer, CancellationToken token)
@@ -519,7 +520,13 @@ internal static partial class MacroContracts
             await WriteAsync(buffer, token);
             return buffer.Length;
         }
-        public ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken token) => ValueTask.FromResult(0);
+        public ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken token)
+        {
+            if (Incoming is not { } data) return ValueTask.FromResult(0);
+            data.CopyTo(buffer);
+            Incoming = null;
+            return ValueTask.FromResult(data.Length);
+        }
         public ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken token)
         {
             token.ThrowIfCancellationRequested();

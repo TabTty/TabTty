@@ -6,6 +6,68 @@ using TabTty.Core;
 
 internal static partial class Program
 {
+    private static async Task CheckCredentialProfileWriteAsync(App app, string directory, FilePublicationFixture publication)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+        var token = deadline.Token;
+        var first = await RegisterAsync("First");
+        var second = await RegisterAsync("Second");
+        byte[] preserved = await File.ReadAllBytesAsync(first.Path, token);
+        byte[] secondOriginal = await File.ReadAllBytesAsync(second.Path, token);
+        var editor = new ProfileEditorWindow(app, "EditProfile", first.Path, await ConnectionProfile.LoadAsync(first.Path, token), false);
+        var form = (FormView)editor.Content;
+        var group = (TextBox)form.FindName("ProfileGroupName");
+        editor.Show();
+        try
+        {
+            using var pause = publication.PauseNextWrite();
+            var update = app.Profiles.UpdateCredentialReferencesAsync(new([first, second], 0), "password", "After");
+            await pause.Issued.Task.WaitAsync(token);
+            group.Text = "Unsaved group";
+            File.Delete(pause.Preservation!);
+            pause.Dispose();
+            var result = await update.WaitAsync(token);
+            if (result.Updated != 1 || result.Problems.Count != 1 ||
+                !result.Problems[0].Contains(App.Text("ProfileSaveResultUnknown"), StringComparison.Ordinal) ||
+                !result.Problems[0].Contains(first.Path, StringComparison.Ordinal) ||
+                (await ConnectionProfile.LoadAsync(second.Path, token)).SshPassword?.Name != "After")
+                throw new InvalidOperationException("The unresolved write did not remain independent of the other profile update.");
+
+            byte[] secondSaved = await File.ReadAllBytesAsync(second.Path, token);
+            if (secondOriginal.SequenceEqual(secondSaved)) throw new InvalidOperationException("The second write did not change the file.");
+            await File.WriteAllBytesAsync(pause.Preservation!, preserved, token);
+            var recheck = FindControls<Button>(form).Single(button => Equals(button.Content, App.Text("CheckProfileSaveResult")));
+            if (!recheck.IsVisible) throw new InvalidOperationException("The affected profile had no pending verification action.");
+            recheck.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, recheck));
+            while (form.IsBusy) await Task.Delay(10, token);
+            byte[] secondAfterCheck = await File.ReadAllBytesAsync(second.Path, token);
+            if (recheck.IsVisible || !form.HasUnsavedChanges || group.Text != "Unsaved group" ||
+                VerifiedFilePublication.IsUnresolved(first.Path) ||
+                (await ConnectionProfile.LoadAsync(first.Path, token)).SshPassword?.Name != "After" ||
+                !secondSaved.AsSpan().SequenceEqual(secondAfterCheck))
+                throw new InvalidOperationException("Checking the original profile write changed the draft or replayed another write.");
+        }
+        finally
+        {
+            group.Text = "";
+            editor.Close();
+        }
+
+        async Task<ProfileCatalog.CredentialProfileMatch> RegisterAsync(string name)
+        {
+            string file = Path.Combine(directory, name + ".ttty");
+            var profile = ConnectionProfile.CreateSsh(name, "localhost", "fixture", password: new("Before", "password"));
+            await profile.SaveNewAsync(file, token);
+            string location = await ProfileCatalog.NormalizeLocationAsync(file, token);
+            Guid registration = Guid.NewGuid();
+            LocalState.Change(state => state["registrations"]!.AsArray().Add(new System.Text.Json.Nodes.JsonObject
+            {
+                ["registrationId"] = registration, ["path"] = location, ["displayPath"] = location,
+                ["favorite"] = false, ["lastUsed"] = null,
+            }));
+            return new(registration, location, profile.TrustVersion);
+        }
+    }
     private static async Task CheckVaultFirstUseAsync(App app, string directory)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
@@ -23,8 +85,7 @@ internal static partial class Program
             string path = Path.Combine(directory, empty ? "first-use-empty.tttykey" : "first-use-missing.tttykey");
             if (empty) File.WriteAllBytes(path, []);
             var original = CredentialVault.InspectFile(path);
-            await app.SaveSettingsAsync(app.LanguageChoice, app.ThemeChoice, app.BellChoice,
-                app.TerminalFontFamily, app.TerminalFontSize, app.RetainedRows, app.AutoCloseDisconnectedTabs, path, app.SettingsRevision);
+            await app.SaveSettingsAsync(app.SettingsRevision, new(VaultPath: path));
 
             Task cancelled = host.Dispatcher.InvokeAsync(UseVault).Task.Unwrap();
             var prompt = await FindDialogAsync("InitializeVault");
@@ -94,8 +155,7 @@ internal static partial class Program
         string vaultPath = Path.Combine(directory, "rename.tttykey");
         using (var vault = await CredentialVault.CreateAsync(vaultPath, master.AsMemory(), token))
             await vault.AddPasswordAsync(original, "fixture secret"u8.ToArray(), token);
-        await app.SaveSettingsAsync(app.LanguageChoice, app.ThemeChoice, app.BellChoice, app.TerminalFontFamily,
-            app.TerminalFontSize, app.RetainedRows, app.AutoCloseDisconnectedTabs, vaultPath, app.SettingsRevision);
+        await app.SaveSettingsAsync(app.SettingsRevision, new(VaultPath: vaultPath));
         string saved = await MakeProfileAsync("Saved", register: true);
         string changed = await MakeProfileAsync("Changed", register: true);
         string pending = await MakeProfileAsync("Pending", register: true);
@@ -501,8 +561,7 @@ internal static partial class Program
             if (host.IsVisible) host.Close();
         }
 
-        Task SelectAsync(string path) => app.SaveSettingsAsync(app.LanguageChoice, app.ThemeChoice, app.BellChoice,
-            app.TerminalFontFamily, app.TerminalFontSize, app.RetainedRows, app.AutoCloseDisconnectedTabs, path, app.SettingsRevision);
+        Task SelectAsync(string path) => app.SaveSettingsAsync(app.SettingsRevision, new(VaultPath: path));
 
         Button? CurrentButton(string key) => FindControls<Button>(host).SingleOrDefault(button =>
             button.IsVisible && Equals(button.Content, App.Text(key)));

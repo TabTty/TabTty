@@ -240,7 +240,7 @@ internal sealed class VaultController(App app) : IDisposable
         deleteEntries.Click += async (_, _) =>
         {
             if (menuTarget is { } selected)
-                await RunAction(selected.File, (file, window) => file.DeleteEntriesAsync(window, selected.Entries, form));
+                await RunAction(selected.File, selected.Entries, (file, window) => file.DeleteEntriesAsync(window, selected.Entries, form));
         };
         menu.Items.Add(deleteEntries);
 
@@ -319,7 +319,7 @@ internal sealed class VaultController(App app) : IDisposable
             args.Handled = true;
             if (args.IsRepeat) return;
             var entries = list.SelectedItems.Cast<VaultEntryInfo>().ToArray();
-            await RunAction(file, (current, window) => current.DeleteEntriesAsync(window, entries, form));
+            await RunAction(file, entries, (current, window) => current.DeleteEntriesAsync(window, entries, form));
         };
         form.Loaded += (_, _) => { ManagementChanged += UpdateEntries; UpdateEntries(); };
         form.Unloaded += (_, _) => ManagementChanged -= UpdateEntries;
@@ -346,13 +346,23 @@ internal sealed class VaultController(App app) : IDisposable
 
         Task RunEntryAction(VaultFileController file, VaultEntryInfo entry,
             Func<VaultFileController, Window, VaultEntryInfo, Task> action) =>
-            RunAction(file, (current, window) => action(current, window, entry));
+            RunAction(file, [entry], (current, window) => action(current, window, entry));
 
-        Task RunAction(VaultFileController file, Func<VaultFileController, Window, Task> action) => form.RunAsync(() =>
+        Task RunAction(VaultFileController file, IReadOnlyList<VaultEntryInfo> entries,
+            Func<VaultFileController, Window, Task> action) => form.RunAsync(() =>
         {
-            if (!ReferenceEquals(file, target()) || file.Unlocked is null) return Task.CompletedTask;
             Window window = form.OwnerWindow;
-            return file.RunAsync(window, () => action(file, window));
+            if (!ReferenceEquals(file, target())) return ShowStaleSelection();
+            return file.RunAsync(window, () => file.HasCurrentSelection(entries)
+                ? action(file, window) : ShowStaleSelection());
+
+            Task ShowStaleSelection()
+            {
+                UpdateEntries();
+                RefreshList(null);
+                form.SetStatusMessage(Text("VaultEntrySelectionChanged"));
+                return Task.CompletedTask;
+            }
         });
 
         void UpdateEntries() => UpdateEntriesAndStatus(refreshLabels: false);

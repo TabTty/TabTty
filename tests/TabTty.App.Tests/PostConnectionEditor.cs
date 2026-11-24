@@ -25,8 +25,7 @@ internal static partial class Program
 
         async Task CheckLanguageAsync(string language, string theme)
         {
-            await app.SaveSettingsAsync(language, theme, app.BellChoice, app.TerminalFontFamily,
-                app.TerminalFontSize, app.RetainedRows, false, app.VaultPath, app.SettingsRevision);
+            await app.SaveSettingsAsync(app.SettingsRevision, new(Language: language, Theme: theme, AutoClose: false));
             var loaded = await ConnectionProfile.LoadAsync(path, CancellationToken.None);
             var window = new ProfileEditorWindow(app, "EditProfile", loaded.OpenedPath, loaded, creating: false);
             window.Show();
@@ -72,6 +71,12 @@ internal static partial class Program
                 await WaitFor(() => ActiveArgument("WaitPrompt", "pattern"), "the first argument in an unfinished call");
                 Edit("WaitPrompt(Literal(\"$\"), ");
                 await WaitFor(() => ActiveArgument("WaitPrompt", "timeoutMs"), "the second argument after a nested call");
+                CheckMacroLaunch(signature.Text.Contains("long timeoutMs") && !signature.Text.Contains("[long timeoutMs]"),
+                    "The profile prompt wait did not require an explicit timeout.");
+                Edit("WaitAnyPrompt(");
+                await WaitFor(() => ActiveArgument("WaitAnyPrompt", "[name: pattern, ...]"), "named wait alternatives");
+                Edit("WritePasswordLine(");
+                await WaitFor(() => ActiveArgument("WritePasswordLine", "string name"), "shared credential argument name");
                 Edit("WriteLine(\"ready\", ma");
                 await WaitFor(() => completions.IsVisible &&
                     completions.Items.Cast<PostConnectionCompletion>().Any(item => item.Label == "markReceiveBoundary"), "the named option");

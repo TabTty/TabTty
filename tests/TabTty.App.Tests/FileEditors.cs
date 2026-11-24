@@ -424,9 +424,7 @@ internal static partial class Program
             }
         }
 
-        Task SelectVault(string path) => app.SaveSettingsAsync(app.LanguageChoice, app.ThemeChoice, app.BellChoice,
-            app.TerminalFontFamily, app.TerminalFontSize, app.RetainedRows, app.AutoCloseDisconnectedTabs, path,
-            app.SettingsRevision);
+        Task SelectVault(string path) => app.SaveSettingsAsync(app.SettingsRevision, new(VaultPath: path));
 
         async Task ManageWithoutPromptAsync()
         {

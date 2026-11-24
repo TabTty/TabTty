@@ -58,39 +58,50 @@ public sealed partial class TerminalSession
                 if (offset + count < characters.Length && characters[offset + count - 1] == '\r' &&
                     characters[offset + count] == '\n') count--;
                 using var deadline = PasteWriteDeadline(CancellationToken.None);
-                await state.WaitAsync(deadline.Token).ConfigureAwait(false);
+                byte[]? chunk = null, wireBytes = null;
                 try
                 {
-                    token.ThrowIfCancellationRequested();
-                    if (disconnected) throw new IOException("The terminal session has ended.");
-                    byte[] chunk = transmitter.Encode(characters.AsSpan(offset, count), profile.TransmitSevenBitKana);
-                    byte[]? wireBytes = null;
+                    ValueTask<TransportSendResult> submission;
+                    bool localEcho;
+                    await state.WaitAsync(deadline.Token).ConfigureAwait(false);
                     try
                     {
+                        token.ThrowIfCancellationRequested();
+                        if (disconnected) throw new IOException("The terminal session has ended.");
+                        chunk = transmitter.Encode(characters.AsSpan(offset, count), profile.TransmitSevenBitKana);
                         wireBytes = EncodeInput(chunk);
-                        var outcome = await transport.SubmitPreparedAsync(wireBytes, deadline.Token,
-                            onFirstSubmission: offset == 0 ? captureBoundary : null).ConfigureAwait(false);
-                        mayHaveSent |= outcome.Status != TransportSubmission.NotIssued;
-                        if (outcome.Status != TransportSubmission.Submitted)
-                        {
-                            if (mayHaveSent) throw new MacroTermination("UncertainDelivery");
-                            token.ThrowIfCancellationRequested();
-                            throw new MacroError(MacroErrorCode.OperationUnavailable);
-                        }
-                        if (!secret && LocalEcho)
-                        {
-                            byte[] echo = new byte[StrictUtf8.GetByteCount(characters.AsSpan(offset, count))];
-                            try { StrictUtf8.GetBytes(characters.AsSpan(offset, count), echo); Echo(echo); }
-                            finally { CryptographicOperations.ZeroMemory(echo); }
-                        }
+                        localEcho = !secret && LocalEcho;
+                        submission = transport.SubmitPreparedAsync(wireBytes, deadline.Token,
+                            onFirstSubmission: offset == 0 ? captureBoundary : null);
                     }
-                    finally
+                    finally { state.Release(); }
+
+                    var outcome = await submission.ConfigureAwait(false);
+                    mayHaveSent |= outcome.Status != TransportSubmission.NotIssued;
+                    if (localEcho && (outcome.Status == TransportSubmission.Submitted || outcome.DefiniteBytes > 0))
                     {
-                        CryptographicOperations.ZeroMemory(chunk);
-                        if (wireBytes is not null && !ReferenceEquals(wireBytes, chunk)) CryptographicOperations.ZeroMemory(wireBytes);
+                        string portion = new(characters, offset, count);
+                        byte[] echo = StrictUtf8.GetBytes(portion);
+                        await state.WaitAsync().ConfigureAwait(false);
+                        try
+                        {
+                            int confirmed = ConfirmedInputEchoLength(outcome, chunk, echo, portion, altPrefix: false);
+                            await EchoSubmittedInputAsync(echo, confirmed).ConfigureAwait(false);
+                        }
+                        finally { state.Release(); }
+                    }
+                    if (outcome.Status != TransportSubmission.Submitted)
+                    {
+                        if (mayHaveSent) throw new MacroTermination("UncertainDelivery");
+                        token.ThrowIfCancellationRequested();
+                        throw new MacroError(MacroErrorCode.OperationUnavailable);
                     }
                 }
-                finally { state.Release(); }
+                finally
+                {
+                    if (chunk is not null) CryptographicOperations.ZeroMemory(chunk);
+                    if (wireBytes is not null && !ReferenceEquals(wireBytes, chunk)) CryptographicOperations.ZeroMemory(wireBytes);
+                }
                 offset += count;
             }
             if (receiveBoundary is { } boundary) owner.CommitReceiveBoundary(boundary);

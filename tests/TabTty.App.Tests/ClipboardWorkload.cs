@@ -200,9 +200,7 @@ internal static partial class Program
             else Clipboard.SetText(source, TextDataFormat.UnicodeText);
         }
 
-        Task SaveMaximumAsync(long limit, bool? autoClose = null) => app.SaveSettingsAsync(app.LanguageChoice, app.ThemeChoice, app.BellChoice,
-            app.TerminalFontFamily, app.TerminalFontSize, app.RetainedRows, autoClose ?? app.AutoCloseDisconnectedTabs,
-            app.VaultPath, app.SettingsRevision, maxPasteTextBytes: limit);
+        Task SaveMaximumAsync(long limit, bool? autoClose = null) => app.SaveSettingsAsync(app.SettingsRevision, new(AutoClose: autoClose, PasteMaximum: limit));
 
         async Task<TerminalPaste?> CaptureAsync(Window owner, long maximum, CancellationToken cancellation)
         {

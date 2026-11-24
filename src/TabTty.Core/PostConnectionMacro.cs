@@ -4,14 +4,14 @@ internal static class PostConnectionMacro
 {
     internal static readonly string[] LocalTypes = ["bool", "long", "string", "WaitPattern", "WaitMatch"];
     // The ordinary API supplies the parameter and result types. The embedded waits require a timeout.
-    internal static readonly Dictionary<string, (int Required, string[] ParameterNames)> Calls = new(StringComparer.Ordinal)
+    internal static readonly Dictionary<string, int> Calls = new(StringComparer.Ordinal)
     {
-        ["Literal"] = (1, ["text", "ignoreCase"]),
-        ["Regex"] = (1, ["pattern", "ignoreCase"]),
-        ["WaitAnyPrompt"] = (2, ["alternatives", "timeoutMs"]),
-        ["WaitPrompt"] = (2, ["pattern", "timeoutMs"]),
-        ["WriteLine"] = (1, ["text", MacroApi.MarkReceiveBoundary.Name]),
-        ["WritePasswordLine"] = (0, ["entryName"]),
+        ["Literal"] = 1,
+        ["Regex"] = 1,
+        ["WaitAnyPrompt"] = 2,
+        ["WaitPrompt"] = 2,
+        ["WriteLine"] = 1,
+        ["WritePasswordLine"] = 0,
     };
 
     internal static MacroSignature? Signature(string name) =>
@@ -44,7 +44,7 @@ internal static class PostConnectionMacro
                     PushAll(call.Arguments.Select(argument => argument.Value).ToArray());
                     break;
                 case MacroPositionalCall call when Calls.TryGetValue(call.Name, out var definition) &&
-                    call.Arguments.Length >= definition.Required:
+                    call.Arguments.Length >= definition:
                     PushAll(call.Arguments);
                     break;
                 case MacroAlternatives choices:

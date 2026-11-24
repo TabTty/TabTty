@@ -53,8 +53,7 @@ internal static partial class Program
         {
             try
             {
-                await app.SaveSettingsAsync(app.LanguageChoice, app.ThemeChoice, app.BellChoice, app.TerminalFontFamily,
-                    app.TerminalFontSize, app.RetainedRows, app.AutoCloseDisconnectedTabs, path, app.SettingsRevision);
+                await app.SaveSettingsAsync(app.SettingsRevision, new(VaultPath: path));
                 selectionEpoch = app.Vault.SelectionEpoch;
                 Window host;
                 if (standaloneEditor)

@@ -29,11 +29,12 @@ internal sealed partial class MacroEditorSymbols
     }
 
     internal IReadOnlyList<MacroConstantsBinding> BindConstants(string macroPath,
-        IReadOnlyList<MacroConstantsDeclaration> declarations, IReadOnlyDictionary<string, string> sources)
+        IReadOnlyList<MacroConstantsDeclaration> declarations, IReadOnlyDictionary<string, string> sources,
+        IReadOnlyDictionary<string, int>? knownBytes)
     {
         var bindings = new List<MacroConstantsBinding>();
         var parsed = new Dictionary<string, (MacroConstantsFile? File, string? Error)>(StringComparer.Ordinal);
-        int remaining = MacroConstantsFile.MaxMembers;
+        var budget = new MacroConstantsBudget();
         foreach (var declaration in declarations)
         {
             string? path = null;
@@ -41,6 +42,8 @@ internal sealed partial class MacroEditorSymbols
             catch (MacroSourceException error) { Report(error); }
             Dependencies.Add(new(declaration.Alias, path, declaration.AliasPosition, declaration.Position));
             if (path is null) continue;
+            if (knownBytes?.TryGetValue(path, out int size) == true && budget.CrossedByteLimit(path, size))
+                Report(new("ConstantsLimit", declaration.Position, macroPath));
             if (!sources.TryGetValue(path, out var text))
             {
                 Report(new("ConstantsRead", declaration.Position, macroPath));
@@ -51,9 +54,9 @@ internal sealed partial class MacroEditorSymbols
                 var members = new List<MacroEditorSymbol>();
                 try
                 {
-                    var file = MacroConstantsFile.Parse(path, "", text, remaining, () => { },
+                    var file = MacroConstantsFile.Parse(path, "", text, budget.RemainingMembers, () => { },
                         (token, value) => members.Add(new(token.Text, MacroChecker.ScalarType(value).ToString(), token.Position)));
-                    remaining -= file.Values.Count;
+                    budget.AddDefinitions(file);
                     constantSymbols.Add(path, members);
                     result = (file, null);
                 }

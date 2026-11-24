@@ -309,6 +309,18 @@ The per-file owner orders conflicting work. Reject obsolete anchors/contexts
 even if an entry with that name exists in a later revision. Queued
 inputs, unlock participation and acquired images remain owned and charged.
 
+A repeated click or keypress on a busy management form starts only the
+original operation and its confirmation. If another view requests a
+conflicting management operation on the same vault, report Busy immediately
+in that view. Starting it after the first operation ends requires a new user
+request.
+
+For an entry menu command, validate the entire selection captured when the
+menu opened. If any selected entry has become stale, leave every entry
+untouched, tell the user the selection changed and show the current list with
+its search and sort preserved. The user can select the intended entries again
+in that view. This also applies when a replacement has the same name.
+
 An ordinary caller awaits one initial observation; it need not run a monitoring
 loop. The operation view also exposes current state, explicit work cancellation,
 reconciliation of the same operation and actual-resource release. Cancelling an
@@ -355,6 +367,24 @@ the matching credential field through the normal verified profile save. Report
 the count updated and identify profiles that could not be saved. Each save has
 its own outcome. The vault rename and verified profile writes remain in effect
 if another write fails. Macros and unregistered files are updated manually.
+
+The profile catalog processes one file at a time. Editor saves and rechecks
+can run between files in a rename. Immediately before each update, recheck the
+registration, reviewed file revision, unsaved edits and any pending save for
+that file, including a save retained after its editor closed. If any check
+fails, report the path and reason, skip that file and continue with the next.
+
+If the write outcome is uncertain and can be rechecked, report its path as
+unconfirmed and retain the original operation ID in the catalog for this
+application run. The profile editor's **Check save result** action checks
+that write. Opening the editor alone leaves the check pending. Rechecking
+applies only to that file and grants no profile trust.
+
+When the write is verified, an open editor with no intervening edits displays
+the new credential reference and uses the verified revision for its next edit.
+If the user edited the form after the write began, keep that draft and its
+original base revision. Tell the user the file changed and require review of
+the saved revision before a later save can overwrite it.
 
 The **Manage vault** command offers master password setup when the selected
 vault path is missing or zero bytes. Use the shared initialization prompt,

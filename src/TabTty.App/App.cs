@@ -168,13 +168,17 @@ public sealed class App : Application
     internal static string Text(string key) => LocalizedText(key)
         ?? throw new InvalidOperationException($"Missing localized string: {key}.");
 
+    internal void ReadSavedSettings()
+    {
+        if (File.Exists(settingsPath)) settings = ReadSettings(settingsPath, out settingsOriginal);
+    }
+
     private void Start(InstanceLaunch[] paths)
     {
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
         try
         {
-            if (File.Exists(settingsPath))
-                settings = ReadSettings(settingsPath, out settingsOriginal);
+            ReadSavedSettings();
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException
             or JsonException or InvalidOperationException or FormatException)
@@ -373,59 +377,78 @@ public sealed class App : Application
         ? state["credentialVaultPath"]?.GetValue<string>() ?? DefaultVaultPath
         : legacyVaultPath ?? DefaultVaultPath;
 
-    internal async Task SaveSettingsAsync(string languageChoice, string themeChoice, string bellChoice,
-        string terminalFontFamily, double terminalFontSize, int retainedRows, bool autoCloseDisconnectedTabs,
-        string vaultPath, int revision, bool? broadcastAcrossWindows = null, long? maxPasteTextBytes = null,
-        string? profileSaveDirectory = null, RecordingDefaults? logDefaults = null, KeyboardShortcuts? shortcuts = null)
+    internal sealed record SettingsChanges(string? Language = null, string? Theme = null, string? Bell = null,
+        string? FontFamily = null, double? FontSize = null, int? RetainedRows = null, bool? AutoClose = null,
+        string? VaultPath = null, bool? Broadcast = null, long? PasteMaximum = null, string? ProfileDirectory = null,
+        string? LogDirectory = null, string? LogTemplate = null, string? MacroLogTemplate = null,
+        IReadOnlyDictionary<ShortcutAction, string?>? Shortcuts = null);
+
+    internal Dictionary<ShortcutAction, string?> ChangedShortcuts(KeyboardShortcuts edited) =>
+        KeyboardShortcuts.Commands.Where(command => Shortcuts[command.Action] != edited[command.Action])
+            .ToDictionary(command => command.Action, command => edited[command.Action]);
+
+    internal async Task SaveSettingsAsync(int revision, SettingsChanges edits)
     {
         if (revision != SettingsRevision)
             throw new InvalidOperationException(Text("ManagementTabOutdated"));
         if (settingsReadOnly)
             throw new InvalidOperationException(Text("RestoreSettings"));
         string priorVaultPath = VaultPath;
-        vaultPath = vaultPath == priorVaultPath ? priorVaultPath : NormalizeVaultPath(vaultPath);
+        string vaultPath = edits.VaultPath is { } selectedVault ? NormalizeVaultPath(selectedVault) : priorVaultPath;
         bool vaultChanged = !string.Equals(priorVaultPath, vaultPath, StringComparison.Ordinal);
         using var publication = ReserveSettingsPublication(priorVaultPath, vaultPath);
-        FontCatalog.Validate(terminalFontFamily, TerminalFontFamily);
         var candidate = (JsonObject)settings.DeepClone();
-        bool scopeChanged = broadcastAcrossWindows is { } scope && scope != BroadcastAcrossWindows;
-        if (broadcastAcrossWindows is { } savedScope) candidate["broadcastAcrossWindows"] = savedScope;
-        if (shortcuts is not null)
+        bool scopeChanged = edits.Broadcast is { } scope && scope != BroadcastAcrossWindows;
+        if (edits.Broadcast is { } savedScope) candidate["broadcastAcrossWindows"] = savedScope;
+        if (edits.Shortcuts is { Count: > 0 } shortcuts)
         {
-            candidate[KeyboardShortcuts.SettingsKey] = shortcuts.ToJson();
+            if (candidate[KeyboardShortcuts.SettingsKey] is not JsonObject stored)
+                candidate[KeyboardShortcuts.SettingsKey] = stored = new JsonObject();
+            foreach (var (action, choice) in shortcuts) stored[action.ToString()] = choice;
             candidate.Remove("tabFocusKey");
         }
-        if (maxPasteTextBytes is { } maximum)
+        if (edits.PasteMaximum is { } maximum)
         {
             if (maximum <= 0) throw new ArgumentException(Text("InvalidPasteSourceMaximum"));
             candidate["maxPasteTextBytes"] = maximum;
         }
-        candidate["language"] = languageChoice;
-        candidate["theme"] = themeChoice;
-        candidate["bell"] = bellChoice;
-        candidate["defaultTerminalFont"]!["family"] = terminalFontFamily;
-        candidate["defaultTerminalFont"]!["sizePoints"] = terminalFontSize;
-        candidate["defaultRetainedRows"] = retainedRows;
-        candidate["autoCloseDisconnectedTabs"] = autoCloseDisconnectedTabs;
-        if (vaultChanged || settings["credentialVaultPath"] is not null)
+        if (edits.Language is { } language) candidate["language"] = language;
+        if (edits.Theme is { } theme) candidate["theme"] = theme;
+        if (edits.Bell is { } bell) candidate["bell"] = bell;
+        if (edits.FontFamily is { } family)
+        {
+            FontCatalog.Validate(family, TerminalFontFamily);
+            candidate["defaultTerminalFont"]!["family"] = family;
+        }
+        if (edits.FontSize is { } size) candidate["defaultTerminalFont"]!["sizePoints"] = size;
+        if (edits.RetainedRows is { } rows) candidate["defaultRetainedRows"] = rows;
+        if (edits.AutoClose is { } close) candidate["autoCloseDisconnectedTabs"] = close;
+        if (edits.VaultPath is not null)
             candidate["credentialVaultPath"] = vaultPath;
-        if (profileSaveDirectory is not null)
+        if (edits.ProfileDirectory is { } profileSaveDirectory)
             candidate["profileSaveDirectory"] = NormalizeProfileSaveDirectory(profileSaveDirectory);
-        RecordingDefaults logging = logDefaults ?? ReadLogDefaults(candidate);
-        logDefaults?.Validate();
-        candidate["defaultLogDirectory"] = logging.Directory;
-        candidate["defaultLogFilenameTemplate"] = logging.ProfileTemplate;
-        candidate["defaultMacroLogFilenameTemplate"] = logging.MacroTemplate;
-        foreach (string legacy in new[] { "logNameIncludeDate", "logNameIncludeTime", "logNameIncludeMicroseconds", "logNameIncludeSequence" })
-            candidate.Remove(legacy);
+        string[] legacyFlags = ["logNameIncludeDate", "logNameIncludeTime", "logNameIncludeMicroseconds", "logNameIncludeSequence"];
+        if (legacyFlags.Any(candidate.ContainsKey))
+        {
+            var legacy = ReadLogDefaults(candidate);
+            candidate["defaultLogFilenameTemplate"] ??= legacy.ProfileTemplate;
+            candidate["defaultMacroLogFilenameTemplate"] ??= legacy.MacroTemplate;
+            foreach (string flag in legacyFlags) candidate.Remove(flag);
+        }
+        if (edits.LogDirectory is { } logDirectory) candidate["defaultLogDirectory"] = logDirectory;
+        if (edits.LogTemplate is { } logTemplate) candidate["defaultLogFilenameTemplate"] = logTemplate;
+        if (edits.MacroLogTemplate is { } macroLogTemplate) candidate["defaultMacroLogFilenameTemplate"] = macroLogTemplate;
+        if (edits.LogDirectory is not null || edits.LogTemplate is not null || edits.MacroLogTemplate is not null)
+            ReadLogDefaults(candidate).Validate();
         byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(candidate, new JsonSerializerOptions { WriteIndented = true });
         if (bytes.Length > 65536) throw new InvalidDataException("Settings exceed 64 KiB.");
+        ValidateSettings(JsonStoreRecovery.ParseObject(bytes));
         var operation = JsonStoreRecovery.BeginSave(settingsPath, bytes, settingsOriginal,
             path => _ = ReadSettings(path, out _), issueSettings);
         JsonStoreRecovery.RequireVerified(await operation.ObserveAsync());
         settingsOriginal = bytes;
         settings = candidate;
-        if (profileSaveDirectory is not null) Profiles.ProfileFolderChanged();
+        if (edits.ProfileDirectory is not null) Profiles.ProfileFolderChanged();
         if (vaultChanged) Vault.SelectionChanged(priorVaultPath);
         if (scopeChanged) Broadcast.ScopeChanged();
         SettingsRevision++;
@@ -530,7 +553,11 @@ public sealed class App : Application
         int length = stream.ReadAtLeast(buffer, buffer.Length, false);
         if (length == buffer.Length) throw new InvalidDataException("Settings exceed 64 KiB.");
         bytes = buffer.AsSpan(0, length).ToArray();
-        JsonObject parsed = JsonStoreRecovery.ParseObject(bytes);
+        return ValidateSettings(JsonStoreRecovery.ParseObject(bytes));
+    }
+
+    private static JsonObject ValidateSettings(JsonObject parsed)
+    {
         if (parsed["schemaVersion"]?.GetValue<int>() != 1 ||
             parsed["requiredFeatures"] is not JsonArray { Count: 0 } ||
             parsed["language"]?.GetValue<string>() is not ("en" or "ja" or "system") ||

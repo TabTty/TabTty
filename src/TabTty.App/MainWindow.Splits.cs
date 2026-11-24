@@ -67,7 +67,7 @@ internal sealed partial class MainWindow
             if (args.Source != group) return;
             foreach (TerminalTab previous in args.RemovedItems.OfType<WindowTab>().Select(item => item.Content).OfType<TerminalTab>())
                 previous.CancelPaneComposition();
-            if (group.SelectedItem is TabItem item) item.BringIntoView();
+            if (group.SelectedItem is TabItem item) RevealTabHeader(group, item);
             if (groups is not null) LabelGroups();
             if (navigatingTabGroup != group) ScheduleSelectedTerminalFocus(group);
         };
@@ -152,7 +152,7 @@ internal sealed partial class MainWindow
         {
             // WPF can focus the selected content during selection. Focus the header afterward.
             group.SelectedItem = tab;
-            tab.BringIntoView();
+            RevealTabHeader(group, tab);
             tab.Focus();
         }
         finally { navigatingTabGroup = previous; }
@@ -164,7 +164,8 @@ internal sealed partial class MainWindow
         // Wait for the tab template to attach the newly selected content.
         _ = Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
         {
-            if (!closing && IsActive && group == activeGroup && group.SelectedItem == selected && terminal.IsVisible)
+            if (!closing && IsActive && group == activeGroup && selected.Host == this &&
+                group.SelectedItem == selected && terminal.IsVisible)
                 terminal.FocusPane();
         }));
     }

@@ -8,15 +8,6 @@ function activate(context) {
     const executable = context.asAbsolutePath(path.join('server', 'TabTty.MacroEditor.exe'));
     const diagnostics = vscode.languages.createDiagnosticCollection('tabtty');
     const japanese = vscode.env.language.toLowerCase().startsWith('ja');
-    const parameterNames = {
-        Literal: ['text', 'ignoreCase'], Regex: ['pattern', 'ignoreCase'],
-        WaitLine: ['pattern', 'timeoutMs'], WaitPrompt: ['pattern', 'timeoutMs'],
-        WaitAnyLine: ['patterns', 'timeoutMs'], WaitAnyPrompt: ['patterns', 'timeoutMs'],
-        Write: ['text'], WritePassword: ['name'], WritePasswordLine: ['name'],
-        FormatNumber: ['value', 'format'], FormatTime: ['value', 'format'],
-        Sleep: ['milliseconds'], SetBaseDirectory: ['path'], Length: ['text'], Count: ['items'],
-        Substring: ['text', 'start', 'length'], Dialog: ['title', 'message', 'buttons', 'inputEnabled', 'initialText']
-    };
     const descriptions = {
         Connect: ['Connect using a saved profile.', '保存済みプロファイルを使って接続します。'],
         Write: ['Send text without a line ending.', '改行を付けずに文字列を送信します。'],
@@ -68,9 +59,10 @@ function activate(context) {
         UnixMilliseconds: ['Get the Unix timestamp in milliseconds.', 'Unix 時刻をミリ秒で取得します。'],
         ElapsedMilliseconds: ['Get elapsed run time in milliseconds.', '実行開始からの経過時間をミリ秒で取得します。']
     };
-    function parameterLabel(name, type, index, namedParameters) {
-        const label = namedParameters?.[index].Name ?? parameterNames[name]?.[index];
-        if (index > 0 && namedParameters) return '[' + label + ': ' + type + ']';
+    function parameterLabel(type, index, signature) {
+        if (type === 'NamedWaitAlternatives') return '[name: pattern, ...]';
+        const label = signature.ParameterNames?.[index];
+        if (index > 0 && signature.NamedParameters) return '[' + label + ': ' + type + ']';
         return label ? type + ' ' + label : type;
     }
     const messages = {
@@ -196,6 +188,7 @@ function activate(context) {
             const snapshots = new Map();
             const trusted = vscode.workspace.isTrusted;
             const constants = Object.create(null);
+            const knownConstantBytes = Object.create(null);
             for (const target of targets) {
                 const candidates = openCandidates(target);
                 const open = await chooseOpen(target, candidates);
@@ -207,10 +200,13 @@ function activate(context) {
                 } else if (document.uri.scheme === 'file' && trusted) {
                     const read = await request({ path: target, source: '', operation: 'readLocal' });
                     snapshot.status = read.status;
-                    if (read.status === 'ok') constants[target] = read.text;
+                    if (read.status === 'ok') {
+                        constants[target] = read.text;
+                        knownConstantBytes[target] = read.byteCount;
+                    }
                 }
             }
-            const result = Object.keys(constants).length ? await request({ ...payload, constants }) : initial;
+            const result = Object.keys(constants).length ? await request({ ...payload, constants, knownConstantBytes }) : initial;
             if (document.isClosed || document.version !== version) return {};
             if (trusted !== vscode.workspace.isTrusted || targets.some(target => {
                 const current = openCandidates(target);
@@ -297,7 +293,7 @@ function activate(context) {
                 const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Function);
                 item.detail = signatures.map(signature =>
                     signature.Result + ' ' + name + '(' + signature.Parameters.map((type, index) =>
-                        parameterLabel(name, type, index, signature.NamedParameters)).join(', ') + ')').join('\n');
+                        parameterLabel(type, index, signature)).join(', ') + ')').join('\n');
                 items.push(item);
             }
             for (const entry of result.symbols || []) {
@@ -345,7 +341,7 @@ function activate(context) {
                 const signatures = result.functions[name];
                 const detail = signatures.map(signature =>
                     signature.Result + ' ' + name + '(' + signature.Parameters.map((type, index) =>
-                        parameterLabel(name, type, index, signature.NamedParameters)).join(', ') + ')').join('\n');
+                        parameterLabel(type, index, signature)).join(', ') + ')').join('\n');
                 const description = descriptions[name]
                     ? '\n' + descriptions[name][japanese ? 1 : 0]
                     : (japanese ? '\nTabTty の組み込み関数です。' : '\nTabTty built-in function.');
@@ -371,7 +367,7 @@ function activate(context) {
             if (!signatures) return undefined;
             const help = new vscode.SignatureHelp();
             help.signatures = signatures.map(signature => {
-                const parameters = signature.Parameters.map((type, index) => parameterLabel(call.name, type, index, signature.NamedParameters));
+                const parameters = signature.Parameters.map((type, index) => parameterLabel(type, index, signature));
                 const info = new vscode.SignatureInformation(
                     signature.Result + ' ' + call.name + '(' + parameters.join(', ') + ')');
                 info.parameters = parameters.map(parameter => new vscode.ParameterInformation(parameter));

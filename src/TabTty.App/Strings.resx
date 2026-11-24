@@ -568,6 +568,12 @@
   <data name="MacroFiles" xml:space="preserve"><value>TabTty macros (*.tttym)|*.tttym</value></data>
   <data name="MacroArguments" xml:space="preserve"><value>Arguments</value></data>
   <data name="MacroArgument" xml:space="preserve"><value>Argument</value></data>
+  <data name="CredentialRenameReviewProfile" xml:space="preserve"><value>A vault rename updated this profile while you were editing. Review the saved credential name before saving your draft over that revision.</value></data>
+  <data name="VaultEntrySelectionChanged" xml:space="preserve"><value>The selected entries changed. Select the entries again from the current list.</value></data>
+  <data name="MacroArgumentCountLimit" xml:space="preserve"><value>The number of arguments exceeds 64 by {0}.</value></data>
+  <data name="MacroArgumentRowLimit" xml:space="preserve"><value>Argument {1} exceeds 4,096 UTF-16 code units by {0}.</value></data>
+  <data name="MacroArgumentTotalLimit" xml:space="preserve"><value>The arguments together exceed 16,384 UTF-16 code units by {0}.</value></data>
+  <data name="MacroArgumentInvalid" xml:space="preserve"><value>Argument {1} contains a NUL or an invalid Unicode character.</value></data>
   <data name="MacroAddArgument" xml:space="preserve"><value>Add argument</value></data>
   <data name="MacroRemoveArgument" xml:space="preserve"><value>Remove</value></data>
   <data name="MacroPause" xml:space="preserve"><value>Pause macro</value></data>

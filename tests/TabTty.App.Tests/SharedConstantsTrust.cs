@@ -202,8 +202,7 @@ internal static partial class Program
             await SetLanguage(previousLanguage);
         }
 
-        Task SetLanguage(string language) => app.SaveSettingsAsync(language, app.ThemeChoice, app.BellChoice,
-            app.TerminalFontFamily, app.TerminalFontSize, app.RetainedRows, app.AutoCloseDisconnectedTabs, app.VaultPath, app.SettingsRevision);
+        Task SetLanguage(string language) => app.SaveSettingsAsync(app.SettingsRevision, new(Language: language));
 
         static void Click(Window owner, string resource) =>
             FindControls<Button>(owner).Single(button => Equals(button.Content, App.Text(resource))).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));

@@ -13,6 +13,7 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
     private readonly TerminalOutput terminal;
     private readonly ConnectionProfile profile;
     private readonly MacroRun? macro;
+    private MacroRun? receiveObserver;
     private readonly TerminalEncoding transmitter;
     private readonly RecordingLifecycle recordings;
     private readonly SemaphoreSlim state = new(1);
@@ -58,6 +59,7 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
         }
         if (macro is not null)
         {
+            receiveObserver = macro;
             terminal.MacroCharacter = macro.Receive;
             terminal.EnteringAlternateScreen = () => macro.Stop("AlternateScreen");
             macro.ObserveSession(this);
@@ -138,7 +140,12 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
         { throw new MacroError(MacroErrorCode.ProfileLoad); }
         if (profile.HasPostConnectionMacro && macro is null)
             throw new InvalidOperationException("This connection cannot run the configured post-connection macro.");
-        macro?.ProfileLoaded(profile);
+        if (macro is not null)
+        {
+            if (reviewed is null && !macro.IsPostConnection)
+                macro.SetPostConnectionProgram(macro.CompilePostConnection(profile));
+            macro.ProfileLoaded(profile);
+        }
         opened?.Invoke(profile);
         if (profile.Type == "ssh" && ssh is null)
             throw new InvalidOperationException("SSH requires host verification and authentication interaction.");
@@ -187,7 +194,11 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
             if (session is not null)
             {
                 if (exception is ResourceLimitException) session.recordings.MarkIncomplete(exception.Message);
-                try { await session.DisposeAsync().ConfigureAwait(false); }
+                try
+                {
+                    if (macro is not null) await session.ReleaseMacroObservationsAsync(macro).ConfigureAwait(false);
+                    await session.DisposeAsync().ConfigureAwait(false);
+                }
                 finally { await session.ReleaseRetainedOutputAsync().ConfigureAwait(false); }
             }
             else if (recording is not null) await recording.FinishAsync().ConfigureAwait(false);
@@ -279,6 +290,7 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
             {
                 Receive(TerminalReceiveSource.Data, tail);
                 recordings.CompleteReceive(keepInterval: transport.CanSendAfterEof && !disconnected);
+                receiveObserver?.ReceiveEof();
             }, token).ConfigureAwait(false);
             ended = true;
             SignalAiActivity();
@@ -342,7 +354,7 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
     private void Receive(TerminalReceiveSource source, byte[] payload, CancellationToken token = default)
     {
         recordings.Receive(source, payload, token);
-        macro?.ReceiveBatch();
+        receiveObserver?.ReceiveBatch();
         if (payload.Length != 0) SignalAiActivity();
     }
 
@@ -857,11 +869,26 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
         using var queuedMemory = queued ?? inputBytes.Reserve(0);
         using var unit = inputUnits.Reserve(1);
         using var transmitMemory = inputBytes.Reserve(0);
+        var (_, rows) = await SubmitOrderedManualInputAsync(async () =>
+        {
+            (byte[] Payload, byte[] Echo) input = ([], []);
+            await ProcessBatchAsync(() => input = encode(), cancellationToken).ConfigureAwait(false);
+            if (queued is null) queuedMemory.Resize(input.Echo.LongLength);
+            transmitMemory.Resize(input.Payload.LongLength * (IsTelnet ? 3 : payloadAlreadyCharged ? 0 : 1));
+            return input;
+        }, cancellationToken, captureRows, text, altPrefix).ConfigureAwait(false);
+        return rows;
+    }
+
+    private async Task<(bool Sent, IReadOnlyList<string> Rows)> SubmitOrderedManualInputAsync(
+        Func<ValueTask<(byte[] Payload, byte[] Echo)?>> prepare, CancellationToken cancellationToken,
+        bool captureRows = false, string? text = null, bool altPrefix = false, Action? admit = null)
+    {
         await manualInputOrder.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ValueTask<TransportSendResult> submission;
-            byte[] payload = [], echo = [];
+            byte[] payload, echo;
             bool localEcho;
             await state.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
@@ -869,11 +896,10 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
                 EnsureConnected();
                 EnsureManualInput();
                 if (pasteActive) throw new InvalidOperationException("A paste is in progress.");
-                await ProcessBatchAsync(() => (payload, echo) = encode(), cancellationToken).ConfigureAwait(false);
-                if (queued is null) queuedMemory.Resize(echo.LongLength);
-                transmitMemory.Resize(payload.LongLength * (IsTelnet ? 3 : payloadAlreadyCharged ? 0 : 1));
-                localEcho = LocalEcho;
-                submission = SubmitInputAsync(payload, cancellationToken);
+                if (await prepare().ConfigureAwait(false) is not { } input) return (false, []);
+                (payload, echo) = input;
+                localEcho = echo.Length != 0 && LocalEcho;
+                submission = SubmitInputAsync(payload, cancellationToken, admit);
             }
             finally { state.Release(); }
             var result = await submission.ConfigureAwait(false);
@@ -884,7 +910,7 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
                     await EchoSubmittedInputAsync(echo, ConfirmedInputEchoLength(result, payload, echo, text, altPrefix))
                         .ConfigureAwait(false);
                 if (result.Error is { } error) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(error);
-                return captureRows ? await CaptureSnapshotAsync(cancellationToken).ConfigureAwait(false) : [];
+                return (true, captureRows ? await CaptureSnapshotAsync(cancellationToken).ConfigureAwait(false) : []);
             }
             finally { state.Release(); }
         }
@@ -974,6 +1000,19 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
         finally { state.Release(); }
     }
 
+    internal async Task ReleaseMacroObservationsAsync(MacroRun owner)
+    {
+        await state.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (!ReferenceEquals(receiveObserver, owner)) return;
+            terminal.MacroCharacter = null;
+            terminal.EnteringAlternateScreen = null;
+            receiveObserver = null;
+        }
+        finally { state.Release(); }
+    }
+
     // The caller holds state. Finishing the terminal projection does not wait for the file writer.
     private void FinalizeReceive()
     {
@@ -986,6 +1025,7 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
         {
             Receive(TerminalReceiveSource.Data, transport.CompleteReceive());
             recordings.CompleteReceive(keepInterval: false);
+            receiveObserver?.ReceiveEof();
         }
         catch (Exception exception) when (exception is InvalidDataException or InvalidOperationException or
             ResourceLimitException or NativeTerminalExecutionException)

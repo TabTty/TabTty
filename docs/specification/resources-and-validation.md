@@ -194,6 +194,15 @@ shared match ranges and their memory reservation. Each pane keeps its own
 current match. With no current match, Next starts at the beginning of the
 invoking pane's visible area and Previous starts at its end.
 
+Apply explicit Next and Previous commands in the order invoked for each pane,
+even while an earlier match is still being located or the count is pending.
+For example, if the next matches are on rows 55 and 59, two presses of Next
+reach row 59 whether the second press arrives before or after row 55 appears.
+Changing focus leaves pending moves with their invoking pane. Changing the
+query or case option, or closing the search bar, discards pending moves for
+the previous search. Editing either search condition refreshes highlights
+and the count while preserving every pane's scroll position.
+
 Closing the search bar cancels its scan, clears match overlays and releases the
 retained-result reservation. Keep the query and case option for reopening in
 the same tab. Removing the tab ends its search owner and releases the retained
@@ -320,6 +329,22 @@ not verify a serializer solely by reading it with the same implementation.
 Fuzz/inject failures at parsers, cancellation/ownership, and file commits.
 Reference-source inspection is evidence for design, not a substitute for these
 runtime checks or an independent security review.
+
+### Asynchronous WPF test scenarios
+
+The WPF test runner starts the scenario on the existing STA dispatcher and
+continues processing UI work until the task returned by the scenario finishes,
+including its asynchronous continuations. End that wait on success, failure
+or cancellation and propagate the original result or exception to the caller.
+The caller owns scenario selection, ordering, output, exit codes and cleanup.
+Scenario-specific deadlines still apply. Tests that observe application exit
+or an intermediate dialog keep their existing wait conditions.
+
+Verify the same command's output and exit code before and after refactoring.
+Include a failure after an `await` and check that it reaches the existing error
+handler and cleanup. A standalone desktop check reports an unavailable desktop
+as `NOT RUN` and exits with 2. In the default suite, a visual check with the
+same prerequisite reports `NOT RUN` and the suite continues.
 
 ## Implementation and release gates
 

@@ -75,7 +75,6 @@ internal sealed class RecordingLifecycle(TerminalOutput terminal, SemaphoreSlim 
         if (projections is null) terminal.CompleteReceive();
         else projections.CompleteReceive(keepInterval);
         if (!keepInterval) Cutoff();
-        macro?.ReceiveEof();
     }
 
     internal Task<RecordingOperationResult> CompleteDisconnectAsync()

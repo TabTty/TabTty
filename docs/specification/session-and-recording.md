@@ -495,6 +495,16 @@ control share this behavior. Broadcast still captures and validates its targets.
 AI control still requires a valid grant and observation at submission. Mouse
 gestures and paced paste keep their existing state and lifetimes.
 
+For direct and broadcast keyboard input, each target session encodes a
+mode-dependent key when its turn arrives, using that session's current
+terminal mode. If the target switches cursor-key mode while Up is waiting
+behind earlier input, Up uses the new mode. Once the session hands the bytes
+to the transport, they stay fixed throughout the write. At that same handoff
+the session samples the local echo setting for the key or committed text.
+If echo is on for `AB` and turns off while the write is pending, a result
+confirming only `A` echoes `A` once. The next input uses the setting in
+effect at its own handoff.
+
 The desktop keyboard path waits for submission and the applicable local echo.
 It requests the screen through the normal rendering path. A later failure to
 capture the screen is a display failure and does not change the send outcome

@@ -61,6 +61,14 @@ internal sealed partial class TerminalTab : UserControl
     private string? connectedName;
     private ConnectionDestination? lastDestination;
     private Window? destinationNotice;
+    private Func<MainWindow?>? tabHost;
+    internal void ResolveTabHost(Func<MainWindow?> resolve) => tabHost = resolve;
+
+    internal void RefreshNoticeOwner()
+    {
+        if (destinationNotice is { IsVisible: true } notice && tabHost?.Invoke() is { } owner && notice.Owner != owner)
+            notice.Owner = owner;
+    }
     private string statusKey = "Connecting";
     private string? error;
     private int pendingSends;
@@ -69,6 +77,8 @@ internal sealed partial class TerminalTab : UserControl
     private CancellationTokenSource? pasteReview;
     private CancellationTokenSource? pasteStop;
     private CancellationTokenSource? searchWork;
+    private CancellationTokenSource? searchMoves;
+    private readonly Dictionary<TerminalSurface, Queue<bool>> pendingSearchMoves = [];
     private TerminalSnapshot? snapshot;
     private TerminalMatch[] searchMatches = [];
     private readonly DispatcherTimer searchRefreshTimer;
@@ -119,7 +129,7 @@ internal sealed partial class TerminalTab : UserControl
         searchRefreshTimer.Tick += async (_, _) =>
         {
             searchRefreshTimer.Stop();
-            if (searchWork is null) await SearchAsync(backwards: false, navigate: false);
+            if (searchWork is null) await UpdateSearchResultsAsync();
         };
         AttachPane(output);
         var catalog = ((App)Application.Current).Highlights;
@@ -186,8 +196,8 @@ internal sealed partial class TerminalTab : UserControl
         searchQuery.TextChanged += async (_, _) => await RefreshSearchAsync();
         matchCase.Checked += async (_, _) => await RefreshSearchAsync();
         matchCase.Unchecked += async (_, _) => await RefreshSearchAsync();
-        previousMatch.Click += async (_, _) => await SearchAsync(backwards: true);
-        nextMatch.Click += async (_, _) => await SearchAsync(backwards: false);
+        previousMatch.Click += (_, _) => QueueSearchMove(backwards: true);
+        nextMatch.Click += (_, _) => QueueSearchMove(backwards: false);
         closeSearch.Click += (_, _) => CloseSearch();
         UpdateLabels();
     }
@@ -333,15 +343,14 @@ internal sealed partial class TerminalTab : UserControl
             {
                 Window? owner = MacroWindow ?? Window.GetWindow(this);
                 string attemptPath = path;
-                var admission = await app.Profiles.AdmitAsync(owner, attemptPath, Macro?.FullPath, startup.Token,
-                    reconnect: hasAdmission, previousOnce);
+                using var admission = await app.Profiles.AdmitAsync(owner, attemptPath, Macro?.FullPath, startup.Token,
+                    reconnect: hasAdmission, previousOnce, Macro);
                 var profile = admission.Profile;
                 hasAdmission = true;
                 previousOnce = admission.Once;
                 attemptPath = path = profile.OpenedPath;
-                if (profile.HasPostConnectionMacro && !IsExternalMacro)
+                if (!IsExternalMacro && admission.Program is { } program)
                 {
-                    using var program = profile.CompilePostConnectionMacro()!;
                     PrepareMacro(program, []);
                     postConnection = Macro!;
                 }
@@ -361,8 +370,18 @@ internal sealed partial class TerminalTab : UserControl
                         failure is (IOException or ArgumentException or UnauthorizedAccessException or InvalidDataException or NotSupportedException))
                     { throw new RecordingStartException(failure.Message, failure); }
                 }
-                session = await TerminalSession.ConnectReviewedAsync(attemptPath, profile, Macro, startupToken, interaction,
-                    Opened, retention, Viewport, logging);
+                var caller = IsExternalMacro ? Macro : null;
+                caller?.SetPostConnectionProgram(admission.TakeProgram());
+                try
+                {
+                    session = await TerminalSession.ConnectReviewedAsync(attemptPath, profile, Macro, startupToken, interaction,
+                        Opened, retention, Viewport, logging);
+                }
+                catch
+                {
+                    caller?.SetPostConnectionProgram(null);
+                    throw;
+                }
             }
             session.Bell += () =>
             {
@@ -521,6 +540,7 @@ internal sealed partial class TerminalTab : UserControl
         searchRefreshTimer.Stop();
         HideMouseNotice();
         searchWork?.Cancel();
+        CancelSearchMoves();
         searchMatches = [];
         searchMemory.Dispose();
         paneLayout?.ReleaseReservations();
@@ -990,7 +1010,7 @@ internal sealed partial class TerminalTab : UserControl
         Dispatcher.BeginInvoke(() =>
         {
             if (session != connected || token.IsCancellationRequested || removed || ClosePending) return;
-            Window? owner = Window.GetWindow(this) ?? AiHost;
+            Window? owner = tabHost?.Invoke();
             if (owner is null) return;
             string body = string.Format(Text("ReconnectDestinationDetails"), PermissionDisplay.Literal(connected.DisplayName),
                 previous, current);
@@ -1101,6 +1121,7 @@ internal sealed partial class TerminalTab : UserControl
             if (snapshot?.IsAlternateScreen == true)
             {
                 searchWork?.Cancel();
+                CancelSearchMoves();
                 SetSearchStatus("SearchNormalScreen");
             }
             else if (wasAlternate)
@@ -1113,12 +1134,13 @@ internal sealed partial class TerminalTab : UserControl
 
     private void OpenSearch()
     {
+        bool opening = searchBar.Visibility != Visibility.Visible;
         searchBar.Visibility = Visibility.Visible;
         PositionSearchBar();
-        SetSearchStatus(snapshot?.IsAlternateScreen == true ? "SearchNormalScreen" : null);
         UpdateSearchButtons();
         searchQuery.Focus();
         searchQuery.SelectAll();
+        if (opening) _ = UpdateSearchResultsAsync();
     }
 
     private void PositionSearchBar()
@@ -1133,6 +1155,7 @@ internal sealed partial class TerminalTab : UserControl
     {
         searchRefreshTimer.Stop();
         searchWork?.Cancel();
+        CancelSearchMoves();
         searchBar.Visibility = Visibility.Collapsed;
         foreach (var pane in panes.Values) pane.CurrentMatch = null;
         SetSearchMatches([]);
@@ -1159,16 +1182,87 @@ internal sealed partial class TerminalTab : UserControl
         searchMatchCount is { } count ? Math.Min(count, TerminalSearch.Limit).ToString("N0") +
             (count > TerminalSearch.Limit ? "+" : "") : "";
 
+    private void CancelSearchMoves()
+    {
+        searchMoves?.Cancel();
+        searchMoves?.Dispose();
+        searchMoves = null;
+        pendingSearchMoves.Clear();
+    }
+
+    private void QueueSearchMove(bool backwards)
+    {
+        if (removed || searchBar.Visibility != Visibility.Visible || !nextMatch.IsEnabled) return;
+        var pane = output;
+        if (pendingSearchMoves.TryGetValue(pane, out var pending))
+        {
+            pending.Enqueue(backwards);
+            return;
+        }
+
+        pending = new Queue<bool>();
+        pending.Enqueue(backwards);
+        pendingSearchMoves.Add(pane, pending);
+        searchMoves ??= new CancellationTokenSource();
+        _ = MoveThroughSearchAsync(pane, pending, searchMoves.Token);
+    }
+
+    private async Task MoveThroughSearchAsync(TerminalSurface surface, Queue<bool> pending, CancellationToken token)
+    {
+        string query = searchQuery.Text;
+        bool caseSensitive = matchCase.IsChecked == true;
+        try
+        {
+            while (pending.TryPeek(out bool backwards))
+            {
+                token.ThrowIfCancellationRequested();
+                if (snapshot is not { IsAlternateScreen: false } captured || !panes.TryGetValue(surface, out var pane)) return;
+                TerminalMatch? anchor = pane.CurrentMatch;
+                if (anchor is null && captured.Count != 0)
+                {
+                    var (first, end) = surface.VisibleRows();
+                    int row = Math.Min(backwards ? Math.Max(first, end - 1) : first, captured.Count - 1);
+                    int offset = backwards ? int.MaxValue : -1;
+                    anchor = new TerminalMatch(row, offset, row, offset);
+                }
+                await TerminalHighlightView.Workers.WaitAsync(token);
+                TerminalMatch? found;
+                try
+                {
+                    found = await Task.Run(() => TerminalSearch.FindNext(captured, query, caseSensitive,
+                        anchor, backwards, token), token);
+                }
+                finally { TerminalHighlightView.Workers.Release(); }
+
+                token.ThrowIfCancellationRequested();
+                if (!panes.ContainsKey(surface) || snapshot is not { IsAlternateScreen: false } current) return;
+                if (!current.HasSameHighlightText(captured)) continue;
+                pending.Dequeue();
+                pane.CurrentMatch = found;
+                surface.SetSearch(found, searchMatches, scroll: found.HasValue);
+                ScheduleSearchRefresh();
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        catch (ResourceLimitException) { }
+        finally
+        {
+            if (pendingSearchMoves.TryGetValue(surface, out var current) && ReferenceEquals(current, pending))
+                pendingSearchMoves.Remove(surface);
+        }
+    }
+
     private async Task RefreshSearchAsync()
     {
+        CancelSearchMoves();
         foreach (var pane in panes.Values) pane.CurrentMatch = null;
         SetSearchMatches([]);
         foreach (var pane in panes.Keys) pane.SetSearch(null, [], scroll: false);
         UpdateSearchButtons();
-        if (searchBar.Visibility == Visibility.Visible) await SearchAsync(backwards: false);
+        if (searchBar.Visibility == Visibility.Visible) await UpdateSearchResultsAsync();
     }
 
-    private async void OnSearchKeyDown(object sender, KeyEventArgs e)
+    private void OnSearchKeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key == Key.Escape)
         {
@@ -1178,7 +1272,7 @@ internal sealed partial class TerminalTab : UserControl
         else if (e.Key == Key.Enter && searchQuery.IsKeyboardFocusWithin)
         {
             e.Handled = true;
-            await SearchAsync(backwards: Keyboard.Modifiers == ModifierKeys.Shift);
+            QueueSearchMove(backwards: Keyboard.Modifiers == ModifierKeys.Shift);
         }
     }
 
@@ -1189,7 +1283,7 @@ internal sealed partial class TerminalTab : UserControl
         searchRefreshTimer.Start();
     }
 
-    private async Task SearchAsync(bool backwards, bool navigate = true)
+    private async Task UpdateSearchResultsAsync()
     {
         searchRefreshTimer.Stop();
         if (removed || searchBar.Visibility != Visibility.Visible) return;
@@ -1203,15 +1297,6 @@ internal sealed partial class TerminalTab : UserControl
         searchWork = work;
         string query = searchQuery.Text;
         bool caseSensitive = matchCase.IsChecked == true;
-        TerminalSurface operated = output;
-        TerminalMatch? anchor = panes[operated].CurrentMatch;
-        if (navigate && anchor is null && captured.Count != 0)
-        {
-            var (first, end) = operated.VisibleRows();
-            int row = Math.Min(backwards ? Math.Max(first, end - 1) : first, captured.Count - 1);
-            int offset = backwards ? int.MaxValue : -1;
-            anchor = new TerminalMatch(row, offset, row, offset);
-        }
         SetSearchStatus("Searching");
         try
         {
@@ -1220,11 +1305,8 @@ internal sealed partial class TerminalTab : UserControl
             try
             {
                 using var ranges = ApplicationResources.SearchCache.Reserve(TerminalSearch.Limit * 64);
-                Func<TerminalMatch?, Task>? announce = navigate
-                    ? match => Dispatcher.InvokeAsync(() => Navigate(match), DispatcherPriority.Normal, work.Token).Task
-                    : null;
                 var result = await Task.Run(() => TerminalSearch.ScanAsync(captured, query, caseSensitive,
-                    anchor, backwards, viewports, announce, work.Token), work.Token);
+                    null, false, viewports, null, work.Token), work.Token);
                 if (!IsCurrent())
                 {
                     if (!work.IsCancellationRequested) ScheduleSearchRefresh();
@@ -1246,13 +1328,6 @@ internal sealed partial class TerminalTab : UserControl
         }
         bool IsCurrent() => !removed && !work.IsCancellationRequested && ReferenceEquals(searchWork, work) &&
             snapshot is { IsAlternateScreen: false } current && current.HasSameHighlightText(captured);
-
-        void Navigate(TerminalMatch? found)
-        {
-            if (!IsCurrent() || !panes.TryGetValue(operated, out var pane)) return;
-            pane.CurrentMatch = found;
-            operated.SetSearch(found, searchMatches, scroll: found.HasValue);
-        }
     }
 
     private void SetSearchMatches(TerminalMatch[] matches)

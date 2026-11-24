@@ -332,9 +332,8 @@ internal sealed partial class MainWindow
         });
         form.AddAction("MacroAddArgument", () =>
         {
-            if (fields.Count == 64) return;
             var row = new DockPanel { Margin = new Thickness(0, 0, 0, 4) };
-            var input = new TextBox { MaxLength = 4096 };
+            var input = new TextBox();
             AutomationProperties.SetName(input, Text("MacroArgument"));
             var remove = new Button { Content = Text("MacroRemoveArgument"), Margin = new Thickness(4, 0, 0, 0) };
             remove.Click += (_, _) => { fields.Remove(input); rows.Children.Remove(row); };
@@ -345,7 +344,22 @@ internal sealed partial class MainWindow
             rows.Children.Add(row);
             input.Focus();
         });
-        form.AddButtons(() => { }, acceptKey: acceptKey);
-        return app.Modal(form.ShowDialog) == true ? fields.Select(input => input.Text).ToArray() : null;
+        var error = new TextBlock { TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
+        rows.Children.Add(error);
+        string[]? accepted = null;
+        form.AddAsyncButtons(() =>
+        {
+            var arguments = fields.Select(input => input.Text).ToArray();
+            if (MacroLimits.CheckArguments(arguments) is { } problem)
+            {
+                error.Text = string.Format(Text(problem.Code), problem.Excess, problem.Row);
+                error.Visibility = Visibility.Visible;
+                error.BringIntoView();
+                return Task.FromResult(false);
+            }
+            accepted = arguments;
+            return Task.FromResult(true);
+        }, acceptKey: acceptKey);
+        return app.Modal(form.ShowDialog) == true ? accepted : null;
     }
 }

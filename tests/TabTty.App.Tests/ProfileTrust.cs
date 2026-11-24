@@ -218,8 +218,7 @@ internal static partial class Program
             CheckMacroLaunch(inPlace.OpenedPath == secondCopy.OpenedPath && app.Profiles.ReadRegistrations().Count == 2,
                 "Importing a registered file in the destination directory created a copy.");
 
-            await app.SaveSettingsAsync("ja", app.ThemeChoice, app.BellChoice, app.TerminalFontFamily,
-                app.TerminalFontSize, app.RetainedRows, app.AutoCloseDisconnectedTabs, app.VaultPath, app.SettingsRevision);
+            await app.SaveSettingsAsync(app.SettingsRevision, new(Language: "ja"));
             admission = app.Profiles.AdmitAsync(owner, path, null, token);
             review = await ReviewAsync();
             CheckMacroLaunch(FindControls<Button>(review).Any(button => Equals(button.Content, "取り込んで接続")) &&
@@ -242,9 +241,7 @@ internal static partial class Program
             }
         }
 
-        Task SetProfileFolderAsync(string folder) => app.SaveSettingsAsync(app.LanguageChoice, app.ThemeChoice, app.BellChoice,
-            app.TerminalFontFamily, app.TerminalFontSize, app.RetainedRows, app.AutoCloseDisconnectedTabs,
-            app.VaultPath, app.SettingsRevision, profileSaveDirectory: folder);
+        Task SetProfileFolderAsync(string folder) => app.SaveSettingsAsync(app.SettingsRevision, new(ProfileDirectory: folder));
 
         async Task RefreshSelectionsAcrossWindowsAsync(ListView list, TabControl groupTabs, string groupName)
         {

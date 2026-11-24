@@ -256,8 +256,7 @@ internal static partial class Program
                 PresentationSource.FromVisual(transfer), Environment.TickCount, key) { RoutedEvent = Keyboard.KeyDownEvent });
         }
 
-        Task SetAutoClose(bool autoClose) => app.SaveSettingsAsync(app.LanguageChoice, app.ThemeChoice, app.BellChoice,
-            app.TerminalFontFamily, app.TerminalFontSize, app.RetainedRows, autoClose, app.VaultPath, app.SettingsRevision);
+        Task SetAutoClose(bool autoClose) => app.SaveSettingsAsync(app.SettingsRevision, new(AutoClose: autoClose));
 
         FileTransferWindow OpenDisconnected(FileOperationOwnership ownership)
         {
