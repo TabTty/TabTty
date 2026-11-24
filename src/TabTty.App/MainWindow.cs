@@ -266,8 +266,7 @@ internal sealed partial class MainWindow : Window
         currentMenu!.Items.Add(BroadcastCommands());
         AddButton("Reconnect", () =>
         {
-            if (SelectedTab is { IsRunning: false } terminal)
-                terminal.Start(profile => _ = app.Profiles.RememberAsync(terminal.ProfilePath, profile, used: true));
+            if (activeGroup.SelectedItem is WindowTab item) ReconnectTab(item);
         });
         AddButton("Disconnect", () => SelectedTab?.Disconnect());
         AddButton("ConnectionCommands", () => SelectedTab?.ShowConnectionCommands());
@@ -446,6 +445,16 @@ internal sealed partial class MainWindow : Window
         var button = new MenuItem { Header = Text(key), Tag = key };
         button.Click += (_, _) => action();
         return button;
+    }
+
+    private bool CanReconnectTab(WindowTab item, TerminalTab terminal) =>
+        !closing && !item.IsClosing && terminal.CanReconnect;
+
+    private void ReconnectTab(WindowTab item)
+    {
+        if (item.Content is not TerminalTab terminal || !CanReconnectTab(item, terminal) || GroupOf(item) is null)
+            return;
+        terminal.Start(profile => _ = app.Profiles.RememberAsync(terminal.ProfilePath, profile, used: true));
     }
 
     private void OpenTabListMenu(object sender, RoutedEventArgs args)
@@ -1064,6 +1073,8 @@ internal sealed partial class MainWindow : Window
                     menu.Items.Clear();
                     if (terminal.CanTransfer) menu.Items.Add(MenuAction("FileTransfer", terminal.OpenFileTransfer));
                     if (Host is not { } host || host.GroupOf(this) is not { } group) return;
+                    if (host.CanReconnectTab(this, terminal))
+                        menu.Items.Add(MenuAction("Reconnect", () => Host?.ReconnectTab(this)));
                     terminal.FillAiMenu(menu);
                     menu.Items.Add(host.BroadcastCommands());
                     menu.Items.Add(host.GroupCommands(group));

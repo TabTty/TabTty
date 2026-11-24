@@ -199,6 +199,7 @@ internal sealed partial class TerminalTab : UserControl
     private ConnectionEnd connectionEnd;
     public bool IsDisconnected => !IsRunning && (Macro is null
         ? connectionEnd != ConnectionEnd.Pending : statusKey == "Disconnected" || connectedName is not null);
+    internal bool CanReconnect => IsDisconnected && CanStartConnection;
     internal bool CloseAfterInitialCancellation => connectionEnd == ConnectionEnd.InitialCancelled;
     internal bool CanAutoCloseOnDisconnect => connectionEnd == ConnectionEnd.Normal;
     internal string ConnectionStatus => status.Text;
@@ -226,6 +227,7 @@ internal sealed partial class TerminalTab : UserControl
     internal FileTransferWindow? TransferWindow => transferWindow;
     internal bool ClosePending { get; set; }
     private bool removed;
+    private bool CanStartConnection => !removed && !ClosePending && Macro is null && connectionCompletion.IsCompleted;
 
     public async void OpenFileTransfer()
     {
@@ -251,7 +253,7 @@ internal sealed partial class TerminalTab : UserControl
 
     public void Start(Action<ConnectionProfile>? opened = null)
     {
-        if (removed || ClosePending || Macro is not null || !Completion.IsCompleted) return;
+        if (!CanStartConnection) return;
         AiCollaboration.EndSharing(this);
         bool reconnect = !IsRunning;
         if (reconnect)

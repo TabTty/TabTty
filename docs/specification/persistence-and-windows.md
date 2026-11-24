@@ -279,6 +279,10 @@ Starting a reconnect clears the previous attempt's icon.
 A previous connection name can supply the tab caption. A late notification from
 an earlier attempt cannot mark or close the tab for the new attempt.
 
+Offer **Reconnect** in the header context menu of a disconnected terminal tab
+that can start another connection. The action reconnects that tab, even when
+another tab is selected, using the ordinary manual reconnect workflow.
+
 | Outcome | With automatic closure on | With automatic closure off |
 | --- | --- | --- |
 | Initial connection or reconnect fails or times out before Connected | Keep the tab with a warning icon | Keep the tab with a warning icon |
