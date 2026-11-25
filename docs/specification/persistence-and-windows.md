@@ -84,8 +84,10 @@ starts with an empty bar and leaves it empty until it has a message of its own.
 In the editor, leave the bar empty during ordinary input, credential selection
 and confirmation prompts. If a save or a recheck is still running 500 ms after
 the work begins, show **Saving changes…** or **Checking the previous save…**
-respectively. Clear the message when the work ends. Present any failure through
-the existing error dialog. The editor reports its progress in its own bar.
+respectively. Clear the progress message when the work ends. On a save or
+recheck failure, show the reason in the editor's upper-right floating notice
+until the user acknowledges it with **OK**. Keep the draft and any applicable
+recovery action available. [Notification policy](notification-policy.md)
 
 The selected vault's rename dialog can update reviewed registered profiles. The update uses the ordinary verified edit path and changes the matching name field. Connection trust is evaluated for the resulting file revision. See [Vault format and operations](vault-format.md).
 
@@ -808,11 +810,26 @@ responsible. A command directed at a particular window or group keeps its
 original scope. A queued request to return focus to the source group can run
 only while its original focus conditions still hold there.
 
-An open modeless reconnect destination-change notice follows its terminal tab
-when a move commits. Even if moving the last tab closes the source window,
-the user can still read and acknowledge the single notice at the destination.
-Moving an acknowledged notice's tab does not show it again. The notice and
-its transfer leave terminal input focus undisturbed.
+The terminal's `WindowTab` subscribes once to caption changes and disconnects
+for the lifetime of the tab. Moving the tab keeps those subscriptions. After
+a move to another window and completion of queued work, the subscriptions
+must hold no reference to the former host. Before applying a queued
+disconnect, check that it still belongs to the tab's current connection
+generation.
+
+Use the same committed placement when presenting a pending SSH question. If
+the tab moves from A to B while waiting to present it, show the question once
+in B after a successful move or in A after a failed or cancelled move. If the
+user is typing in another tab, keep keyboard focus there.
+
+An unread reconnect destination-change notice follows its terminal tab when
+a move commits. Even if the source window closes, the same notice appears
+once in the destination tab's upper-right stack, where the user can read the
+old and new destinations and select **OK**. When the tab is inactive, mark
+it unread and announce the change once in a modeless window that identifies
+the affected tab and leaves keyboard focus in place. The window and the
+tab notice share one acknowledgement. Moving the tab preserves that state.
+[Notification policy](notification-policy.md)
 
 The [transfer window](file-transfer.md#transfer-window-and-operation-ownership)
 is associated with its SSH terminal tab and current connection generation.
@@ -992,8 +1009,9 @@ Leave the bars empty while the user edits a credential or answers a
 confirmation. After **OK** and any required confirmation, show **Saving
 changes…** in the edit dialog's status bar only if the vault save is still
 pending after 500 ms. The parent view stays quiet throughout the edit. Clear
-the message when the save succeeds or fails and show any save error through
-the usual error handling.
+the progress message when the save ends. A save failure appears in an
+upper-right **OK** notice in the credential editor. Acknowledging it leaves
+the failed save available for correction or recovery.
 
 When the user chooses **Manage vault** and the selected file is missing or zero
 bytes, prompt for a master password before opening the tab. Show the tab after
@@ -1005,8 +1023,9 @@ state. The next **Manage vault** command offers setup. Keep
 before creating a new vault.
 
 When **Unlock vault** creates or initializes the file, open or activate the
-management tab in the issuing main window after success. An ordinary unlock
-of an existing vault continues to show the completion notification.
+management tab in the issuing main window after success. When the command
+unlocks an existing vault, show the resulting unlocked state in the issuing
+window so the user can see that the command succeeded.
 
 When Settings changes the selected vault, any open vault editor keeps its
 target; the management tab and subsequent connections use the new selection.
@@ -1113,7 +1132,7 @@ final-exit rules. No hidden lifetime or session-recording timeout is introduced.
 | Open or edit one `.tttykey`, or select multiple vault files | Single-file verbs open one editor. A vault invocation carrying multiple paths is rejected before opening or unlocking a file. |
 | Choose **Manage vault** with a missing or zero-byte target | Cancelling setup keeps the current view. Verified initialization opens the management tab. The backup restore command remains available in the vault menu before setup. |
 | Archive the selected vault or switch to a missing or zero-byte target while its management tab is open | Show the resulting state without prompting. The next **Manage vault** command offers setup. |
-| Choose **Unlock vault** with a missing, zero-byte, or existing valid target | Verified creation or initialization opens the management tab. Ordinary unlock of the existing target shows the completion notification. |
+| Choose **Unlock vault** with a missing, zero-byte, or existing valid target | Verified creation or initialization opens the management tab. The issuing window shows the unlocked state of an existing target without requiring acknowledgement. |
 | Choose **Manage vault** in the profile password or key picker | The action is present with an empty or populated list. Preserve the draft, close the picker, and use the standalone vault editor if no main window is open. Reopening the picker shows current committed entries. |
 | Change a selected vault entry in a standalone window | The in-app management view and the next credential lookup see the same committed revision without another unlock. |
 | Edit a copy of the selected vault at another path | Save to the copy. Connections keep using the selected file. Closing the copy's editor releases its unlock. |

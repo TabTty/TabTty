@@ -63,10 +63,16 @@ regardless of which tab invokes Start. Stop hides the checkboxes and preserves
 their values for this application run, subject to Q197's scope-change reset.
 Disconnect/reconnect in the same tab and same-window group moves preserve them.
 When a successful reconnect changes the transport, host and port, SSH account, or
-serial port, show a topmost modeless notification with the tab name and both
-destinations. Show it without activating it or moving keyboard focus. Terminal
-and broadcast input continue while it is open. OK dismisses the notice.
-The first connection and reconnects to the same destination do not show this dialog.
+serial port, show the tab name and both destinations in the terminal tab's
+upper-right notification stack. The notice remains available for acknowledgement
+with **OK**. If the affected tab is inactive, mark its header and also show the
+tab name and both destinations in a modeless notice in the originating window.
+This applies even when the tab is visible in another split group while the user
+works in a different tab. Both views share one acknowledgement. **OK** in
+either clears this notice from both and clears its unread indication. Terminal
+and broadcast input continue, and keyboard focus stays where it was. This
+notice is specific to a change from a previous successful connection. See the
+[notification policy](notification-policy.md).
 New terminal tabs default to checked. They can receive input from the next operation
 once ready. Closing a tab deletes its remembered selection.
 
@@ -111,8 +117,9 @@ terminal tabs in participating windows while a mode is active. Bulk selection
 uses the effective scope, includes hidden tabs, and cannot bypass an operation's
 selection lock. Count ready-selected/total-selected targets, such as `3/4`,
 in the single bottom status row of a visible terminal tab in each participating
-window. If the window shows no terminal, float the count over the window
-content. Status changes preserve the allocated terminal layout. Distinguish zero
+window. If the window shows no terminal, display the count in that window's
+upper-right stack until a terminal can show it again or broadcast status clears.
+Status changes preserve the allocated terminal layout. Distinguish zero
 selection from selected targets that are all unready. Disconnected status and
 target checks are separate indications.
 
@@ -392,7 +399,8 @@ Use existing stable content anchors through edits/reflow; eviction clamps each
 affected anchor to surviving content. Never create a per-pane retained buffer
 or change saved retention to preserve an old view. The tab's search controls
 operate on its active pane and do not move another pane's current result.
-The search bar overlays the top of the terminal area. Opening or closing it
+The search bar overlays the top of the terminal area. Keep its controls and the
+upper-right notification stack operable together. Opening or closing search
 preserves the terminal grid and each pane's viewport size.
 
 Provide vertical/horizontal scrollbars when needed; they affect only the local

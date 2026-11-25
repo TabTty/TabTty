@@ -230,9 +230,10 @@ The first Start selects the existing terminal tabs in scope. Use **Select All
 Targets** or **Clear All Targets** to change the selection. Stopping and restarting
 with the same setting keeps the selection. Newly opened terminal tabs start checked,
 and moving a tab to another window checks it for subsequent operations.
-Reconnecting a tab preserves your selection. If the destination changes, a topmost
-notification shows the previous and current destinations. You can keep typing and
-broadcasting while it is open.
+Reconnecting a tab preserves your selection. If the destination changes, the tab
+shows both destinations in an upper-right notice until you select **OK**. If you
+are working in another tab, a separate notification also offers **Show tab** and
+keeps keyboard focus where you are typing.
 Hover over a recipient checkbox to see its transport and destination.
 
 To broadcast across windows, enable **Allow broadcast input across windows**
@@ -243,8 +244,8 @@ using its current scope until stopped. While the all-window preference is saved,
 
 A multiline paste asks once for confirmation and lists each recipient's destination and tab name. During
 paste or a remote mouse drag, the recipients stay fixed. **Stop Paste** ends the
-remaining paste across all recipients. If sending fails, check the status for
-each recipient's outcome before trying again.
+remaining paste across all recipients. If sending fails, read the upper-right
+report for each recipient's outcome before deciding whether to send again.
 
 During a window-local paste or remote drag, tabs can move between groups in that
 window. Wait for the operation to finish before moving a tab across that window's

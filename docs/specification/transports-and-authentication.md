@@ -155,9 +155,19 @@ attempt. Leave the configured path, file, and references as observed.
 After reporting either condition, continue with the next available method
 allowed by the profile and currently offered by the server. For example, a
 password method already configured for manual entry can continue while a
-saved password that requires the same missing vault remains unavailable. If
-no method can continue, show an error dialog and end the attempt. Existing
-handling for mismatch, cancellation, and other vault failures applies.
+saved password that requires the same missing vault remains unavailable. End
+the attempt if no method can continue.
+
+When an unavailable vault, a missing saved credential or a kind mismatch ends
+the attempt, the terminal tab's status shows the failed connection.
+Present the reason in an upper-right
+floating notice with **OK**. For an inactive tab, mark it unread and announce
+the failure once in a modeless window that identifies the affected tab and
+leaves keyboard focus in place. **OK** on either surface marks the same notice
+as read. If authentication is waiting for a decision or input, present its
+dialog even when the relevant tab is inactive. Existing rules govern
+cancellation, authentication fallback and other vault failures.
+[Notification policy](notification-policy.md)
 
 When the profile has no saved key reference and the user chooses a key during
 SSH authentication, show the verified host, port, and fixed SSH username. Offer

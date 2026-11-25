@@ -115,9 +115,14 @@ Ask before using a changed drive mapping, and record that approval separately
 from profile trust. Use the captured mapping throughout the recording session.
 See [the recording contract](../drafts/receive-logging-issue.md#log-filename-template-redesign).
 Keep SSH host-key
-checks and vault unlock in their normal order. Other sessions continue to accept input during review.
-The existing modeless destination-change notice after a successful reconnect
-has no effect on these decisions or on broadcast selection.
+checks and vault unlock in their normal order. For an inactive tab that needs
+a trust decision, present the review dialog identifying the tab and destination
+as soon as the decision is needed. Keep keystrokes directed to the user's
+current input target until the user focuses the dialog. Only the affected
+operation waits. After a successful reconnect to a changed destination, follow
+the [notification policy](notification-policy.md) for the tab notice and the
+additional modeless notice when the tab is inactive. Acknowledging either
+preserves the completed trust decisions and broadcast selection.
 
 ## Reset and pending operations
 

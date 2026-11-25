@@ -139,6 +139,11 @@ The light or dark appearance of the UI surrounding the terminal, including the
 title bar, menus, tabs, status bar, and window frame. It does not change the
 terminal's default colors or highlight styles.
 
+**Floating notice**:
+A message or set of available actions shown over its owning TabTty view while
+the user can continue working. A notice can explain a temporary change, offer
+control of an ongoing activity, or report an event that needs acknowledgement.
+
 **Terminal default colors**:
 The fixed black background and white foreground used as the terminal's base
 appearance, independently of the application theme. Received terminal color

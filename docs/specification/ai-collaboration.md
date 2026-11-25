@@ -586,7 +586,10 @@ rejection never consumes `action_seq` or promises that an older action was unsen
 ## UI and offline operation
 
 Both permission dialogs identify the session by its tab name, transport and
-destination. Show the SSH account and host/port, the Telnet host/port, or the
+destination. When a permission decision is needed for an inactive tab, present
+the dialog when the request arises. Keep ongoing keyboard input in its current
+target until the user focuses the dialog. Only the requested permission change
+waits for the answer. Show the SSH account and host/port, the Telnet host/port, or the
 serial port from the session being authorized, including a retained session.
 These details stay in the local dialog. Display any formatting or line-control
 characters in identity fields visibly as Unicode code points. Before starting
@@ -609,9 +612,11 @@ Remote Desktop preserves existing permissions so unattended AI work can continue
 The usual terminal and counterpart loss rules still apply.
 Keep End AI sharing available as a floating button over the selected shared
 tab's terminal, including during control and takeover. Show the floating
-takeover button while the AI has control. Place these compact, opaque actions
-at the upper right without reserving terminal space, moving keyboard focus,
-or covering a tab or split divider. Taking control back preserves reading.
+takeover button while the AI has control. Group these actions in a single
+compact, opaque item in the tab's upper-right stack. Update the buttons in
+place as control changes and remove the item when sharing ends. Keep keyboard
+focus in place and tabs and split dividers accessible, as specified in the
+[notification policy](notification-policy.md). Taking control back preserves reading.
 Display connection and AI collaboration status in the tab's single-row bottom
 status bar, fixed at 30 DIP, with the text centered vertically. Status changes
 and floating actions preserve the terminal viewport dimensions.

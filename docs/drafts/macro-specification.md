@@ -634,9 +634,10 @@ Yes/No, else OK. No password-masking/secret-input or arbitrary button API is add
 
 Wait only for the originating run. Identify that run and its current host; other
 tabs/windows remain usable. Each run has at most one outstanding dialog. A tab
-move moves/reparents its outstanding request without losing typed input. Restore
-a minimized host to its prior normal/maximized state when action is needed, but
-do not promise Windows foreground focus. An answer does not clear other holds.
+move reparents its outstanding request and preserves typed input. If the host
+is minimized, keep it minimized and make the decision dialog reachable from
+the taskbar. A background request preserves the user's current keyboard target.
+An answer clears only the hold for that question. [Notification policy](../specification/notification-policy.md)
 
 Minimize/Restore target the window currently hosting the run's tab, including
 after moves. Restore is a no-op unless minimized and preserves pre-minimize
@@ -671,14 +672,17 @@ and bounded error details without copying arguments, sent text or captures into
 diagnostics automatically.
 
 Recording owns file recovery. The run decides under its state lock whether a
-recovery applies to its current recording-failure hold. From acceptance of Stop,
-the macro panel and tab status stop offering retry, resume or continue actions
-for that run. Keep the factual failure history and show Stopping until cleanup
+recovery applies to its current recording-failure hold. Show available run
+actions in the tab's upper-right floating notice. From acceptance of Stop,
+withdraw retry, resume and continue for that run. Keep the factual failure
+history and show Stopping until cleanup
 ends, then show the end reason and source position. A successful retry that
 finishes after accepted Stop can restore recording on a healthy terminal. The
 run remains stopped and submits no further input. On recovery, update the status
-bar only if it still shows the matching recording failure. Keep a newer disconnect
-or unrelated error visible. See [#190](https://github.com/TabTty/TabTty/issues/190).
+bar for the matching recording part and preserve a newer disconnect or unrelated
+error. Acknowledging the recording failure leaves the run's holds in place.
+See the [notification policy](../specification/notification-policy.md) and
+[#190](https://github.com/TabTty/TabTty/issues/190).
 
 Macro ownership preserves broadcast checks but excludes the session from newly
 captured eligible recipients; other eligible selected sessions still receive.
