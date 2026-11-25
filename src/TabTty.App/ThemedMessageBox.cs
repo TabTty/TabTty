@@ -29,14 +29,13 @@ internal static class ThemedMessageBox
 
     internal static Window Create(Window? owner, string message, string title, MessageBoxButton buttons,
         MessageBoxImage icon, MessageBoxResult defaultResult, Action<MessageBoxResult> select,
-        Func<MessageBoxResult, string>? label = null, ImageSource? windowIcon = null, bool notification = false,
-        string? details = null)
+        Func<MessageBoxResult, string>? label = null, ImageSource? windowIcon = null,
+        string? details = null, bool modelessDecision = false)
     {
         owner = owner is { IsVisible: true } ? owner : null;
         var dialog = new Window
         {
             Owner = owner, Title = title, Icon = windowIcon ?? WindowIcons.App,
-            Topmost = notification, ShowActivated = !notification,
             Width = 480, SizeToContent = SizeToContent.Height,
             ResizeMode = ResizeMode.NoResize, ShowInTaskbar = owner is null,
             WindowStartupLocation = owner is null ? WindowStartupLocation.CenterScreen : WindowStartupLocation.CenterOwner,
@@ -108,15 +107,16 @@ internal static class ThemedMessageBox
             var button = new Button
             {
                 Content = label?.Invoke(choice) ?? Text(choice.ToString()), MinWidth = 84, Margin = new Thickness(8, 0, 0, 0),
-                IsDefault = choice == initial, IsCancel = !notification && choice == DismissalResult(buttons),
+                IsDefault = choice == initial, IsCancel = choice == DismissalResult(buttons),
             };
             button.Click += (_, _) =>
             {
+                if (!dialog.IsVisible) return;
                 select(choice);
-                if (notification) dialog.Close();
+                if (modelessDecision) dialog.Close();
                 else dialog.DialogResult = true;
             };
-            if (!notification && button.IsDefault) dialog.Loaded += (_, _) => button.Focus();
+            if (button.IsDefault) dialog.Loaded += (_, _) => { if (dialog.ShowActivated) button.Focus(); };
             actions.Children.Add(button);
         }
         return dialog;

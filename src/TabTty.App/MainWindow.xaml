@@ -180,14 +180,7 @@
         <Border x:Name="groupHost">
             <TabControl x:Name="tabs" Template="{StaticResource TabGroupTemplate}" />
         </Border>
-        <Canvas ClipToBounds="True">
-            <Border x:Name="broadcastBand" Canvas.Left="2" Canvas.Bottom="2"
-                    MaxWidth="500" Visibility="Collapsed" Background="{DynamicResource WindowBackground}">
-                <TextBlock x:Name="broadcastStatus" Foreground="{DynamicResource WindowForeground}"
-                           TextTrimming="CharacterEllipsis" Padding="6,2" Focusable="True"
-                           ToolTipService.ShowsToolTipOnKeyboardFocus="True" />
-            </Border>
-        </Canvas>
+        <Grid x:Name="windowNoticeHost" Margin="0,45,0,0" Panel.ZIndex="1" ClipToBounds="True" />
         <DockPanel x:Name="welcomePanel" Margin="18,58,18,18" VerticalAlignment="Top">
             <Image x:Name="welcomeIcon" DockPanel.Dock="Left" Width="96" Height="96"
                    Margin="0,0,20,0" VerticalAlignment="Top"

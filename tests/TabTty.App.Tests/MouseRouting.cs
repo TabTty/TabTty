@@ -19,9 +19,13 @@ internal static partial class Program
             .SaveNewAsync(path, token);
 
         var tab = new TerminalTab(path);
-        var window = new MainWindow(app);
+        var window = new MainWindow(app, hasForeground: () => true);
         window.AddTerminalTab(tab);
         window.Show();
+        window.SelectNotificationTab(tab);
+        window.UpdateLayout();
+        tab.FocusPane();
+        await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.ApplicationIdle);
         try
         {
             tab.Start();
@@ -36,7 +40,10 @@ internal static partial class Program
             await WaitForTrackingAsync(true);
             if (!surface.CanReportMouse || !Shows("MouseDestinationHost") || !Shows("MouseSentToHostNotice") ||
                 FindCommand(paneMenu, "SendMouseToHost") is not null)
-                throw new InvalidOperationException("The host did not receive default mouse routing and its first notice.");
+                throw new InvalidOperationException($"Default host routing: mouse={surface.CanReportMouse}, " +
+                    $"status={Shows("MouseDestinationHost")}, hint={Shows("MouseSentToHostNotice")}, " +
+                    $"current={window.IsCurrentView(tab)}, activeWindow={window.IsActive}, " +
+                    $"selected={((TabControl)window.FindName("tabs")).SelectedContent == tab}, clock={tab.Notices.HintsActive}.");
 
             Invoke(tabMenu, "UseMouseInTabTty");
             if (surface.CanReportMouse || !Shows("MouseDestinationTabTty") || Shows("MouseSentToHostNotice"))

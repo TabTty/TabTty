@@ -226,7 +226,7 @@ internal static partial class Program
                 File.Copy(movedStage, stage);
             });
             save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            await RespondAsync("Error", "OK", "The prepared file changed before publication.");
+            await AcknowledgeReportAsync(firstEditor, "The prepared file changed before publication.");
             await UntilAsync(() => !form.IsBusy);
             if (replacementStage is null ||
                 !File.ReadAllBytes(replacementStage).AsSpan().SequenceEqual(File.ReadAllBytes(movedStage)) ||
@@ -236,14 +236,14 @@ internal static partial class Program
             byte[] external = [.. original, (byte)'\n'];
             File.WriteAllBytes(first, external);
             save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            await RespondAsync("Error", "OK", App.Text("StoreChanged"));
+            await AcknowledgeReportAsync(firstEditor, App.Text("StoreChanged"));
             await UntilAsync(() => !form.IsBusy);
             if (!form.HasUnsavedChanges || !File.ReadAllBytes(first).AsSpan().SequenceEqual(external) || File.Exists(first + ".bak"))
                 throw new InvalidOperationException("The stale profile editor lost its draft or changed the external file.");
             File.WriteAllBytes(first, original);
             using (VerifiedFilePublication.ReserveNamespace([Path.Combine(directory, "full-artifacts")], 256L * 1024 * 1024))
             {
-                var dismiss = RespondAsync("Error", "OK", "The file publication artifact budget reached its limit.");
+                var dismiss = AcknowledgeReportAsync(firstEditor, "The file publication artifact budget reached its limit.");
                 save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 await dismiss;
                 await UntilAsync(() => !form.IsBusy);
@@ -266,7 +266,7 @@ internal static partial class Program
                 throw new InvalidOperationException("Profile replacement did not preserve the original.");
             File.Delete(first + ".bak");
             paused.Dispose();
-            await RespondAsync("Error", "OK");
+            await AcknowledgeReportAsync(firstEditor, first + ".bak", App.Text("StoreSaveUnverified"));
             await UntilAsync(() => !form.IsBusy);
 
             var close = FindControls<Button>(form).Single(button => Equals(button.Content, App.Text("CloseDialog")));
@@ -316,7 +316,7 @@ internal static partial class Program
                 await pausedRename.Issued.Task.WaitAsync(renameDeadline.Token);
                 File.WriteAllText(renamed, "A different file owns the requested name.");
                 pausedRename.Dispose();
-                await RespondAsync("Error", "OK", App.Text("ProfileFileNameChangeIncomplete"), reopened);
+                await AcknowledgeReportAsync(reopened, App.Text("ProfileFileNameChangeIncomplete"));
                 await UntilAsync(() => !reopenedForm.IsBusy);
             }
             var retryRename = FindControls<Button>(reopenedForm).Single(button =>
@@ -331,15 +331,12 @@ internal static partial class Program
                 throw new InvalidOperationException("The retry did not finish the original rename.");
             reopened.Close();
 
-            async Task RespondAsync(string title, string action, string? message = null, Window? owner = null)
+            async Task RespondAsync(string title, string action)
             {
                 Window? dialog = null;
                 await UntilAsync(() => (dialog = app.Windows.Cast<Window>()
-                    .SingleOrDefault(window => window.IsVisible && window.Owner == (owner ?? firstEditor) &&
-                        window.Title == (title == "Error" ? App.Text(title) : title))) is not null);
-                if (!FindControls<TextBlock>(dialog!).Any(text => message is not null
-                    ? text.Text.Contains(message, StringComparison.Ordinal)
-                    : text.Text.Contains(first + ".bak", StringComparison.Ordinal) &&
+                    .SingleOrDefault(window => window.IsVisible && window.Owner == firstEditor && window.Title == title)) is not null);
+                if (!FindControls<TextBlock>(dialog!).Any(text => text.Text.Contains(first + ".bak", StringComparison.Ordinal) &&
                       text.Text.Contains(App.Text("StoreSaveUnverified"), StringComparison.Ordinal)))
                     throw new InvalidOperationException("The editor dialog omitted the unverified recovery artifact.");
                 FindControls<Button>(dialog!).Single(button => Equals(button.Content, App.Text(action)))

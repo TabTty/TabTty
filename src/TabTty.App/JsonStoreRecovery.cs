@@ -20,7 +20,7 @@ internal static class JsonStoreRecovery
 
     public static void Show(App app, MainWindow owner, IReadOnlyList<Store> stores) => owner.OpenForm("RecoverStores", form =>
     {
-        form.ShowFileOperationStatus();
+        form.AddStatusBar();
         var choice = new ComboBox { ItemsSource = stores, DisplayMemberPath = nameof(Store.Name), SelectedIndex = 0 };
         form.AddField("RecoveryStore", choice);
         form.AddAsyncAction("RecheckFilePublication", async () =>
@@ -29,6 +29,7 @@ internal static class JsonStoreRecovery
             Adoption? adoption = null;
             try
             {
+                using var progress = form.BeginProgress("FileOperationPending");
                 var outcome = await Task.Run(() => VerifiedFilePublication.Reconcile(store.Path, candidate =>
                 {
                     if (store.PrepareAdoption is { } prepare)
@@ -38,15 +39,15 @@ internal static class JsonStoreRecovery
                 if (outcome is null)
                 {
                     var stages = await Task.Run(() => VerifiedFilePublication.ReinspectRetainedStages(store.Path));
-                    if (!ShowRetainedStages(app, form, stages))
-                        app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow, Text("NoFilePublicationToRecheck"), Text("RecoverStores")));
+                    if (!ShowRetainedStages(form, stages))
+                        form.SetStatusResource("NoFilePublicationToRecheck");
                     return;
                 }
                 if (outcome.Status != FilePublicationStatus.Verified)
                     throw new FilePublicationException(Text("StoreSaveUnverified"), outcome);
                 if (adoption is null) store.Reload();
                 else adoption.Apply();
-                ShowRetainedStages(app, form, VerifiedFilePublication.GetRetainedStagePaths(store.Path));
+                ShowRetainedStages(form, VerifiedFilePublication.GetRetainedStagePaths(store.Path));
             }
             finally { adoption?.Reservation?.Dispose(); }
         });
@@ -77,6 +78,7 @@ internal static class JsonStoreRecovery
             Adoption? adoption = null;
             try
             {
+                using var progress = form.BeginProgress("FileOperationPending");
                 await Task.Run(() => action(candidate =>
                 {
                     if (store.PrepareAdoption is { } prepare)
@@ -85,17 +87,17 @@ internal static class JsonStoreRecovery
                 }));
                 if (adoption is null) store.Reload();
                 else adoption.Apply();
-                ShowRetainedStages(app, form, VerifiedFilePublication.GetRetainedStagePaths(store.Path));
+                ShowRetainedStages(form, VerifiedFilePublication.GetRetainedStagePaths(store.Path));
             }
             finally { adoption?.Reservation?.Dispose(); }
         }
     });
 
-    internal static bool ShowRetainedStages(App app, FormView form, string[] stages)
+    internal static bool ShowRetainedStages(FormView form, string[] stages)
     {
         if (stages.Length == 0) return false;
-        app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow,
-            Text("PublicationRetainedStages") + "\n\n" + string.Join("\n", stages), Text("RecoverStores")));
+        string paths = string.Join("\n", stages);
+        form.Reports.Report(("retained-stages", paths), Text("PublicationRetainedStages") + "\n\n" + paths);
         return true;
     }
 

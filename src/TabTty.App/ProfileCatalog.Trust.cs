@@ -85,7 +85,11 @@ internal sealed partial class ProfileCatalog
             LocalState.Change(state => state.Remove(TrustKey));
         }
         catch (Exception error) when (IsFileProblem(error))
-        { MainWindow.ShowError(owner, new IOException(Text("ProfileTrustWriteFailed"), error)); }
+        {
+            var failure = new IOException(Text("ProfileTrustWriteFailed"), error);
+            if (owner is MainWindow main) FormView.ReportFailure(main.CaptureReport(), failure);
+            else MainWindow.ShowError(owner, failure);
+        }
     }
 
     internal sealed record OnceApproval(string Location, string Version);
@@ -110,9 +114,9 @@ internal sealed partial class ProfileCatalog
     }
 
     internal async Task<Admission> AdmitAsync(Window? owner, string path, string? macroName, CancellationToken token,
-        bool reconnect, OnceApproval? previousOnce, MacroRun? caller = null)
+        bool reconnect, OnceApproval? previousOnce, MacroRun? caller = null, TerminalTab? tab = null)
     {
-        ConnectionProfile profile = await LoadForUseAsync(owner, path, token, macroName);
+        ConnectionProfile profile = await LoadForUseAsync(owner, path, token, macroName, tab);
         string location = await ProfileLocationAsync(profile, token);
         string version = profile.TrustVersion;
         var once = new OnceApproval(location, version);
@@ -135,7 +139,7 @@ internal sealed partial class ProfileCatalog
                 if (unregistered && Path.GetDirectoryName(location) != ActiveFolder)
                     details += "\n\n" + Text("ProfileImportLogDirectory") + "\n" + PermissionDisplay.Literal(folder);
                 var choice = await AskAsync(owner, "ProfileTrustReview", details,
-                    "ProfileConnectOnce", unregistered ? "ProfileImportAndConnect" : "ProfileTrustAndConnect", token);
+                    "ProfileConnectOnce", unregistered ? "ProfileImportAndConnect" : "ProfileTrustAndConnect", token, tab);
                 if (choice == ProfileAnswer.Cancel) throw new SshInteractionCancelledException();
                 token.ThrowIfCancellationRequested();
                 if (ReadTrust(location) != before || folder != app.ProfileSaveDirectory) continue;
@@ -178,7 +182,8 @@ internal sealed partial class ProfileCatalog
         !profile.HasPostConnectionMacro || await AskAsync(owner, "PostConnectionMacroRegistration",
             Describe(path, profile, null, false), "PostConnectionMacroTrustProfile", null, token) == ProfileAnswer.Once;
 
-    internal async Task ApproveRecordingDestinationAsync(Window? owner, RecordingDestination destination, CancellationToken token)
+    internal async Task ApproveRecordingDestinationAsync(Window? owner, RecordingDestination destination, CancellationToken token,
+        TerminalTab? tab = null)
     {
         if (destination.DriveTarget is null) return;
         string key = Digest(Path.TrimEndingDirectorySeparator(destination.Path).ToUpperInvariant());
@@ -191,7 +196,7 @@ internal sealed partial class ProfileCatalog
             if (previous == version) return;
             if (previous is not null && await AskAsync(owner, "LogDestinationReview",
                 Text("LogDestinationReviewNotice") + "\n\n" + PermissionDisplay.Literal(destination.Path) + "\n" +
-                PermissionDisplay.Literal(destination.EffectivePath), "ApproveLogDestination", null, token) == ProfileAnswer.Cancel)
+                PermissionDisplay.Literal(destination.EffectivePath), "ApproveLogDestination", null, token, tab) == ProfileAnswer.Cancel)
                 throw new RecordingStartException(Text("LogDestinationRejected"));
 
             token.ThrowIfCancellationRequested();
@@ -212,7 +217,8 @@ internal sealed partial class ProfileCatalog
         static string Digest(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     }
 
-    private async Task<ConnectionProfile> LoadForUseAsync(Window? owner, string path, CancellationToken token, string? macroName = null)
+    private async Task<ConnectionProfile> LoadForUseAsync(Window? owner, string path, CancellationToken token,
+        string? macroName = null, TerminalTab? tab = null)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
@@ -220,7 +226,7 @@ internal sealed partial class ProfileCatalog
         if (profile is not null) return profile;
         var details = Text("ProfileReadSourceNotice") + "\n\n" + PermissionDisplay.Literal(path);
         if (macroName is not null) details += "\n" + Text("MacroSourceFile") + "  " + PermissionDisplay.Literal(macroName);
-        if (await AskAsync(owner, "ProfileReadSource", details, "ProfileReadSource", null, token) == ProfileAnswer.Cancel)
+        if (await AskAsync(owner, "ProfileReadSource", details, "ProfileReadSource", null, token, tab) == ProfileAnswer.Cancel)
             throw new SshInteractionCancelledException();
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
         return await ConnectionProfile.LoadAsync(path, timeout.Token);
@@ -257,9 +263,10 @@ internal sealed partial class ProfileCatalog
     }
 
     private static async Task<ProfileAnswer> AskAsync(Window? owner, string title, string details,
-        string once, string? remember, CancellationToken token)
+        string once, string? remember, CancellationToken token, TerminalTab? tab = null)
     {
         token.ThrowIfCancellationRequested();
+        owner = tab?.DecisionHost ?? owner;
         if (owner is { IsLoaded: false }) owner = null;
         var answer = new TaskCompletionSource<ProfileAnswer>(TaskCreationOptions.RunContinuationsAsynchronously);
         var window = new MainWindow.FormWindow(owner, Text(title))
@@ -284,6 +291,12 @@ internal sealed partial class ProfileCatalog
             Complete(ProfileAnswer.Cancel);
         };
         window.Closed += (_, _) => answer.TrySetResult(ProfileAnswer.Cancel);
+        if (tab is not null)
+        {
+            window.Loaded += (_, _) => { if (window.ShowActivated) cancel.Focus(); };
+            await tab.PresentDecisionAsync(window, token);
+            return await answer.Task;
+        }
         window.Show();
         cancel.Focus();
         using var cancellation = token.Register(() => window.Dispatcher.BeginInvoke(() =>

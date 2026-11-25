@@ -237,7 +237,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
     public void Show(MainWindow owner)
     {
         try { owner.OpenForm("ProfileCatalog", Build); }
-        catch (Exception exception) when (IsFileProblem(exception)) { MainWindow.ShowError(owner, exception); }
+        catch (Exception exception) when (IsFileProblem(exception)) { FormView.ReportFailure(owner.CaptureReport(), exception); }
 
         void Build(FormView form)
         {
@@ -447,7 +447,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                     ProfileRecycling.Recycle(form.OwnerWindow, item.Path);
                     ChangeSelected(remove: true, item);
                 }
-                catch (Exception exception) when (IsFileProblem(exception)) { MainWindow.ShowError(form.OwnerWindow, exception); }
+                catch (Exception exception) when (IsFileProblem(exception)) { form.ReportFailure(exception); }
                 finally { registrationChanges.Release(); }
             }
 
@@ -483,7 +483,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                     if (!remove && list.SelectedItem is Registration item && item.Id == selected.Id)
                         list.ScrollIntoView(item);
                 }
-                catch (Exception exception) when (IsFileProblem(exception)) { MainWindow.ShowError(form.OwnerWindow, exception); }
+                catch (Exception exception) when (IsFileProblem(exception)) { form.ReportFailure(exception); }
             }
 
             void Reload() => ReloadAfterSave(null);
@@ -708,7 +708,6 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 }
                 ConnectionProfile draft = editor.GetDraft();
                 Action baseline = form.CaptureSaveBaseline();
-                using var progress = form.BeginProgress("SavingChanges");
                 long reset = trustReset;
                 string attemptedPath;
                 ProfileEdit? pendingEdit = null;
@@ -730,6 +729,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                     pendingEdit = await PrepareEditAsync(path, profile, editor.ProfileName, fromExplorer);
                 }
                 var pending = new PendingProfileSave(path, attemptedPath, pendingEdit, reset, removals.GetValueOrDefault(attemptedPath));
+                using var progress = form.BeginProgress("SavingChanges");
                 var operation = path is null ? draft.BeginSaveNew(attemptedPath, issueProfiles, validateProfileStage)
                     : draft.BeginSaveEdit(issueProfiles, validateProfileStage);
                 try { await operation.ObserveAsync(); }
@@ -786,7 +786,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
             if (form.HasUnsavedChanges)
             {
                 changedByRename = verified;
-                form.SetStatusMessage(Text("CredentialRenameProfileChanged"));
+                form.SetStatusResource("CredentialRenameProfileChanged");
                 return;
             }
             changedByRename = null;
@@ -819,9 +819,8 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
         void ShowCleanupWarning(ConnectionProfile saved, string attemptedPath)
         {
             if (BackupCleanupWarning(saved) is { } warning)
-                app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow, warning, Text("EditProfile"),
-                    icon: MessageBoxImage.Warning));
-            JsonStoreRecovery.ShowRetainedStages(app, form, VerifiedFilePublication.GetRetainedStagePaths(attemptedPath));
+                form.Reports.Report(("profile-cleanup", attemptedPath), warning);
+            JsonStoreRecovery.ShowRetainedStages(form, VerifiedFilePublication.GetRetainedStagePaths(attemptedPath));
         }
     }
 

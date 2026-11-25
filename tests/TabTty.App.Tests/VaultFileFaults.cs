@@ -123,6 +123,15 @@ internal static partial class Program
                 (!empty && !FindControls<Button>(host).Any(button => Equals(button.Content, App.Text("AddVaultPassword")))))
                 throw new InvalidOperationException("First use did not publish the new vault.");
 
+            await app.Vault.UnlockFromMenuAsync(host).WaitAsync(deadline.Token);
+            await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+            if (!FindControls<TextBlock>(host).Any(label => label.IsVisible && label.Text.Contains(App.Text("VaultUnlocked"))))
+            {
+                string states = string.Join(" | ", FindControls<TextBlock>(host).Where(label => label.ToolTip is string)
+                    .Select(label => $"{label.Text} ({label.IsVisible})"));
+                throw new InvalidOperationException($"Explicit vault unlock left no visible state (empty={empty}): {states}.");
+            }
+
             Task choose = host.Dispatcher.InvokeAsync(ChooseSavedPassword).Task.Unwrap();
             (await FindDialogAsync("SelectSavedPassword")).Close();
             await choose.WaitAsync(deadline.Token);
@@ -195,16 +204,26 @@ internal static partial class Program
             if (list.Items.OfType<VaultEntryInfo>().Single().Name != original)
                 throw new InvalidOperationException("Cancelling renamed the vault credential.");
 
+            byte[] originalVault = File.ReadAllBytes(vaultPath);
+            (edit, confirm) = await OpenRenameAsync(renamed);
+            using (VerifiedFilePublication.ReserveNamespace([Path.Combine(directory, "reserve-artifacts")], 256L * 1024 * 1024))
+            {
+                Click(confirm, "RenameCredentialOnly");
+                await AcknowledgeReportAsync(edit, "The file publication artifact budget reached its limit.");
+            }
+            var editForm = (FormView)edit.Content;
+            if (!edit.IsVisible || editForm.IsBusy || editForm.Reports.HasReports ||
+                FindControls<TextBox>(edit).Single().Text != renamed ||
+                !originalVault.AsSpan().SequenceEqual(File.ReadAllBytes(vaultPath)))
+                throw new InvalidOperationException("Acknowledging a failed credential save lost its draft or changed the vault.");
+            edit.Close();
+            await WaitIdleAsync();
+
             (edit, confirm) = await OpenRenameAsync(renamed);
             File.AppendAllText(changed, "\n");
             Click(confirm, "RenameAndUpdateProfiles");
-            var report = await FindDialogAsync("Vault", form: false);
-            var outcome = FindControls<TextBlock>(report).Single(block =>
-                block.Text.Contains(string.Format(App.Text("CredentialRenameUpdatedProfiles"), 1), StringComparison.Ordinal));
-            if (!outcome.Text.Contains(App.Text("CredentialRenameProfileChanged"), StringComparison.Ordinal) ||
-                !outcome.Text.Contains(App.Text("CredentialRenamePendingProfileEdits"), StringComparison.Ordinal))
-                throw new InvalidOperationException("The rename report lost the reasons for skipped profiles.");
-            Click(report, "OK");
+            await AcknowledgeReportAsync(host, string.Format(App.Text("CredentialRenameUpdatedProfiles"), 1),
+                App.Text("CredentialRenameProfileChanged"), App.Text("CredentialRenamePendingProfileEdits"));
             await WaitIdleAsync();
             if (edit.IsVisible) throw new InvalidOperationException("A successful rename did not close the edit dialog.");
 
@@ -401,9 +420,7 @@ internal static partial class Program
             using (VaultController.ManagementDeliveries.Reserve(VaultController.ManagementDeliveryLimit))
             {
                 StartManagement();
-                var busy = await FindDialogAsync("Vault", form: false);
-                EnsureMessage(busy, App.Text("VaultBusy"));
-                Click(busy, "OK");
+                await AcknowledgeReportAsync(host, App.Text("VaultBusy"));
                 await UntilIdleAsync();
                 if (fixture.Installing.Task.IsCompleted || CredentialVault.InspectFile(empty) != originalEmpty)
                     throw new InvalidOperationException("Notification pressure admitted vault initialization.");
@@ -434,11 +451,7 @@ internal static partial class Program
             byte[] collision = "separately created target"u8.ToArray();
             File.WriteAllBytes(empty, collision);
             fixture.ReleaseInstallation.SetResult();
-            var problem = await FindDialogAsync("Vault", form: false);
-            EnsureMessage(problem, parked, StringComparison.OrdinalIgnoreCase);
-            EnsureMessage(problem, stage, StringComparison.OrdinalIgnoreCase);
-            EnsureMessage(problem, App.Text("PublishedImageOther"));
-            Click(problem, "OK");
+            await AcknowledgeReportAsync(host, parked, stage, App.Text("PublishedImageOther"));
             await UntilIdleAsync();
             if (!File.ReadAllBytes(empty).AsSpan().SequenceEqual(collision) || !VerifiedFilePublication.IsUnresolved(empty))
                 throw new InvalidOperationException("Initialization overwrote the competing file or lost its restriction.");
@@ -480,16 +493,10 @@ internal static partial class Program
                     throw new InvalidOperationException("Restore exposed metadata before verifying preservation.");
                 File.Delete(preservation);
                 hold.Dispose();
-                problem = await FindDialogAsync("Vault", form: false);
-                EnsureMessage(problem, preservation, StringComparison.OrdinalIgnoreCase);
-                EnsureMessage(problem, App.Text("PublishedImageMissing"));
-                Click(problem, "OK");
+                await AcknowledgeReportAsync(host, preservation, App.Text("PublishedImageMissing"));
                 await UntilIdleAsync();
                 Start("RecheckFilePublication");
-                problem = await FindDialogAsync("Vault", form: false);
-                EnsureMessage(problem, preservation, StringComparison.OrdinalIgnoreCase);
-                EnsureMessage(problem, App.Text("PublishedImageMissing"));
-                Click(problem, "OK");
+                await AcknowledgeReportAsync(host, preservation, App.Text("PublishedImageMissing"));
                 await UntilIdleAsync();
                 File.WriteAllBytes(preservation, prior);
                 Start("RecheckFilePublication");
@@ -546,7 +553,9 @@ internal static partial class Program
             if (!archiveEditor.IsVisible) throw new InvalidOperationException("The archive editor closed before acknowledgement.");
             Click(acknowledged, "OK");
             await UntilAsync(() => !archiveEditor.IsVisible && !app.Vault.HasActiveOperations);
-            if (File.Exists(first) || app.VaultPath != first || !File.ReadAllBytes(backup).AsSpan().SequenceEqual(priorBackup))
+            string archiveLocation = string.Format(App.Text("VaultArchiveDestination"), archive);
+            if (!FindControls<TextBlock>(host).Any(text => text.IsVisible && text.Text.Contains(archiveLocation)) ||
+                File.Exists(first) || app.VaultPath != first || !File.ReadAllBytes(backup).AsSpan().SequenceEqual(priorBackup))
                 throw new InvalidOperationException("Archive changed the selected path, created a replacement or moved its backup.");
             Console.WriteLine("PASS VaultArchiveOwnsIssuedMoveUntilTheEditorAcknowledges");
         }

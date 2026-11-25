@@ -40,7 +40,7 @@ internal static partial class Program
         string settingsDirectory = Directory.CreateTempSubdirectory("TabTty-settings-test-").FullName;
         LocalState.UseTestDirectory(settingsDirectory);
         MacroTrust.UseTestStore();
-        if (args is not ["--profile-trust" or "--macro-profile-connect" or "--post-connection-macro"])
+        if (args is not ["--profile-trust" or "--macro-profile-connect" or "--post-connection-macro" or "--tab-decisions"])
             AcceptFixtureProfileReviews();
         string settingsPath = Path.Combine(settingsDirectory, "settings.json");
         if (args is ["--settings-draft"])
@@ -76,6 +76,24 @@ internal static partial class Program
 #pragma warning restore WPF0001
         try
         {
+            if (args is ["--notice-stack"])
+            {
+                RunScenario(application.Dispatcher, () => CheckNoticeStackAsync(application, settingsDirectory));
+                Console.WriteLine("PASS NoticeStack");
+                return 0;
+            }
+            if (args is ["--credential-notices"])
+            {
+                RunScenario(application.Dispatcher, () => CheckSavedCredentialNotificationsAsync(settingsDirectory));
+                Console.WriteLine("PASS SavedCredentialNotifications");
+                return 0;
+            }
+            if (args is ["--tab-decisions"])
+            {
+                RunScenario(application.Dispatcher, () => CheckTabDecisionsAsync(application, settingsDirectory));
+                Console.WriteLine("PASS TabDecisions");
+                return 0;
+            }
             if (args is ["--dispatcher-scenarios"])
             {
                 CheckDispatcherScenarios(application.Dispatcher);
@@ -700,7 +718,7 @@ internal static partial class Program
             {
                 var contents = (FormView)dialog.Content;
                 string expected = string.Format(App.Text("SshServerQuestions"), destination);
-                if (contents.Children[0] is not TextBlock notice || notice.Text != expected ||
+                if (contents.Body.Children[0] is not TextBlock notice || notice.Text != expected ||
                     DockPanel.GetDock(notice) != Dock.Top || inputs is not [TextBox { IsUndoEnabled: false }, PasswordBox] ||
                     !FindControls<Button>(contents).Any(button => Equals(button.Content, App.Text("SendSshAnswers"))))
                     throw new InvalidOperationException("The SSH form did not keep the recipient above the scrolling server questions.");
@@ -849,7 +867,7 @@ internal static partial class Program
             AssertStandaloneCheckBox(settingChecks[1], "BroadcastAcrossWindows");
             settingsForm.Completed += result => completed = result;
             int revision = app.SettingsRevision;
-            var dismiss = ((DockPanel)settings.Header).Children.OfType<Button>().Single();
+            var dismiss = TabCloseButton(settings);
             dismiss.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, dismiss));
             if (completed != false || tabs.Items.Count != 2 || !tabs.Items.Contains(highlights) || app.SettingsRevision != revision)
                 throw new InvalidOperationException("The settings tab close button did not cancel its draft.");
@@ -975,7 +993,7 @@ internal static partial class Program
             root.Measure(new Size(960, 620));
             root.Arrange(new Rect(0, 0, 960, 620));
             root.UpdateLayout();
-            var dismiss = ((DockPanel)tab.Header).Children.OfType<Button>().Single();
+            var dismiss = TabCloseButton(tab);
             Point closePosition = dismiss.TranslatePoint(new Point(dismiss.ActualWidth / 2, dismiss.ActualHeight / 2), root);
             var inputHit = root.InputHitTest(closePosition);
             DependencyObject? hit = inputHit as DependencyObject;
@@ -1335,7 +1353,7 @@ internal static partial class Program
                 var form = (FormView)tabs.SelectedContent;
                 bool detailsPage = titleKeys[index] is "ProfileCatalog" or "ManageVault";
                 var fields = detailsPage
-                    ? form.Children.OfType<StackPanel>().Single(panel => DockPanel.GetDock(panel) == Dock.Top)
+                    ? form.Body.Children.OfType<StackPanel>().Single(panel => DockPanel.GetDock(panel) == Dock.Top)
                     : FormFields(form);
                 var heading = FindControls<TextBlock>(form).SingleOrDefault(text =>
                     AutomationProperties.GetHeadingLevel(text) == AutomationHeadingLevel.Level1);
@@ -1347,11 +1365,11 @@ internal static partial class Program
                     Border? frame;
                     if (titleKeys[index] == "ProfileCatalog")
                     {
-                        var groups = form.Children.OfType<TabControl>().Single();
+                        var groups = form.Body.Children.OfType<TabControl>().Single();
                         var presenter = groups.Template.FindName("PART_SelectedContentHost", groups) as ContentPresenter;
                         frame = presenter is null ? null : VisualTreeHelper.GetParent(presenter) as Border;
                     }
-                    else frame = form.Children.OfType<Border>().Single(border => FindControls<ListView>(border).Any());
+                    else frame = form.Body.Children.OfType<Border>().Single(border => FindControls<ListView>(border).Any());
                     if (frame is null || frame.BorderThickness != new Thickness(1))
                         throw new InvalidOperationException("The details page does not have a shared rectangular content frame.");
                     double tallHeight = frame.ActualHeight;
@@ -1372,7 +1390,7 @@ internal static partial class Program
                 }
 
                 if (titleKeys[index] is "HighlightSets" or "Settings" &&
-                    !form.Children.OfType<Grid>().Any(footer => DockPanel.GetDock(footer) == Dock.Bottom &&
+                    !form.Body.Children.OfType<Grid>().Any(footer => DockPanel.GetDock(footer) == Dock.Bottom &&
                         FindControls<Button>(footer).Any(button => Equals(button.Content, App.Text("Save")))))
                     throw new InvalidOperationException("The editor save button was not fixed at the bottom of the page.");
 
@@ -1481,7 +1499,7 @@ internal static partial class Program
             AutomationProperties.GetHeadingLevel(text) == AutomationHeadingLevel.Level1);
         var scroller = layout.Children.OfType<ScrollViewer>().Single();
         bool titleAboveColumns = heading.Parent == layout && Grid.GetRow(heading) == 0 && Grid.GetColumnSpan(heading) == 2 ||
-            heading.Parent is Border titleBand && titleBand.Parent == form && DockPanel.GetDock(titleBand) == Dock.Top;
+            heading.Parent is Border titleBand && titleBand.Parent == form.Body && DockPanel.GetDock(titleBand) == Dock.Top;
         if (!titleAboveColumns ||
             Grid.GetRow(navigation) != 1 || Grid.GetColumn(navigation) != 0 ||
             Grid.GetRow(scroller) != 1 || Grid.GetColumn(scroller) != 1)
@@ -1513,11 +1531,15 @@ internal static partial class Program
     }
 
     private static StackPanel FormFields(FormView form) =>
-        (StackPanel)FindControls<ScrollViewer>(form).Single(view => view.Content is StackPanel).Content;
+        (StackPanel)FindControls<ScrollViewer>(form.Body).Single(view => view.Content is StackPanel).Content;
 
     private static Button SettingsActionButton(FormView form, string key) => FindControls<Button>(form).Single(button =>
         Equals(button.Content, App.Text("Run")) && AutomationProperties.GetLabeledBy(button) is Label { Content: TextBlock label } &&
         label.Text == App.Text(key));
+
+    private static FixedChoiceBox SettingsChoice(FormView form, string key) => FindControls<FixedChoiceBox>(form)
+        .Single(choice => AutomationProperties.GetLabeledBy(choice) is Label { Content: TextBlock label } &&
+            label.Text == App.Text(key));
 
     private static void OpenSettings(MainWindow window)
     {
@@ -1537,21 +1559,21 @@ internal static partial class Program
             OpenSettings(window);
             var tabs = (TabControl)window.FindName("tabs");
             var form = (FormView)tabs.SelectedContent;
-            var language = FindControls<ComboBox>(form).Single(choice => choice.Items.Contains(App.Text("English")));
-            var theme = FindControls<ComboBox>(form).Single(choice => choice.Items.Contains(App.Text("Dark")));
+            var language = SettingsChoice(form, "Language");
+            var theme = SettingsChoice(form, "Theme");
             var save = FindControls<Button>(form).Single(button => Equals(button.Content, App.Text("Save")));
 
-            await Apply("Japanese", "Dark", "ja", "dark", "設定", "認証情報 vault", "vault の管理");
-            await Apply("English", "Light", "en", "light", "Settings", "Credential vault", "Vault management");
+            await Apply("ja", "dark", "設定", "認証情報 vault", "vault の管理");
+            await Apply("en", "light", "Settings", "Credential vault", "Vault management");
             bool systemJapanese = SystemLanguage.Resolve() == "ja";
-            await Apply("System", "System", "system", "system", systemJapanese ? "設定" : "Settings",
+            await Apply("system", "system", systemJapanese ? "設定" : "Settings",
                 systemJapanese ? "認証情報 vault" : "Credential vault", systemJapanese ? "vault の管理" : "Vault management");
 
-            async Task Apply(string languageKey, string themeKey, string languageCode, string themeMode, string settingsLabel,
+            async Task Apply(string languageCode, string themeMode, string settingsLabel,
                 string vaultLabel, string manageLabel)
             {
-                language.SelectedItem = App.Text(languageKey);
-                theme.SelectedItem = App.Text(themeKey);
+                language.SelectedId = languageCode;
+                theme.SelectedId = themeMode;
                 save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, save));
                 using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
                 while (form.IsBusy) await Task.Delay(15, deadline.Token);
@@ -1606,6 +1628,9 @@ internal static partial class Program
         encoder.Save(file);
     }
 
+    private static Button TabCloseButton(TabItem item) => ((DockPanel)item.Header).Children.OfType<Button>()
+        .Single(button => AutomationProperties.GetName(button) == App.Text("CloseTab"));
+
     private static void CheckTabHeaderLabels(Window window, TabItem shortTab, TabItem longTab, double expectedWidth)
     {
         var longHeader = (DockPanel)longTab.Header;
@@ -1618,8 +1643,8 @@ internal static partial class Program
             root.UpdateLayout();
             var untrimmed = new TextBlock { Text = label.Text, FontFamily = label.FontFamily, FontSize = label.FontSize };
             untrimmed.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-            var close = longHeader.Children.OfType<Button>().Single();
-            var shortClose = ((DockPanel)shortTab.Header).Children.OfType<Button>().Single();
+            var close = TabCloseButton(longTab);
+            var shortClose = TabCloseButton(shortTab);
             double closeStart = close.TranslatePoint(new Point(), longTab).X;
             if (Math.Abs(shortTab.ActualWidth - expectedWidth) > 0.5 ||
                 Math.Abs(longTab.ActualWidth - expectedWidth) > 0.5 ||
@@ -1756,8 +1781,8 @@ internal static partial class Program
             OpenSettings(host);
             var form = (FormView)tabs.SelectedContent;
             var autoClose = FindControls<CheckBox>(form).First();
-            var languageChoice = FindControls<ComboBox>(form).Single(choice => choice.Items.Contains(App.Text("English")));
-            if (autoClose.IsChecked != true || app.LanguageChoice != "system" || !Equals(languageChoice.SelectedItem, App.Text("System")))
+            var languageChoice = SettingsChoice(form, "Language");
+            if (autoClose.IsChecked != true || app.LanguageChoice != "system" || languageChoice.SelectedId != "system")
                 throw new InvalidOperationException("Settings did not default to system language and automatic closure.");
 
             using (TcpClient firstPeer = await Connect(host))
@@ -1812,8 +1837,8 @@ internal static partial class Program
             autoClose.IsChecked = true;
             logTemplate.Text = "<cpname>_<datetime:yyyy-MM-dd_HH-mm-ss-ffffff>";
             navigation.SelectedIndex = 0;
-            var themeChoice = FindControls<ComboBox>(form).Single(choice => choice.Items.Contains(App.Text("Dark")));
-            themeChoice.SelectedItem = App.Text("Dark");
+            var themeChoice = SettingsChoice(form, "Theme");
+            themeChoice.SelectedId = "dark";
             save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, save));
             while (form.IsBusy) await Task.Delay(15, deadline.Token);
             using (var saved = System.Text.Json.JsonDocument.Parse(File.ReadAllBytes(settingsPath)))
@@ -1892,7 +1917,7 @@ internal static partial class Program
             OpenSettings(finalHost);
             if (finalTabs.SelectedItem is not TabItem settingsTab || welcome.IsVisible)
                 throw new InvalidOperationException("The empty window could not open a new tab.");
-            var closeSettings = ((DockPanel)settingsTab.Header).Children.OfType<Button>().Single();
+            var closeSettings = TabCloseButton(settingsTab);
             closeSettings.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             if (finalTabs.HasItems || !finalHost.IsVisible || finalHost.IsClosing || !welcome.IsVisible)
                 throw new InvalidOperationException("Closing the final settings tab did not keep the window open.");
@@ -1906,7 +1931,7 @@ internal static partial class Program
             if (finalTabs.Items.Count != 1 || terminals[^1].ConnectionWarning != "ConnectionLost")
                 throw new InvalidOperationException("A connection reset was not retained with a warning when automatic closure was enabled.");
             CheckTabHeader((TabItem)finalTabs.SelectedItem, disconnected: false, warning: "ConnectionLost");
-            var closeBrokenTab = ((DockPanel)((TabItem)finalTabs.SelectedItem).Header).Children.OfType<Button>().Single();
+            var closeBrokenTab = TabCloseButton((TabItem)finalTabs.SelectedItem);
             closeBrokenTab.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             while (finalTabs.HasItems) await Task.Delay(15, deadline.Token);
 
@@ -2849,7 +2874,7 @@ internal static partial class Program
             var challenge = new SshChallenge(SshDestination.Parse("fixture.example", 22), "", "", [new("Code", false)]);
             var (dialog, _) = TerminalTab.CreateSshChallengeForm(host, challenge);
             dialog.ContentRendered += (_, _) => dialog.DialogResult = true;
-            bool? accepted = SshHostTrust.ShowCancellable((App)Application.Current, dialog, deadline.Token);
+            bool accepted = TabDecision.ShowFormAsync((App)Application.Current, dialog, deadline.Token).GetAwaiter().GetResult();
             host.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
             if (accepted != true || !input.IsKeyboardFocused)
                 throw new InvalidOperationException("Closing the authentication prompt did not return keyboard focus to terminal input.");

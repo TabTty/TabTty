@@ -29,7 +29,8 @@ internal static partial class Program
         var tab = new TerminalTab(path);
         bool autoClose = app.AutoCloseDisconnectedTabs;
         await SetAutoClose(false);
-        var window = new MainWindow(app);
+        bool originalHasForeground = true;
+        var window = new MainWindow(app, () => originalHasForeground);
         window.Show();
         window.AddTerminalTab(tab);
         try
@@ -41,8 +42,13 @@ internal static partial class Program
             edit["connection"]!["port"] = ((IPEndPoint)second.LocalEndpoint).Port;
             await profile.Edit(edit.ToJsonString()).SaveEditAsync(deadline.Token);
             await CheckConnection(second, selected: true, previous: first);
+            var reverse = System.Text.Json.Nodes.JsonNode.Parse((await ConnectionProfile.LoadAsync(path, deadline.Token)).ToEditorJson())!;
+            reverse["connection"]!["port"] = ((IPEndPoint)first.LocalEndpoint).Port;
+            var saved = await ConnectionProfile.LoadAsync(path, deadline.Token);
+            await saved.Edit(reverse.ToJsonString()).SaveEditAsync(deadline.Token);
+            await CheckConnection(first, selected: true, previous: second, background: true);
             tab.BroadcastChecked = false;
-            await CheckConnection(second, selected: false);
+            await CheckConnection(first, selected: false);
         }
         finally
         {
@@ -54,11 +60,20 @@ internal static partial class Program
 
         Task SetAutoClose(bool enabled) => app.SaveSettingsAsync(app.SettingsRevision, new(AutoClose: enabled));
 
-        async Task CheckConnection(TcpListener endpoint, bool selected, TcpListener? previous = null)
+        async Task CheckConnection(TcpListener endpoint, bool selected, TcpListener? previous = null, bool background = false)
         {
             var ready = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             void Connected(string _) => ready.TrySetResult(tab.BroadcastChecked);
             tab.Connected += Connected;
+            MainWindow? destination = null;
+            if (background)
+            {
+                originalHasForeground = false;
+                destination = new MainWindow(app, () => !originalHasForeground);
+                destination.Show();
+                destination.Activate();
+            }
+            else window.Activate();
             try
             {
                 tab.Start();
@@ -69,45 +84,47 @@ internal static partial class Program
                 await window.Dispatcher.InvokeAsync(async () =>
                 {
                     var notice = window.OwnedWindows.OfType<Window>().SingleOrDefault(dialog => dialog.IsVisible);
-                    try
+                    if (previous is null)
                     {
-                        if (previous is null && notice is null) return;
-                        if (previous is null || notice is not { Topmost: true, ShowActivated: false, IsActive: false } ||
-                            !window.IsEnabled || notice.Title != App.Text("ReconnectDestinationChanged"))
-                            throw new InvalidOperationException("The destination change notification appeared at the wrong time or below the owner.");
-                        string before = string.Format(App.Text("AiTelnetTarget"), previous.LocalEndpoint);
-                        string after = string.Format(App.Text("AiTelnetTarget"), endpoint.LocalEndpoint);
-                        string body = string.Format(App.Text("ReconnectDestinationDetails"),
-                            Path.GetFileNameWithoutExtension(path), before, after);
-                        if (!FindControls<TextBlock>(notice).Any(label => label.Text == body) || FindControls<Button>(notice).Count() != 1)
-                            throw new InvalidOperationException("The reconnect notification did not identify the old and new destinations.");
-                        var pane = FindControls<TerminalSurface>(tab).Single();
-                        SendText(pane, "a");
-                        var input = new byte[2];
-                        await peer.GetStream().ReadExactlyAsync(input.AsMemory(0, 1), deadline.Token);
-                        app.Broadcast.Start(window);
-                        if (!app.Broadcast.IsActive(window))
-                            throw new InvalidOperationException("Broadcast could not start while the notification was visible.");
-                        SendText(pane, "b");
-                        await peer.GetStream().ReadExactlyAsync(input.AsMemory(1), deadline.Token);
-                        if (!input.AsSpan().SequenceEqual("ab"u8) || !notice.IsVisible)
-                            throw new InvalidOperationException("The open notification interrupted terminal or broadcast input.");
-                        app.Broadcast.Stop(window);
-                        var source = window;
-                        var destination = new MainWindow(app);
-                        destination.Show();
-                        var move = FindMenu(source, "WindowMenu", "MoveTab");
+                        if (notice is not null || tab.Reports.HasReports)
+                            throw new InvalidOperationException("An unchanged destination raised a report.");
+                        return;
+                    }
+                    string body = string.Format(App.Text("ReconnectDestinationDetails"), Path.GetFileNameWithoutExtension(path),
+                        string.Format(App.Text("AiTelnetTarget"), previous.LocalEndpoint),
+                        string.Format(App.Text("AiTelnetTarget"), endpoint.LocalEndpoint));
+                    bool shown = FindControls<TextBlock>(tab.Notices).Any(label => label.Text == body);
+                    if (!shown || tab.Reports.HasUnread != background || (notice is not null) != background)
+                        throw new InvalidOperationException("Changed destination was not routed to its active or background surfaces.");
+                    if (notice is not null && (notice.ShowActivated || notice.IsActive || !window.IsEnabled ||
+                            !FindControls<TextBlock>(notice).Any(label => label.Text == body)))
+                        throw new InvalidOperationException("A background report lost its target or disturbed the active window.");
+                    var pane = FindControls<TerminalSurface>(tab).Single();
+                    SendText(pane, "a");
+                    var input = new byte[2];
+                    await peer.GetStream().ReadExactlyAsync(input.AsMemory(0, 1), deadline.Token);
+                    app.Broadcast.Start(window);
+                    SendText(pane, "b");
+                    await peer.GetStream().ReadExactlyAsync(input.AsMemory(1), deadline.Token);
+                    app.Broadcast.Stop(window);
+                    if (!input.AsSpan().SequenceEqual("ab"u8) || !tab.Reports.HasReports)
+                        throw new InvalidOperationException("The report interrupted normal or broadcast input.");
+                    if (notice is not null)
+                    {
+                        var move = FindMenu(window, "WindowMenu", "MoveTab");
                         OpenSubmenu(move);
                         Click(move.Items.OfType<MenuItem>().Last());
-                        if (!source.IsClosing || !destination.TerminalTabs.Contains(tab) || notice.Owner != destination ||
-                            !notice.IsVisible || notice.IsActive || destination.OwnedWindows.OfType<Window>().Count(w => w.IsVisible) != 1)
-                            throw new InvalidOperationException("The reconnect notice did not follow the last tab to its destination.");
+                        if (!window.IsClosing || !destination!.TerminalTabs.Contains(tab) || notice.Owner != destination || !notice.IsVisible)
+                            throw new InvalidOperationException("The unread report did not follow its tab.");
                         window = destination;
-                        FindControls<Button>(notice).Single().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-                        if (notice.IsVisible || !tab.BroadcastChecked)
-                            throw new InvalidOperationException("Acknowledging the notification changed broadcast selection.");
+                        FindControls<Button>(notice).Single(button => Equals(button.Content, App.Text("NoticeShowTab")))
+                            .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                        if (!tab.Reports.HasUnread) throw new InvalidOperationException("Navigation acknowledged an incident.");
                     }
-                    finally { if (notice?.IsVisible == true) notice.Close(); }
+                    FindControls<Button>(tab.Notices).Single(button => Equals(button.Content, App.Text("OK")))
+                        .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    if (notice?.IsVisible == true || tab.Reports.HasReports || !tab.BroadcastChecked)
+                        throw new InvalidOperationException("Acknowledgement did not resolve both surfaces consistently.");
                 }, DispatcherPriority.ApplicationIdle, deadline.Token).Task.Unwrap();
                 tab.Disconnect();
                 await tab.Completion.WaitAsync(deadline.Token);
@@ -120,6 +137,7 @@ internal static partial class Program
     {
         await CheckMouseRoutingAsync(app, directory);
         await CheckBroadcastReconnectAsync(app, directory);
+        await CheckRecordingNoticesAsync(app, directory);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();

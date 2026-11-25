@@ -87,13 +87,17 @@ internal static partial class Program
             var terminalItem = group.SelectedItem;
             window.OpenForm("Settings", _ => { });
             window.UpdateLayout();
-            var broadcastBand = (FrameworkElement)window.FindName("broadcastBand");
+            var form = (FormView)group.SelectedContent;
+            var broadcastBand = FindControls<TextBlock>(form.Notices).Single(label =>
+                label.Text == string.Format(App.Text("NoticeBroadcastWindow"), app.Broadcast.Status(window)));
             Check(broadcastBand.IsVisible, "Broadcast status must stay visible while a settings tab is selected.");
             group.SelectedItem = terminalItem;
             window.UpdateLayout();
             Check(!broadcastBand.IsVisible, "A visible terminal must provide the broadcast status in its own bottom row.");
             app.Broadcast.Stop(window);
-            await Decide(owner, grant: false, approve: false);
+            group.SelectedItem = group.Items.OfType<TabItem>().Single(item => item.Content == form);
+            await Decide(owner, grant: false, approve: false, background: true);
+            group.SelectedItem = terminalItem;
             Check(!tab.IsAiShared, "Cancel disclosed output.");
             window.UpdateLayout();
             var areaBeforeSharing = tab.TerminalArea.RenderSize;
@@ -193,6 +197,17 @@ internal static partial class Program
             var searchBounds = new Rect(searchBar.TranslatePoint(new Point(), tab.TerminalArea), searchBar.RenderSize);
             Check(!actionBounds.IntersectsWith(searchBounds) && tab.TerminalArea.RenderSize == areaBeforeSharing,
                 "The search overlay obstructed the floating AI controls or resized the terminal.");
+            for (int i = 0; i < 16; i++)
+                tab.Notices.ShowReport(i, string.Concat(Enumerable.Repeat("録画ファイルに書き込めませんでした。", 5)), () => { });
+            window.UpdateLayout();
+            var overflowButton = FindControls<Button>(tab.Notices).Single(button =>
+                Equals(button.Content, string.Format(App.Text("NoticeStackShow"), 16)));
+            Check(overflowButton.IsVisible && AiAction("AiTakeControl") == takeover && AiAction("AiEndSharing").IsVisible &&
+                !new Rect(tab.Notices.TranslatePoint(new Point(), tab.TerminalArea), tab.Notices.RenderSize)
+                    .IntersectsWith(new Rect(searchBar.TranslatePoint(new Point(), tab.TerminalArea), searchBar.RenderSize)) &&
+                tab.TerminalArea.RenderSize == areaBeforeSharing,
+                "Overflow hid the active AI controls, covered search, or changed the terminal size.");
+            for (int i = 0; i < 16; i++) tab.Notices.Remove(i);
             closeSearch.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             string control = tab.AiSharing.Control!.Id;
             string observation = await Observe();
@@ -295,7 +310,8 @@ internal static partial class Program
                 return button;
             }
 
-            async Task Decide(AiCollaboration.Counterpart recipient, bool grant, bool approve, Action? beforeDecision = null)
+            async Task Decide(AiCollaboration.Counterpart recipient, bool grant, bool approve,
+                Action? beforeDecision = null, bool background = false)
             {
                 var menu = new ContextMenu();
                 tab.FillAiMenu(menu);
@@ -309,6 +325,9 @@ internal static partial class Program
                     try
                     {
                         var buttons = FindControls<Button>(dialog).ToArray();
+                        Check(tab.HasPendingDecision && window.IsEnabled && (!background ||
+                            !dialog.IsActive && !dialog.ShowActivated && group.SelectedContent == form),
+                            "AI consent took over a different view or failed to identify its pending tab.");
                         Check(buttons.Single(button => button.IsDefault).IsCancel, "Consent should default to Cancel.");
                         Check(FindControls<TextBlock>(dialog).Any(label =>
                             label.Text.Contains(tab.TabCaption) && label.Text.Contains(recipient.Code) &&
@@ -323,6 +342,8 @@ internal static partial class Program
                 }, DispatcherPriority.Background);
                 operation.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
                 await review.Task.WaitAsync(token);
+                await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                Check(!tab.HasPendingDecision, "An answered consent remained pending.");
             }
 
             async Task ChangedSearchCannotCommit()

@@ -10,9 +10,9 @@ namespace TabTty.App;
 internal sealed partial class TerminalTab
 {
     private readonly TextBlock aiStatus = new();
-    private readonly Button aiTakeover = new() { Margin = new Thickness(2) };
-    private readonly Button aiEndSharing = new() { Margin = new Thickness(2) };
-    private readonly WrapPanel aiActions = new() { Visibility = Visibility.Collapsed };
+    private readonly WrapPanel aiActions = new();
+    private AiCollaboration.Sharing? actionShare;
+    private AiCollaboration.Control? actionControl;
     private TerminalSession? retainedAiSession;
     private long aiAuthorityRevision;
     internal AiCollaboration.Sharing? AiSharing { get; set; }
@@ -31,7 +31,11 @@ internal sealed partial class TerminalTab
         HasMouseCapture || panes.Keys.Any(pane => pane.HasComposition) || Broadcast.HasUnfinishedOperation(this);
 
     private AiCollaboration AiCollaboration => ((App)Application.Current).Ai;
-    internal void ReportAiUncertain() => SetStatus(statusKey, Text("AiUncertainDelivery"));
+    internal void ReportAiUncertain(TerminalSession target)
+    {
+        if (!removed)
+            Reports.Report(new object(), $"{BroadcastTargetLabel(target)} — {Text("AiUncertainDelivery")}");
+    }
     internal string? AiStateLabel => IsAiTakingControl && IsAiShared ? Text("AiTakingControl")
         : IsAiControlling ? Text("AiControlling") : IsAiShared ? Text("AiReadOnly") : null;
 
@@ -40,27 +44,49 @@ internal sealed partial class TerminalTab
         ConfigureStatusIndicator(aiStatus);
         DockPanel.SetDock(aiStatus, Dock.Right);
         statusBar.Children.Add(aiStatus);
-        aiActions.Children.Add(aiTakeover);
-        aiActions.Children.Add(aiEndSharing);
-        aiActions.SetResourceReference(Panel.BackgroundProperty, "WindowBackground");
-        Canvas.SetTop(aiActions, 2);
-        Canvas.SetRight(aiActions, 2);
-        terminalOverlays.Children.Add(aiActions);
-        aiActions.SizeChanged += (_, _) => PositionSearchBar();
         AutomationProperties.SetLiveSetting(aiStatus, AutomationLiveSetting.Polite);
-        aiTakeover.Click += (_, _) => AiCollaboration.EndControl(this);
-        aiEndSharing.Click += (_, _) => AiCollaboration.EndSharing(this);
         UpdateAiControls();
     }
 
-    private void PositionAiActions(object? sender, EventArgs args)
+    private void UpdateAiActions()
     {
-        if (!aiActions.IsVisible) return;
-        Rect anchor = AiActionOverlayBounds();
-        Canvas.SetRight(aiActions, terminalArea.ActualWidth - anchor.Right + 2);
-        Canvas.SetTop(aiActions, anchor.Top + 2);
-        aiActions.MaxWidth = Math.Max(0, anchor.Width - 4);
-        PositionSearchBar();
+        var share = AiSharing;
+        if (actionShare != share)
+        {
+            actionShare = share;
+            actionControl = null;
+            aiActions.Children.Clear();
+            if (share is not null)
+                aiActions.Children.Add(ActionButton("AiEndSharing", () =>
+                {
+                    if (AiSharing == share) AiCollaboration.EndSharing(this);
+                }));
+        }
+        if (share is null) { Notices.Remove(aiActions); return; }
+        if (share.Control != actionControl)
+        {
+            if (actionControl is not null) aiActions.Children.RemoveAt(0);
+            actionControl = share.Control;
+            if (actionControl is { } control)
+                aiActions.Children.Insert(0, ActionButton("AiTakeControl", () =>
+                {
+                    if (AiSharing == share && share.Control == control) AiCollaboration.EndControl(this);
+                }));
+        }
+        foreach (Button button in aiActions.Children)
+        {
+            string label = Text((string)button.Tag);
+            button.Content = label;
+            AutomationProperties.SetName(button, label);
+        }
+        Notices.ShowContent(aiActions, aiActions, keepVisible: true);
+
+        static Button ActionButton(string label, Action act)
+        {
+            var button = new Button { Tag = label, Margin = new Thickness(2) };
+            button.Click += (_, _) => act();
+            return button;
+        }
     }
 
     internal void AiAuthorityChanged()
@@ -75,27 +101,7 @@ internal sealed partial class TerminalTab
     {
         string? state = IsAiTakingControl ? Text("AiTakingControl") : AiStateLabel;
         aiStatus.Visibility = state is null ? Visibility.Collapsed : Visibility.Visible;
-        aiTakeover.Visibility = IsAiControlling ? Visibility.Visible : Visibility.Collapsed;
-        aiTakeover.Content = Text("AiTakeControl");
-        AutomationProperties.SetName(aiTakeover, Text("AiTakeControl"));
-        aiEndSharing.Visibility = IsAiShared ? Visibility.Visible : Visibility.Collapsed;
-        aiEndSharing.Content = Text("AiEndSharing");
-        AutomationProperties.SetName(aiEndSharing, Text("AiEndSharing"));
-        var visibility = IsAiShared ? Visibility.Visible : Visibility.Collapsed;
-        if (aiActions.Visibility != visibility)
-        {
-            aiActions.Visibility = visibility;
-            if (IsAiShared)
-            {
-                terminalArea.LayoutUpdated += PositionAiActions;
-                PositionAiActions(null, EventArgs.Empty);
-            }
-            else
-            {
-                terminalArea.LayoutUpdated -= PositionAiActions;
-                PositionSearchBar();
-            }
-        }
+        UpdateAiActions();
         string detail = AiSharing is { } share ? "  " + share.Peer.Label : "";
         if (AiCleanupDelayed) detail += "  " + Text("AiCleanupPending");
         if (AiSharing?.Reason is { Length: > 0 } reason)
@@ -155,8 +161,11 @@ internal sealed partial class TerminalTab
     private static string LauncherDescription(AiCollaboration.Counterpart peer) =>
         string.Format(Text("AiLauncherProcess"), PermissionDisplay.Literal(peer.LauncherPath), peer.LauncherId);
 
-    private void ConfirmAiPermission(AiCollaboration.Counterpart peer, bool grantControl)
+    private Window? aiConsent;
+
+    private async void ConfirmAiPermission(AiCollaboration.Counterpart peer, bool grantControl)
     {
+        if (aiConsent is { } existing) { existing.Activate(); return; }
         var collaboration = AiCollaboration;
         var share = AiSharing;
         if (grantControl ? share?.Peer != peer : share?.Peer == peer) return;
@@ -171,8 +180,13 @@ internal sealed partial class TerminalTab
         message += "\n\n" + Text("AiUnattendedConsent");
         if (!grantControl && share is not null)
             message += "\n\n" + string.Format(Text("AiConfirmSwitch"), share.Peer.Code);
-        var answer = ((App)Application.Current).Modal(() => ThemedMessageBox.Show(owner, message, title,
-            MessageBoxButton.OKCancel, MessageBoxImage.Question, MessageBoxResult.Cancel));
+        var answer = MessageBoxResult.Cancel;
+        var dialog = ThemedMessageBox.Create(owner, message, title, MessageBoxButton.OKCancel, MessageBoxImage.Question,
+            MessageBoxResult.Cancel, selected => answer = selected, modelessDecision: true);
+        aiConsent = dialog;
+        try { await PresentDecisionAsync(dialog, IsRunning ? InputLifetime : CancellationToken.None); }
+        catch (OperationCanceledException) { return; }
+        finally { aiConsent = null; }
         if (answer != MessageBoxResult.OK) return;
         if (ClosePending || ConnectionGeneration != generation || AiSession != sessionAtPrompt || AiSharing != share ||
             aiAuthorityRevision != revision ||

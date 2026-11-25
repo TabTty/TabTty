@@ -15,7 +15,7 @@ internal sealed class MacroDialogWindow : Window
     private readonly TextBox? input;
     private bool invalid;
 
-    public MacroDialogWindow(Window owner, string macro, MacroDialogRequest request)
+    public MacroDialogWindow(Window owner, string macro, MacroDialogRequest request, string targetTab)
     {
         Owner = owner;
         Icon = WindowIcons.App;
@@ -29,6 +29,10 @@ internal sealed class MacroDialogWindow : Window
         SetResourceReference(ForegroundProperty, "WindowForeground");
         var panel = new StackPanel { Margin = new Thickness(16) };
         Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        panel.Children.Add(new TextBlock
+        {
+            Text = string.Format(Text("DecisionTargetTab"), PermissionDisplay.Literal(targetTab)), TextWrapping = TextWrapping.Wrap,
+        });
         panel.Children.Add(new TextBlock { Text = request.Message, TextWrapping = TextWrapping.Wrap });
         if (request.InputEnabled)
         {
@@ -47,7 +51,7 @@ internal sealed class MacroDialogWindow : Window
             });
             panel.Children.Add(input);
             panel.Children.Add(validation);
-            Loaded += (_, _) => input.Focus();
+            Loaded += (_, _) => { if (ShowActivated) input.Focus(); };
         }
         var bar = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right };
         panel.Children.Add(bar);
@@ -96,16 +100,7 @@ internal sealed class MacroDialogWindow : Window
         Close();
     }
 
-    public async Task<MacroDialogResult> ShowAsync(CancellationToken token)
-    {
-        token.ThrowIfCancellationRequested();
-        Show();
-        using var cancellation = token.Register(() => Dispatcher.BeginInvoke(() =>
-        {
-            if (result.TrySetCanceled(token)) Close();
-        }));
-        return await result.Task;
-    }
+    internal Task<MacroDialogResult> Answered => result.Task;
 
     private static bool IsUnicode(string text)
     {

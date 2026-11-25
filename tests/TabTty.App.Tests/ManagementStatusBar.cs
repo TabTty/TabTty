@@ -5,6 +5,30 @@ using TabTty.App;
 
 internal static partial class Program
 {
+    // Read the actual report and acknowledge its own button, including every expected detail.
+    private static async Task AcknowledgeReportAsync(FrameworkElement owner, params string[] details)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        for (;;)
+        {
+            foreach (var stack in FindControls<NoticeStack>(owner).Where(stack => stack.IsVisible))
+            {
+                var ok = FindControls<Button>(stack).SingleOrDefault(button =>
+                    Equals(button.Content, App.Text("OK")) &&
+                    details.All(text => AutomationProperties.GetHelpText(button).Contains(text, StringComparison.OrdinalIgnoreCase)));
+                if (ok is { IsVisible: true, IsEnabled: true })
+                {
+                    ok.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    return;
+                }
+                var more = FindControls<Button>(stack).FirstOrDefault(button => button.IsVisible &&
+                    button.Content is string caption && caption == string.Format(App.Text("NoticeStackShow"), 1));
+                more?.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            }
+            await Task.Delay(15, deadline.Token);
+        }
+    }
+
     private static async Task CheckManagementStatusBarAsync()
     {
         var form = new FormView();
@@ -13,7 +37,7 @@ internal static partial class Program
         form.AddField("SearchProfiles", search);
         form.AddFillingDisplay("ProfileGroups", list);
         form.AddStatusBar();
-        var bar = form.Children.OfType<Border>().Single();
+        var bar = form.Body.Children.OfType<Border>().Single();
         var status = (TextBlock)bar.Child;
 
         var bounds = new Rect(0, 0, 360, 280);

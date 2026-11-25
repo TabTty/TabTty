@@ -1,3 +1,4 @@
+using System.IO;
 using System.Security.Cryptography;
 using System.Windows;
 using System.Windows.Automation;
@@ -7,11 +8,12 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Threading;
+using TabTty.Core;
 using static TabTty.App.App;
 
 namespace TabTty.App;
 
-internal sealed class FormView : DockPanel
+internal sealed class FormView : Grid
 {
     private readonly StackPanel fields = new() { Margin = new Thickness(14) };
     private readonly ScrollViewer scroller;
@@ -28,14 +30,36 @@ internal sealed class FormView : DockPanel
     private bool tracksEdits;
     private Action? updateEditorButtons;
     private Grid? editorFooter;
-    private TextBlock? busyStatus;
+    internal DockPanel Body { get; } = new();
+    private readonly NoticeStack notices = new();
+    internal NoticeStack Notices => notices;
+    internal ViewNotifications Reports { get; }
     private TextBlock? statusBarText;
     private string statusMessage = "";
+    private string? statusResource;
+    private bool fileWorkAttempted;
     private string? progressKey;
+    private string windowStatus = "";
 
     public FormView(bool modal = false)
     {
         this.modal = modal;
+        Children.Add(Body);
+        var overlay = new Canvas { ClipToBounds = true };
+        Canvas.SetRight(notices, 0);
+        Canvas.SetTop(notices, 0);
+        overlay.Children.Add(notices);
+        Children.Add(overlay);
+        overlay.SizeChanged += (_, args) =>
+        {
+            notices.MaxWidth = Math.Min(440, args.NewSize.Width);
+            notices.MaxHeight = args.NewSize.Height;
+        };
+        Reports = new ViewNotifications(notices,
+            () => (Window?)TabOwner ?? Window.GetWindow(this),
+            () => Tab is null || TabOwner?.IsCurrentView(this) == true,
+            () => Tab?.Caption ?? Window.GetWindow(this)?.Title ?? "",
+            () => { if (Tab is { Host: { } host } tab) host.SelectNotificationTab(tab); });
         scroller = new ScrollViewer
         {
             Content = fields, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
@@ -48,7 +72,7 @@ internal sealed class FormView : DockPanel
             fields.MaxWidth = 760;
             fields.MinWidth = 280;
         }
-        Children.Add(scroller);
+        Body.Children.Add(scroller);
     }
 
     internal MainWindow.WindowTab? Tab { get; set; }
@@ -63,18 +87,9 @@ internal sealed class FormView : DockPanel
     public bool HasUnsavedChanges => tracksEdits && edits.Any(edit => edit.IsChanged());
     public event Action<bool>? Completed;
 
-    internal void ShowFileOperationStatus()
-    {
-        var status = new TextBlock { Visibility = Visibility.Collapsed, TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 0, 0, 8) };
-        AutomationProperties.SetLiveSetting(status, AutomationLiveSetting.Polite);
-        SetText("FileOperationPending", value => status.Text = value);
-        fields.Children.Add(status);
-        busyStatus = status;
-    }
-
     internal void AddStatusBar()
     {
+        if (statusBarText is not null) return;
         var text = new TextBlock { Height = 20, TextTrimming = TextTrimming.CharacterEllipsis };
         AutomationProperties.SetLiveSetting(text, AutomationLiveSetting.Polite);
         var bar = new Border
@@ -84,23 +99,42 @@ internal sealed class FormView : DockPanel
         };
         bar.SetResourceReference(Border.BorderBrushProperty, "SurfaceStrokeColorDefaultBrush");
         statusBarText = text;
-        SetDock(bar, Dock.Bottom);
-        Children.Insert(0, bar);
+        DockPanel.SetDock(bar, Dock.Bottom);
+        Body.Children.Insert(0, bar);
         AddLocalizedUpdate(UpdateStatusBar);
     }
 
     internal void SetStatusMessage(string message)
     {
+        statusResource = null;
         statusMessage = message;
         UpdateStatusBar();
     }
 
-    internal IDisposable BeginProgress(string key) => new DelayedProgress(this, key);
+    internal void SetStatusResource(string key)
+    {
+        statusResource = key;
+        UpdateStatusBar();
+    }
+
+    internal void SetWindowStatus(string message)
+    {
+        windowStatus = message;
+        UpdateStatusBar();
+    }
+
+    internal IDisposable BeginProgress(string key)
+    {
+        fileWorkAttempted = true;
+        return new DelayedProgress(this, key);
+    }
 
     private void UpdateStatusBar()
     {
         if (statusBarText is not { } text) return;
-        string message = progressKey is { } key ? Text(key) : statusMessage;
+        string message = (progressKey ?? statusResource) is { } key ? Text(key) : statusMessage;
+        if (windowStatus.Length != 0)
+            message = message.Length == 0 ? windowStatus : $"{message} · {windowStatus}";
         if (Equals(text.ToolTip, message.Length == 0 ? null : message)) return;
         text.Text = message.ReplaceLineEndings(" ");
         text.ToolTip = message.Length == 0 ? null : message;
@@ -163,8 +197,8 @@ internal sealed class FormView : DockPanel
                     Padding = new Thickness(0, 1, 0, 0),
                 };
                 header.SetResourceReference(Border.BackgroundProperty, "TabViewItemHeaderBackgroundSelected");
-                SetDock(header, Dock.Top);
-                Children.Insert(0, header);
+                DockPanel.SetDock(header, Dock.Top);
+                Body.Children.Insert(0, header);
             }
             else fields.Children.Insert(0, pageTitle);
             AddLocalizedUpdate(() => pageTitle.Text = FormatPageTitle());
@@ -298,7 +332,7 @@ internal sealed class FormView : DockPanel
                 Margin = new Thickness(0, 0, 0, 8) };
             AutomationProperties.SetHeadingLevel(heading, AutomationHeadingLevel.Level2);
             SetText(key, value => heading.Text = value);
-            SetDock(heading, Dock.Top);
+            DockPanel.SetDock(heading, Dock.Top);
             page.Children.Add(heading);
             BuildIn(page, build);
             pages.Add(page);
@@ -334,7 +368,7 @@ internal sealed class FormView : DockPanel
         var separator = new Border { Width = 1, Opacity = 0.16, HorizontalAlignment = HorizontalAlignment.Right,
             Margin = new Thickness(0, 0, 0, 12), IsHitTestVisible = false };
         separator.SetResourceReference(Border.BackgroundProperty, "WindowForeground");
-        Children.Remove(scroller);
+        Body.Children.Remove(scroller);
         Grid.SetRow(navigation, 1);
         Grid.SetRow(separator, 1);
         Grid.SetRow(scroller, 1);
@@ -348,7 +382,7 @@ internal sealed class FormView : DockPanel
             Grid.SetColumn(fill, 1);
             layout.Children.Add(fill);
         }
-        Children.Add(layout);
+        Body.Children.Add(layout);
         layout.SizeChanged += (_, args) =>
             layout.ColumnDefinitions[0].Width = new GridLength(args.NewSize.Width < 650 ? 146 : 190);
         return navigation;
@@ -371,21 +405,21 @@ internal sealed class FormView : DockPanel
     {
         var description = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 8) };
         SetText(key, value => description.Text = value);
-        SetDock(description, Dock.Top);
+        DockPanel.SetDock(description, Dock.Top);
         (section ?? fields).Children.Add(description);
     }
 
     internal void AddFillingDisplay(string key, FrameworkElement element, Action? buildFooter = null)
     {
         SetText(key, value => AutomationProperties.SetName(element, value));
-        Children.Remove(scroller);
+        Body.Children.Remove(scroller);
         scroller.Content = null;
         double previousMaxWidth = fields.MaxWidth;
         fields.MaxWidth = double.PositiveInfinity;
         Thickness margin = fields.Margin;
         fields.Margin = new Thickness(margin.Left, margin.Top, margin.Right, 8);
-        SetDock(fields, Dock.Top);
-        Children.Add(fields);
+        DockPanel.SetDock(fields, Dock.Top);
+        Body.Children.Add(fields);
         if (buildFooter is not null)
         {
             var footer = new StackPanel { MaxWidth = previousMaxWidth, Margin = new Thickness(margin.Left, 8, margin.Right, 0) };
@@ -396,11 +430,11 @@ internal sealed class FormView : DockPanel
             };
             footerScroll.SetResourceReference(StyleProperty, typeof(ScrollViewer));
             SizeChanged += (_, args) => footerScroll.MaxHeight = args.NewSize.Height * 0.45;
-            SetDock(footerScroll, Dock.Bottom);
-            Children.Add(footerScroll);
+            DockPanel.SetDock(footerScroll, Dock.Bottom);
+            Body.Children.Add(footerScroll);
             BuildIn(footer, buildFooter);
         }
-        Children.Add(element);
+        Body.Children.Add(element);
     }
 
     private void BuildIn(Panel panel, Action build)
@@ -453,6 +487,8 @@ internal sealed class FormView : DockPanel
 
     public void UpdateLabels()
     {
+        Reports.UpdateLabels();
+        notices.UpdateLabels();
         foreach (Action label in labels) label();
         updateEditorButtons?.Invoke();
     }
@@ -674,8 +710,14 @@ internal sealed class FormView : DockPanel
             }
             else Completed?.Invoke(true);
         };
-        if (!modal) cancel.Click += (_, _) => cancelAction();
-        if (cancelDefault) Loaded += (_, _) => cancel.Focus();
+        cancel.Click += (_, _) =>
+        {
+            if (!modal || Window.GetWindow(this) is MainWindow.FormWindow { IsDecision: true }) cancelAction();
+        };
+        if (cancelDefault) Loaded += (_, _) =>
+        {
+            if (Window.GetWindow(this)?.ShowActivated != false) cancel.Focus();
+        };
         buttons.Children.Add(apply);
         buttons.Children.Add(cancel);
         if (tracksEdits)
@@ -708,8 +750,8 @@ internal sealed class FormView : DockPanel
             Grid.SetRow(buttons, 2);
             footer.Children.Add(divider);
             footer.Children.Add(buttons);
-            SetDock(footer, Dock.Bottom);
-            Children.Insert(0, footer);
+            DockPanel.SetDock(footer, Dock.Bottom);
+            Body.Children.Insert(0, footer);
             editorFooter = footer;
         }
         else fields.Children.Add(buttons);
@@ -748,31 +790,35 @@ internal sealed class FormView : DockPanel
     {
         if (IsBusy) return;
         IsBusy = true;
-        IsEnabled = false;
+        fileWorkAttempted = false;
+        Body.IsEnabled = false;
         try
         {
-            SetBusyStatus(Visibility.Visible);
             await action();
         }
         catch (Exception exception) when (ProfileCatalog.IsFileProblem(exception) ||
             exception is OperationCanceledException or CryptographicException or DllNotFoundException or EntryPointNotFoundException)
         {
-            if (((Window?)TabOwner ?? Window.GetWindow(this)) is { } owner) MainWindow.ShowError(owner, exception);
+            if (fileWorkAttempted || exception is IOException or UnauthorizedAccessException or CryptographicException or DllNotFoundException or EntryPointNotFoundException)
+                ReportFailure(exception);
+            else if (((Window?)TabOwner ?? Window.GetWindow(this)) is { } owner)
+                MainWindow.ShowError(owner, exception);
         }
         finally
         {
             IsBusy = false;
-            IsEnabled = true;
-            SetBusyStatus(Visibility.Collapsed);
+            Body.IsEnabled = true;
             updateEditorButtons?.Invoke();
         }
     }
 
-    private void SetBusyStatus(Visibility visibility)
+    internal void ReportFailure(Exception exception) => ReportFailure(Reports.Report, exception);
+
+    internal static void ReportFailure(Action<object, string> report, Exception exception)
     {
-        if (busyStatus is not { } status) return;
-        status.Visibility = visibility;
-        UIElementAutomationPeer.FromElement(status)?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+        if (exception is FilePublicationException publication)
+            report(publication.Result.OperationId, JsonStoreRecovery.DescribeFailure(publication.Result));
+        else report(exception, exception.Message);
     }
 
     private void SetText(string key, Action<string> apply) => AddLocalizedUpdate(() => apply(Text(key)));

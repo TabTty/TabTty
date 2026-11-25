@@ -22,8 +22,9 @@ internal sealed class BroadcastInput(App app)
         public string? Detail;
     }
 
-    private sealed class Mode(MainWindow? window, long selectionRevision)
+    private sealed class Mode(MainWindow origin, MainWindow? window, long selectionRevision)
     {
+        public MainWindow Origin { get; } = origin;
         public MainWindow? Window { get; } = window;
         public long SelectionRevision { get; } = selectionRevision;
         public CancellationTokenSource Stop { get; } = new();
@@ -93,7 +94,7 @@ internal sealed class BroadcastInput(App app)
     public void Start(MainWindow window)
     {
         if (!CanStart(window)) return;
-        var mode = new Mode(app.BroadcastAcrossWindows ? null : window, revision);
+        var mode = new Mode(window, app.BroadcastAcrossWindows ? null : window, revision);
         foreach (var host in Scope(mode))
         {
             var state = windows[host];
@@ -199,7 +200,7 @@ internal sealed class BroadcastInput(App app)
         try { memory = mode.PendingText.Reserve(input.Text.Length * 2L); }
         catch (ResourceLimitException)
         {
-            ReportFailure(mode, Text("InputQueueFull"));
+            ReportQueueFull(mode, Recipients(mode));
             return false;
         }
         using (memory)
@@ -480,13 +481,15 @@ internal sealed class BroadcastInput(App app)
     {
         if (mode.Waiting >= 256)
         {
-            ReportFailure(mode, Text("InputQueueFull"));
+            ReportQueueFull(mode, targets);
             return false;
         }
         mode.Waiting++;
         var prepared = new Dictionary<Target, TerminalSession.PreparedInput>();
         var submitted = new HashSet<Target>();
+        var attempted = new HashSet<Target>();
         Target? failed = null;
+        Target? failedPasteSend = null;
         bool entered = false;
         try
         {
@@ -520,15 +523,16 @@ internal sealed class BroadcastInput(App app)
                     {
                         // Let every target reserve its ordered start before granting any sends.
                         Task<bool> send = pair.Value.SendAsync(admission.Token);
-                        if (await pair.Value.PasteReady! && await commitPaste.Task) submitted.Add(pair.Key);
-                        await send;
+                        if (await pair.Value.PasteReady! && await commitPaste.Task) attempted.Add(pair.Key);
+                        if (await send) submitted.Add(pair.Key);
+                        else attempted.Remove(pair.Key);
                         pair.Key.Tab.RefreshInputOutput();
                     }
                     catch (Exception exception) when (IsInputError(exception))
                     {
                         if (!admission.IsCancellationRequested)
                         {
-                            failed = pair.Key;
+                            failedPasteSend = pair.Key;
                             admission.Cancel();
                             throw;
                         }
@@ -568,12 +572,14 @@ internal sealed class BroadcastInput(App app)
                     failed = target;
                     using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(admission.Token, target.Lifetime);
                     lifetime.CancelAfter(TimeSpan.FromSeconds(30));
+                    attempted.Add(target);
                     if (await request.SendAsync(lifetime.Token))
                     {
                         submitted.Add(target);
                         delivered?.Invoke(target, request.MouseGeneration);
                         target.Tab.RefreshInputOutput();
                     }
+                    else attempted.Remove(target);
                 }
             }
             return submitted.Count > 0 && !admission.IsCancellationRequested;
@@ -582,8 +588,13 @@ internal sealed class BroadcastInput(App app)
         { return false; }
         catch (Exception exception) when (IsInputError(exception))
         {
-            string details = string.Join("\n", targets.Select(target => $"{target.Tab.TabCaption} — " +
-                Text(target == failed ? "BroadcastFailedTarget" : submitted.Contains(target) ? "BroadcastSubmitted" : "BroadcastNotSent")));
+            failed = failedPasteSend ?? failed;
+            if (commitPaste is null && failed is not null && exception is TransportAdmissionRejectedException)
+                attempted.Remove(failed);
+            string details = string.Join("\n", targets.Select(target => $"{TerminalTab.BroadcastTargetLabel(target.Session)} — " +
+                (target == failed ? Text("BroadcastFailedTarget") + " · " : "") +
+                Text(submitted.Contains(target) ? "BroadcastSubmitted" : attempted.Contains(target) ?
+                    "NoticeBroadcastUncertain" : "BroadcastNotSent")));
             ReportFailure(mode, $"{exception.Message}\n{details}");
             return false;
         }
@@ -596,10 +607,14 @@ internal sealed class BroadcastInput(App app)
         }
     }
 
+    private void ReportQueueFull(Mode mode, IEnumerable<Target> targets) => ReportFailure(mode,
+        Text("InputQueueFull") + "\n" + string.Join("\n", targets.Select(target =>
+            $"{TerminalTab.BroadcastTargetLabel(target.Session)} — {Text("BroadcastNotSent")}")));
+
     private void ReportFailure(Mode mode, string details)
     {
-        foreach (var window in Scope(mode))
-            if (windows.TryGetValue(window, out var state)) state.Detail = $"{Text("BroadcastFailed")}\n{details}";
+        var host = windows.ContainsKey(mode.Origin) ? mode.Origin : Scope(mode).FirstOrDefault(windows.ContainsKey);
+        host?.ReportBroadcastFailure($"{Text("BroadcastFailed")} ({Text(mode.Window is null ? "BroadcastGlobal" : "BroadcastLocal")})\n{details}");
         Stop(mode);
         Refresh();
     }

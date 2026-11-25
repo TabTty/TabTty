@@ -83,6 +83,7 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
 
     internal sealed class Control(AiInputLease lease)
     {
+        private bool deliveryReported;
         internal string Id { get; } = NewId();
         internal AiInputLease Lease { get; } = lease;
         internal int HighWater { get; set; }
@@ -90,6 +91,13 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
         internal AiInputAttempt? Attempt { get; set; }
         internal byte[]? PendingDigest { get; set; }
         internal Dictionary<int, SendOutcome> Ledger { get; } = [];
+
+        internal void ReportUncertain(Sharing share)
+        {
+            if (deliveryReported) return;
+            deliveryReported = true;
+            share.Tab.ReportAiUncertain(share.Session);
+        }
     }
 
     internal sealed record SendOutcome(byte[] Digest, object Result);
@@ -230,7 +238,7 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
                 catch (Exception exception) when (exception is IOException or SocketException or
                     OperationCanceledException or InvalidOperationException or CryptographicException)
                 {
-                    tab.ReportAiUncertain();
+                    control.ReportUncertain(share);
                 }
             }
         }
@@ -498,7 +506,7 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
         }
         if (DeliveryUncertain(result) || token.IsCancellationRequested && attempt.Admitted)
         {
-            if (DeliveryUncertain(result)) share.Tab.ReportAiUncertain();
+            if (DeliveryUncertain(result)) control.ReportUncertain(share);
             if (share.Control == control) EndControl(share.Tab);
         }
         if (attempt.Admitted) share.Tab.RefreshInputOutput();

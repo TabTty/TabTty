@@ -25,7 +25,7 @@ internal sealed class SshHostTrust(App app, string pathName, Action<string, stri
             .Select(key => key["format"]!.GetValue<string>()).ToArray() ?? [];
     }
 
-    public async Task<bool> ApproveAsync(Window owner, SshHostKey key, CancellationToken token)
+    public async Task<bool> ApproveAsync(Window owner, SshHostKey key, CancellationToken token, TerminalTab? tab = null)
     {
         token.ThrowIfCancellationRequested();
         var (document, original) = Read();
@@ -58,7 +58,7 @@ internal sealed class SshHostTrust(App app, string pathName, Action<string, stri
         form.AddField("PresentedFingerprint", ReadOnly(key.Fingerprint));
         form.AddNotice("VerifyHostFingerprint");
         form.AddButtons(() => { }, acceptKey: accept, cancelDefault: true);
-        if (ShowCancellable(app, form, token) != true) return false;
+        if (!await TabDecision.ShowFormAsync(app, form, token, tab)) return false;
         token.ThrowIfCancellationRequested();
 
         if (destination is null)
@@ -90,7 +90,7 @@ internal sealed class SshHostTrust(App app, string pathName, Action<string, stri
 
     public void Show(MainWindow owner) => owner.OpenForm("HostKeys", form =>
     {
-        form.ShowFileOperationStatus();
+        form.AddStatusBar();
         var (document, original) = Read();
         var destinations = document["destinations"]!.AsArray();
         var items = destinations.OfType<JsonObject>().SelectMany(destination => destination["keys"]!.AsArray()
@@ -107,6 +107,7 @@ internal sealed class SshHostTrust(App app, string pathName, Action<string, stri
             int index = keys.IndexOf(row.Key);
             keys.RemoveAt(index);
             if (keys.Count == 0) destinations.Remove(row.Destination);
+            using var progress = form.BeginProgress("FileOperationPending");
             try { await SaveAsync(document, original); }
             catch
             {
@@ -117,14 +118,6 @@ internal sealed class SshHostTrust(App app, string pathName, Action<string, stri
             return true;
         }, acceptKey: "DeleteHostKey", cancelDefault: true);
     });
-
-    internal static bool? ShowCancellable(App app, Window dialog, CancellationToken token)
-    {
-        token.ThrowIfCancellationRequested();
-        using var cancellation = token.Register(() =>
-            dialog.Dispatcher.BeginInvoke(() => { if (dialog.IsVisible) dialog.Close(); }));
-        return app.Modal(dialog.ShowDialog);
-    }
 
     private static TextBox ReadOnly(string value) => new() { Text = value, IsReadOnly = true };
 

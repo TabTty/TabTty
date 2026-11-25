@@ -16,6 +16,7 @@ namespace TabTty.App;
 internal sealed partial class MainWindow : Window
 {
     private readonly App app;
+    private readonly Func<bool> hasForeground;
     private readonly TerminalClosure terminalClosure;
     private MenuItem? currentMenu;
     private bool closing;
@@ -24,13 +25,16 @@ internal sealed partial class MainWindow : Window
     private int tabWheelDelta;
     private Color? headerAccent;
 
-    public MainWindow(App app)
+    public MainWindow(App app, Func<bool>? hasForeground = null)
     {
         this.app = app;
+        this.hasForeground = hasForeground ?? (() => IsActive);
         terminalClosure = new(this);
         Closed += (_, _) =>
         {
             closed = true;
+            windowReports?.Dispose();
+            foreach (var form in AllTabs.Select(tab => tab.Content).OfType<FormView>()) form.Reports.Dispose();
             groups.ReleaseReservations();
             app.CommitWindowClose(this);
         };
@@ -39,6 +43,7 @@ internal sealed partial class MainWindow : Window
             System.Windows.Interop.HwndSource.FromHwnd(new System.Windows.Interop.WindowInteropHelper(this).Handle)
                 ?.AddHook(HandleWindowMessage);
         InitializeComponent();
+        windowNoticeHost.Children.Add(windowNotices);
         UpdateActiveHeaderShade();
         Icon = WindowIcons.App;
         welcomeIcon.Source = WindowIcons.Welcome;
@@ -52,8 +57,14 @@ internal sealed partial class MainWindow : Window
         };
         closeButton.Click += (_, _) => SystemCommands.CloseWindow(this);
         StateChanged += (_, _) => UpdateMaximizeButton();
+        app.Vault.ManagementChanged += UpdateVaultStatus;
+        Closed += (_, _) => app.Vault.ManagementChanged -= UpdateVaultStatus;
         NativeKeyState.Attach(this);
         InitializeGroups();
+        Activated += (_, _) => RefreshNoticeActivity();
+        Deactivated += (_, _) => RefreshNoticeActivity();
+        Loaded += (_, _) => RefreshNoticeHosts();
+        StateChanged += (_, _) => RefreshNoticeHosts();
         PreviewKeyDown += OnTabShortcutKeyDown;
         ConfigureTabDrag();
         UpdateLabels();
@@ -175,6 +186,7 @@ internal sealed partial class MainWindow : Window
             item.Host?.RemoveFormTab(item);
         };
         build(form);
+        form.AddStatusBar();
         SelectNewTab(item);
     }
 
@@ -193,12 +205,14 @@ internal sealed partial class MainWindow : Window
 
     internal void UpdateLabels()
     {
+        windowNotices.UpdateLabels();
+        windowReports?.UpdateLabels();
         groups.UpdateLabels();
         LabelGroups();
         RefreshBroadcast();
         welcomeTitle.Text = Text("WelcomeTitle");
         profileHint.Text = Text("OpenHint");
-        vaultHint.Text = Text("VaultHint");
+        UpdateVaultStatus();
         Resources["NewTabLabel"] = Text("NewTab");
         Resources["TabListLabel"] = Text("TabList");
         Resources["ScrollTabsLeftLabel"] = Text("ScrollTabsLeft");
@@ -392,7 +406,6 @@ internal sealed partial class MainWindow : Window
             target.UpdateWelcomePanel();
             if (terminal is not null)
             {
-                terminal.RefreshNoticeOwner();
                 if (this != target && !terminal.IsExternalMacro) terminal.BroadcastChecked = true;
             }
             target.ActivateGroup(destinationGroup);
@@ -696,13 +709,13 @@ internal sealed partial class MainWindow : Window
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException
             or FormatException or InvalidOperationException or System.Text.Json.JsonException)
         {
-            ShowError(this, exception);
+            FormView.ReportFailure(CaptureReport(), exception);
         }
     }
 
     private void EditSettings() => OpenForm("Settings", form =>
     {
-        form.ShowFileOperationStatus();
+        form.AddStatusBar();
         int revision = app.SettingsRevision;
         string[] languages = ["en", "ja", "system"];
         string[] themes = ["system", "light", "dark"];
@@ -783,7 +796,10 @@ internal sealed partial class MainWindow : Window
         form.AddEditorButtons(async () =>
         {
             if (revision != app.SettingsRevision)
-                throw new InvalidOperationException(Text("ManagementTabOutdated"));
+            {
+                form.ReportFailure(new InvalidOperationException(Text("ManagementTabOutdated")));
+                return false;
+            }
             if (string.IsNullOrWhiteSpace(fontFamily.Text) ||
                 !double.TryParse(fontSize.Text, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out double size) ||
                 !int.TryParse(retained.Text, NumberStyles.None, CultureInfo.InvariantCulture, out int rows))
@@ -794,6 +810,7 @@ internal sealed partial class MainWindow : Window
             bool broadcast = broadcastScope.IsChecked == true;
             var logging = app.LogDefaults;
             var shortcuts = new KeyboardShortcuts(shortcutChoices.Select(choice => choice.SelectedItem as string));
+            using var progress = form.BeginProgress("FileOperationPending");
             await app.SaveSettingsAsync(revision, new App.SettingsChanges(
                 Language: Change(language.SelectedId!, app.LanguageChoice),
                 Theme: Change(theme.SelectedId!, app.ThemeChoice),
@@ -842,9 +859,9 @@ internal sealed partial class MainWindow : Window
             try
             {
                 ProfileFileAssociation.RegisterOpenWith();
-                app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow, Text("AssociationRegistered"), "TabTty"));
+                form.SetStatusResource("AssociationRegistered");
             }
-            catch (Exception exception) when (ProfileFileAssociation.IsRegistrationFailure(exception)) { ShowError(form.OwnerWindow, exception); }
+            catch (Exception exception) when (ProfileFileAssociation.IsRegistrationFailure(exception)) { form.ReportFailure(exception); }
         }
 
         FixedChoiceBox LocalizedChoice(string[] ids, string selected, params string[] keys)
@@ -891,6 +908,7 @@ internal sealed partial class MainWindow : Window
         if (GroupOf(item) is not { } group) return;
         group.Items.Remove(item);
         if (group.Items.Contains(item)) return;
+        if (item.Content is FormView form) form.Reports.Dispose();
         item.Placement = null;
         UpdateWelcomePanel();
     }
@@ -1026,6 +1044,11 @@ internal sealed partial class MainWindow : Window
             Width = 24, Height = 24, Padding = new Thickness(0), Margin = new Thickness(8, 0, 0, 0),
             BorderThickness = new Thickness(0), Background = Brushes.Transparent,
         };
+        private readonly Button attention = new()
+        {
+            Padding = new Thickness(4, 0, 4, 0), Margin = new Thickness(0, 0, 4, 0),
+            Visibility = Visibility.Collapsed, FontWeight = FontWeights.Bold,
+        };
 
         public WindowTab(FrameworkElement content)
         {
@@ -1046,11 +1069,22 @@ internal sealed partial class MainWindow : Window
             header.Children.Add(targetCheck);
             header.Children.Add(disconnectedIcon);
             header.Children.Add(warningIcon);
+            header.Children.Add(attention);
             header.Children.Add(aiIcon);
             header.Children.Add(label);
             Header = header;
             Content = content;
-            if (content is FormView form) form.Tab = this;
+            if (content is FormView form)
+            {
+                form.Tab = this;
+                form.Reports.Changed += () => Caption = Caption;
+            }
+            System.Windows.Shell.WindowChrome.SetIsHitTestVisibleInChrome(attention, true);
+            attention.Click += (_, _) =>
+            {
+                Host?.SelectNotificationTab(this);
+                if (Content is TerminalTab { HasPendingDecision: true } pending) pending.ActivatePendingDecision();
+            };
             if (content is TerminalTab terminal)
             {
                 var menu = new ContextMenu();
@@ -1118,7 +1152,18 @@ internal sealed partial class MainWindow : Window
         }
 
         public string? FormKey { get; init; }
-        public (MainWindow Window, TabControl Group)? Placement { get; set; }
+        private (MainWindow Window, TabControl Group)? placement;
+        public (MainWindow Window, TabControl Group)? Placement
+        {
+            get => placement;
+            set
+            {
+                placement = value;
+                if (value is null) return;
+                if (Content is TerminalTab terminal) terminal.RefreshNoticeOwner();
+                if (Content is FormView form) form.Reports.HostChanged();
+            }
+        }
         public MainWindow? Host => Placement?.Window;
         public bool IsClosing { get; set; }
         public bool CanCloseAsDisconnected => Content is TerminalTab { IsDisconnected: true, HasActiveMacro: false };
@@ -1148,6 +1193,18 @@ internal sealed partial class MainWindow : Window
                 if (statusKey is null && disconnectedIcon.Visibility == Visibility.Visible) statusKey = "Disconnected";
                 string description = statusKey is null ? value : $"({Text(statusKey)}) {value}";
                 if (Content is TerminalTab { AiStateLabel: { } aiState }) description += $" ({aiState})";
+                bool decision = Content is TerminalTab { HasPendingDecision: true };
+                bool unread = Content switch { TerminalTab t => t.Reports.HasUnread, FormView f => f.Reports.HasUnread, _ => false };
+                attention.Visibility = decision || unread ? Visibility.Visible : Visibility.Collapsed;
+                if (decision || unread)
+                {
+                    string detail = string.Join(" · ", new[] { decision ? Text("NoticeAwaitingAnswer") : null,
+                        unread ? Text("NoticeUnread") : null }.OfType<string>());
+                    attention.Content = decision ? "?" : "!";
+                    attention.ToolTip = detail;
+                    AutomationProperties.SetName(attention, detail);
+                    description += $" ({detail})";
+                }
                 ToolTip = description;
                 AutomationProperties.SetName(this, description);
             }
@@ -1184,8 +1241,21 @@ internal sealed partial class MainWindow : Window
             SetResourceReference(BackgroundProperty, "WindowBackground");
             SetResourceReference(ForegroundProperty, "WindowForeground");
             Content = form;
-            form.Completed += result => DialogResult = result;
+            form.Completed += Finish;
             Closing += (_, args) => { if (form.IsBusy) args.Cancel = true; };
+        }
+
+        internal bool IsDecision { get; set; }
+        internal bool Accepted { get; private set; }
+        internal void Finish(bool accepted)
+        {
+            if (IsDecision)
+            {
+                if (!IsVisible) return;
+                Accepted = accepted;
+                Close();
+            }
+            else DialogResult = accepted;
         }
 
         public Button AddAction(string key, Action action) => form.AddAction(key, action);
@@ -1193,14 +1263,16 @@ internal sealed partial class MainWindow : Window
             string? actionKey = null, Func<Task>? action = null) =>
             form.AddField(key, control, actionKey: actionKey, action: action, inlineCheckBox: inlineCheckBox);
         public void AddPrompt(string caption, Control control) => form.AddPrompt(caption, control);
+        internal void AddDisplay(string key, FrameworkElement element) => form.AddDisplay(key, element);
         public void AddNotice(string key) => form.AddNotice(key);
         internal void AddStatusBar() => form.AddStatusBar();
         internal IDisposable BeginProgress(string key) => form.BeginProgress(key);
-        public void AddPinnedNotice(string message)
+        public TextBlock AddPinnedNotice(string message)
         {
             var notice = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(14, 10, 14, 4) };
             DockPanel.SetDock(notice, Dock.Top);
-            form.Children.Insert(0, notice);
+            form.Body.Children.Insert(0, notice);
+            return notice;
         }
         public Button AddButtons(Action save, string acceptKey = "Save", bool cancelDefault = false, string cancelKey = "Cancel") =>
             form.AddButtons(save, acceptKey, cancelDefault, cancelKey);

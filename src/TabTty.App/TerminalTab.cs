@@ -26,11 +26,13 @@ internal sealed partial class TerminalTab : UserControl
     private readonly (int Columns, int Rows)? fixedViewport;
     private CancellationTokenSource stop = new();
     private readonly TextBlock status = new();
+    private readonly TextBlock recordingStatus = new() { Visibility = Visibility.Collapsed };
     private readonly TextBlock highlightStatus = new() { Visibility = Visibility.Collapsed };
     private readonly TextBlock broadcastTabStatus = new() { Visibility = Visibility.Collapsed };
     private readonly DockPanel statusBar = new() { Height = 30, ClipToBounds = true };
     private const double SearchInset = 4;
     private readonly Canvas terminalOverlays = new();
+    internal NoticeStack Notices { get; } = new();
     private readonly WrapPanel searchBar = new() { Visibility = Visibility.Collapsed };
     private readonly TextBox searchQuery = new() { Width = 220, MaxLength = 1024, Margin = new Thickness(3) };
     private readonly CheckBox matchCase = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(3) };
@@ -55,19 +57,18 @@ internal sealed partial class TerminalTab : UserControl
     private (int Columns, int Rows) appliedGrid = (80, 24);
     private TerminalSession? session;
     private RecordingStatus? lastRecordingStatus;
-    private int? displayedRecordingFailure;
+    private readonly HashSet<int> reportedRecordingParts = [];
     private FileTransferWindow? transferWindow;
     private readonly System.Runtime.CompilerServices.ConditionalWeakTable<TerminalSession, FileOperationOwnership> transferOwnership = new();
     private string? connectedName;
     private ConnectionDestination? lastDestination;
-    private Window? destinationNotice;
     private Func<MainWindow?>? tabHost;
     internal void ResolveTabHost(Func<MainWindow?> resolve) => tabHost = resolve;
 
     internal void RefreshNoticeOwner()
     {
-        if (destinationNotice is { IsVisible: true } notice && tabHost?.Invoke() is { } owner && notice.Owner != owner)
-            notice.Owner = owner;
+        reports?.HostChanged();
+        PendingDecisionHostChanged();
     }
     private string statusKey = "Connecting";
     private string? error;
@@ -166,25 +167,30 @@ internal sealed partial class TerminalTab : UserControl
         searchBar.SetResourceReference(Panel.BackgroundProperty, "WindowBackground");
         Canvas.SetLeft(searchBar, SearchInset);
         terminalOverlays.Children.Add(searchBar);
-        terminalArea.SizeChanged += (_, _) => PositionSearchBar();
+        terminalOverlays.Children.Add(Notices);
+        terminalArea.LayoutUpdated += (_, _) => { if (IsVisible && (Notices.HasItems || searchBar.IsVisible)) PositionSearchBar(); };
         ConfigureStatusIndicator(status);
         terminalArea.Children.Add(output.Scroller);
         terminalArea.Children.Add(terminalOverlays);
         InitializeAiControls();
         InitializeMouseRoutingControls();
+        ConfigureStatusIndicator(macroStatus);
+        DockPanel.SetDock(macroStatus, Dock.Right);
+        statusBar.Children.Add(macroStatus);
         ConfigureStatusIndicator(highlightStatus);
         ConfigureStatusIndicator(broadcastTabStatus);
         DockPanel.SetDock(highlightStatus, Dock.Right);
         DockPanel.SetDock(broadcastTabStatus, Dock.Right);
         statusBar.Children.Add(highlightStatus);
         statusBar.Children.Add(broadcastTabStatus);
+        ConfigureStatusIndicator(recordingStatus);
+        DockPanel.SetDock(recordingStatus, Dock.Right);
+        statusBar.Children.Add(recordingStatus);
         statusBar.Children.Add(status);
         RestoreStatusBarColors();
-        statusBar.SizeChanged += (_, e) =>
-        {
-            highlightStatus.MaxWidth = e.NewSize.Width / 4;
-            aiStatus.MaxWidth = broadcastTabStatus.MaxWidth = e.NewSize.Width * 0.28;
-        };
+        statusBar.SizeChanged += (_, _) => AllocateStatusWidths();
+        foreach (TextBlock indicator in statusBar.Children)
+            indicator.IsVisibleChanged += (_, _) => AllocateStatusWidths();
         var body = new Grid();
         body.RowDefinitions.Add(new RowDefinition());
         body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -213,7 +219,7 @@ internal sealed partial class TerminalTab : UserControl
         ? connectionEnd != ConnectionEnd.Pending : statusKey == "Disconnected" || connectedName is not null);
     internal bool CanReconnect => IsDisconnected && CanStartConnection;
     internal bool CloseAfterInitialCancellation => connectionEnd == ConnectionEnd.InitialCancelled;
-    internal bool CanAutoCloseOnDisconnect => connectionEnd == ConnectionEnd.Normal;
+    internal bool CanAutoCloseOnDisconnect => connectionEnd == ConnectionEnd.Normal && reports?.HasReports != true;
     internal string ConnectionStatus => status.Text;
     public bool ShowDisconnectedIndicator => !IsExternalMacro ? !IsRunning && connectionEnd == ConnectionEnd.Normal
         : statusKey == "Disconnected" || IsDisconnected;
@@ -298,6 +304,7 @@ internal sealed partial class TerminalTab : UserControl
         MacroProgram? reviewedPostConnection = null;
         bool postConnectionStarted = false;
         lastRecordingStatus = null;
+        reportedRecordingParts.Clear();
         try
         {
             if (retainedAiSession is { } previous)
@@ -314,7 +321,7 @@ internal sealed partial class TerminalTab : UserControl
                 }), RequestSshChallengeAsync,
                 RequestSshPrivateKeyAsync, app.HostTrust.ApprovedFormats,
                 (request, token) => OnSshPromptAsync((application, owner) =>
-                    application.Vault.CheckSshCredentialsAsync(owner, request, token), token, serialize: false),
+                    application.Vault.CheckSshCredentialsAsync(owner, request, token, this), token, serialize: false),
                 message => Dispatcher.BeginInvoke(() =>
                 {
                     if (!ReferenceEquals(stop, generation) || stop.IsCancellationRequested) return;
@@ -346,7 +353,7 @@ internal sealed partial class TerminalTab : UserControl
                 Window? owner = MacroWindow ?? Window.GetWindow(this);
                 string attemptPath = path;
                 using var admission = await app.Profiles.AdmitAsync(owner, attemptPath, Macro?.FullPath, startup.Token,
-                    reconnect: hasAdmission, previousOnce, Macro);
+                    reconnect: hasAdmission, previousOnce, Macro, this);
                 var profile = admission.Profile;
                 hasAdmission = true;
                 previousOnce = admission.Once;
@@ -366,7 +373,7 @@ internal sealed partial class TerminalTab : UserControl
                     {
                         logging = RecordingSettings.Resolve(attemptPath, profile, Macro?.RecordingMacroName,
                             logDefaults, recordingOverrides);
-                        await app.Profiles.ApproveRecordingDestinationAsync(MacroWindow ?? Window.GetWindow(this), logging.Destination, startupToken);
+                        await app.Profiles.ApproveRecordingDestinationAsync(DecisionHost, logging.Destination, startupToken, this);
                     }
                     catch (Exception failure) when (failure is not RecordingStartException &&
                         failure is (IOException or ArgumentException or UnauthorizedAccessException or InvalidDataException or NotSupportedException))
@@ -395,7 +402,8 @@ internal sealed partial class TerminalTab : UserControl
             stop.Token.ThrowIfCancellationRequested();
             var destination = ConnectionDestination.From(session);
             if (lastDestination is { } previousDestination && previousDestination != destination)
-                NotifyDestinationChange(session, previousDestination, destination, generation.Token);
+                Reports.Report(new object(), string.Format(Text("ReconnectDestinationDetails"),
+                    PermissionDisplay.Literal(session.DisplayName), previousDestination, destination));
             lastDestination = destination;
             connectedName = session.DisplayName;
             established = true;
@@ -428,15 +436,12 @@ internal sealed partial class TerminalTab : UserControl
             if (session.RecordingStartFailure is { } logFailure) SetStatus("Failed", LogStartError(logFailure));
             else SetStatus("Disconnected");
 
-            void ShowRecordingFailure() => _ = Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+            void ShowRecordingFailure()
             {
-                if (!removed && ReferenceEquals(session, recordingOwner) &&
-                    recordingOwner.RecordingStatus is { Disposition: RecordingDisposition.Incomplete, Error: { } problem } failure)
-                {
-                    SetStatus(statusKey, problem);
-                    displayedRecordingFailure = failure.Part;
-                }
-            }));
+                var snapshot = recordingOwner.RecordingStatus;
+                if (snapshot.Disposition == RecordingDisposition.Incomplete)
+                    _ = Dispatcher.BeginInvoke(() => ObserveRecordingFailure(recordingOwner, snapshot, generation));
+            }
         }
         catch (OperationCanceledException exception) when (stop.IsCancellationRequested ||
             postConnection?.AttemptToken.IsCancellationRequested == true || exception is SshInteractionCancelledException)
@@ -456,36 +461,13 @@ internal sealed partial class TerminalTab : UserControl
                 connectionEnd = established || reconnect ? ConnectionEnd.Normal : ConnectionEnd.InitialCancelled;
                 SetStatus("Disconnected");
             }
-            else
-            {
-                connectionEnd = established ? ConnectionEnd.FailedAfterConnect : ConnectionEnd.FailedBeforeConnect;
-                string? credentialError = exception switch
-                {
-                    SshCredentialFailureException => exception.Message,
-                    CredentialLookupException { Code: MacroErrorCode.CredentialKindMismatch } => Text("VaultCredentialKindMismatch"),
-                    CredentialLookupException { Code: MacroErrorCode.CredentialUnavailable } => Text("SshCredentialMissing"),
-                    _ => null,
-                };
-                SetStatus("Failed", session?.RecordingStartFailure is { } failure ? LogStartError(failure) : credentialError ?? (exception switch
-                {
-                    RecordingStartException recording => LogStartError(recording.Message),
-                    OperationCanceledException => Text("TimedOut"),
-                    DllNotFoundException or EntryPointNotFoundException => Text("VaultCryptoUnavailable"),
-                    MacroSourceException macroError => PostConnectionSourceError(macroError),
-                    MacroError macroError when macroError.DisplayDetail is { } detail => detail,
-                    _ => !IsExternalMacro ? exception.Message : Text("MacroErrorConnectionFailed"),
-                }));
-                if (credentialError is not null && (MacroWindow ?? Window.GetWindow(this)) is { IsVisible: true } owner)
-                    ((App)Application.Current).Modal(() => ThemedMessageBox.ShowVault(owner, credentialError,
-                        Text("Vault"), icon: MessageBoxImage.Error));
-            }
+            else ShowConnectionFailure(exception, established);
         }
         finally
         {
             reviewedPostConnection?.Dispose();
             if (postConnectionStarted) postConnection!.Stop("Disconnected");
             else if (postConnection is not null) ClearPostConnectionMacro();
-            destinationNotice?.Close();
             AiCollaboration.EndControl(this);
             transferWindow?.ConnectionEnded();
             stop.Cancel();
@@ -518,7 +500,8 @@ internal sealed partial class TerminalTab : UserControl
                     connectionEnd = established ? ConnectionEnd.FailedAfterConnect : ConnectionEnd.FailedBeforeConnect;
                     SetStatus("Failed", LogStartError(failure));
                 }
-                else if (closing.RecordingError is { } problem) SetStatus(statusKey, problem);
+                else ObserveRecordingFailure(closing, closing.RecordingStatus, generation);
+                UpdateStatusText();
             }
             resizeTimer.Stop();
             if (postConnectionStarted) await postConnection!.Completion;
@@ -533,6 +516,8 @@ internal sealed partial class TerminalTab : UserControl
     internal Task ReleaseRemovedOutputAsync()
     {
         removed = true;
+        reports?.Dispose();
+        CancelPendingDecisions();
         frameTimer.Stop();
         searchRefreshTimer.Stop();
         HideMouseNotice();
@@ -624,30 +609,30 @@ internal sealed partial class TerminalTab : UserControl
     }
 
     private Task<bool> ApproveHostAsync(SshHostKey key, CancellationToken token) =>
-        OnSshPromptAsync((app, owner) => app.HostTrust.ApproveAsync(owner, key, token), token);
+        OnSshPromptAsync((app, owner) => app.HostTrust.ApproveAsync(owner, key, token, this), token);
 
     private Task<VaultSecret?> RequestSshPrivateKeyAsync(SshPrivateKeyRequest request, CancellationToken token) =>
-        OnSshPromptAsync((app, owner) => app.Vault.ReadPrivateKeyAsync(owner, request, token),
+        OnSshPromptAsync((app, owner) => app.Vault.ReadPrivateKeyAsync(owner, request, token, this),
             token, serialize: false);
 
     private Task<VaultSecret?> RequestSshPasswordAsync(SshPasswordRequest request, CancellationToken token)
     {
         if (request.Attempt == 1 && request.SavedPassword is { } reference)
-            return OnSshPromptAsync((app, owner) => app.Vault.ReadSavedPasswordAsync(owner, reference, token),
+            return OnSshPromptAsync((app, owner) => app.Vault.ReadSavedPasswordAsync(owner, reference, token, this),
                 token, serialize: false);
-        return OnSshPromptAsync<VaultSecret?>((app, owner) =>
+        return OnSshPromptAsync<VaultSecret?>(async (app, owner) =>
         {
             var form = new MainWindow.FormWindow(owner, Text("SshPasswordSource"));
             var password = new PasswordBox { MaxLength = 16 * 1024 };
             form.AddField("SshDestination", new TextBox { Text = request.Destination.ToString(), IsReadOnly = true });
             form.AddField("SshUsername", new TextBox { Text = PermissionDisplay.Literal(request.Username), IsReadOnly = true });
             form.AddField("VaultPassword", password);
-            form.Loaded += (_, _) => password.Focus();
+            form.Loaded += (_, _) => { if (form.ShowActivated) password.Focus(); };
             form.AddButtons(() => { }, acceptKey: "Authenticate");
             try
             {
-                if (SshHostTrust.ShowCancellable(app, form, token) != true) return Task.FromResult<VaultSecret?>(null);
-                return Task.FromResult<VaultSecret?>(EncodeSecret(VaultController.ReadPassword(password), token));
+                await PresentDecisionAsync(form, token);
+                return form.Accepted ? EncodeSecret(VaultController.ReadPassword(password), token) : null;
             }
             finally { password.Clear(); }
         }, token);
@@ -674,24 +659,24 @@ internal sealed partial class TerminalTab : UserControl
             form.AddPrompt(prompt.Text, input);
             inputs.Add(input);
         }
-        form.Loaded += (_, _) => inputs.FirstOrDefault()?.Focus();
+        form.Loaded += (_, _) => { if (form.ShowActivated) inputs.FirstOrDefault()?.Focus(); };
         form.AddButtons(() => { }, acceptKey: "SendSshAnswers");
         return (form, inputs);
     }
 
-    private Task<VaultSecret[]?> RequestSshChallengeAsync(SshChallenge challenge, CancellationToken token) =>
-        OnSshPromptAsync<VaultSecret[]?>((app, owner) =>
+    internal Task<VaultSecret[]?> RequestSshChallengeAsync(SshChallenge challenge, CancellationToken token) =>
+        OnSshPromptAsync<VaultSecret[]?>(async (app, owner) =>
         {
             var (form, inputs) = CreateSshChallengeForm(owner, challenge);
             var answers = new List<VaultSecret>();
             try
             {
-                if (SshHostTrust.ShowCancellable(app, form, token) != true)
-                    return Task.FromResult<VaultSecret[]?>(null);
+                await PresentDecisionAsync(form, token);
+                if (!form.Accepted) return null;
                 foreach (Control input in inputs)
                     answers.Add(EncodeSecret(input is PasswordBox password ? VaultController.ReadPassword(password) :
                         ((TextBox)input).Text.ToCharArray(), token));
-                return Task.FromResult<VaultSecret[]?>(answers.ToArray());
+                return answers.ToArray();
             }
             catch
             {
@@ -738,9 +723,8 @@ internal sealed partial class TerminalTab : UserControl
         {
             return await Dispatcher.InvokeAsync(() =>
             {
-                Window? owner = Macro is null ? Window.GetWindow(this) : MacroWindow;
+                Window? owner = DecisionHost;
                 if (owner is null || token.IsCancellationRequested) throw new OperationCanceledException(token);
-                if (Macro is not null && owner is MainWindow main) main.RestoreMacroHost();
                 return prompt(app, owner);
             }).Task.Unwrap().ConfigureAwait(false);
         }
@@ -863,7 +847,8 @@ internal sealed partial class TerminalTab : UserControl
                 ShowRecordingRecovery(active, previous.Part);
                 return;
             }
-            SetStatus("Connected", outcome.Status.Error ?? Text(resume ? "RecordingResumed" : "RecordingPaused"));
+            if (outcome.Status.Error is not null) ObserveRecordingFailure(active, outcome.Status, ConnectionGeneration);
+            UpdateStatusText();
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested)
         {
@@ -881,6 +866,9 @@ internal sealed partial class TerminalTab : UserControl
 
     public void UpdateLabels()
     {
+        reports?.UpdateLabels();
+        Notices.UpdateLabels();
+        Notices.UpdateHintText(mouseHintKey, Text("MouseSentToHostNotice"));
         UpdateMacroControls();
         UpdateAiControls();
         UpdateStatusText();
@@ -953,9 +941,32 @@ internal sealed partial class TerminalTab : UserControl
         ((App)Application.Current).Modal(form.ShowDialog);
     }
 
+    internal void ShowConnectionFailure(Exception exception, bool established)
+    {
+        connectionEnd = established ? ConnectionEnd.FailedAfterConnect : ConnectionEnd.FailedBeforeConnect;
+        string? credentialError = exception switch
+        {
+            SshCredentialFailureException => exception.Message,
+            CredentialLookupException { Code: MacroErrorCode.CredentialKindMismatch } => Text("VaultCredentialKindMismatch"),
+            CredentialLookupException { Code: MacroErrorCode.CredentialUnavailable } => Text("SshCredentialMissing"),
+            _ => null,
+        };
+        SetStatus("Failed", session?.RecordingStartFailure is { } failure ? LogStartError(failure) : exception switch
+        {
+            _ when credentialError is not null => null,
+            RecordingStartException recording => LogStartError(recording.Message),
+            OperationCanceledException => Text("TimedOut"),
+            DllNotFoundException or EntryPointNotFoundException => Text("VaultCryptoUnavailable"),
+            MacroSourceException macroError => PostConnectionSourceError(macroError),
+            MacroError macroError when macroError.DisplayDetail is { } detail => detail,
+            _ => !IsExternalMacro ? exception.Message : Text("MacroErrorConnectionFailed"),
+        });
+        if (credentialError is not null && !removed)
+            Reports.Report(ConnectionGeneration, $"{PermissionDisplay.Literal(TabCaption)} — {credentialError}");
+    }
+
     private void SetStatus(string key, string? detail = null)
     {
-        displayedRecordingFailure = null;
         bool changed = statusKey != key;
         statusKey = key;
         error = detail;
@@ -965,8 +976,25 @@ internal sealed partial class TerminalTab : UserControl
 
     private void ShowRecordingRecovery(TerminalSession active, int recoveredPart)
     {
-        if (ReferenceEquals(session, active) && displayedRecordingFailure == recoveredPart && active.RecordingError is null)
-            SetStatus(statusKey, Text("RecordingResumed"));
+        if (ReferenceEquals(session, active) && active.RecordingError is null)
+        {
+            reports?.UpdateIfPending((ConnectionGeneration, recoveredPart),
+                string.Format(Text("NoticeRecordingRecovered"), recoveredPart, active.RecordingStatus.Part));
+            UpdateStatusText();
+        }
+    }
+
+    private void ObserveRecordingFailure(TerminalSession source, RecordingStatus snapshot, object generation)
+    {
+        if (removed || generation != ConnectionGeneration || source.RecordingStartFailure is not null ||
+            snapshot is not { Disposition: RecordingDisposition.Incomplete, Error: { } reason }) return;
+        if (reportedRecordingParts.Add(snapshot.Part))
+        {
+            Reports.Report((generation, snapshot.Part), string.Format(Text("NoticeRecordingFailed"), snapshot.Part,
+                reason == RecordingDestinationChangedException.Description ? Text("RecordingDestinationChanged") : reason));
+            if (source.RecordingStatus.Part > snapshot.Part) ShowRecordingRecovery(source, snapshot.Part);
+        }
+        UpdateStatusText();
     }
 
     private static string LogStartError(string message) => string.Format(Text("RecordingStartFailed"),
@@ -981,6 +1009,26 @@ internal sealed partial class TerminalTab : UserControl
         {
             if (active.IsTelnet) text = $"{Text("TelnetUnencrypted")}   {text}";
             text += $"   {Text("LocalEcho")} {Text(active.LocalEchoEnabled ? "On" : "Off")}";
+        }
+        string recordingLabel = "";
+        if (RecordingCloseStatus is { Part: > 0 } recording)
+        {
+            string key = recording.Disposition switch
+            {
+                RecordingDisposition.Active => "NoticeRecordingActive",
+                RecordingDisposition.Incomplete => "NoticeRecordingStopped",
+                RecordingDisposition.Saving => "NoticeRecordingSaving",
+                RecordingDisposition.Saved when session is not null && IsRunning && statusKey == "Connected" => "NoticeRecordingPaused",
+                _ => "NoticeRecordingSaved"
+            };
+            recordingLabel = string.Format(Text(key), recording.Part);
+        }
+        if (recordingStatus.Text != recordingLabel)
+        {
+            recordingStatus.Text = recordingLabel;
+            recordingStatus.ToolTip = recordingLabel;
+            AutomationProperties.SetName(recordingStatus, recordingLabel);
+            recordingStatus.Visibility = recordingLabel.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         }
         if (output.UsesFontFallback) text += "   " + string.Format(Text("FontFallback"), output.AutomationFontFamily);
         if (Equals(status.ToolTip, text)) return;
@@ -998,6 +1046,20 @@ internal sealed partial class TerminalTab : UserControl
         AutomationProperties.SetName(broadcastTabStatus, text);
     }
 
+    private void AllocateStatusWidths()
+    {
+        // Keep connection and recording independently readable when several optional indicators appear.
+        var other = statusBar.Children.OfType<TextBlock>().Where(indicator =>
+            indicator != status && indicator != recordingStatus && indicator.Visibility == Visibility.Visible).ToArray();
+        double width = statusBar.ActualWidth;
+        double connectionShare = status.Visibility == Visibility.Visible ? 0.35 : 0;
+        double recordingShare = recordingStatus.Visibility == Visibility.Visible ? 0.25 : 0;
+        recordingStatus.MaxWidth = width * recordingShare;
+        if (other.Length == 0) return;
+        double share = (1 - connectionShare - recordingShare) / other.Length;
+        foreach (var indicator in other) indicator.MaxWidth = width * share;
+    }
+
     private void RestoreStatusBarColors()
     {
         statusBar.SetResourceReference(Panel.BackgroundProperty, "WindowBackground");
@@ -1013,23 +1075,24 @@ internal sealed partial class TerminalTab : UserControl
         ToolTipService.SetShowsToolTipOnKeyboardFocus(indicator, true);
     }
 
-    private void NotifyDestinationChange(TerminalSession connected, ConnectionDestination previous,
-        ConnectionDestination current, CancellationToken token)
+    private ViewNotifications? reports;
+    internal ViewNotifications Reports
     {
-        // Start receiving before displaying the notice, including for a background tab.
-        Dispatcher.BeginInvoke(() =>
+        get
         {
-            if (session != connected || token.IsCancellationRequested || removed || ClosePending) return;
-            Window? owner = tabHost?.Invoke();
-            if (owner is null) return;
-            string body = string.Format(Text("ReconnectDestinationDetails"), PermissionDisplay.Literal(connected.DisplayName),
-                previous, current);
-            var dialog = ThemedMessageBox.Create(owner, body, Text("ReconnectDestinationChanged"),
-                MessageBoxButton.OK, MessageBoxImage.Information, MessageBoxResult.OK, _ => { }, notification: true);
-            destinationNotice = dialog;
-            dialog.Closed += (_, _) => { if (destinationNotice == dialog) destinationNotice = null; };
-            dialog.Show();
-        });
+            if (reports is null)
+            {
+                reports = new(Notices, () => tabHost?.Invoke(), () => tabHost?.Invoke()?.IsCurrentView(this) ?? IsVisible,
+                    () => TabCaption, SelectNoticeTab);
+                reports.Changed += () => CaptionChanged?.Invoke();
+            }
+            return reports;
+        }
+    }
+
+    internal void SelectNoticeTab()
+    {
+        tabHost?.Invoke()?.SelectNotificationTab(this);
     }
 
     private void ApplyHighlightSet()
@@ -1154,10 +1217,23 @@ internal sealed partial class TerminalTab : UserControl
 
     private void PositionSearchBar()
     {
-        if (searchBar.Visibility != Visibility.Visible) return;
-        searchBar.MaxWidth = Math.Max(0, terminalArea.ActualWidth - 2 * SearchInset);
-        double occupiedTop = aiActions.Visibility == Visibility.Visible ? Canvas.GetTop(aiActions) + aiActions.ActualHeight : 0;
-        Canvas.SetTop(searchBar, occupiedTop + SearchInset);
+        Rect anchor = NoticeOverlayBounds();
+        Canvas.SetRight(Notices, terminalArea.ActualWidth - anchor.Right + 2);
+        Canvas.SetTop(Notices, anchor.Top + 2);
+        Notices.MaxWidth = Math.Clamp(anchor.Width - 4, 0, 440);
+        double availableHeight = anchor.Height - 4;
+        if (searchBar.Visibility == Visibility.Visible)
+        {
+            bool beside = Notices.HasItems && anchor.Left >= searchQuery.Width + 2 * SearchInset;
+            double searchWidth = beside ? anchor.Left : terminalArea.ActualWidth;
+            searchBar.MaxWidth = Math.Max(0, searchWidth - 2 * SearchInset);
+            if (!beside)
+                availableHeight = Math.Min(availableHeight, terminalArea.ActualHeight - anchor.Top -
+                    searchBar.ActualHeight - 2 * SearchInset);
+            double occupiedTop = Notices.HasItems && !beside ? Canvas.GetTop(Notices) + Notices.ActualHeight : 0;
+            Canvas.SetTop(searchBar, occupiedTop + SearchInset);
+        }
+        Notices.MaxHeight = Math.Max(0, availableHeight);
     }
 
     private void CloseSearch()
@@ -1450,8 +1526,8 @@ internal sealed partial class TerminalTab : UserControl
             {
                 var broadcast = await app.Broadcast.PasteFromClipboardAsync(host, this, CaptureAsync,
                     (text, preview, token) => Dispatcher.InvokeAsync(() =>
-                        PresentPaste(owner, text, preview.Pacing, preview.Targets, token),
-                        DispatcherPriority.Normal, token).Task, review.Token);
+                        PresentPasteAsync(DecisionHost ?? owner, text, preview.Pacing, preview.Targets, token),
+                        DispatcherPriority.Normal, token).Task.Unwrap(), review.Token);
                 if (broadcast != BroadcastInput.PasteOutcome.Inactive)
                 {
                     if (broadcast == BroadcastInput.PasteOutcome.Submitted && session == active && !sourceLifetime.IsCancellationRequested)
@@ -1464,7 +1540,8 @@ internal sealed partial class TerminalTab : UserControl
             var (characterDelay, lineDelay, remember) = app.PasteDefaults;
             if (paste.RequiresConfirmation)
             {
-                var choice = PresentPaste(owner, paste, (characterDelay, lineDelay, remember), null, review.Token);
+                var choice = await PresentPasteAsync(DecisionHost ?? owner, paste, (characterDelay, lineDelay, remember),
+                    [BroadcastTargetLabel(active)], review.Token);
                 if (choice is null || !SingleTargetCurrent()) return;
                 (characterDelay, lineDelay, remember) = choice;
                 app.PasteDefaults = remember ? (characterDelay, lineDelay, true) : default;
@@ -1488,7 +1565,7 @@ internal sealed partial class TerminalTab : UserControl
                 {
                     Interlocked.Exchange(ref receivedRevision, 1);
                     ScheduleFrame();
-                    SetStatus("Connected", completed ? active.RecordingError : Text("PasteStopped"));
+                    SetStatus("Connected", completed ? null : Text("PasteStopped"));
                 }
             }
             finally
@@ -1510,8 +1587,8 @@ internal sealed partial class TerminalTab : UserControl
             if (ReferenceEquals(pasteReview, cancellation)) pasteReview = null;
         }
 
-        bool SingleTargetCurrent() => Window.GetWindow(this) == owner &&
-            (owner is not MainWindow window || !app.Broadcast.IsActive(window)) &&
+        bool SingleTargetCurrent() => DecisionHost is { } current &&
+            (current is not MainWindow window || !app.Broadcast.IsActive(window)) &&
             active == InputSession && !HasPendingInput && !review.IsCancellationRequested;
 
         async Task<TerminalPaste?> CaptureAsync(CancellationToken token)
@@ -1523,11 +1600,10 @@ internal sealed partial class TerminalTab : UserControl
         }
     }
 
-    private static BroadcastInput.PasteDecision? PresentPaste(Window owner, TerminalPaste paste,
-        (int Character, int Line, bool Remember) pacing, IReadOnlyList<string>? targets, CancellationToken token)
+    private async Task<BroadcastInput.PasteDecision?> PresentPasteAsync(Window owner, TerminalPaste paste,
+        (int Character, int Line, bool Remember) pacing, IReadOnlyList<string> targets, CancellationToken token)
     {
         if (token.IsCancellationRequested) return null;
-        var app = (App)Application.Current;
         var (characterDelay, lineDelay, remember) = pacing;
         var form = new MainWindow.FormWindow(owner, Text("PastePreview")) { Width = 680 };
         string summary = string.Format(CultureInfo.CurrentCulture, Text("PasteCounts"),
@@ -1535,7 +1611,7 @@ internal sealed partial class TerminalTab : UserControl
             Text(paste.EndsWithNewline ? "TrailingNewline" : "NoTrailingNewline"));
         // Each source page can expand into visible Unicode markers and line breaks.
         // Include escaped captions, their joined text and the read-only controls.
-        long captionMemory = targets?.Sum(name => 128L + 64L * name.Length) ?? 0;
+        long captionMemory = targets.Sum(name => 128L + 64L * name.Length);
         using var previewMemory = ApplicationResources.TerminalState.Reserve(1024 * 1024 + captionMemory);
         var previewText = new TextBox
         {
@@ -1550,12 +1626,11 @@ internal sealed partial class TerminalTab : UserControl
         ReadOnlyPreview.Add(form, "PastePreview", previewText, paste.Text);
 
         form.AddField("PasteCountsLabel", new TextBox { Text = summary, IsReadOnly = true });
-        if (targets is not null)
-            form.AddField("BroadcastTargets", new TextBox
-            {
-                Text = string.Join(Environment.NewLine, targets), TextWrapping = TextWrapping.Wrap,
-                IsReadOnly = true, MaxHeight = 130, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            });
+        form.AddField("PasteTargets", new TextBox
+        {
+            Text = string.Join(Environment.NewLine, targets), TextWrapping = TextWrapping.Wrap,
+            IsReadOnly = true, MaxHeight = 130, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        });
         var character = new TextBox { Text = characterDelay.ToString(CultureInfo.InvariantCulture) };
         var line = new TextBox { Text = lineDelay.ToString(CultureInfo.InvariantCulture) };
         var rememberDelays = new CheckBox { IsChecked = remember };
@@ -1572,12 +1647,8 @@ internal sealed partial class TerminalTab : UserControl
             lineDelay = parsedLine;
             remember = rememberDelays.IsChecked == true;
         }, acceptKey: "SendPaste", cancelDefault: true);
-        using var close = token.Register(() => form.Dispatcher.BeginInvoke(() =>
-        {
-            if (form.IsVisible) form.Close();
-        }));
-        return app.Modal(form.ShowDialog) == true && !token.IsCancellationRequested
-            ? new(characterDelay, lineDelay, remember) : null;
+        await PresentDecisionAsync(form, token);
+        return form.Accepted ? new(characterDelay, lineDelay, remember) : null;
     }
 
     private async Task SendAsync(TerminalInput input)
@@ -1605,7 +1676,7 @@ internal sealed partial class TerminalTab : UserControl
                 operated.RevealCursor();
                 Interlocked.Exchange(ref receivedRevision, 1);
                 ScheduleFrame();
-                SetStatus("Connected", session?.RecordingError);
+                SetStatus("Connected");
             }
         }
         catch (OperationCanceledException)

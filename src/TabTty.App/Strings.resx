@@ -180,6 +180,7 @@
   <data name="VaultUnlocked" xml:space="preserve"><value>The credential vault is unlocked.</value></data>
   <data name="ArchiveVault" xml:space="preserve"><value>Archive vault and start over…</value></data>
   <data name="ArchiveVaultConfirm" xml:space="preserve"><value>Move the current vault to a new file in the same folder? Existing credential references will need to be selected again after you create a new vault.</value></data>
+  <data name="VaultArchiveDestination" xml:space="preserve"><value>Last archive location: {0}</value></data>
   <data name="VaultArchived" xml:space="preserve"><value>The vault was moved to the path below. Choose Unlock vault or Vault management to set a new master password.</value></data>
   <data name="AddVaultPassword" xml:space="preserve"><value>Add password</value></data>
   <data name="VaultEntries" xml:space="preserve"><value>Vault entries</value></data>
@@ -776,4 +777,22 @@ The host can send keys and multiple lines of commands without asking again, with
   <data name="MacroErrorParameterLimit" xml:space="preserve"><value>This call or declaration has too many parameters.</value></data>
   <data name="MacroErrorTypeNestingLimit" xml:space="preserve"><value>This type exceeds the nesting limit.</value></data>
   <data name="MacroErrorLocalLimit" xml:space="preserve"><value>The macro declares too many local variables.</value></data>
+  <data name="DecisionTargetTab" xml:space="preserve"><value>Tab: {0}</value></data>
+  <data name="PasteTargets" xml:space="preserve"><value>Paste destinations</value></data>
+  <data name="NoticeStackShow" xml:space="preserve"><value>Show notices ({0})</value></data>
+  <data name="NoticeStackHide" xml:space="preserve"><value>Hide notices ({0})</value></data>
+  <data name="NoticeShowTab" xml:space="preserve"><value>Show tab</value></data>
+  <data name="NoticeShowWindow" xml:space="preserve"><value>Show window</value></data>
+  <data name="NoticeForView" xml:space="preserve"><value>Notifications — {0}</value></data>
+  <data name="NoticeUnread" xml:space="preserve"><value>Unread notification</value></data>
+  <data name="NoticeAwaitingAnswer" xml:space="preserve"><value>Awaiting your response</value></data>
+  <data name="NoticeRecordingFailed" xml:space="preserve"><value>Recording stopped in part {0}. {1}</value></data>
+  <data name="NoticeRecordingRecovered" xml:space="preserve"><value>Part {0} remains incomplete. Recording resumed in part {1}.</value></data>
+  <data name="NoticeRecordingActive" xml:space="preserve"><value>Recording (part {0})</value></data>
+  <data name="NoticeRecordingSaving" xml:space="preserve"><value>Saving recording (part {0})</value></data>
+  <data name="NoticeRecordingStopped" xml:space="preserve"><value>Recording stopped (part {0} incomplete)</value></data>
+  <data name="NoticeRecordingPaused" xml:space="preserve"><value>Recording paused (part {0} saved)</value></data>
+  <data name="NoticeRecordingSaved" xml:space="preserve"><value>Recording saved (part {0})</value></data>
+  <data name="NoticeBroadcastUncertain" xml:space="preserve"><value>Delivery uncertain</value></data>
+  <data name="NoticeBroadcastWindow" xml:space="preserve"><value>Window broadcast — {0}</value></data>
 </root>

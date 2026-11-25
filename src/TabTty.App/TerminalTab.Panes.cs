@@ -19,7 +19,7 @@ internal sealed partial class TerminalTab
     private bool presentationEnabled;
     private FrameworkElement GridHost => (FrameworkElement?)paneViewport ?? output.Scroller;
 
-    private Rect AiActionOverlayBounds()
+    private Rect NoticeOverlayBounds()
     {
         var area = new Rect(terminalArea.RenderSize);
         if (paneLayout is null) return area;
@@ -157,17 +157,11 @@ internal sealed partial class TerminalTab
 
     internal void BeginHostMove()
     {
-        if (macroDialog is not null) macroDialog.Owner = null;
         foreach (var pane in panes.Keys) pane.BeginHostMove();
     }
 
     internal bool EndHostMove()
     {
-        if (macroDialog is not null && MacroWindow is { } owner)
-        {
-            macroDialog.Owner = owner;
-            owner.RestoreMacroHost();
-        }
         bool cancelled = false;
         foreach (var pane in panes.Keys) cancelled |= pane.EndHostMove();
         return cancelled;

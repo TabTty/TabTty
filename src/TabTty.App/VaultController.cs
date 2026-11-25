@@ -23,7 +23,7 @@ internal sealed class VaultController(App app) : IDisposable
     internal long SelectionEpoch { get; private set; }
     internal bool HasActiveOperations => selectionTransition is not null || files.Values.Any(file => file.HasActiveWork);
     internal bool IsInitializingFor(Window host) => files.Values.Any(file => file.IsInitializingFor(host));
-    private event Action? ManagementChanged;
+    internal event Action? ManagementChanged;
 
     private VaultFileController Selected => selected ??= GetFile(ProfileLocation.Normalize(app.VaultPath));
 
@@ -171,16 +171,16 @@ internal sealed class VaultController(App app) : IDisposable
     }
 
     public Task<SshCredentialAvailability> CheckSshCredentialsAsync(Window owner, SshSavedCredentialRequest request,
-        CancellationToken token) => Selected.CheckSshCredentialsAsync(owner, request, token);
+        CancellationToken token, TerminalTab? tab = null) => Selected.CheckSshCredentialsAsync(owner, request, token, tab);
 
-    public Task<VaultSecret?> ReadSavedPasswordAsync(Window owner, CredentialReference reference, CancellationToken token) =>
-        Selected.ReadSavedPasswordAsync(owner, reference, token);
+    public Task<VaultSecret?> ReadSavedPasswordAsync(Window owner, CredentialReference reference, CancellationToken token,
+        TerminalTab? tab = null) => Selected.ReadSavedPasswordAsync(owner, reference, token, tab: tab);
 
-    public Task<VaultSecret?> ReadPrivateKeyAsync(Window owner, SshPrivateKeyRequest request, CancellationToken token) =>
-        Selected.ReadPrivateKeyAsync(owner, request, token);
+    public Task<VaultSecret?> ReadPrivateKeyAsync(Window owner, SshPrivateKeyRequest request, CancellationToken token,
+        TerminalTab? tab = null) => Selected.ReadPrivateKeyAsync(owner, request, token, tab);
 
-    public Task<VaultSecret?> ReadMacroPasswordAsync(Window owner, CredentialReference reference, CancellationToken token) =>
-        Selected.ReadMacroPasswordAsync(owner, reference, token);
+    public Task<VaultSecret?> ReadMacroPasswordAsync(Window owner, CredentialReference reference, CancellationToken token,
+        TerminalTab? tab = null) => Selected.ReadMacroPasswordAsync(owner, reference, token, tab);
 
     internal static char[] ReadPassword(PasswordBox box) => VaultFileController.ReadPassword(box);
 
@@ -227,7 +227,7 @@ internal sealed class VaultController(App app) : IDisposable
         var menu = new ContextMenu();
         list.ContextMenu = menu;
         (VaultFileController File, VaultEntryInfo[] Entries)? menuTarget = null;
-        MenuItem editEntry = AddEntryAction("VaultEditEntry", static (file, window, entry) => file.EditEntryAsync(window, entry));
+        MenuItem editEntry = AddEntryAction("VaultEditEntry", (file, window, entry) => file.EditEntryAsync(window, entry, form));
         MenuItem copyMacroReference = AddEntryAction("CopyMacroReference", static (file, _, entry) =>
         {
             if (entry.Kind == "password")
@@ -246,8 +246,8 @@ internal sealed class VaultController(App app) : IDisposable
 
         form.AddActionRow(() =>
         {
-            requiresVault.Add(Add("AddVaultPassword", (file, window) => file.AddPasswordAsync(window, form)));
-            requiresVault.Add(Add("ImportPrivateKey", (file, window) => file.ImportPrivateKeyAsync(window, form)));
+            requiresVault.Add(Add("AddVaultPassword", (file, window) => file.AddPasswordAsync(window)));
+            requiresVault.Add(Add("ImportPrivateKey", (file, window) => file.ImportPrivateKeyAsync(window)));
         });
         form.AddFillingDisplay("VaultEntryList", frame, () => form.AddGroup("VaultFileOperations", () =>
         {
@@ -310,7 +310,7 @@ internal sealed class VaultController(App app) : IDisposable
             if (args.ClickCount != 2 || columns.RowAt(args.OriginalSource)?.Content is not VaultEntryInfo entry ||
                 listedFile is not { Unlocked: not null } file) return;
             args.Handled = true;
-            await RunEntryAction(file, entry, static (current, window, item) => current.EditEntryAsync(window, item));
+            await RunEntryAction(file, entry, (current, window, item) => current.EditEntryAsync(window, item, form));
         };
         list.PreviewKeyDown += async (_, args) =>
         {
@@ -328,7 +328,7 @@ internal sealed class VaultController(App app) : IDisposable
         {
             Window window = form.OwnerWindow;
             VaultFileController file = target();
-            return file.RunAsync(window, () => action(file, window));
+            return file.RunAsync(window, () => action(file, window), form);
         });
 
         MenuItem AddEntryAction(string key, Func<VaultFileController, Window, VaultEntryInfo, Task> action)
@@ -354,13 +354,13 @@ internal sealed class VaultController(App app) : IDisposable
             Window window = form.OwnerWindow;
             if (!ReferenceEquals(file, target())) return ShowStaleSelection();
             return file.RunAsync(window, () => file.HasCurrentSelection(entries)
-                ? action(file, window) : ShowStaleSelection());
+                ? action(file, window) : ShowStaleSelection(), form);
 
             Task ShowStaleSelection()
             {
                 UpdateEntries();
                 RefreshList(null);
-                form.SetStatusMessage(Text("VaultEntrySelectionChanged"));
+                form.SetStatusResource("VaultEntrySelectionChanged");
                 return Task.CompletedTask;
             }
         });
@@ -371,6 +371,8 @@ internal sealed class VaultController(App app) : IDisposable
         {
             VaultFileController file = target();
             vaultPath.Text = string.Format(Text("VaultPathDisplay"), file.FilePath);
+            if (file.LastArchivePath is { } archive)
+                vaultPath.Text += "\n" + string.Format(Text("VaultArchiveDestination"), archive);
             AutomationProperties.SetName(vaultPath, vaultPath.Text);
             bool sameFile = ReferenceEquals(listedFile, file);
             bool unlocked = file.Unlocked is not null;
@@ -385,7 +387,7 @@ internal sealed class VaultController(App app) : IDisposable
             foreach (Button action in requiresVault) action.IsEnabled = true;
             if (file.Unlocked is null)
             {
-                form.SetStatusMessage(Text("VaultEntriesLocked"));
+                form.SetStatusResource("VaultEntriesLocked");
                 if (form.IsLoaded) _ = DescribeMissingAsync(file, revision);
             }
         }

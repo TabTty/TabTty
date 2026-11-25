@@ -74,12 +74,12 @@ internal sealed class HighlightCatalog(App app, string pathName, Action<string, 
         }
         catch (Exception exception) when (InvalidStore(exception))
         {
-            MainWindow.ShowError(owner, new InvalidDataException(Text("HighlightStoreInvalid")));
+            FormView.ReportFailure(owner.CaptureReport(), new InvalidDataException(Text("HighlightStoreInvalid")));
         }
 
         void Build(FormView form)
         {
-            form.ShowFileOperationStatus();
+            form.AddStatusBar();
             var originalSets = GetSets();
             var draft = originalSets.ToList();
             var list = new ListBox { DisplayMemberPath = nameof(HighlightSet.Name), Height = 250 };
@@ -120,6 +120,7 @@ internal sealed class HighlightCatalog(App app, string pathName, Action<string, 
                 pair.First.Enabled == pair.Second.Enabled && pair.First.Rules.SequenceEqual(pair.Second.Rules)));
             form.AddEditorButtons(async () =>
             {
+                using var progress = form.BeginProgress("FileOperationPending");
                 if (!ReferenceEquals(originalSets, GetSets()))
                     throw new InvalidOperationException(Text("ManagementTabOutdated"));
                 await SaveAsync(draft.ToArray());

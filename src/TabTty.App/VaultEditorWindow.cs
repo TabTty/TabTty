@@ -26,6 +26,7 @@ internal sealed class VaultEditorWindow : Window
         form.SetPageTitle("ManageVault");
         build(form);
         UpdateLabels();
+        Closed += (_, _) => form.Reports.Dispose();
     }
 
     public void EnableManagement() => form.IsEnabled = true;

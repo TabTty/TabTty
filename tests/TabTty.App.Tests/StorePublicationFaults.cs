@@ -36,14 +36,14 @@ internal static partial class Program
         byte[] changedHighlights = [.. priorHighlights, (byte)'\n'];
         File.WriteAllBytes(highlights.Path, changedHighlights);
         Click(await VisibleButtonAsync(owner, "Save"));
-        await DismissAsync("Error", "OK");
+        await AcknowledgeReportAsync(owner, App.Text("StoreChanged"));
         if (!File.ReadAllBytes(highlights.Path).AsSpan().SequenceEqual(changedHighlights) ||
             app.Highlights.Find(highlightId)?.Name != "Previous" || File.Exists(highlights.Path + ".bak"))
             throw new InvalidOperationException("A stale highlight save changed the external file or the effective catalog.");
         File.WriteAllBytes(highlights.Path, priorHighlights);
         using (HoldArtifactCapacity())
         {
-            var dismissal = DismissAsync("Error", "OK");
+            var dismissal = AcknowledgeReportAsync(owner, "The file publication artifact budget reached its limit.");
             Click(await VisibleButtonAsync(owner, "Save"));
             await dismissal;
             if (!File.ReadAllBytes(highlights.Path).AsSpan().SequenceEqual(priorHighlights) ||
@@ -57,10 +57,12 @@ internal static partial class Program
             if (app.Highlights.Find(highlightId)?.Name != "Previous" ||
                 !File.ReadAllBytes(held.Preservation!).AsSpan().SequenceEqual(priorHighlights))
                 throw new InvalidOperationException("Pending highlight publication changed the effective selection or original.");
+            await WaitForAsync(() => FindControls<TextBlock>(owner).Any(text =>
+                text.IsVisible && text.Text == App.Text("FileOperationPending")));
             byte[] candidate = File.ReadAllBytes(highlights.Path);
             File.Delete(held.Preservation!);
             held.Dispose();
-            await DismissAsync("Error", "OK");
+            await AcknowledgeReportAsync(owner, held.Preservation!, App.Text("StoreSaveUnverified"));
             if (app.Highlights.Find(highlightId)?.Name != "Previous" || !VerifiedFilePublication.IsUnresolved(highlights.Path))
                 throw new InvalidOperationException("Unverified highlight publication replaced the effective catalog.");
             File.WriteAllBytes(held.Preservation!, priorHighlights);

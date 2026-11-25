@@ -313,7 +313,7 @@ internal static partial class Program
             using (File.Open(Path.Combine(LocalState.DirectoryPath, "state.json"), FileMode.Open, FileAccess.Read, FileShare.Read))
             {
                 Click(editor, "Save");
-                await AnswerEditorNotice(editor, App.Text("Error"));
+                await AcknowledgeReportAsync(editor, App.Text("ProfileRegistrationIncomplete"));
                 while (form.IsBusy) await Task.Delay(10, token);
                 if ((await ConnectionProfile.LoadAsync(path, token)).GroupName != savedGroup ||
                     form.UnresolvedPublication is null)

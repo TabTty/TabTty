@@ -183,6 +183,7 @@ internal sealed partial class MainWindow
         foreach (var group in Groups)
             AutomationProperties.SetName(group, GroupName(group));
         PlaceBroadcastStatus();
+        RefreshNoticeActivity();
     }
 
     private string GroupName(TabControl group)
@@ -341,25 +342,130 @@ internal sealed partial class MainWindow
         bool visible = app.Broadcast.IsActive(this);
         bool editable = app.Broadcast.CanSelect(this);
         foreach (var tab in AllTabs) tab.UpdateBroadcast(visible, editable);
-        string status = app.Broadcast.Status(this);
-        broadcastStatus.Text = status;
-        broadcastStatus.ToolTip = status;
-        AutomationProperties.SetName(broadcastStatus, status);
+        broadcastState = app.Broadcast.Status(this);
         PlaceBroadcastStatus();
     }
 
     private void PlaceBroadcastStatus()
     {
-        string text = broadcastStatus.Text;
-        TerminalTab? terminal = text.Length == 0 ? null : SelectedTab ?? Groups
+        string text = broadcastState;
+        string vaultState = explicitlyUnlockedVault is null ? "" : Text("VaultUnlocked");
+        var selectedView = (activeGroup.SelectedItem as WindowTab)?.Content;
+        FormView? selectedForm = selectedView as FormView;
+        if (vaultStatusForm != selectedForm) vaultStatusForm?.SetWindowStatus("");
+        vaultStatusForm = selectedForm;
+        selectedForm?.SetWindowStatus(vaultState);
+        bool showVaultInTerminal = vaultState.Length != 0 && selectedForm is null;
+        TerminalTab? terminal = text.Length == 0 && !showVaultInTerminal ? null : SelectedTab ?? Groups
             .Select(group => (group.SelectedItem as WindowTab)?.Content).OfType<TerminalTab>().FirstOrDefault();
         if (broadcastStatusTab != terminal)
         {
             broadcastStatusTab?.SetBroadcastStatus("");
             broadcastStatusTab = terminal;
         }
-        terminal?.SetBroadcastStatus(text);
-        broadcastBand.Visibility = terminal is null && text.Length != 0 ? Visibility.Visible : Visibility.Collapsed;
+        string terminalStatus = showVaultInTerminal && text.Length != 0 ? $"{text} · {vaultState}" :
+            showVaultInTerminal ? vaultState : text;
+        terminal?.SetBroadcastStatus(terminalStatus);
+        NoticeStack stack = (selectedView as TerminalTab)?.Notices ?? selectedForm?.Notices ?? windowNotices;
+        windowReports?.PresentIn(stack);
+        bool fallback = terminal is null && text.Length != 0;
+        if (broadcastStack != stack || !fallback)
+        {
+            broadcastStack?.Remove(broadcastStatus);
+            broadcastStack = null;
+        }
+        if (fallback)
+        {
+            broadcastStatus.Text = string.Format(Text("NoticeBroadcastWindow"), text);
+            AutomationProperties.SetName(broadcastStatus, broadcastStatus.Text);
+            stack.ShowContent(broadcastStatus, broadcastStatus);
+            broadcastStack = stack;
+        }
+    }
+
+    private VaultFileController? explicitlyUnlockedVault;
+    private FormView? vaultStatusForm;
+
+    internal void ShowUnlockedVault(VaultFileController file)
+    {
+        explicitlyUnlockedVault = file;
+        UpdateVaultStatus();
+    }
+
+    private void UpdateVaultStatus()
+    {
+        if (explicitlyUnlockedVault is { } file && (file.Unlocked is null || !app.Vault.IsSelected(file)))
+            explicitlyUnlockedVault = null;
+        vaultHint.Text = explicitlyUnlockedVault is null ? Text("VaultHint") : Text("VaultUnlocked");
+        PlaceBroadcastStatus();
+    }
+
+    private readonly NoticeStack windowNotices = new();
+    private string broadcastState = "";
+    private readonly TextBlock broadcastStatus = new() { TextWrapping = TextWrapping.Wrap, IsHitTestVisible = false };
+    private NoticeStack? broadcastStack;
+    private ViewNotifications? windowReports;
+    private ViewNotifications WindowReports => windowReports ??= new(windowNotices, () => this,
+        hasForeground, () => Title, ShowNotificationWindow, "NoticeShowWindow");
+
+    private void ShowNotificationWindow()
+    {
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        Activate();
+    }
+
+    internal bool IsCurrentView(FrameworkElement view) => hasForeground() && (activeGroup.SelectedItem as WindowTab)?.Content == view;
+
+    private void RefreshNoticeActivity()
+    {
+        foreach (var tab in TerminalTabs) tab.Notices.HintsActive = IsCurrentView(tab);
+    }
+
+    private void RefreshNoticeHosts()
+    {
+        foreach (var tab in AllTabs)
+        {
+            if (tab.Content is TerminalTab terminal) terminal.RefreshNoticeOwner();
+            else if (tab.Content is FormView form) form.Reports.HostChanged();
+        }
+        windowReports?.HostChanged();
+    }
+
+    internal void SelectNotificationTab(WindowTab tab)
+    {
+        if (closing || GroupOf(tab) is not { } group) return;
+        ActivateGroup(group);
+        group.SelectedItem = tab;
+        ShowNotificationWindow();
+        RevealTabHeader(group, tab);
+    }
+
+    internal void SelectNotificationTab(TerminalTab terminal)
+    {
+        if (AllTabs.FirstOrDefault(tab => tab.Content == terminal) is { } tab) SelectNotificationTab(tab);
+    }
+
+    internal void ReportBroadcastFailure(string message)
+    {
+        var reports = WindowReports;
+        PlaceBroadcastStatus();
+        reports.Report(new object(), message);
+    }
+
+    internal Action<object, string> CaptureReport()
+    {
+        var item = activeGroup.SelectedItem as WindowTab;
+        return (key, message) =>
+        {
+            if (item?.Host is not null && item.Content is FormView form) form.Reports.Report(key, message);
+            else if (item?.Host is not null && item.Content is TerminalTab terminal) terminal.Reports.Report(key, message);
+            else if (!closed)
+            {
+                var reports = WindowReports;
+                PlaceBroadcastStatus();
+                reports.Report(key, message);
+            }
+        };
     }
 
     private TabControl? GroupOf(TabItem item) =>

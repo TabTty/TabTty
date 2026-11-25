@@ -27,7 +27,7 @@ internal sealed class ProfileEditorWindow : Window
         UpdatePageTitle(profile.DisplayName);
         app.Profiles.AddEditor(form, profile, titleKey == "EditProfile" ? identity : null, creating, OnSaved, fromExplorer);
         UpdateTitle();
-        Closed += (_, _) => app.EditorClosed(this);
+        Closed += (_, _) => { form.Reports.Dispose(); app.EditorClosed(this); };
     }
 
     public string TitleKey { get; private set; }

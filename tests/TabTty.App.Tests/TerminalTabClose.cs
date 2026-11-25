@@ -83,7 +83,7 @@ internal static partial class Program
             tabs.SelectedItem = item;
             timer.Start();
             if (entireWindow) host.Close();
-            else ((DockPanel)item.Header).Children.OfType<Button>().Single().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            else TabCloseButton(item).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             while (questions == 0) await Task.Delay(10, deadline.Token);
             await Task.Delay(TimeSpan.FromSeconds(6), deadline.Token);
             if (questions != 1 || !tabs.Items.Contains(item) || !terminal.RecordingReleasePending || session.RecordingError is not null)
@@ -147,7 +147,7 @@ internal static partial class Program
         host.Show();
         var tabs = (TabControl)host.FindName("tabs");
         var item = (TabItem)tabs.SelectedItem;
-        var close = ((DockPanel)item.Header).Children.OfType<Button>().Single();
+        var close = TabCloseButton(item);
         try
         {
             using TcpClient oldPeer = await ConnectAsync();
@@ -221,7 +221,7 @@ internal static partial class Program
         host.Show();
         var tabs = (TabControl)host.FindName("tabs");
         var item = (TabItem)tabs.SelectedItem;
-        var close = ((DockPanel)item.Header).Children.OfType<Button>().Single();
+        var close = TabCloseButton(item);
         bool accept = false;
         int reviews = 0;
         var dialogTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(30) };
@@ -344,7 +344,7 @@ internal static partial class Program
             var item = tabs.Items.OfType<TabItem>().Single(tab => ReferenceEquals(tab.Content, first));
             first.Disconnected += RequestWindowCloseWhileFirstFinishes;
             dialogs.Start();
-            ((DockPanel)item.Header).Children.OfType<Button>().Single().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            TabCloseButton(item).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             while (tabs.Items.Contains(item)) await Task.Delay(10, deadline.Token);
             if (acceptWindow)
             {

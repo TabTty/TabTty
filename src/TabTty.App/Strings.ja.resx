@@ -177,9 +177,10 @@
   <data name="BrowsePath" xml:space="preserve"><value>参照</value></data>
   <data name="InvalidVaultPath" xml:space="preserve"><value>.tttykey ファイルの絶対パスを指定してください。</value></data>
   <data name="VaultBusy" xml:space="preserve"><value>実行中の vault 操作が終わるまでお待ちください。</value></data>
-  <data name="VaultUnlocked" xml:space="preserve"><value>認証情報 vault のロックを解除しました。</value></data>
+  <data name="VaultUnlocked" xml:space="preserve"><value>認証情報 vault はロック解除済みです。</value></data>
   <data name="ArchiveVault" xml:space="preserve"><value>vault を退避して作り直す…</value></data>
   <data name="ArchiveVaultConfirm" xml:space="preserve"><value>現在の vault を同じフォルダーの別ファイルに移動しますか？ 新しい vault を作成した後、プロファイルで認証情報を選び直してください。</value></data>
+  <data name="VaultArchiveDestination" xml:space="preserve"><value>前回の退避先：{0}</value></data>
   <data name="VaultArchived" xml:space="preserve"><value>次のパスに vault を退避しました。解除または管理を選ぶと、新しいマスターパスワードを設定できます。</value></data>
   <data name="AddVaultPassword" xml:space="preserve"><value>パスワードを追加</value></data>
   <data name="VaultEntries" xml:space="preserve"><value>vault の項目</value></data>
@@ -774,4 +775,22 @@ AI アプリは個別の確認なしでキーや複数行のコマンドを入�
   <data name="MacroErrorParameterLimit" xml:space="preserve"><value>引数の数が上限を超えています。</value></data>
   <data name="MacroErrorTypeNestingLimit" xml:space="preserve"><value>型の入れ子の深さが上限を超えています。</value></data>
   <data name="MacroErrorLocalLimit" xml:space="preserve"><value>ローカル変数の宣言数が上限を超えています。</value></data>
+  <data name="DecisionTargetTab" xml:space="preserve"><value>対象タブ：{0}</value></data>
+  <data name="PasteTargets" xml:space="preserve"><value>貼り付け先</value></data>
+  <data name="NoticeStackShow" xml:space="preserve"><value>通知を表示 ({0})</value></data>
+  <data name="NoticeStackHide" xml:space="preserve"><value>通知を折りたたむ ({0})</value></data>
+  <data name="NoticeShowTab" xml:space="preserve"><value>タブを表示</value></data>
+  <data name="NoticeShowWindow" xml:space="preserve"><value>ウィンドウを表示</value></data>
+  <data name="NoticeForView" xml:space="preserve"><value>通知 — {0}</value></data>
+  <data name="NoticeUnread" xml:space="preserve"><value>未確認の通知</value></data>
+  <data name="NoticeAwaitingAnswer" xml:space="preserve"><value>応答待ち</value></data>
+  <data name="NoticeRecordingFailed" xml:space="preserve"><value>パート {0} の記録を停止しました。{1}</value></data>
+  <data name="NoticeRecordingRecovered" xml:space="preserve"><value>パート {0} は不完全です。パート {1} で記録を再開しました。</value></data>
+  <data name="NoticeRecordingActive" xml:space="preserve"><value>記録中（パート {0}）</value></data>
+  <data name="NoticeRecordingSaving" xml:space="preserve"><value>記録を保存中（パート {0}）</value></data>
+  <data name="NoticeRecordingStopped" xml:space="preserve"><value>記録停止（パート {0} は不完全）</value></data>
+  <data name="NoticeRecordingPaused" xml:space="preserve"><value>記録を一時停止中（パート {0} は保存済み）</value></data>
+  <data name="NoticeRecordingSaved" xml:space="preserve"><value>記録を保存済み（パート {0}）</value></data>
+  <data name="NoticeBroadcastUncertain" xml:space="preserve"><value>到達範囲は不明</value></data>
+  <data name="NoticeBroadcastWindow" xml:space="preserve"><value>ウィンドウの一斉入力 — {0}</value></data>
 </root>
