@@ -516,17 +516,23 @@ without echo. Resolve the mode at the session's actual send turn. Preserve
 the existing Enter, Backspace and Tab mappings and native special-key encoding.
 See [#182](https://github.com/TabTty/TabTty/issues/182).
 
-The desktop keyboard path waits for submission and the applicable local echo.
-It requests the screen through the normal rendering path. A later failure to
-capture the screen is a display failure and does not change the send outcome
-or cause input to be replayed. Existing public send methods that return rows
-continue to return the post-send screen, including applicable local echo.
+Use one session entry point for ordinary keyboard input from the desktop,
+tests and workload measurements. It accepts committed text, Enter, Backspace,
+Tab, special keys and Ctrl letters (A through Z). A successful send completes
+after transport submission completes and the session applies any local echo
+due. Retire the six public methods that also return screen rows. Measure send
+latency through the ordinary input entry point.
 
-Verify that one desktop key sends once and triggers no snapshot export as part
-of submission. In a separate case, refuse snapshot capacity after a confirmed
-send. Verify that the send succeeds, the subsequent capture reports its own
-failure, and the peer receives the key once. With capacity available, verify
-the returned rows through the existing send-and-observe methods.
+The desktop reads the screen during normal rendering. Callers that need rows
+request them separately with `GetOutputAsync`. The rows describe the screen at
+the time of that read and can include intervening output or a later key's echo.
+A capture failure is reported to the reader. The confirmed send stands and
+the session never replays the key because of a failed read.
+
+With local echo enabled, send one character and verify that submission exports
+no snapshot. Refuse snapshot capacity for the following read. The send succeeds,
+the read fails, and the peer receives the character once. Restore capacity and
+verify that an explicit read shows one local echo.
 
 Preflight a whole input unit using a cloned encoder state; unencodable input
 does not mutate the live state or send a prefix. Serialize user input, paste,
