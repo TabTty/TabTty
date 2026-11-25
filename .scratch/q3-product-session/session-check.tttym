@@ -1,0 +1,5 @@
+#tttym 1
+Connect("maintenance.ttty");
+Dialog("保守端末", "端末の状態照会を開始します。", DialogButtons.OK);
+WriteLine("show status");
+WaitPrompt(Literal("inspection-complete>"));

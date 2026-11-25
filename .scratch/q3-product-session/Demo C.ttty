@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "requiredFeatures": [],
+  "profileId": "19d35a17-249c-483e-8b82-8c1574758c1f",
+  "displayName": "Demo C",
+  "connection": {
+    "type": "telnet",
+    "waitSeconds": 30,
+    "host": "127.0.0.1",
+    "port": 61611,
+    "initiateBinary": false
+  },
+  "terminal": {
+    "advertisedType": "xterm",
+    "receiveEncoding": "utf-8",
+    "sameEncoding": true,
+    "transmitEncoding": "utf-8",
+    "jis": {
+      "kanjiIn": "B",
+      "kanjiOut": "B",
+      "receiveKana": "eightBit",
+      "transmitKana": "eightBit"
+    },
+    "ambiguousWidth": 1,
+    "enter": "crlf",
+    "backspace": "del",
+    "localEcho": "followRemote",
+    "font": {
+      "mode": "inherit",
+      "family": null,
+      "sizePoints": null
+    },
+    "retainedRows": {
+      "mode": "inherit",
+      "value": null
+    },
+    "highlightSetId": null
+  },
+  "logging": {
+    "raw": false,
+    "text": false,
+    "terminal": false,
+    "directory": "Logs"
+  }
+}
