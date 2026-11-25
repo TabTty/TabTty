@@ -36,8 +36,10 @@ wait/loss choices still apply. Final exit follows the existing rule. The
 changes and the unchanged actual-cleanup ownership.
 
 Open the local pane at the Windows Documents known folder and obtain the remote
-default directory using SFTP REALPATH of `.`. If either fails, show its error and
-leave that pane's path editor available. Each pane owns its current directory,
+default directory using SFTP REALPATH of `.`. On an ordinary open, list each
+directory once and display that result. If either side fails, keep any listing
+and selection on the successful side, show the error and leave the failed
+pane's path editor available. Each pane owns its current directory,
 listing revision, and selection. Navigation and Refresh supersede stale listing
 results. The local and remote folder controls are keyboard accessible. All
 actions, dialogs, and outcomes use the application's language and theme.
@@ -326,9 +328,12 @@ recycled. Show permanent deletion in the initial remote prompt. On a child
 failure stop that top-level tree and continue with other selected entries where
 possible. Cancellation stops new destructive requests, keeps completed effects,
 and reports failed and unprocessed entries. If an issued mutation's outcome
-cannot be verified, report it as unknown. Once outstanding I/O has retired,
-require a successful refresh of both panes before accepting another mutation.
-A failed refresh leaves the restriction in effect. Recheck eligibility before
+cannot be verified, report it as unknown. Before accepting another mutation,
+require both panes to display current listings from reads started after the
+outstanding I/O retired. On reopening the transfer window for the same
+connection, the initial pair counts if it meets those conditions and no newer
+unknown outcome has occurred. Reads started too early, cancelled, superseded
+or failed leave the restriction in effect. Recheck eligibility before
 execution. See [#202](https://github.com/TabTty/TabTty/issues/202).
 
 Use the profile connection-wait budget for SFTP startup and periods without
