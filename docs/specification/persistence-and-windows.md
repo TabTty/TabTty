@@ -279,9 +279,18 @@ for the same vault unlock share its result under the
 | highlighting.json | `sets`: ordered array, initially empty; each has `setId`, `name`, `enabled`, `rules`; each rule has `ruleId`, `name`, `enabled`, `pattern`, `ignoreCase`, `style` |
 | style | Nullable `foreground`/`background` as `#RRGGBB`; nullable booleans `bold` and `underline`; null inherits terminal attributes, never a lower-priority rule |
 | state.json | `registrations`, `lastWindow`, legacy `selectedVaultPath` for settings that predate the vault path field. Contains application state only. |
-| registration | Independent `registrationId`, canonical opening path plus display spelling, optional `name`, `favorite`, nullable UTC `lastUsed`; missing status is observed locally |
+| registration | Independent `registrationId`, normalized opened location in `path`, optional `name`, `favorite`, nullable UTC `lastUsed`; missing status is observed locally |
 | lastWindow | Normal bounds in DIPs, monitor identity/work-area/DPI observations, maximized flag; never restore minimized |
 | host-keys.json | Versioned host records defined in the transport contract, independent of vault and portable settings |
+
+Store one path per registration. The catalog opens the file at `path` and
+derives its list name from the filename without the `.ttty` extension. New
+registrations omit `displayPath`. If present, preserve it under the common
+rule for unknown optional properties. An in-app rename updates only `path`
+for the file location. Normal loading and recovery accept an otherwise valid
+registration with no `displayPath`. After an in-app rename and restart,
+verify the registration ID, favorite and last-used time before reconnecting.
+Opening the editor from the new list name must open the renamed file.
 
 A settings draft retains the revision at which editing began. Callers supply
 only the preferences they change. One explicit **Save** validates all edits
