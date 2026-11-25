@@ -291,6 +291,17 @@ before saving. The existing settings file operation verifies the write before
 the application adopts the revision and applies effects such as a theme or
 selected vault change.
 
+Normal Save and settings recovery use the same adoption step. Once the file
+outcome is verified, adopt the settings revision and any reserved selected
+vault change together before notifying open views. A change of the effective
+profile folder is the only settings change that triggers a profile detail
+reread. When the folder changes, each open profile
+list switches to the new folder's registrations and loads their details.
+When it stays the same, let any detail read continue. Restoring a backup that
+changes only the theme updates the appearance and preserves the list's group,
+search, sort order and visible selection. External edits to a profile file
+appear through the usual detail reads, such as when the list is opened again.
+
 Preserve omitted optional fields and unknown optional properties at every
 object level when saving a supported version. For example, an omitted **Copy**
 shortcut uses the default binding. Saving a theme change leaves the shortcut

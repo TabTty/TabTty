@@ -225,6 +225,19 @@ this design.
 
 ## Migration and verification
 
+Move retained-range validation into Rust first. Rust resolves both logical
+endpoints, checks the terminating hard line break when the range depends on it,
+and combines the partial first and last rows with any whole rows between them.
+C# can then drop its validation-specific row search and proof composition.
+At publication, validate the range and perform the C# permission checks and
+queue admission in the same ordered operation. Move page construction and
+literal search into Rust in a later step.
+
+Verify the first step through an existing history range. Appending beyond its
+end or changing the wrap width preserves the range. Editing within it and
+restoring the original text yields `range_changed`. Retiring the requested
+content from scrollback yields `range_evicted`.
+
 Move history reading/search/continuation and their proof-building knowledge out
 of AiCollaboration.Observations into the terminal module. Preserve the useful
 real model, stable content anchors, and transport implementation. Generic

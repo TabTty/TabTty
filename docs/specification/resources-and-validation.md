@@ -230,6 +230,13 @@ state while the count is undetermined. Both operations use the shared worker
 and memory limits and discard results superseded by query, case or content
 changes.
 
+For a literal search for U+FEFF, count each occurrence in the retained text.
+In the invoking pane, draw a thin vertical line at the position of the current
+match. For example, searching for U+FEFF in `A` + U+FEFF + `B` yields one
+match with the line between A and B. Reserve this marker for the current
+search match. A regular-expression highlight that matches only U+FEFF leaves
+the neighboring cells' styles intact.
+
 Using comparable long histories and pane positions, record process CPU time,
 time to reveal the nearest match and time to finish the count before and after
 separating the operations. Preserve the existing resource limits and report any

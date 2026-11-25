@@ -443,10 +443,14 @@ verification, sizing, and failure cleanup.
 | `paste` | `text`, optional `character_delay_ms`/`line_delay_ms` (0-10000, default 0). Literal text may contain TAB/CR/LF, but no other C0/C1/DEL. No implicit Enter or newline conversion. Use captured bracketed-paste mode, existing payload preflight and encoder closure. These fields do not alter human remembered paste settings or access the clipboard. |
 | `mouse` | `action` press/release/move/wheel, `row`, `column`, optional unique Shift/Alt/Ctrl `modifiers`. Press/release require `button` left/middle/right and forbid `wheel`; move forbids both; wheel requires `wheel` up/down and forbids `button`. Press state comes from the session, not a client-supplied move-button field. Reject unsupported mode/event/coordinate without sending. Track sent presses; do not synthesize unmatched release. |
 
-AI mouse events are explicit remote terminal actions; Shift is an event modifier,
-not a human local-selection gesture. Use the existing single-session encoding
-and reporting support, including classic format's coordinate behavior; return
-effective coordinates when it clamps. No mouse operation moves the Windows cursor.
+AI mouse events operate the remote terminal and use Shift as an event modifier.
+Apply the [shared mouse coordinate rule](terminal-and-encodings.md#keyboard-and-mouse).
+For a new press, move or wheel at an in-grid coordinate outside the classic
+format's range, reject before submission with `not_sent` and
+`sequence_consumed: false`. The caller can correct the coordinate and reuse the
+sequence number. Record a press only after submission. For a matching release
+bounded to the format's limit, return the effective coordinates actually sent.
+No mouse operation moves the Windows cursor.
 Mode-generation change cancels gesture bookkeeping. On takeover, best-effort release
 only previously sent presses whose original connection/reporting generation still
 permits a release, bounded to current grid/format; never release a wheel or press-

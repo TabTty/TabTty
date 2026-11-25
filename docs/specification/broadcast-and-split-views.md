@@ -260,14 +260,12 @@ target's current grid. Example: a press at column 50 followed by motion and
 release at column 70 gives a 60-column target no motion at 70, then a release
 at 60 at the actual release time. It is not released early at the edge.
 
-Protocol representability is separate from grid bounds. Classic reports have
-the existing 223-cell encoding limit; SGR reports use numeric coordinates.
-For broadcast, an unrepresentable press/motion is unsupported and skipped,
-rather than sent at another cell. Release coordinates are bounded by both the
-current grid and that format's representable range. No invented releases for
-wheel/press-only protocols, changed reporting generations, or new connections.
-This is a broadcast amendment to the single-session encoding contract's
-general classic-coordinate clamping; see [terminal modes](terminal-and-encodings.md).
+Apply the [shared mouse coordinate rule](terminal-and-encodings.md#keyboard-and-mouse)
+independently to each recipient. For a press, motion or wheel at column 224
+inside two recipients' grids, skip the classic recipient and send to an SGR
+recipient whose tracking mode supports the event. Track only recipients that
+received the press. Bound a matching release by the current grid and format.
+Wheel events and press-only tracking have no release.
 
 Keep an operation owner independent of the pane's UI host. Check mouse capture
 success; do not silently begin an untracked gesture. Unexpected capture loss

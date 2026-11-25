@@ -141,6 +141,19 @@ iterator or a native-reservation recipe. The managed adapter hides those steps.
 This supplies depth through complete obligations, locality for shared rules and
 leverage across existing consumers rather than a second public Unicode workflow.
 
+Use the same bounded Rust scan for paste confirmation with or without
+cancellation. In one pass over each page, validate UTF-16 and allowed controls,
+count completed graphemes and line breaks, and carry the context into the next
+page. The C# adapter checks for cancellation between pages and before publishing
+the completed result. This removes the second pass over the same page for line
+counts and validation. Each target still checks the complete input against its
+transmit encoding before sending.
+
+Verify that a CRLF at a page boundary counts as one line break and that an
+`e` followed by combining accents spanning several pages counts as one grapheme.
+A forbidden DEL on the final page rejects the entire paste. Cancellation during
+analysis produces no confirmation dialog, payload, or bracketed-paste opener.
+
 Analyze the exact complete immutable input, including its final page, before
 reporting success. Malformed UTF-16 or forbidden controls reject the whole
 not-yet-started operation without replacement, normalization, live encoder

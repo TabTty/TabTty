@@ -315,11 +315,22 @@ conflicting management operation on the same vault, report Busy immediately
 in that view. Starting it after the first operation ends requires a new user
 request.
 
-For an entry menu command, validate the entire selection captured when the
-menu opened. If any selected entry has become stale, leave every entry
-untouched, tell the user the selection changed and show the current list with
-its search and sort preserved. The user can select the intended entries again
-in that view. This also applies when a replacement has the same name.
+Entry menu commands, double-click editing and the Delete key use the same
+selection value. Capture it when the menu opens, or when the double-click or
+keypress occurs. It contains the view's vault binding and role epoch, the
+revision displayed at that time, and the original name and kind of each
+targeted entry. The per-file owner validates the selection as a whole. A
+write also checks the captured revision at the point of mutation so that a
+change during confirmation cannot redirect it.
+
+If the binding has expired, the revision has changed, or any targeted entry
+fails to match, leave all entries untouched. Tell the user the selection
+changed and show the current list with its search and sort preserved so the
+user can select again. This also
+applies when an entry is replaced under the same name or a master password
+change advances the revision while leaving every displayed row intact.
+Restoring a visible selection by name during refresh does not renew a
+previously captured command.
 
 An ordinary caller awaits one initial observation; it need not run a monitoring
 loop. The operation view also exposes current state, explicit work cancellation,

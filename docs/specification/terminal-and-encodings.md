@@ -221,6 +221,16 @@ scrolling, selection, and search navigation over the shared terminal model;
 query/case and temporary zoom remain tab-shared. See the
 [split-view contract](broadcast-and-split-views.md).
 
+When copying a mouse selection, include a zero-width U+FEFF only when its
+position falls strictly between the selection endpoints. For `A` + U+FEFF +
+`B`, selecting A alone copies `A`, selecting B alone copies `B`, and selecting
+both copies `A` + U+FEFF + `B`. Verify the same clipboard text when dragging in
+the opposite direction. Consecutive U+FEFF characters at the same position
+follow the same rule, preserving their order and count inside the selection.
+With `A` + U+FEFF + `BC`, verify that searching for B and a highlight rule
+matching B each highlight only the B cell. Its zero-based display column is 1
+and its UTF-16 start offset in the captured row text is 2.
+
 Expose UIA Text/TextRange selection, caret, visible ranges, and retained text
 with stable content anchors and ordinary logical boundary positions. Alternate
 mode exposes only its active content. Evicted ranges collapse at the nearest
@@ -284,18 +294,29 @@ Menu-based zoom has no new Ctrl+wheel binding.
 Mouse 9 sends presses only; 1000 adds release/wheel; 1002 adds drag motion;
 1003 adds all cell motion. Latest enabled tracking mode wins; disabling it
 leaves tracking off. 1006 chooses SGR format and never enables tracking alone.
-Classic reports are CSI M plus encoded button/x/y, one-based cells clamped to
-223; SGR is CSI <button;x;y M, with m for release. Add standard Shift/Alt/Ctrl
+Classic reports are CSI M plus encoded button/x/y with one-based coordinates
+from 1 through 223 on each axis. SGR is CSI <button;x;y M, with m for release. Add standard Shift/Alt/Ctrl
 bits 4/8/16, motion 32, wheel 64/65. Coalesce motion within one cell. Shift is
 a mouse report modifier. Preserve matching releases for presses already sent
 when routing changes. Cancel a remote gesture on protocol mode or generation
 change and send releases only within the matching mode and generation.
 Pixel, urxvt, and UTF-8-coordinate extensions are unsupported.
 
-Broadcast Q182/Q190 amend coordinate handling: skip unsupported or out-of-grid
-press/motion and clamp matching release only at actual button-up. Do not end
-the gesture at grid exit. The [broadcast contract](broadcast-and-split-views.md)
-also covers protocol bounds, capture, and same-session pane coordinates.
+Single-session, broadcast and AI input share one rule for in-grid coordinates.
+Skip a press, motion or wheel event if the target's format cannot represent its
+row or column. A skipped press creates no matching release. If an earlier press
+was sent and its generation still permits release, bound the release to the
+current grid and format when the button is released. Skipped motion alone
+does not end a drag.
+
+For example, on a 300-column grid, a classic press at column 224 sends no
+bytes. A press at 223, motion to 224 and button-up there sends one press and
+one release, both at 223. An SGR target receives column 224 when its tracking
+mode supports the event. Check the same limit on rows. Rust determines whether
+each target can report the event and produces its bytes and effective coordinates
+from the same grid, mode and generation. C# tracks the recipients of each press
+and orders submission. See the [broadcast contract](broadcast-and-split-views.md)
+for out-of-grid dragging, capture and same-session pane coordinates.
 
 ## Encoding providers
 

@@ -161,6 +161,14 @@ timers: joining does not restart the five-second wait, duplicate its loss
 dialog, or replace a prior Continue waiting choice. Existing modal ordering
 and bounded cleanup admission still apply.
 
+For a terminal tab, its per-target closure execution alone records when closure
+has been accepted. Set that state after review and revalidation, before the
+first closure effect. Tab movement, terminal input and reconnect read the same
+state. Cancelling during review leaves those operations subject to their usual
+conditions. If cleanup leaves the tab open, end the accepted state once. The
+user can read the retained output and request closure again. Input and reconnect
+then follow the actual connection state, including any completed disconnect.
+
 Keep shared execution/results observable after the tab leaves the live UI
 collection. Joining does not duplicate cleanup-capacity charges or transfer
 one target's loss permission to another. Any combined cleanup choice applies
