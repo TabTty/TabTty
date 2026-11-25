@@ -15,6 +15,7 @@ internal sealed partial class MacroEditorSymbols(int? cursorOffset = null)
         new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<MacroBlock, (int Start, int End)> blocks =
         new(ReferenceEqualityComparer.Instance);
+    private readonly List<(MacroEditorSymbol Symbol, string Frame, int Start, int End)> locals = [];
     internal MacroSourceException? Error { get; private set; }
     internal bool UnsupportedVersion { get; private set; }
     private int innermostOpen = -1;
@@ -93,67 +94,27 @@ internal sealed partial class MacroEditorSymbols(int? cursorOffset = null)
 
     internal void Block(MacroBlock block, int start, int end) => blocks.Add(block, (start, end));
 
+    internal void AcceptLocal(object declaration, MacroType type, string frame, MacroBlock body, bool includesHeader)
+    {
+        var (name, from) = names[declaration];
+        var (start, end) = blocks.TryGetValue(body, out var extent) ? extent : (0, int.MaxValue);
+        locals.Add((new(name.Text, type.ToString(), name.Position), frame,
+            includesHeader ? from : Math.Max(start, from), end));
+    }
+
     internal List<MacroEditorSymbol> At(MacroProgram program, int offset)
     {
         var visible = new List<MacroEditorSymbol>();
-        MacroFunction? currentFunction = null;
+        string frame = "";
         foreach (var function in program.Functions.Values)
         {
             visible.Add(FunctionSymbol(function));
-            if (Inside(function.Body)) currentFunction = function;
+            var span = blocks[function.Body];
+            if (offset >= span.Start && offset < span.End) frame = function.Name;
         }
-        if (currentFunction is not null)
-        {
-            foreach (var parameter in currentFunction.Parameters) Add(parameter, parameter.Type);
-            Visit(currentFunction.Body);
-        }
-        else
-        {
-            foreach (var statement in program.Body.Statements) Visit(statement);
-        }
+        foreach (var local in locals)
+            if (local.Frame == frame && offset >= local.Start && offset < local.End) visible.Add(local.Symbol);
         ResolveReference(program, visible);
         return visible;
-
-        bool Inside(MacroBlock block)
-        {
-            var span = blocks[block];
-            return offset >= span.Start && offset < span.End;
-        }
-
-        void Add(object node, MacroType type)
-        {
-            var (name, from) = names[node];
-            if (from <= offset) visible.Add(new(name.Text, type.ToString(), name.Position));
-        }
-
-        void Visit(MacroStatement statement)
-        {
-            switch (statement)
-            {
-                case MacroDeclaration declaration:
-                    Add(declaration, declaration.Declared ?? declaration.Type);
-                    break;
-                case MacroBlock block when Inside(block):
-                    foreach (var child in block.Statements) Visit(child);
-                    break;
-                case MacroIf branch:
-                    Visit(branch.Yes);
-                    if (branch.No is not null) Visit(branch.No);
-                    break;
-                case MacroWhile loop: Visit(loop.Body); break;
-                case MacroFor loop:
-                    if (loop.Initial is MacroDeclaration initializer && offset < blocks[loop.Body].End)
-                        Visit(initializer);
-                    Visit(loop.Body);
-                    break;
-                case MacroForeach loop when Inside(loop.Body):
-                    Add(loop, loop.Declared ?? loop.Type); Visit(loop.Body);
-                    break;
-                case MacroTry attempt:
-                    Visit(attempt.Body);
-                    if (Inside(attempt.Catch)) { Add(attempt, new("MacroError")); Visit(attempt.Catch); }
-                    break;
-            }
-        }
     }
 }

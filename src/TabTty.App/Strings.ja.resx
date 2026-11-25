@@ -582,6 +582,9 @@
   <data name="MacroHistoryLost" xml:space="preserve"><value>受信テキストの一部が欠落しました。欠落した行は次の改行まで照合されないため、改行のないプロンプトを検出できない場合があります。継続するか、マクロを終了してください。</value></data>
   <data name="MacroRecordingFailed" xml:space="preserve"><value>記録に失敗しました。記録を再試行するか、マクロを終了してください。</value></data>
   <data name="MacroRecordingReady" xml:space="preserve"><value>新しいファイルで記録を再開しました。準備ができたらマクロを再開してください。</value></data>
+  <data name="MacroHistoryLossFact" xml:space="preserve"><value>受信テキストの一部が欠落しました。</value></data>
+  <data name="MacroRecordingFailureFact" xml:space="preserve"><value>マクロの実行中に記録が失敗しました。</value></data>
+  <data name="MacroRecordingRecoveryFact" xml:space="preserve"><value>失敗後に記録を再開しました。</value></data>
   <data name="MacroPlaintextNotice" xml:space="preserve"><value>この接続では TabTty による暗号化がありません。接続先がパスワードをエコーすると、記録や共有出力に含まれる場合があります。</value></data>
   <data name="MacroReadFailed" xml:space="preserve"><value>マクロファイルを読み込めませんでした。</value></data>
   <data name="MacroLocation" xml:space="preserve"><value>{0} 行 {1} 列: {2}</value></data>

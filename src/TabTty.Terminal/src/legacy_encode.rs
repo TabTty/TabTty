@@ -67,6 +67,98 @@ pub(crate) fn encode(
     Ok(length)
 }
 
+pub(crate) fn visit_transmit_units(
+    page: u32,
+    input: &[u16],
+    flags: u32,
+    encoded: &[u8],
+    mut visit: impl FnMut(usize, usize),
+) -> Result<(), i32> {
+    let join_crlf = flags & 16 != 0;
+    let mut source = 0;
+    let mut position = 0;
+    let mut unit = |scalar: char, bytes: &[u8], position: &mut usize| -> Result<(), i32> {
+        if !encoded
+            .get(*position..)
+            .map_or(false, |tail| tail.starts_with(bytes))
+        {
+            return Err(3);
+        }
+        *position += bytes.len();
+        source += scalar.len_utf16();
+        if !join_crlf || scalar != '\r' || input.get(source) != Some(&10) {
+            // A bulk conversion's trailing reset belongs to the final source unit.
+            visit(
+                source,
+                if source == input.len() {
+                    encoded.len()
+                } else {
+                    *position
+                },
+            );
+        }
+        Ok(())
+    };
+    let scalars = char::decode_utf16(input.iter().copied());
+    #[cfg(windows)]
+    if let Some(name) = icu_name(page, flags) {
+        return windows_icu::with_converter(name, |converter| {
+            let mut output = [0; 16];
+            for scalar in scalars {
+                let scalar = scalar.map_err(|_| 1)?;
+                let count = converter.send(scalar.encode_utf16(&mut [0; 2]), &mut output, false)?;
+                if count == 0 {
+                    return Err(3);
+                }
+                unit(scalar, &output[..count], &mut position)?;
+            }
+            let count = converter.send(&[], &mut output, true)?;
+            if encoded.get(position..) != Some(&output[..count]) {
+                return Err(3);
+            }
+            Ok(())
+        });
+    }
+    if page != 0 && !windows_page(page) {
+        return Err(1);
+    }
+    for scalar in scalars {
+        let scalar = scalar.map_err(|_| 1)?;
+        if page == 0 {
+            unit(scalar, scalar.encode_utf8(&mut [0; 4]).as_bytes(), &mut position)?;
+        } else {
+            let mut bytes = [0; 2];
+            let count = windows::encode(page, scalar, &mut bytes)?;
+            unit(scalar, &bytes[..count], &mut position)?;
+        }
+    }
+    if position != encoded.len() {
+        return Err(3);
+    }
+    Ok(())
+}
+
+pub(crate) fn closure(
+    page: u32,
+    input: &[u16],
+    flags: u32,
+    prefix: &[u8],
+    output: &mut [u8],
+) -> Result<usize, i32> {
+    if page != 50220 {
+        return Ok(0);
+    }
+    let length = encode(page, input, flags, None)?;
+    let mut finished = vec![0; length];
+    encode(page, input, flags, Some(&mut finished))?;
+    if !finished.starts_with(prefix) {
+        return Err(3);
+    }
+    let tail = &finished[prefix.len()..];
+    output.get_mut(..tail.len()).ok_or(2)?.copy_from_slice(tail);
+    Ok(tail.len())
+}
+
 fn windows_page(page: u32) -> bool {
     matches!(
         page, 437 | 737 | 775 | 850 | 852 | 855 | 857 | 860..=866 | 869 | 874 |

@@ -32,6 +32,8 @@ module.exports = async function checkReferences(providers, doc) {
     await check('Write($"In|dex={Index}");', undefined);
     await check('Write($"Index={In|dex}");', 'long Index', local);
     await check('Sleep(In|dex', 'long Index', local);
+    await check('{ string Index = "duplicate"; Sleep(In|dex', 'long Index', local);
+    await check('{ string Index = "duplicate"; Sleep(In|dex); }', 'long Index', local);
     await check('var n = Le|ngth("x");', /long Length\(/);
     await check('string re|tries = "";', 'string retries');
     await check('long Tw|ice(long n) { return n + n; }', 'long Twice(long n)');

@@ -158,19 +158,18 @@ public sealed partial class TerminalSession
             if (input.Alt) payload = [0x1b, .. payload];
             return (payload, StrictUtf8.GetBytes(input.Text));
         }
-        (byte[] Bytes, byte[] Echo) result = input.Kind switch
+        var kind = input.Kind == TerminalInputKind.Key && input.Key == TerminalKey.KeypadEnter && !terminal.ApplicationKeypad
+            ? TerminalInputKind.Enter : input.Kind;
+        return kind switch
         {
             TerminalInputKind.Enter => (profile.Enter switch { "cr" => [13], "lf" => [10], _ => [13, 10] }, [13, 10]),
             TerminalInputKind.Backspace => ([profile.Backspace == "bs" ? (byte)8 : (byte)127], [8]),
             TerminalInputKind.Tab => ([9], [9]),
             TerminalInputKind.Control => ([(byte)(input.Text[0] - 'A' + 1)], []),
-            TerminalInputKind.Key when input.Key == TerminalKey.KeypadEnter && !terminal.ApplicationKeypad =>
-                (profile.Enter switch { "cr" => [13], "lf" => [10], _ => [13, 10] }, [13, 10]),
             TerminalInputKind.Key => (TerminalKeys.Encode(input.Key, input.Modifiers, terminal.ApplicationCursorKeys,
                 terminal.ApplicationKeypad), []),
             _ => throw new ArgumentOutOfRangeException(nameof(input)),
         };
-        return result;
     }
 
     internal async Task<PreparedInput> PreparePasteAsync(TerminalPaste paste, int characterDelay, int lineDelay,

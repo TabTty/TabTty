@@ -9,6 +9,7 @@ using TabTty.Core;
 namespace TabTty.App;
 
 internal enum MacroTrustDecision : byte { Allow = 1, Block = 2 }
+internal enum MacroReviewResult { Run, Block, Expired }
 
 internal readonly record struct MacroTrustKey(string SourceDigest, string Fingerprint, string? ConstantsDigest = null)
 {
@@ -76,18 +77,33 @@ internal static class MacroTrust
     private const int NotFound = 1168, V2Size = 66, V3Size = V2Size + 32;
     private static readonly HashSet<PendingReview> pendingReviews = [];
 
-    internal sealed class PendingReview(MacroTrustKey key) : IDisposable
+    internal sealed class PendingReview(MacroTrustKey key, MacroTrustDecision? remembered, bool elevated) : IDisposable
     {
         internal MacroTrustKey Key { get; } = key;
         internal bool Expired { get; set; }
+        internal bool CanRemember(MacroTrustDecision decision) => remembered is null &&
+            (decision == MacroTrustDecision.Block || decision == MacroTrustDecision.Allow && !elevated);
+
+        internal MacroReviewResult Confirm(MacroTrustDecision? choice)
+        {
+            if (Expired || Read(Key) != remembered) return MacroReviewResult.Expired;
+            if (choice is not { } decision) return MacroReviewResult.Run;
+            if (!CanRemember(decision)) return MacroReviewResult.Expired;
+            Save(Key, decision);
+            return decision == MacroTrustDecision.Allow ? MacroReviewResult.Run : MacroReviewResult.Block;
+        }
+
         public void Dispose() => pendingReviews.Remove(this);
     }
 
-    internal static PendingReview BeginReview(MacroTrustKey key)
+    internal static (bool RunImmediately, PendingReview? Review) Evaluate(MacroTrustKey key, bool elevated)
     {
-        var review = new PendingReview(key);
+        var remembered = Read(key);
+        if (remembered == MacroTrustDecision.Block) return (false, null);
+        if (remembered == MacroTrustDecision.Allow && !elevated) return (true, null);
+        var review = new PendingReview(key, remembered, elevated);
         pendingReviews.Add(review);
-        return review;
+        return (false, review);
     }
 
     private static void ExpireReviews(string fingerprint, byte version)

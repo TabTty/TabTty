@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Automation;
+using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
@@ -26,6 +27,7 @@ internal static partial class Program
         async Task CheckLanguageAsync(string language, string theme)
         {
             await app.SaveSettingsAsync(app.SettingsRevision, new(Language: language, Theme: theme, AutoClose: false));
+            CheckPreviewAccessibility();
             var loaded = await ConnectionProfile.LoadAsync(path, CancellationToken.None);
             var window = new ProfileEditorWindow(app, "EditProfile", loaded.OpenedPath, loaded, creating: false);
             window.Show();
@@ -172,5 +174,54 @@ internal static partial class Program
                 await Task.Delay(15);
             }
         }
+    }
+
+    private static void CheckPreviewAccessibility()
+    {
+        const string label = "MacroInspectSource";
+        string prefix = new('x', ReadOnlyPreview.PageUnits - 1);
+        foreach (string boundary in new[] { "😀", "\r\n" })
+        {
+            var window = new MainWindow.FormWindow(null, App.Text(label));
+            var contents = new TextBox { IsReadOnly = true, AcceptsReturn = true };
+            ReadOnlyPreview.Add(window, label, contents, prefix + boundary + "tail");
+            window.Show();
+            try
+            {
+                Verify(1, 2, prefix);
+                Navigate("PasteNextPage");
+                Verify(2, 2, boundary + "tail");
+                Navigate("PasteNextPage");
+                Verify(2, 2, boundary + "tail");
+                Navigate("PastePreviousPage");
+                Verify(1, 2, prefix);
+            }
+            finally { window.Close(); }
+
+            void Navigate(string key) => FindControls<Button>(window).Single(button => Equals(button.Content, App.Text(key)))
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
+            void Verify(int page, int pages, string source)
+            {
+                string position = string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                    App.Text("PastePreviewPage"), page, pages);
+                if (new TextBoxAutomationPeer(contents).GetName() != App.Text(label) + " " + position ||
+                    contents.Text != PermissionDisplay.PastePage(source))
+                    throw new InvalidOperationException("The preview lost its accessible page label or split its boundary.");
+            }
+        }
+
+        var single = new MainWindow.FormWindow(null, App.Text(label));
+        var singleContents = new TextBox { IsReadOnly = true };
+        ReadOnlyPreview.Add(single, label, singleContents, "");
+        single.Show();
+        try
+        {
+            string position = string.Format(System.Globalization.CultureInfo.CurrentCulture, App.Text("PastePreviewPage"), 1, 1);
+            if (new TextBoxAutomationPeer(singleContents).GetName() != App.Text(label) + " " + position ||
+                FindControls<Button>(single).Any(button => Equals(button.Content, App.Text("PasteNextPage"))))
+                throw new InvalidOperationException("A single page did not expose exactly its current page or offered navigation.");
+        }
+        finally { single.Close(); }
     }
 }

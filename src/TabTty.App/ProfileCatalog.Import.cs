@@ -151,6 +151,6 @@ internal sealed partial class ProfileCatalog
     private void SelectImportedProfile(string location, bool connecting)
     {
         if (!connecting) lastCreatedProfile = (lastCreatedProfile.Sequence + 1, location);
-        ProfileSaved?.Invoke();
+        ProfileSaved?.Invoke(null);
     }
 }

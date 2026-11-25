@@ -269,9 +269,13 @@ settings, this operation expands the name for the new part, rechecks the
 destination, claims a serial when needed and opens the complete set of selected
 files. On failure or cancellation before handoff, preparation closes the
 handles it acquired and releases its name claim. The writer takes ownership of
-the prepared files for that part only. The recording lifecycle chooses the
-part number and when to activate the recording interval. If it has accepted a
-prepared part but can no longer activate it, it closes that part.
+the prepared files for that part only. The recording lifecycle owns the part
+number, interval eligibility and cutoff for all input projections. It flushes
+each eligible tail once when Pause races EOF or close. The writer owns file writes,
+drain and actual release. The interval can end while the writer still holds
+its files. Wait for that release before activating a part that requires those
+files. If preparation succeeds but the interval can no longer start, close
+the prepared part. See [#183](https://github.com/TabTty/TabTty/issues/183).
 
 | Boundary | Required ordering |
 | --- | --- |
@@ -505,6 +509,13 @@ If echo is on for `AB` and turns off while the write is pending, a result
 confirming only `A` echoes `A` once. The next input uses the setting in
 effect at its own handoff.
 
+Use the same key payload and echo rules for direct and prepared input.
+Numeric keypad Enter sends the profile's CR, LF or CRLF mapping and echoes
+CRLF when echo is enabled. In application keypad mode, send `ESC O M`
+without echo. Resolve the mode at the session's actual send turn. Preserve
+the existing Enter, Backspace and Tab mappings and native special-key encoding.
+See [#182](https://github.com/TabTty/TabTty/issues/182).
+
 The desktop keyboard path waits for submission and the applicable local echo.
 It requests the screen through the normal rendering path. A later failure to
 capture the screen is a display failure and does not change the send outcome
@@ -542,6 +553,21 @@ codec closure and one started bracket wrapper, without LF.
 Queue automatic terminal replies after this closure. Later peer mode changes
 apply to the next paste. Further interactive terminal input is rejected while
 paste owns sending; Cancel/Disconnect remain usable.
+
+The Rust transmit encoder supplies source-unit positions, encoded byte
+boundaries and the required codec closure for the current paste chunk. Stop
+uses these boundaries after transport framing. On healthy JIS `日本語`, a stop
+inside `日` completes that character, returns to ASCII and closes an open
+bracketed frame. Echo reflects only `日` when enabled. Ordinary input uses
+the same encoder boundary rules to select the complete confirmed prefix for
+echo after a partial send, including the final JIS reset when it is required
+to complete the final unit. Map progress through Alt and transport framing
+including Telnet IAC expansion. Framing contributes no text to echo. Keep
+whole-input preflight and bound boundary storage to the current paste chunk or
+ordinary input unit. Compare large-paste peak memory and short-send allocations
+with the same inputs before and after these changes.
+See [#186](https://github.com/TabTty/TabTty/issues/186) and
+[#187](https://github.com/TabTty/TabTty/issues/187).
 
 Expose these lifecycle/send/receive operations independently of WPF views.
 Future observers must not consume data away from the terminal/logger or depend

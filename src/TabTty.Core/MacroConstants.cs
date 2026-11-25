@@ -14,6 +14,63 @@ internal sealed record MacroConstantsDeclaration(string Alias, string Path, Macr
     }
 }
 internal sealed record MacroConstantsBinding(string Alias, MacroConstantsFile File);
+internal sealed record MacroConstantsCapture(string Text, string Digest, int? ByteCount);
+
+internal static class MacroConstantsBinder
+{
+    internal static async ValueTask<IReadOnlyList<MacroConstantsBinding>?> BindAsync(string macroPath,
+        IReadOnlyList<MacroConstantsDeclaration> declarations,
+        Func<string, int, ValueTask<MacroConstantsCapture?>> capture, CancellationToken token = default,
+        Action<MacroConstantsDeclaration, string?>? dependency = null, Action<MacroSourceException>? report = null,
+        Func<MacroConstantsCapture, IDisposable>? reserveParse = null, Action? admitMember = null,
+        Action<string, MacroToken, object>? definition = null, Action<MacroConstantsFile>? admitted = null)
+    {
+        var budget = new MacroConstantsBudget();
+        var paths = new Dictionary<string, (MacroConstantsFile? File, string? Error)>(StringComparer.Ordinal);
+        var bindings = new List<MacroConstantsBinding>(declarations.Count);
+        foreach (var declaration in declarations)
+        {
+            token.ThrowIfCancellationRequested();
+            string path;
+            try { path = declaration.Resolve(macroPath); }
+            catch (MacroSourceException error) when (report is not null)
+            {
+                dependency?.Invoke(declaration, null);
+                report(error);
+                continue;
+            }
+            dependency?.Invoke(declaration, path);
+            if (!paths.TryGetValue(path, out var entry))
+            {
+                try
+                {
+                    var captured = await capture(path, budget.RemainingBytes).ConfigureAwait(false);
+                    if (captured is null) return null;
+                    if (budget.CrossedByteLimit(path, captured.ByteCount))
+                    {
+                        var excess = new MacroSourceException("ConstantsLimit", declaration.Position, macroPath);
+                        if (report is null) throw excess;
+                        report(excess);
+                    }
+                    using var scratch = reserveParse?.Invoke(captured);
+                    var file = MacroConstantsFile.Parse(path, captured.Digest, captured.Text, budget.RemainingMembers,
+                        admitMember ?? (static () => { }), definition is null ? null : (name, value) => definition(path, name, value));
+                    budget.AddDefinitions(file);
+                    admitted?.Invoke(file);
+                    entry = (file, null);
+                }
+                catch (MacroSourceException error) when (report is not null)
+                {
+                    entry = (null, error.Code is "ConstantsLimit" or "ConstantsRead" ? error.Code : "ConstantsInvalid");
+                }
+                paths.Add(path, entry);
+            }
+            if (entry.File is { } valid) bindings.Add(new(declaration.Alias, valid));
+            else report!(new(entry.Error!, declaration.Position, macroPath));
+        }
+        return bindings.AsReadOnly();
+    }
+}
 
 internal sealed class MacroConstantsBudget
 {

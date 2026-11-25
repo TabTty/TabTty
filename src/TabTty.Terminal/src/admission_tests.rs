@@ -68,7 +68,7 @@ fn prepared_admission_does_not_survive_state_or_capacity_changes() {
     model.snapshot().unwrap();
     assert!(!model.prepared.valid);
     model.preflight(0, 0, b"X", 0).unwrap();
-    model.export().unwrap();
+    model.prepare_history([101, 103], true).unwrap();
     assert!(!model.prepared.valid);
     model.preflight(0, 0, b"n", 128 << 8).unwrap();
     model.feed(0, b"\x1b[6", 0).unwrap();

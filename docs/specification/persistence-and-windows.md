@@ -220,13 +220,22 @@ registration. With zero or multiple rows selected, Delete has no effect.
 In the search field, Delete edits text. Holding the key starts at most one
 deletion per press.
 
-When a connection updates a registration's group or last-used time, refresh
-open profile lists in every window. Use the same registration data when
-populating a list or a new-tab menu, including details loaded asynchronously.
-Keep each list's search text, current group filter and chosen sort. Restore
-selection by registration ID for rows that are still visible. If a selected
-row leaves the displayed group, drop it from the selection and keep the list
-on that group.
+On each `Loaded`, the profile list subscribes once to profile saves, changes
+to the selected profile folder, and registration updates from connections.
+It reads the current registrations and loads their details. On `Unloaded`,
+detach all three subscriptions and cancel the list's pending detail read.
+A later load reads the current folder again. Ignore late results from an
+earlier load. Each window's loaded list follows changes in group and last-used
+time and shares its registration data with the new-tab menu.
+
+When the list is loaded again for the same folder, a connection updates a
+registration, or a detail read finishes, keep the current group tab selected
+even if its last row moved elsewhere. Keep the search text, sort column and
+direction, and the selected registration IDs that are still visible. If saving an
+explicit edit moves the only selected profile while its list is displayed,
+a group-filtered list follows that row to its new group. Creating a profile
+still selects and scrolls to the new registration, switching groups or clearing
+a search when needed to show it. See [#200](https://github.com/TabTty/TabTty/issues/200).
 
 An open **[+]** menu keeps the displayed connection targets, group counts
 and order until it closes. Registrations that join a group while it is open
@@ -313,6 +322,18 @@ as below. Candidate 6's final Q23 review was accepted on 2026-11-18; this
 documentation change implements no file migration.
 
 Language/theme/bell and saved rule content apply live after successful save.
+
+Open settings and profile editors share fixed-choice relabeling. Use stable
+IDs for selection, change tracking, discard and save, including language,
+theme, bell and profile inherit/override choices. Changing the display language
+updates the selected label and the available labels wherever localized.
+Protocol names keep their defined spelling. The draft values, their saved
+baseline and Save and Discard availability stay intact. The SSH editor derives
+second-method choices from the first method. A language change preserves both
+selections and their credential fields. Changing the first method recomputes
+the second method's choices, retaining whether a second method was enabled.
+See [#201](https://github.com/TabTty/TabTty/issues/201).
+
 Application logging defaults are stored as the optional strings
 `defaultLogDirectory`, `defaultLogFilenameTemplate`, and
 `defaultMacroLogFilenameTemplate` in `settings.json`. Legacy filename component
@@ -414,6 +435,19 @@ registrations/host destinations; 32 required features of at most 64 ASCII bytes.
 Unknown-property content counts toward the same size/depth limits. These are
 internal bounded-loading limits, not promises of usable performance at all maxima.
 
+Open the local state, highlight rule set and SSH host-key stores directly. One
+bounded read checks the file length, reads exactly that many bytes, and checks
+for EOF before schema validation. An absent path on open permits first-use
+defaults. Empty, oversized, unreadable or invalid files, including a directory
+where the file should be, take the existing store-specific failure path.
+At startup, local state and highlighting offer their temporary read-only
+mode. An unusable host-key store ends the SSH attempt before any first-seen
+key approval. Use the same reader for the selected backup during restore,
+requiring the source to exist. If it disappears, report restore failure and
+preserve the current store. Keep each store's publication and recovery rules.
+See [#184](https://github.com/TabTty/TabTty/issues/184) and
+[Microsoft's `File.Exists` behavior](https://learn.microsoft.com/en-us/dotnet/api/system.io.file.exists).
+
 ## Opening locations and registration
 
 Resolve local app data through Windows. Unpackaged stores live under its
@@ -458,6 +492,17 @@ Only files directly in the configured folder qualify for active registration.
 Switching the folder switches the catalog shown in the list and connection
 menu. It neither moves files nor registers files found on disk. Returning to
 a previous folder restores its registrations, favorites and usage history.
+
+For manual open and reconnect, use one local-state snapshot to look up the
+registration at the opened location and decide whether to save usage. For a
+registered attempt, update its UTC last-used time and current group, even if
+a subsequent step such as authentication fails. Notify observers after the
+save succeeds. This applies to **Connect once** at a registered location and
+to **Import and connect** at the registered destination. An unregistered
+attempt skips the usage save. Verify that neither the main state file nor its
+backup is created or modified, including modification times. Pending publication
+and temporary read-only state still govern writes.
+See [#178](https://github.com/TabTty/TabTty/issues/178).
 
 Saving a changed name in the editor renames the file within its current
 directory, including when editing an external file. A registered rename
@@ -731,16 +776,18 @@ loops. If the dialog owner closes, resolve or transfer the interaction to a
 surviving window through the same coordinator. See
 [vault ownership and cleanup](vault-format.md#secret-owners-and-cleanup).
 
-Tab transfer retains source ownership until destination insertion can commit.
-Commit changes only visual hosting; then remove an empty source window. Failure
-or cancelled drag leaves the source intact. A transfer guard prevents last-window
+Each terminal or form tab belongs to one tab group and its window. This
+committed location stays at the source until destination insertion commits.
+Commit changes only visual hosting. The profile list directs a connection to
+its form tab's committed group. A failed insertion or cancelled drag preserves
+the source placement, order and selection. Remove an empty source window only
+after a successful insertion. A transfer guard prevents last-window
 exit between hosts. File activation/close/transfer commits run in coordinator
-order; each session has one containing terminal tab, and that tab belongs to one
-tab group/window except while protected by a transfer guard. Multiple panes
+order. Each session has one containing terminal tab. Multiple panes
 inside the same tab are views of that session, not additional tab/group owners
 (accepted Q165/Q170/Q172, 2026-11-13). Close confirmation cancellation resumes
-deferred opens. Committed final
-exit rejects new opens and cancels pending requests, without a hidden tray run.
+deferred opens. Committed final exit rejects new opens and cancels pending
+requests, without a hidden tray run. See [#203](https://github.com/TabTty/TabTty/issues/203).
 
 Keep the identity of the tab when scheduling tab-specific work. At delivery,
 use that tab's current committed window and group. For example, if a terminal

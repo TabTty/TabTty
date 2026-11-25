@@ -103,9 +103,8 @@ internal sealed partial class MainWindow : Window
 
     internal void OpenProfiles(IReadOnlyList<string> paths, FormView source)
     {
-        var group = Groups.FirstOrDefault(group =>
-            group.Items.OfType<WindowTab>().Any(tab => ReferenceEquals(tab.Content, source)));
-        if (group is not null) OpenProfiles(paths, group);
+        if (source.Tab?.Placement is { } location && location.Window == this)
+            OpenProfiles(paths, location.Group);
     }
 
     private void OpenProfiles(IReadOnlyList<string> paths, TabControl group)
@@ -118,20 +117,21 @@ internal sealed partial class MainWindow : Window
         {
             var item = CreateTerminalTab(terminal);
             group.Items.Add(item);
+            item.Placement = (this, group);
             first ??= item;
         }
         group.SelectedItem = first;
         UpdateWelcomePanel();
         app.Broadcast.Refresh();
         foreach (var terminal in terminals)
-            terminal.Start(profile => _ = app.Profiles.RememberAsync(terminal.ProfilePath, profile, used: true));
+            terminal.Start(profile => _ = app.Profiles.RememberUsageAsync(terminal.ProfilePath, profile));
     }
 
     internal void AddTerminalTab(TerminalTab terminal) => SelectNewTab(CreateTerminalTab(terminal));
 
     private WindowTab CreateTerminalTab(TerminalTab terminal)
     {
-        var item = new WindowTab(terminal) { Host = this };
+        var item = new WindowTab(terminal);
         terminal.ResolveTabHost(() => item.Host);
         item.UpdateTerminalCaption(terminal);
         terminal.CaptionChanged += () => { item.UpdateTerminalCaption(terminal); app.Broadcast.Refresh(); };
@@ -172,7 +172,7 @@ internal sealed partial class MainWindow : Window
         var item = new WindowTab(form) { FormKey = titleKey, Caption = Text(titleKey) };
         form.Completed += _ =>
         {
-            form.TabOwner?.RemoveFormTab(item, form);
+            item.Host?.RemoveFormTab(item);
         };
         build(form);
         SelectNewTab(item);
@@ -180,10 +180,10 @@ internal sealed partial class MainWindow : Window
 
     private void SelectNewTab(WindowTab item)
     {
-        item.Host = this;
-        if (item.Content is FormView form) form.TabOwner = this;
-        activeGroup.Items.Add(item);
-        activeGroup.SelectedItem = item;
+        var group = activeGroup;
+        group.Items.Add(item);
+        item.Placement = (this, group);
+        group.SelectedItem = item;
         UpdateWelcomePanel();
         app.Broadcast.Refresh();
     }
@@ -348,8 +348,8 @@ internal sealed partial class MainWindow : Window
 
     private bool MoveTab(TabItem item, MainWindow target, int? destination = null, TabControl? destinationGroup = null)
     {
-        if (GroupOf(item) is not { } source || !target.CanAcceptTabs || closing ||
-            item is WindowTab { IsClosing: true } || item.Content is FormView { IsBusy: true }) return false;
+        if (item is not WindowTab { IsClosing: false } movedTab || GroupOf(item) is not { } source ||
+            !target.CanAcceptTabs || closing || item.Content is FormView { IsBusy: true }) return false;
         if (!app.Broadcast.CanMove(this, target))
         {
             ShowError(this, new InvalidOperationException(Text("BroadcastMoveBusy")));
@@ -369,7 +369,8 @@ internal sealed partial class MainWindow : Window
         bool Place()
         {
             int index = source.Items.IndexOf(item);
-            bool wasSelected = item.IsSelected;
+            var sourceSelection = source.SelectedItem;
+            var targetSelection = destinationGroup.SelectedItem;
             source.Items.RemoveAt(index);
             try
             {
@@ -379,20 +380,21 @@ internal sealed partial class MainWindow : Window
             }
             catch (InvalidOperationException exception)
             {
+                if (destinationGroup.Items.Contains(item)) destinationGroup.Items.Remove(item);
                 source.Items.Insert(index, item);
-                if (wasSelected) source.SelectedItem = item;
+                source.SelectedItem = sourceSelection;
+                if (destinationGroup != source) destinationGroup.SelectedItem = targetSelection;
                 placementError = exception;
                 return false;
             }
 
+            movedTab.Placement = (target, destinationGroup);
             target.UpdateWelcomePanel();
-            if (item is WindowTab movedTab) movedTab.Host = target;
             if (terminal is not null)
             {
                 terminal.RefreshNoticeOwner();
                 if (this != target && !terminal.IsExternalMacro) terminal.BroadcastChecked = true;
             }
-            if (item.Content is FormView moved) moved.TabOwner = target;
             target.ActivateGroup(destinationGroup);
             if (moveCapturedPane || destinationGroup.SelectedContent is not TerminalTab { HasMouseCapture: true })
                 destinationGroup.SelectedItem = item;
@@ -462,7 +464,7 @@ internal sealed partial class MainWindow : Window
     {
         if (item.Content is not TerminalTab terminal || !CanReconnectTab(item, terminal) || GroupOf(item) is null)
             return;
-        terminal.Start(profile => _ = app.Profiles.RememberAsync(terminal.ProfilePath, profile, used: true));
+        terminal.Start(profile => _ = app.Profiles.RememberUsageAsync(terminal.ProfilePath, profile));
     }
 
     private void OpenTabListMenu(object sender, RoutedEventArgs args)
@@ -704,10 +706,10 @@ internal sealed partial class MainWindow : Window
         int revision = app.SettingsRevision;
         string[] languages = ["en", "ja", "system"];
         string[] themes = ["system", "light", "dark"];
-        var language = LocalizedChoice(Array.IndexOf(languages, app.LanguageChoice), "English", "Japanese", "System");
-        var theme = LocalizedChoice(Array.IndexOf(themes, app.ThemeChoice), "System", "Light", "Dark");
+        var language = LocalizedChoice(languages, app.LanguageChoice, "English", "Japanese", "System");
+        var theme = LocalizedChoice(themes, app.ThemeChoice, "System", "Light", "Dark");
         string[] bells = ["visual", "off"];
-        var bell = LocalizedChoice(Array.IndexOf(bells, app.BellChoice), "VisualBell", "Off");
+        var bell = LocalizedChoice(bells, app.BellChoice, "VisualBell", "Off");
         var fontFamily = FontCatalog.Picker(app.TerminalFontFamily);
         var fontSize = new TextBox { Text = app.TerminalFontSize.ToString(CultureInfo.InvariantCulture) };
         var retained = new TextBox { Text = app.RetainedRows.ToString(CultureInfo.InvariantCulture) };
@@ -793,9 +795,9 @@ internal sealed partial class MainWindow : Window
             var logging = app.LogDefaults;
             var shortcuts = new KeyboardShortcuts(shortcutChoices.Select(choice => choice.SelectedItem as string));
             await app.SaveSettingsAsync(revision, new App.SettingsChanges(
-                Language: Change(languages[language.SelectedIndex], app.LanguageChoice),
-                Theme: Change(themes[theme.SelectedIndex], app.ThemeChoice),
-                Bell: Change(bells[bell.SelectedIndex], app.BellChoice),
+                Language: Change(language.SelectedId!, app.LanguageChoice),
+                Theme: Change(theme.SelectedId!, app.ThemeChoice),
+                Bell: Change(bell.SelectedId!, app.BellChoice),
                 FontFamily: Change(fontFamily.Text, app.TerminalFontFamily),
                 FontSize: size == app.TerminalFontSize ? null : size,
                 RetainedRows: rows == app.RetainedRows ? null : rows,
@@ -845,15 +847,10 @@ internal sealed partial class MainWindow : Window
             catch (Exception exception) when (ProfileFileAssociation.IsRegistrationFailure(exception)) { ShowError(form.OwnerWindow, exception); }
         }
 
-        ComboBox LocalizedChoice(int index, params string[] keys)
+        FixedChoiceBox LocalizedChoice(string[] ids, string selected, params string[] keys)
         {
-            var choice = new ComboBox();
-            form.AddLocalizedUpdate(() =>
-            {
-                int selected = choice.ItemsSource is null ? index : choice.SelectedIndex;
-                choice.ItemsSource = keys.Select(Text).ToArray();
-                choice.SelectedIndex = selected;
-            });
+            var choice = new FixedChoiceBox();
+            form.AddLocalizedUpdate(() => choice.SetChoices(ids, keys.Select(Text).ToArray(), choice.SelectedId ?? selected));
             return choice;
         }
     });
@@ -879,8 +876,8 @@ internal sealed partial class MainWindow : Window
         if (GroupOf(item) is not { } group || item.Content is not TerminalTab terminal)
             return (false, Task.CompletedTask);
         group.Items.Remove(item);
-        if (GroupOf(item) is not null) return (false, Task.CompletedTask);
-        item.Host = null;
+        if (group.Items.Contains(item)) return (false, Task.CompletedTask);
+        item.Placement = null;
         Task release = terminal.ReleaseRemovedOutputAsync();
         app.Ai.EndSharing(terminal);
         terminal.DisposeMacro();
@@ -889,12 +886,12 @@ internal sealed partial class MainWindow : Window
         return (true, release);
     }
 
-    private void RemoveFormTab(WindowTab item, FormView form)
+    private void RemoveFormTab(WindowTab item)
     {
         if (GroupOf(item) is not { } group) return;
         group.Items.Remove(item);
-        item.Host = null;
-        form.TabOwner = null;
+        if (group.Items.Contains(item)) return;
+        item.Placement = null;
         UpdateWelcomePanel();
     }
 
@@ -985,7 +982,7 @@ internal sealed partial class MainWindow : Window
                 JsonStoreRecovery.DescribeFailure(publication.Result) : exception.Message,
                 Text("Error"), MessageBoxButton.OK, MessageBoxImage.Error));
 
-    private sealed class WindowTab : TabItem
+    internal sealed class WindowTab : TabItem
     {
         private bool updatingBroadcast;
         private readonly CheckBox targetCheck = new()
@@ -1053,6 +1050,7 @@ internal sealed partial class MainWindow : Window
             header.Children.Add(label);
             Header = header;
             Content = content;
+            if (content is FormView form) form.Tab = this;
             if (content is TerminalTab terminal)
             {
                 var menu = new ContextMenu();
@@ -1120,7 +1118,8 @@ internal sealed partial class MainWindow : Window
         }
 
         public string? FormKey { get; init; }
-        public MainWindow? Host { get; set; }
+        public (MainWindow Window, TabControl Group)? Placement { get; set; }
+        public MainWindow? Host => Placement?.Window;
         public bool IsClosing { get; set; }
         public bool CanCloseAsDisconnected => Content is TerminalTab { IsDisconnected: true, HasActiveMacro: false };
 

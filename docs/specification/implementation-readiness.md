@@ -1,5 +1,26 @@
 # TabTty initial implementation readiness
 
+## Refactoring follow-up, 2026-11-25
+
+The three plans have 24 implementation tickets and one research ticket.
+The implementation tickets specify entry points, preserved behavior and
+acceptance checks. Start the terminal and persistence plan with #178. Implement
+#186 before #187 because both use the encoder's input boundaries. The other
+children of the three plans can start independently.
+
+| Plan | Readiness evidence |
+| --- | --- |
+| [#177 Terminal, transport, recording and persistence](https://github.com/TabTty/TabTty/issues/177) | [Local stores and profile usage](persistence-and-windows.md#opening-locations-and-registration), [terminal observation](native-terminal-core.md#verification-and-replacement-readiness), [SSH credit and serial completion](transports-and-authentication.md), [transfer execution](file-transfer.md#file-management-deadlines-and-limits) and [session input and recording](session-and-recording.md). |
+| [#188 Macro architecture follow-up](https://github.com/TabTty/TabTty/issues/188) | [Macro behavior](../drafts/macro-specification.md), [list mutations](../drafts/macro-language.md#lists-and-read-only-api-values) and [editor acceptance](../drafts/macro-validation.md#editor-acceptance). [#197 measured completion](../drafts/macro-completion-latency.md) and recommends deferring the optimization. |
+| [#198 WPF refactoring](https://github.com/TabTty/TabTty/issues/198) | [Profiles, editors and tab ownership](persistence-and-windows.md), [group removal](broadcast-and-split-views.md), [file-transfer availability](file-transfer.md) and [highlighting and search](resources-and-validation.md). |
+
+Runtime acceptance for the refactors follows implementation. In particular,
+#186, #187 and #204 require comparable before/after measurements for paste peak
+memory, short-send allocations and search CPU/latency, respectively. #194
+requires actual screen-reader output in both languages.
+
+## Earlier decisions and plans
+
 Architecture review update, 2026-11-18: the
 [whole-codebase interview](../drafts/whole-codebase-architecture-deepening.md)
 has finalized all six candidates: recording finalization, terminal transport,

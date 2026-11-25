@@ -50,6 +50,15 @@ internal static partial class Program
             var reconnect = await app.Profiles.AdmitAsync(owner, path, null, token, reconnect: true, first.Once)
                 .WaitAsync(TimeSpan.FromSeconds(2), token);
             CheckMacroLaunch(reconnect.Once == first.Once, "An unchanged reconnect did not reuse the tab's decision.");
+            var stateFiles = new[] { Path.Combine(LocalState.DirectoryPath, "state.json"), Path.Combine(LocalState.DirectoryPath, "state.json.bak") };
+            var lastWrites = stateFiles.Select(ReadUsageFile).ToArray();
+            await app.Profiles.RememberUsageAsync(path, first.Profile);
+            await app.Profiles.RememberUsageAsync(path, reconnect.Profile);
+            CheckMacroLaunch(lastWrites.SequenceEqual(stateFiles.Select(ReadUsageFile)),
+                "Using an unregistered profile wrote local state or its backup.");
+
+            static (DateTime Time, string? Content) ReadUsageFile(string file) => File.Exists(file)
+                ? (File.GetLastWriteTimeUtc(file), File.ReadAllText(file)) : default;
 
             var admission = app.Profiles.AdmitAsync(owner, path, "Fixture macro", token);
             await ReviewAsync();
@@ -157,7 +166,7 @@ internal static partial class Program
             {
                 MacroTrust.Save(macroAllow, MacroTrustDecision.Allow);
                 MacroTrust.Save(macroBlock, MacroTrustDecision.Block);
-                using var pendingMacro = MacroTrust.BeginReview(MacroTrustKey.Create(sourceDigest, []));
+                using var pendingMacro = MacroTrust.Evaluate(MacroTrustKey.Create(sourceDigest, []), elevated: false).Review!;
                 app.Profiles.ResetTrust(owner);
                 CheckMacroLaunch(!pendingMacro.Expired && MacroTrust.Read(macroAllow) == MacroTrustDecision.Allow &&
                     MacroTrust.Read(macroBlock) == MacroTrustDecision.Block, "A profile reset affected macro decisions.");
@@ -260,21 +269,21 @@ internal static partial class Program
             try
             {
                 app.Profiles.Show(other);
-                await app.Profiles.RememberAsync(path, await ConnectionProfile.LoadAsync(path, token), used: true);
+                await app.Profiles.RememberUsageAsync(path, await ConnectionProfile.LoadAsync(path, token));
                 while (list.Items.Count != 2) await Task.Delay(10, token);
                 if (!((GridView)list.View).Columns.Select(column => column.Header).OfType<GridViewColumnHeader>().Any(header =>
                     System.Windows.Automation.AutomationProperties.GetName(header) == App.Text("ProfileListLastUsed")))
                     throw new InvalidOperationException("The catalog did not offer a last-used sort.");
                 list.SelectAll();
                 Guid[] selected = list.SelectedItems.Cast<ProfileCatalog.Registration>().Select(item => item.Id).Order().ToArray();
-                await app.Profiles.RememberAsync(extraPath, extra, used: true);
+                await app.Profiles.RememberUsageAsync(extraPath, extra);
                 var reordered = list.Items.Cast<ProfileCatalog.Registration>().ToArray();
                 if (reordered[0].Name != name || !selected.SequenceEqual(list.SelectedItems.Cast<ProfileCatalog.Registration>()
                     .Select(item => item.Id).Order()))
                     throw new InvalidOperationException("Connection usage lost the catalog selection during sorting.");
                 draft["groupName"] = "Moved out";
                 extra = extra.Edit(draft.ToJsonString());
-                await app.Profiles.RememberAsync(extraPath, extra, used: true);
+                await app.Profiles.RememberUsageAsync(extraPath, extra);
                 if ((groupTabs.SelectedItem as TabItem)?.Tag as string != groupName ||
                     list.SelectedItems.Count != 1 || list.SelectedItem is not ProfileCatalog.Registration selectedItem ||
                     selectedItem.Id == reordered[0].Id)
@@ -288,7 +297,7 @@ internal static partial class Program
                     var entries = state["registrations"]!.AsArray();
                     entries.Remove(entries.Single(entry => entry!["displayPath"]!.GetValue<string>() == extraPath));
                 });
-                await app.Profiles.RememberAsync(path, await ConnectionProfile.LoadAsync(path, token), used: true);
+                await app.Profiles.RememberUsageAsync(path, await ConnectionProfile.LoadAsync(path, token));
             }
         }
 

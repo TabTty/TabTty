@@ -82,6 +82,16 @@ extern "C" {
         length: i32,
         error: *mut i32,
     ) -> i32;
+    fn ucnv_fromUnicode(
+        converter: *mut c_void,
+        target: *mut *mut u8,
+        target_limit: *const u8,
+        source: *mut *const u16,
+        source_limit: *const u16,
+        offsets: *mut i32,
+        flush: i8,
+        error: *mut i32,
+    );
     fn ucnv_toUnicode(
         converter: *mut c_void,
         target: *mut *mut u16,
@@ -232,6 +242,34 @@ impl Converter {
 
     pub(crate) fn encode(&mut self, input: &[u16], output: &mut [u8]) -> Result<usize, i32> {
         self.encode_to(input, output.as_mut_ptr(), output.len() as i32, false)
+    }
+
+    pub(crate) fn send(
+        &mut self,
+        input: &[u16],
+        output: &mut [u8],
+        flush: bool,
+    ) -> Result<usize, i32> {
+        let mut error = 0;
+        let mut source = input.as_ptr();
+        let mut target = output.as_mut_ptr();
+        unsafe {
+            let source_limit = input.as_ptr().add(input.len());
+            ucnv_fromUnicode(
+                self.handle.as_ptr(),
+                &mut target,
+                output.as_ptr().add(output.len()),
+                &mut source,
+                source_limit,
+                null_mut(),
+                flush as i8,
+                &mut error,
+            );
+            if error > 0 || source != source_limit {
+                return Err(3);
+            }
+            Ok(target.offset_from(output.as_ptr()) as usize)
+        }
     }
 
     pub(crate) fn encoded_length(&mut self, input: &[u16]) -> Result<usize, i32> {

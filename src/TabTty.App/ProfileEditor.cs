@@ -139,8 +139,8 @@ internal sealed class ProfileEditor
             var transmit = Choice(terminal, "transmitEncoding", "TransmitEncoding", TerminalEncodings.Identifiers.ToArray());
             Number(terminal, "ambiguousWidth", "AmbiguousWidth");
             var jis = terminal["jis"]!.AsObject();
-            var receiveKana = Choice(jis, "receiveKana", "ReceiveKana", ["eightBit", "soSi"], ["8-bit", "SO/SI"]);
-            var transmitKana = Choice(jis, "transmitKana", "TransmitKana", ["eightBit", "soSi"], ["8-bit", "SO/SI"]);
+            var receiveKana = Choice(jis, "receiveKana", "ReceiveKana", ["eightBit", "soSi"], () => ["8-bit", "SO/SI"]);
+            var transmitKana = Choice(jis, "transmitKana", "TransmitKana", ["eightBit", "soSi"], () => ["8-bit", "SO/SI"]);
             receive.SelectionChanged += (_, _) => UpdateEncoding();
             transmit.SelectionChanged += (_, _) => UpdateEncoding();
             same.Checked += (_, _) => UpdateEncoding();
@@ -176,15 +176,10 @@ internal sealed class ProfileEditor
             String(logging, "directory", "LogDirectory", "NetworkLogDestinationNotice", optional: true);
             String(logging, "filenameTemplate", "LogFilenameTemplate", "LogFilenameTemplateDescription", optional: true)
                 .MaxLength = RecordingNameTemplate.MaximumLength;
-            var collision = new ComboBox { SelectedValuePath = nameof(ComboBoxItem.Tag) };
-            foreach (var policy in LogCollisionPolicies.All)
-            {
-                var item = new ComboBoxItem { Tag = LogCollisionPolicies.Format(policy) };
-                form.AddLocalizedUpdate(() => item.Content = Text("LogCollision" + policy));
-                collision.Items.Add(item);
-            }
-            collision.SelectedValue = LogCollisionPolicies.Format(profile.LogCollision);
-            Add("LogCollision", collision);
+            var policies = LogCollisionPolicies.All;
+            var collision = Selection("LogCollision", policies.Select(LogCollisionPolicies.Format).ToArray(),
+                () => policies.Select(policy => Text("LogCollision" + policy)).ToArray(),
+                LogCollisionPolicies.Format(profile.LogCollision));
             bool hasCollision = logging.ContainsKey("collision");
             apply.Add(() =>
             {
@@ -303,10 +298,10 @@ internal sealed class ProfileEditor
             Number(connection, "baudRate", "BaudRate");
             Number(connection, "dataBits", "DataBits");
             Choice(connection, "parity", "Parity", ["none", "odd", "even", "mark", "space"],
-                [Text("None"), Text("Odd"), Text("Even"), Text("Mark"), Text("Space")]);
+                () => [Text("None"), Text("Odd"), Text("Even"), Text("Mark"), Text("Space")]);
             Number(connection, "stopBits", "StopBits");
             var flow = Choice(connection, "flowControl", "FlowControl", ["none", "xonXoff", "rtsCts", "dsrDtr"],
-                [Text("None"), "XON/XOFF", "RTS/CTS", "DSR/DTR"]);
+                () => [Text("None"), "XON/XOFF", "RTS/CTS", "DSR/DTR"]);
             var dtr = Boolean(connection, "dtr", "Dtr");
             var rts = Boolean(connection, "rts", "Rts");
             flow.SelectionChanged += (_, _) => UpdateLines();
@@ -340,7 +335,7 @@ internal sealed class ProfileEditor
         Choice(terminal, "enter", "EnterSequence", ["cr", "lf", "crlf"]);
         Choice(terminal, "backspace", "BackspaceSequence", ["bs", "del"]);
         string[] echo = profile.Type switch { "serial" => ["off", "on"], "telnet" => ["off", "followRemote"], _ => ["off"] };
-        Choice(terminal, "localEcho", "LocalEcho", echo, echo.Select(value => Text(value switch
+        Choice(terminal, "localEcho", "LocalEcho", echo, () => echo.Select(value => Text(value switch
             { "off" => "Off", "on" => "On", _ => "FollowRemote" })).ToArray());
     }
 
@@ -348,10 +343,11 @@ internal sealed class ProfileEditor
     {
         string[] methods = ["password", "publicKey"];
         string[] savedMethods = auth["methods"]!.AsArray().Select(method => method!.GetValue<string>()).ToArray();
-        var primary = Selection("PrimarySshMethod", methods, methods.Select(MethodLabel).ToArray(), savedMethods[0],
+        var primary = Selection("PrimarySshMethod", methods, () => methods.Select(MethodLabel).ToArray(), savedMethods[0],
             trackEdit: false);
         var firstSettings = form.AddSection(_ => { });
-        var secondary = Selection("SecondarySshMethod", [], [], "", trackEdit: false);
+        var secondary = new FixedChoiceBox();
+        Add("SecondarySshMethod", secondary, trackEdit: false);
         var secondSettings = form.AddSection(_ => { });
         var password = form.AddSection(_ => Credential(auth, "password", "SshPasswordSource", app));
         var privateKey = form.AddSection(_ => Credential(auth, "privateKey", "PublicKey", app));
@@ -363,26 +359,19 @@ internal sealed class ProfileEditor
         UpdateSecondary(savedMethods.Length == 2);
         primary.SelectionChanged += (_, _) =>
         {
-            if (primary.SelectedValue is string) UpdateSecondary(secondary.SelectedIndex == 1);
+            if (primary.SelectedId is not null) UpdateSecondary(HasSecond());
         };
         secondary.SelectionChanged += (_, _) => UpdateSettings();
-        form.AddLocalizedUpdate(() =>
+        form.AddLocalizedUpdate(() => UpdateSecondary(HasSecond()));
+        form.TrackValue(() => (First: primary.SelectedId, HasSecond: HasSecond()), saved =>
         {
-            string first = (string)primary.SelectedValue;
-            bool hasSecond = secondary.SelectedIndex == 1;
-            primary.ItemsSource = methods.Select(method => new Option(method, MethodLabel(method))).ToArray();
-            primary.SelectedValue = first;
-            UpdateSecondary(hasSecond);
-        });
-        form.TrackValue(() => (First: (string)primary.SelectedValue, HasSecond: secondary.SelectedIndex == 1), saved =>
-        {
-            primary.SelectedValue = saved.First;
-            secondary.SelectedIndex = saved.HasSecond ? 1 : 0;
+            primary.SelectedId = saved.First;
+            UpdateSecondary(saved.HasSecond);
         });
         apply.Add(() =>
         {
-            string first = (string)primary.SelectedValue;
-            bool hasSecond = secondary.SelectedIndex == 1;
+            string first = primary.SelectedId!;
+            bool hasSecond = HasSecond();
             if ((first == "publicKey" || hasSecond) && auth["privateKey"] is null)
                 throw new InvalidDataException(Text("ProfilePrivateKeyRequired"));
             auth["methods"] = hasSecond ? new JsonArray(first, OtherMethod(first)) : new JsonArray(first);
@@ -390,12 +379,12 @@ internal sealed class ProfileEditor
 
         static string OtherMethod(string value) => value == "password" ? "publicKey" : "password";
         static string MethodLabel(string value) => Text(value == "password" ? "SshPasswordSource" : "PublicKey");
+        bool HasSecond() => secondary.SelectedId is { Length: > 0 };
 
         void UpdateSecondary(bool hasSecond)
         {
-            string other = OtherMethod((string)primary.SelectedValue);
-            secondary.ItemsSource = new[] { new Option("", Text("None")), new Option(other, MethodLabel(other)) };
-            secondary.SelectedIndex = hasSecond ? 1 : 0;
+            string other = OtherMethod(primary.SelectedId!);
+            secondary.SetChoices(["", other], [Text("None"), MethodLabel(other)], hasSecond ? other : "");
             UpdateSettings();
         }
 
@@ -403,7 +392,7 @@ internal sealed class ProfileEditor
         {
             var first = Equals(primary.SelectedValue, "password") ? password : privateKey;
             var second = ReferenceEquals(first, password) ? privateKey : password;
-            var selectedSecond = secondary.SelectedIndex == 1 ? second : null;
+            var selectedSecond = HasSecond() ? second : null;
             if (firstSettings.Children.Contains(first) &&
                 (selectedSecond is null ? secondSettings.Children.Count == 0 : secondSettings.Children.Contains(selectedSecond)))
                 return;
@@ -416,7 +405,7 @@ internal sealed class ProfileEditor
 
     private void InheritedFont(JsonObject font, App app)
     {
-        var mode = Selection("FontMode", ["inherit", "override"], [Text("Inherit"), Text("Override")],
+        var mode = Selection("FontMode", ["inherit", "override"], () => [Text("Inherit"), Text("Override")],
             font["mode"]!.GetValue<string>());
         string previous = font["family"]?.GetValue<string>() ?? app.TerminalFontFamily;
         var family = FontCatalog.Picker(previous);
@@ -444,7 +433,7 @@ internal sealed class ProfileEditor
 
     private void InheritedRetention(JsonObject retention, App app)
     {
-        var mode = Selection("RetentionMode", ["inherit", "override"], [Text("Inherit"), Text("Override")],
+        var mode = Selection("RetentionMode", ["inherit", "override"], () => [Text("Inherit"), Text("Override")],
             retention["mode"]!.GetValue<string>());
         var value = new TextBox { Text = (retention["value"]?.GetValue<int>() ?? app.RetainedRows)
             .ToString(CultureInfo.InvariantCulture) };
@@ -518,18 +507,18 @@ internal sealed class ProfileEditor
         return box;
     }
 
-    private ComboBox Choice(JsonObject node, string property, string key, string[] values, string[]? labels = null)
+    private ComboBox Choice(JsonObject node, string property, string key, string[] values, Func<string[]>? labels = null)
     {
-        var box = Selection(key, values, labels ?? values.Select(value => value.ToUpperInvariant()).ToArray(),
+        var box = Selection(key, values, labels ?? (() => values.Select(value => value.ToUpperInvariant()).ToArray()),
             node[property]!.GetValue<string>());
         apply.Add(() => node[property] = (string)box.SelectedValue);
         return box;
     }
 
-    private ComboBox Selection(string key, string[] values, string[] labels, string selected, bool trackEdit = true)
+    private FixedChoiceBox Selection(string key, string[] values, Func<string[]> labels, string selected, bool trackEdit = true)
     {
-        var box = new ComboBox { ItemsSource = values.Select((value, index) => new Option(value, labels[index])).ToArray(),
-            DisplayMemberPath = nameof(Option.Label), SelectedValuePath = nameof(Option.Value), SelectedValue = selected };
+        var box = new FixedChoiceBox();
+        form.AddLocalizedUpdate(() => box.SetChoices(values, labels(), box.SelectedId ?? selected));
         Add(key, box, trackEdit);
         return box;
     }
@@ -540,6 +529,5 @@ internal sealed class ProfileEditor
         form.AddField(key, control, trackEdit, descriptionKey: descriptionKey, inlineCheckBox: inlineCheckBox);
     }
 
-    private sealed record Option(string Value, string Label);
     private sealed record TransportFields(JsonObject Connection, JsonObject Terminal, List<Action> Apply, StackPanel Panel);
 }

@@ -26,25 +26,31 @@ internal sealed partial class MacroRun
                 string path = ResolvePath(S(0));
                 var recording = new RecordingOverrides(args[MacroApi.LogDirectory.Index] as string,
                     args[MacroApi.LogFilenameTemplate.Index] as string, collision, baseDirectory);
-                await HostOperationAsync("Connect", async () =>
+                MacroProgram? postConnection = null;
+                try
                 {
-                    try
+                    await HostOperationAsync("Connect", async () =>
                     {
-                        TerminalSession connected = await host.ConnectAsync(this, path, recording, attemptStop.Token).ConfigureAwait(false);
-                        lock (gate) { session = connected; ready = true; }
-                        return true;
-                    }
-                    catch (MacroError) { throw; }
-                    catch (SshInteractionCancelledException) when (!stop.IsCancellationRequested)
-                    { throw new MacroError(MacroErrorCode.UserCancelled); }
-                    catch (Exception error) when (error is IOException or UnauthorizedAccessException or
-                        ArgumentException or InvalidOperationException or System.Text.Json.JsonException or CryptographicException or
-                        System.Net.Sockets.SocketException or InvalidDataException or NotSupportedException or
-                        DllNotFoundException or EntryPointNotFoundException or FormatException or KeyNotFoundException or MacroSourceException ||
-                        error is OperationCanceledException && !stop.IsCancellationRequested)
-                    { throw new MacroError(MacroErrorCode.ConnectionFailed); }
-                }, finishing: true).ConfigureAwait(false);
-                await ExecutePostConnectionAsync().ConfigureAwait(false);
+                        try
+                        {
+                            var connected = await host.ConnectAsync(this, path, recording, attemptStop.Token).ConfigureAwait(false);
+                            postConnection = connected.PostConnection;
+                            lock (gate) { session = connected.Session; ready = true; }
+                            return true;
+                        }
+                        catch (MacroError) { throw; }
+                        catch (SshInteractionCancelledException) when (!stop.IsCancellationRequested)
+                        { throw new MacroError(MacroErrorCode.UserCancelled); }
+                        catch (Exception error) when (error is IOException or UnauthorizedAccessException or
+                            ArgumentException or InvalidOperationException or System.Text.Json.JsonException or CryptographicException or
+                            System.Net.Sockets.SocketException or InvalidDataException or NotSupportedException or
+                            DllNotFoundException or EntryPointNotFoundException or FormatException or KeyNotFoundException or MacroSourceException ||
+                            error is OperationCanceledException && !stop.IsCancellationRequested)
+                        { throw new MacroError(MacroErrorCode.ConnectionFailed); }
+                    }, finishing: true).ConfigureAwait(false);
+                    if (postConnection is not null) await ExecutePostConnectionAsync(postConnection).ConfigureAwait(false);
+                }
+                finally { postConnection?.Dispose(); }
                 return VoidValue;
             case "SetBaseDirectory": baseDirectory = ResolvePath(S(0)); return VoidValue;
             case "ResetBaseDirectory": baseDirectory = Path.GetDirectoryName(Program.FullPath)!; return VoidValue;
@@ -115,10 +121,13 @@ internal sealed partial class MacroRun
                 if (list.Items.Count == MacroLimits.ListItems) throw new MacroError(MacroErrorCode.PayloadLimit);
                 int insertion = name == "Add" ? list.Items.Count : Index(args[1], list.Items.Count, insert: true);
                 object item = ConvertValue(args[^1], list.Element);
-                allocations.GetValue(list, _ => memory.Reserve(0)).Resize(32 + Math.Max(list.Items.Capacity, Math.Max(4, list.Items.Count * 2L)) * 16L);
-                list.Items.Insert(insertion, item); list.Revision++; Own(list); return VoidValue;
-            case "RemoveAt": L(0).Items.RemoveAt(Index(args[1], L(0).Items.Count)); L(0).Revision++; return VoidValue;
-            case "Clear": L(0).Items.Clear(); L(0).Revision++; return VoidValue;
+                list.Insert(insertion, item, allocations.GetValue(list, _ => memory.Reserve(0)).Resize);
+                return VoidValue;
+            case "RemoveAt":
+                MacroList removal = L(0);
+                removal.RemoveAt(Index(args[1], removal.Items.Count));
+                return VoidValue;
+            case "Clear": L(0).Clear(); return VoidValue;
             case "Clone": return new MacroList(L(0).Element, L(0).Items);
             case "ParseLong": return ParseLong(S(0));
             case "ParseDouble": return ParseDouble(S(0));

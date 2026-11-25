@@ -116,7 +116,8 @@ internal static class MacroApi
 internal sealed class MacroChecker(MacroProgram program, MacroEditorSymbols? editor = null)
 {
     private sealed record Variable(MacroType Type, object Declaration, bool ReadOnly);
-    private readonly List<Dictionary<string, Variable>> scopes = [];
+    private sealed record Scope(Dictionary<string, Variable> Names, MacroBlock Body, bool IncludesHeader);
+    private readonly List<Scope> scopes = [];
     private readonly Dictionary<string, MacroConstantsFile> constants = program.Constants.ToDictionary(
         binding => binding.Alias, binding => binding.File, StringComparer.Ordinal);
     private readonly Dictionary<string, HashSet<string>> calls = new(StringComparer.Ordinal);
@@ -156,14 +157,14 @@ internal sealed class MacroChecker(MacroProgram program, MacroEditorSymbols? edi
     private void CheckFrame(string name, MacroType result, MacroParameter[] parameters, MacroBlock body)
     {
         caller = name; returns = result; locals = loops = 0; insideCatch = false; calls[name] = [];
-        scopes.Clear(); Push();
+        scopes.Clear(); Push(body);
         foreach (var parameter in parameters) Declare(parameter.Name, parameter.Type, body.Position, parameter);
         CheckBlock(body); Pop();
     }
 
     private void CheckBlock(MacroBlock block)
     {
-        Push();
+        Push(block);
         foreach (var statement in block.Statements)
         {
             int previousScopes = scopes.Count, previousLoops = loops;
@@ -212,7 +213,7 @@ internal sealed class MacroChecker(MacroProgram program, MacroEditorSymbols? edi
                 Require(Expression(loop.Condition) == MacroType.Bool, loop);
                 loops++; CheckBlock(loop.Body); loops--; break;
             case MacroFor loop:
-                Push(); if (loop.Initial is { } init) CheckStatement(init);
+                Push(loop.Body, includesHeader: true); if (loop.Initial is { } init) CheckStatement(init);
                 if (loop.Condition is { } condition) Require(Expression(condition) == MacroType.Bool, loop);
                 loops++; CheckBlock(loop.Body); if (loop.Step is { } step) CheckStatement(step); loops--; Pop(); break;
             case MacroForeach loop:
@@ -220,11 +221,11 @@ internal sealed class MacroChecker(MacroProgram program, MacroEditorSymbols? edi
                 Require(collection.Name == "List", loop);
                 loop.Type = loop.Declared ?? collection.Element!;
                 Require(loop.Type.Accepts(collection.Element!), loop);
-                Push(); Declare(loop.Name, loop.Type, loop.Position, loop, readOnly: true);
+                Push(loop.Body); Declare(loop.Name, loop.Type, loop.Position, loop, readOnly: true);
                 loops++; CheckBlock(loop.Body); loops--; Pop(); break;
             case MacroTry attempt:
                 CheckBlock(attempt.Body);
-                Push(); Declare(attempt.ErrorName, new("MacroError"), attempt.Position, attempt);
+                Push(attempt.Catch); Declare(attempt.ErrorName, new("MacroError"), attempt.Position, attempt);
                 bool enclosingCatch = insideCatch;
                 insideCatch = true;
                 try { CheckBlock(attempt.Catch); }
@@ -412,9 +413,11 @@ internal sealed class MacroChecker(MacroProgram program, MacroEditorSymbols? edi
     private void Declare(string name, MacroType type, MacroPosition at, object declaration, bool readOnly = false)
     {
         CheckName(name, at);
-        if (program.Functions.ContainsKey(name) || scopes.Any(scope => scope.ContainsKey(name))) Fail("DuplicateLocal", at);
+        if (program.Functions.ContainsKey(name) || scopes.Any(scope => scope.Names.ContainsKey(name))) Fail("DuplicateLocal", at);
         if (++locals > 1024) Fail("LocalLimit", at);
-        scopes[^1].Add(name, new(type, declaration, readOnly));
+        var scope = scopes[^1];
+        scope.Names.Add(name, new(type, declaration, readOnly));
+        editor?.AcceptLocal(declaration, type, caller, scope.Body, scope.IncludesHeader);
     }
     internal static MacroType ScalarType(object value) => value switch
     {
@@ -435,10 +438,11 @@ internal sealed class MacroChecker(MacroProgram program, MacroEditorSymbols? edi
     }
     private Variable Lookup(string name, MacroPosition at)
     {
-        for (int i = scopes.Count - 1; i >= 0; i--) if (scopes[i].TryGetValue(name, out var variable)) return variable;
+        for (int i = scopes.Count - 1; i >= 0; i--) if (scopes[i].Names.TryGetValue(name, out var variable)) return variable;
         throw new MacroSourceException("UnknownName", at);
     }
-    private void Push() => scopes.Add(new(StringComparer.Ordinal));
+    private void Push(MacroBlock body, bool includesHeader = false) =>
+        scopes.Add(new(new(StringComparer.Ordinal), body, includesHeader));
     private void Pop() => scopes.RemoveAt(scopes.Count - 1);
     private static void Require(bool condition, MacroNode node) { if (!condition) Fail("TypeMismatch", node.Position); }
     private static void Fail(string code, MacroPosition at) => throw new MacroSourceException(code, at);

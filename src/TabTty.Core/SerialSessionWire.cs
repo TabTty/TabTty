@@ -97,22 +97,27 @@ internal sealed class SerialSessionWire : ISessionWire
         }
     }
 
-    internal const int WriteChunkBytes = 1024;
+    internal static int WriteRequestLength(int length) => Math.Min(length, 1024);
+
+    internal static void RequireFullWrite(int count, int requested)
+    {
+        if (count != requested) throw new IOException("COM write timed out before sending the entire chunk.");
+    }
 
     public async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken)
     {
         while (!buffer.IsEmpty)
         {
-            int requested = Math.Min(buffer.Length, WriteChunkBytes);
+            int requested = WriteRequestLength(buffer.Length);
             int count = await WriteSomeAsync(buffer, cancellationToken).ConfigureAwait(false);
-            if (count != requested) throw new IOException("COM write timed out before sending the entire chunk.");
+            RequireFullWrite(count, requested);
             buffer = buffer[count..];
         }
     }
 
     public async ValueTask<int> WriteSomeAsync(ReadOnlyMemory<byte> buffer, CancellationToken token)
     {
-        var chunk = buffer[..Math.Min(buffer.Length, WriteChunkBytes)];
+        var chunk = buffer[..WriteRequestLength(buffer.Length)];
         return await Task.Run(() => Transfer(chunk, write: true, token), token).ConfigureAwait(false);
     }
 

@@ -89,7 +89,8 @@ internal static partial class MacroContracts
         using var run = new MacroRun(program, [], host);
         var interaction = new SshInteraction((_, _) => Task.FromResult(true),
             (_, _) => Task.FromResult<VaultSecret?>(new VaultSecret("local-test-password"u8.ToArray())));
-        await using var session = await TerminalSession.ConnectMacroAsync(path, run, deadline.Token, interaction,
+        var reviewed = await ConnectionProfile.LoadAsync(path, deadline.Token);
+        await using var session = await TerminalSession.ConnectReviewedAsync(path, reviewed, run, deadline.Token, interaction,
             viewport: _ => Task.FromResult((120, 40)));
         Check(!session.AcceptsInput && host.LastCredential is null, "The post-connection macro ran during SSH startup.");
         run.Start(session);

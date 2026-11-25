@@ -82,11 +82,6 @@ internal sealed partial class TerminalTab
     {
         var state = new PaneState(new TerminalHighlightView(pane, highlightState));
         panes.Add(pane, state);
-        state.Highlight.Suspended += suspended =>
-        {
-            highlightSuspended = suspended;
-            UpdateHighlightStatus();
-        };
         pane.SetPresentationEnabled(presentationEnabled);
         pane.ConfigureFont(baseFontFamily, zoomFontSize);
         pane.SetConnected(InputSession is not null);

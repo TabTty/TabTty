@@ -44,7 +44,6 @@ internal sealed partial class TerminalTab : UserControl
     private TerminalSurface output = new();
     private Guid? highlightSetId;
     private readonly TerminalHighlightState highlightState = new();
-    private bool highlightSuspended;
     private readonly DispatcherTimer resizeTimer;
     private readonly DispatcherTimer frameTimer;
     private IReadOnlyList<string>? pendingFrame;
@@ -56,6 +55,7 @@ internal sealed partial class TerminalTab : UserControl
     private (int Columns, int Rows) appliedGrid = (80, 24);
     private TerminalSession? session;
     private RecordingStatus? lastRecordingStatus;
+    private int? displayedRecordingFailure;
     private FileTransferWindow? transferWindow;
     private readonly System.Runtime.CompilerServices.ConditionalWeakTable<TerminalSession, FileOperationOwnership> transferOwnership = new();
     private string? connectedName;
@@ -131,6 +131,7 @@ internal sealed partial class TerminalTab : UserControl
             searchRefreshTimer.Stop();
             if (searchWork is null) await UpdateSearchResultsAsync();
         };
+        highlightState.Changed += _ => UpdateHighlightStatus();
         AttachPane(output);
         var catalog = ((App)Application.Current).Highlights;
         Window? host = null;
@@ -286,7 +287,7 @@ internal sealed partial class TerminalTab : UserControl
         connectionCompletion = ConnectAsync(opened, reconnect: reconnect);
     }
 
-    private async Task ConnectAsync(Action<ConnectionProfile>? opened, TaskCompletionSource<TerminalSession>? ready = null,
+    private async Task ConnectAsync(Action<ConnectionProfile>? opened, TaskCompletionSource<MacroConnection>? ready = null,
         CancellationToken attempt = default, RecordingOverrides recordingOverrides = default, bool reconnect = false)
     {
         var generation = stop;
@@ -294,6 +295,7 @@ internal sealed partial class TerminalTab : UserControl
         ResetMouseRouting();
         bool established = false;
         MacroRun? postConnection = null;
+        MacroProgram? reviewedPostConnection = null;
         bool postConnectionStarted = false;
         lastRecordingStatus = null;
         try
@@ -370,18 +372,9 @@ internal sealed partial class TerminalTab : UserControl
                         failure is (IOException or ArgumentException or UnauthorizedAccessException or InvalidDataException or NotSupportedException))
                     { throw new RecordingStartException(failure.Message, failure); }
                 }
-                var caller = IsExternalMacro ? Macro : null;
-                caller?.SetPostConnectionProgram(admission.TakeProgram());
-                try
-                {
-                    session = await TerminalSession.ConnectReviewedAsync(attemptPath, profile, Macro, startupToken, interaction,
-                        Opened, retention, Viewport, logging);
-                }
-                catch
-                {
-                    caller?.SetPostConnectionProgram(null);
-                    throw;
-                }
+                session = await TerminalSession.ConnectReviewedAsync(attemptPath, profile, Macro, startupToken, interaction,
+                    Opened, retention, Viewport, logging);
+                if (ready is not null) reviewedPostConnection = admission.TakeProgram();
             }
             session.Bell += () =>
             {
@@ -424,7 +417,7 @@ internal sealed partial class TerminalTab : UserControl
                 postConnection.Start(session);
                 postConnectionStarted = true;
             }
-            ready?.TrySetResult(session);
+            if (ready?.TrySetResult(new(session, reviewedPostConnection)) == true) reviewedPostConnection = null;
             try
             {
                 await ReceiveOutputAsync(recordingOwner);
@@ -438,8 +431,11 @@ internal sealed partial class TerminalTab : UserControl
             void ShowRecordingFailure() => _ = Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
             {
                 if (!removed && ReferenceEquals(session, recordingOwner) &&
-                    recordingOwner.RecordingStatus is { Disposition: RecordingDisposition.Incomplete, Error: { } problem })
+                    recordingOwner.RecordingStatus is { Disposition: RecordingDisposition.Incomplete, Error: { } problem } failure)
+                {
                     SetStatus(statusKey, problem);
+                    displayedRecordingFailure = failure.Part;
+                }
             }));
         }
         catch (OperationCanceledException exception) when (stop.IsCancellationRequested ||
@@ -486,6 +482,7 @@ internal sealed partial class TerminalTab : UserControl
         }
         finally
         {
+            reviewedPostConnection?.Dispose();
             if (postConnectionStarted) postConnection!.Stop("Disconnected");
             else if (postConnection is not null) ClearPostConnectionMacro();
             destinationNotice?.Close();
@@ -858,8 +855,14 @@ internal sealed partial class TerminalTab : UserControl
         if (session is not { RecordsOutput: true } active || stop.IsCancellationRequested) return;
         try
         {
+            var previous = active.RecordingStatus;
             var outcome = await active.ChangeRecordingAsync(resume, stop.Token);
             if (!ReferenceEquals(session, active)) return;
+            if (resume && previous.Disposition == RecordingDisposition.Incomplete && outcome.Status.Error is null)
+            {
+                ShowRecordingRecovery(active, previous.Part);
+                return;
+            }
             SetStatus("Connected", outcome.Status.Error ?? Text(resume ? "RecordingResumed" : "RecordingPaused"));
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested)
@@ -911,7 +914,7 @@ internal sealed partial class TerminalTab : UserControl
         messages.Click += (_, _) => ShowSshMessages();
         menu.Items.Add(messages);
         var resumeHighlight = new MenuItem { Header = Text("ResumeHighlighting") };
-        resumeHighlight.Click += (_, _) => panes[pane].Highlight.Resume();
+        resumeHighlight.Click += (_, _) => highlightState.Resume();
         menu.Items.Add(resumeHighlight);
         int fixedItemCount = menu.Items.Count;
         menu.Opened += (_, _) =>
@@ -952,11 +955,18 @@ internal sealed partial class TerminalTab : UserControl
 
     private void SetStatus(string key, string? detail = null)
     {
+        displayedRecordingFailure = null;
         bool changed = statusKey != key;
         statusKey = key;
         error = detail;
         UpdateStatusText();
         if (changed) CaptionChanged?.Invoke();
+    }
+
+    private void ShowRecordingRecovery(TerminalSession active, int recoveredPart)
+    {
+        if (ReferenceEquals(session, active) && displayedRecordingFailure == recoveredPart && active.RecordingError is null)
+            SetStatus(statusKey, Text("RecordingResumed"));
     }
 
     private static string LogStartError(string message) => string.Format(Text("RecordingStartFailed"),
@@ -1025,14 +1035,13 @@ internal sealed partial class TerminalTab : UserControl
     private void ApplyHighlightSet()
     {
         var rules = fixtureHighlights ?? ((App)Application.Current).Highlights.Find(highlightSetId);
-        highlightState.SetRules(rules);
-        UpdateHighlightStatus();
+        highlightState.SetRules(rules, highlightSetId is not null && rules is null);
     }
 
     private void UpdateHighlightStatus()
     {
-        bool missing = highlightSetId is not null && ((App)Application.Current).Highlights.Find(highlightSetId) is null;
-        highlightStatus.Visibility = highlightSuspended || missing ? Visibility.Visible : Visibility.Collapsed;
+        bool missing = highlightState.MissingSet;
+        highlightStatus.Visibility = highlightState.Suspended.Count != 0 || missing ? Visibility.Visible : Visibility.Collapsed;
         highlightStatus.Text = Text(missing ? "HighlightSetMissing" : "HighlightRuleSuspended");
         highlightStatus.ToolTip = highlightStatus.Text;
         AutomationProperties.SetName(highlightStatus, highlightStatus.Text);
@@ -1305,8 +1314,8 @@ internal sealed partial class TerminalTab : UserControl
             try
             {
                 using var ranges = ApplicationResources.SearchCache.Reserve(TerminalSearch.Limit * 64);
-                var result = await Task.Run(() => TerminalSearch.ScanAsync(captured, query, caseSensitive,
-                    null, false, viewports, null, work.Token), work.Token);
+                var result = await Task.Run(() => TerminalSearch.Aggregate(captured, query, caseSensitive,
+                    viewports, work.Token), work.Token);
                 if (!IsCurrent())
                 {
                     if (!work.IsCancellationRequested) ScheduleSearchRefresh();
@@ -1524,9 +1533,6 @@ internal sealed partial class TerminalTab : UserControl
         string summary = string.Format(CultureInfo.CurrentCulture, Text("PasteCounts"),
             paste.CharacterCount, paste.LineCount,
             Text(paste.EndsWithNewline ? "TrailingNewline" : "NoTrailingNewline"));
-        const int pageUnits = 8192;
-        int page = 0;
-        int pages = 1 + (paste.Text.Length - 1) / pageUnits;
         // Each source page can expand into visible Unicode markers and line breaks.
         // Include escaped captions, their joined text and the read-only controls.
         long captionMemory = targets?.Sum(name => 128L + 64L * name.Length) ?? 0;
@@ -1541,32 +1547,7 @@ internal sealed partial class TerminalTab : UserControl
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
         };
-        var pageLabel = new TextBox { IsReadOnly = true };
-        form.AddField("PastePreview", previewText);
-        if (pages > 1)
-        {
-            form.AddField("PastePreviewPageLabel", pageLabel);
-            form.AddAction("PastePreviousPage", () => { if (page > 0) { page--; ShowPage(); } });
-            form.AddAction("PasteNextPage", () => { if (page < pages - 1) { page++; ShowPage(); } });
-        }
-        ShowPage();
-        void ShowPage()
-        {
-            int start = PageBoundary(page);
-            int end = page == pages - 1 ? paste.Text.Length : PageBoundary(page + 1);
-            previewText.Text = PermissionDisplay.PastePage(paste.Text.AsSpan(start, end - start));
-            var position = string.Format(CultureInfo.CurrentCulture, Text("PastePreviewPage"), page + 1, pages);
-            pageLabel.Text = position;
-            AutomationProperties.SetName(previewText, Text("PastePreview") + " " + position);
-        }
-
-        int PageBoundary(int value)
-        {
-            int offset = value * pageUnits;
-            if (offset != 0 && (char.IsLowSurrogate(paste.Text[offset]) ||
-                paste.Text[offset] == '\n' && paste.Text[offset - 1] == '\r')) offset--;
-            return offset;
-        }
+        ReadOnlyPreview.Add(form, "PastePreview", previewText, paste.Text);
 
         form.AddField("PasteCountsLabel", new TextBox { Text = summary, IsReadOnly = true });
         if (targets is not null)

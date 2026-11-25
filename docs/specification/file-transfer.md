@@ -49,13 +49,17 @@ and transfers involving it. Failed navigation leaves the draft available for
 correction. A background refresh must preserve an outstanding draft. These
 rules apply to new operations; a running batch keeps its captured paths.
 
+Buttons, keyboard shortcuts, and drag-and-drop use the same availability rules
+for the same action. While copying is unavailable, including during a required
+refresh, suppress the copy cursor and target highlight.
 Buttons capture the selected source entries and the opposite pane's displayed
 directory at invocation. A cross-pane drop captures the highlighted directory,
 or the displayed directory for a drop on a file row or empty space. Accept a
-drop only on the destination last previewed during that drag. Both use
-the same copy operation. Discard a drag if its source selection or target
-listing generation is stale. After capture, pane navigation and refresh do not
-change the batch. A second batch and file-management mutations in that window
+drop only if copying is still available and its destination matches the last
+preview for that drag. Both use the same copy operation. Discard a drag if its
+selection or either captured listing generation is stale. After capture,
+navigation and refresh leave the batch's paths intact. A second batch and
+file-management mutations in that window
 are unavailable while a transfer batch is active. Serialize create, rename,
 and delete in that window, with no new batch admitted while a mutation is in
 progress. Browsing and transfer never generate terminal input or broadcast
@@ -175,8 +179,10 @@ with fresh state and finalized output for a stateful encoding such as JIS.
 Use ASCII `/` only as the SFTP separator between components. Do not apply VT
 control handling, stream BOM removal, terminal kana shifts, or replacement
 characters to names. Preserve raw bytes from remote listings for requests about
-those entries. A non-decodable name can be shown with an escaped byte label;
-reject operations that require interpreting it as a usable filename. Reject
+those entries. A non-decodable name can be shown with an escaped byte label.
+For such a remote entry, disable Rename and ignore F2. Other operations that
+require interpreting the name as a usable filename must reject it. Otherwise
+eligible operations using the original path bytes remain available. Reject
 generated names that cannot round-trip in the chosen encoding. File data and
 line endings are copied byte for byte.
 
@@ -302,6 +308,15 @@ identify committed, skipped, failed, unfinished, and unknown items. Retry failed
 items explicitly from the beginning on the original live generation. Recheck
 the current paths, source, and collisions at retry time.
 
+Each admitted copy or retry owns its planning counters and duplicate-result
+tracking until that execution ends. Release them on success, cancellation and
+failure. Retain the latest bounded results, including unfinished entries and
+unresolved temporary paths, and the plans required for eligible retries. A
+rejected admission keeps the previous results and retry information. Verify
+that interrupted traversal reports every item once, and that starting a retry
+with three results and one retryable failure processes only that file.
+See [#181](https://github.com/TabTty/TabTty/issues/181).
+
 ## File management, deadlines, and limits
 
 Confirm deletion once per selection with side, parent path, selected names,
@@ -311,7 +326,10 @@ recycled. Show permanent deletion in the initial remote prompt. On a child
 failure stop that top-level tree and continue with other selected entries where
 possible. Cancellation stops new destructive requests, keeps completed effects,
 and reports failed and unprocessed entries. If an issued mutation's outcome
-cannot be verified, report it as unknown and refresh before further mutations.
+cannot be verified, report it as unknown. Once outstanding I/O has retired,
+require a successful refresh of both panes before accepting another mutation.
+A failed refresh leaves the restriction in effect. Recheck eligibility before
+execution. See [#202](https://github.com/TabTty/TabTty/issues/202).
 
 Use the profile connection-wait budget for SFTP startup and periods without
 relevant remote reply or forward byte progress. Unrelated terminal traffic and

@@ -5,14 +5,10 @@ use crate::{
 };
 #[cfg(windows)]
 use crate::{legacy_receive::Receiver, windows_icu};
-#[cfg(test)]
-use crate::{CursorView, EditingView, ExportRow, ExportState, PageView, SourceView};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 use std::mem::size_of;
-#[cfg(test)]
-use std::ptr;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 #[cfg(test)]
@@ -602,21 +598,6 @@ struct Page {
     rows: usize,
 }
 
-impl Page {
-    #[cfg(test)]
-    fn view(&self, first: usize) -> PageView {
-        PageView {
-            first: first as u32,
-            count: self.screen.len() as u32,
-            row: self.row as u32,
-            column: self.column as u32,
-            columns: self.columns as u32,
-            rows: self.rows as u32,
-            wrap: self.wrap as u32,
-        }
-    }
-}
-
 const DEFAULT_TABS: [u64; 16] = [
     0x0101010101010100,
     0x0101010101010101,
@@ -821,14 +802,7 @@ pub struct Model {
     generation: u64,
     content_stamp: i64,
     prepared: PreparedOperation,
-    #[cfg(test)]
-    export_rows: Vec<ExportRow>,
-    #[cfg(test)]
-    export_tabs: Vec<TabView>,
-    #[cfg(test)]
-    export_sources: [SourceView; 3],
-    #[cfg(test)]
-    export_editing: EditingView,
+
 }
 impl Model {
     pub fn new(columns: usize, rows: usize, retained: usize, ambiguous: usize) -> Self {
@@ -916,29 +890,6 @@ impl Model {
             generation: 0,
             content_stamp: 0,
             prepared: PreparedOperation::default(),
-            #[cfg(test)]
-            export_rows: Vec::new(),
-            #[cfg(test)]
-            export_tabs: Vec::new(),
-            #[cfg(test)]
-            export_sources: [SourceView::empty(); 3],
-            #[cfg(test)]
-            export_editing: EditingView {
-                margin_top: 0,
-                margin_bottom: 0,
-                position_row: -1,
-                position_column: 0,
-                saved_row: 0,
-                saved_column: 0,
-                saved_fg: 0,
-                saved_bg: 0,
-                saved_style: 0,
-                saved_flags: 0,
-                tab_stops: DEFAULT_TABS,
-                parked: PageView::default(),
-                alternate: PageView::default(),
-                normal_return: CursorView::default(),
-            },
         };
         LIVE_MODELS.fetch_add(1, Ordering::Relaxed);
         result.update_accounting();
@@ -971,8 +922,7 @@ impl Model {
             + self.text_log.bytes.capacity()
             + self.observations.capacity() * size_of::<ReceiveObservation>()
             + self.replies.capacity()
-            + self.view_rows.capacity() * size_of::<RowView>()
-            + self.export_workspace()) as u64
+            + self.view_rows.capacity() * size_of::<RowView>()) as u64
             + self.decoder_workspace
             + self
                 .history_index
@@ -990,16 +940,6 @@ impl Model {
         self.update_accounting();
         Ok(())
     }
-    fn export_workspace(&self) -> usize {
-        #[cfg(test)]
-        {
-            return self.export_rows.capacity() * size_of::<ExportRow>()
-                + self.export_tabs.capacity() * size_of::<TabView>();
-        }
-        #[cfg(not(test))]
-        0
-    }
-
     fn update_accounting(&mut self) {
         self.invalidate_prepared();
         let owned = self.owned();
@@ -2481,177 +2421,6 @@ impl Model {
             mouse_generation: self.mouse_generation,
         })
     }
-    #[cfg(test)]
-    pub fn export(&mut self) -> Result<ExportState, i32> {
-        #[cfg(windows)]
-        if self.sources[0].legacy.is_some() {
-            return Err(UNSUPPORTED);
-        }
-        let mut snapshot = self.snapshot()?;
-        snapshot.screen_start = self.history.len() as i32;
-        self.export_rows.clear();
-        self.export_tabs.clear();
-        let primary_count = self.history.len() + self.screen.len();
-        let parked = self
-            .parked
-            .as_ref()
-            .map_or(PageView::default(), |page| page.view(primary_count));
-        let alternate = self.alternate.as_ref().map_or(PageView::default(), |page| {
-            page.view(primary_count + parked.count as usize)
-        });
-        let rows = self
-            .history
-            .iter()
-            .chain(&self.screen)
-            .chain(self.parked.iter().flat_map(|page| &page.screen))
-            .chain(self.alternate.iter().flat_map(|page| &page.screen));
-        self.export_tabs
-            .reserve(rows.clone().map(|r| r.tabs.len()).sum::<usize>());
-        for row in rows {
-            self.export_tabs
-                .extend(row.tabs.iter().map(|&(start, end)| TabView {
-                    start: start as u32,
-                    end: end as u32,
-                }));
-        }
-        let mut tab_index = 0;
-        let mut previous: Option<(i64, i64, usize, bool)> = None;
-        let last_history = self.history.len();
-        let mut normal_previous = None;
-        self.history_bytes = 0;
-        let rows = self
-            .history
-            .iter_mut()
-            .chain(&mut self.screen)
-            .chain(self.parked.iter_mut().flat_map(|page| &mut page.screen))
-            .chain(self.alternate.iter_mut().flat_map(|page| &mut page.screen));
-        for (index, row) in rows.enumerate() {
-            if parked.count != 0 && index == last_history {
-                normal_previous = previous;
-                previous = None;
-            }
-            if parked.count != 0 && index == primary_count {
-                previous = normal_previous;
-            }
-            if alternate.count != 0 && index == alternate.first as usize {
-                previous = None;
-            }
-            row.refresh_plain();
-            if let Some((_, offset, count, soft)) = previous {
-                row.logical_cluster_offset = if soft { offset + count as i64 } else { 0 };
-            }
-            let count = row.span_count();
-            previous = Some((row.logical_id, row.logical_cluster_offset, count, row.soft));
-            if index < last_history {
-                self.history_bytes += row.bytes();
-            }
-            self.export_rows.push(ExportRow {
-                view: view(row),
-                tabs: unsafe { self.export_tabs.as_ptr().add(tab_index) },
-                submitted: row.submitted.as_ref().map_or(ptr::null(), |s| s.as_ptr()),
-                content_revision: row.content_revision,
-                logical_cluster_offset: row.logical_cluster_offset,
-                submitted_revision: row.submitted_revision,
-                tab_count: row.tabs.len() as u32,
-                submitted_length: row.submitted.as_ref().map_or(u32::MAX, |s| s.len() as u32),
-                formats: row.formats.as_ptr(),
-                format_count: row.formats.len() as u32,
-                recorded: row.recorded_columns.as_ptr(),
-                recorded_count: row.recorded_columns.len() as u32,
-                excluded: row.excluded as u32,
-            });
-            tab_index += row.tabs.len();
-        }
-        for (index, source) in self.sources.iter().enumerate() {
-            self.export_sources[index] = SourceView {
-                pending: source.pending.as_ptr(),
-                parameters: source.parameters.as_ptr(),
-                last_graphic: source.last_graphic.as_ptr(),
-                pending_count: source.pending_count as u32,
-                parameter_count: source.parameters.len() as u32,
-                last_graphic_count: source.last_graphic.len() as u32,
-                flags: (source.started as u32)
-                    | ((source.previous_cr as u32) << 1)
-                    | ((source.last_was_graphic as u32) << 2)
-                    | ((source.osc as u32) << 3)
-                    | ((source.charset.0 as u32) << 4),
-                escape: source.escape as u32,
-                reserved: source.string_bytes as u32,
-                pending_interval: source.pending_interval,
-                escape_interval: source.escape_interval,
-                previous_interval: source.previous_interval,
-            };
-        }
-        self.export_editing = EditingView {
-            margin_top: self.margin_top as u32,
-            margin_bottom: self.margin_bottom as u32,
-            position_row: self.saved_position.map_or(-1, |position| position.0 as i32),
-            position_column: self.saved_position.map_or(0, |position| position.1 as u32),
-            saved_row: self.saved_cursor.row as u32,
-            saved_column: self.saved_cursor.column as u32,
-            saved_fg: self.saved_cursor.style.fg,
-            saved_bg: self.saved_cursor.style.bg,
-            saved_style: self.saved_cursor.style.flags,
-            saved_flags: (self.saved_cursor.origin as u32)
-                | ((self.saved_cursor.auto_wrap as u32) << 1)
-                | ((self.saved_cursor.wrap_pending as u32) << 2)
-                | ((self.saved_cursor.charset.0 as u32) << 3),
-            tab_stops: self.tab_stops,
-            parked,
-            alternate,
-            normal_return: self
-                .normal_return
-                .map_or(CursorView::default(), |state| CursorView {
-                    row: state.row as u32,
-                    column: state.column as u32,
-                    fg: state.style.fg,
-                    bg: state.style.bg,
-                    style: state.style.flags,
-                    flags: (state.origin as u32)
-                        | ((state.auto_wrap as u32) << 1)
-                        | ((state.wrap_pending as u32) << 2)
-                        | ((state.charset.0 as u32) << 3),
-                    active: 1,
-                }),
-        };
-        self.update_accounting();
-        Ok(ExportState {
-            snapshot,
-            rows: self.export_rows.as_ptr(),
-            sources: self.export_sources.as_ptr(),
-            cluster: self.cluster.as_ptr(),
-            recorded_cluster: self.position.cluster.as_ptr(),
-            cluster_row: self.cluster_row,
-            cluster_count: self.cluster.len() as u32,
-            cluster_column: self.cluster_column as u32,
-            cluster_width: self.cluster_width as u32,
-            cursor_row: self.cursor_row as u32,
-            style_foreground: self.style.fg,
-            style_background: self.style.bg,
-            style_flags: self.style.flags,
-            cluster_foreground: self.cluster_style.fg,
-            cluster_background: self.cluster_style.bg,
-            cluster_flags: self.cluster_style.flags,
-            mode_flags: (self.auto_wrap as u32)
-                | ((self.line_feed_returns as u32) << 1)
-                | ((self.wrap_pending as u32) << 2)
-                | ((self.finished as u32) << 3)
-                | ((self.bracketed_paste as u32) << 4)
-                | ((self.application_cursor as u32) << 5)
-                | ((self.application_keypad as u32) << 6)
-                | ((self.origin as u32) << 7)
-                | ((self.insert as u32) << 8),
-            recorded_column: self.position.column as u32,
-            recorded_known: (!self.position.initialized || self.position.known) as u32,
-            recorded_count: self.position.cluster.len() as u32,
-            row_count: primary_count as u32,
-            source_count: 3,
-            reserved0: self.export_rows.len() as u32,
-            reserved1: self.alternate_cr.map_or(0, |source| source as u32 + 1),
-            editing: &self.export_editing,
-        })
-    }
-
     pub fn creation_required(columns: usize, rows: usize, retained: usize) -> u64 {
         // VecDeque may round to a power-of-two allocation on older Rust toolchains.
         let row_capacity = (retained + 1).next_power_of_two() + (rows + 1).next_power_of_two() + 4;
@@ -2711,7 +2480,7 @@ impl Model {
             return Err(UNSUPPORTED);
         }
         let pending_replies = (flags >> 8) as usize;
-        let last_operation = if cfg!(test) { 4 } else { 3 };
+        let last_operation = 3;
         if operation > last_operation
             || source > 2
             || flags & 0xf8 != 0
@@ -2837,15 +2606,7 @@ impl Model {
                 .filter(|r| r.dirty)
                 .map(|r| (r.arena.len() + r.cells.len() + r.format_units()) as u64)
                 .sum::<u64>();
-            let snapshot = owned + text * 4 + rows * size_of::<RowView>() as u64 * 2 + 128 * 1024;
-            #[cfg(test)]
-            if operation == 4 {
-                let tabs = row_list.map(|r| r.tabs.len() as u64).sum::<u64>();
-                return Ok(snapshot
-                    + rows * size_of::<ExportRow>() as u64 * 2
-                    + tabs * size_of::<TabView>() as u64 * 2);
-            }
-            snapshot
+            owned + text * 4 + rows * size_of::<RowView>() as u64 * 2 + 128 * 1024
         };
         Ok(required)
     }

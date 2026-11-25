@@ -1,5 +1,46 @@
 # Implementation and validation status
 
+## Terminal, macro, and WPF refactors, 2026-11-25
+
+The refactors in [#177](https://github.com/TabTty/TabTty/issues/177),
+[#188](https://github.com/TabTty/TabTty/issues/188) and
+[#198](https://github.com/TabTty/TabTty/issues/198) passed the Rust, Core,
+SSH/SFTP loopback, WPF and VS Code regression checks. The bilingual WPF checks
+inspect the preview content field's UI Automation name and page boundaries.
+Actual screen-reader speech is the remaining manual check for
+[#194](https://github.com/TabTty/TabTty/issues/194).
+
+Windows x64 Release measurements used the same machine, a controlled serial
+writer and the pre-refactor Core and Rust encoder for the baseline. Values
+summarize three fresh processes per input workload or seven warm search samples.
+
+| Check | Before | After |
+| --- | ---: | ---: |
+| [#186](https://github.com/TabTty/TabTty/issues/186) JIS paste sampled managed heap increase at its peak | 4.02 MiB | 3.31 MiB |
+| Same paste, median wall time | 768 ms | 633 ms |
+| [#187](https://github.com/TabTty/TabTty/issues/187) Successful short send, managed allocation per send | 1,745 B | 1,745 B |
+| Same short input, partial-confirmation boundary calculation, managed allocation per run | 168 B | <1 B |
+| [#204](https://github.com/TabTty/TabTty/issues/204) Search, median nearest match | 0.0025 ms | 0.0026 ms |
+| Same history, median time through count aggregation | 6.66 ms | 5.60 ms |
+| Same history, total sampled process CPU across seven runs | 46.875 ms | 46.875 ms |
+
+The paste contains 262,144 copies of `日` and submits 525,824 bytes in both
+builds. Sample the managed heap during each write and subtract the live heap
+after collecting with the source captured. Boundary storage covers at most
+one 1,024-unit chunk. These observations exclude native and unsampled heap
+peaks. The ordinary-send test warms up with 200 submissions and measures 2,048
+submissions of `日本語`. The partial check separately repeats boundary selection
+with six confirmed JIS bytes, which completes only `日`.
+
+Search uses a deterministic 100,000-row snapshot with one match every four rows
+and two viewports at opposite ends. Start Next three rows before the nearest
+match, then aggregate using the same viewport ranges. Both builds show 10,000
+cached ranges with a count of `10,000+`. The measurements cover Core operations
+in sequence and exclude WPF scheduling and painting. The previous WPF path
+already called directional navigation and aggregation separately. The measured
+CPU time has approximately 15.6 ms resolution and establishes no CPU difference.
+See the [separate VS Code latency measurements](../drafts/macro-completion-latency.md).
+
 ## Macro editing, file consent and trust, 2026-11-21
 
 - [#95](https://github.com/TabTty/TabTty/issues/95): completion, hover and

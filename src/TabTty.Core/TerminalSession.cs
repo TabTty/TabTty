@@ -113,20 +113,15 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
         Func<CancellationToken, Task<(int Columns, int Rows)>>? viewport = null)
         => await ConnectCoreAsync(path, cancellationToken, ssh, opened, defaultRetainedRows, viewport, null).ConfigureAwait(false);
 
-    internal static Task<TerminalSession> ConnectMacroAsync(string path, MacroRun macro, CancellationToken token,
-        SshInteraction? ssh = null, Action<ConnectionProfile>? opened = null, int defaultRetainedRows = 5000,
-        Func<CancellationToken, Task<(int Columns, int Rows)>>? viewport = null, RecordingOverrides overrides = default) =>
-        ConnectCoreAsync(path, token, ssh, opened, defaultRetainedRows, viewport, macro, overrides: overrides);
-
     internal static Task<TerminalSession> ConnectReviewedAsync(string path, ConnectionProfile profile, MacroRun? macro,
-        CancellationToken token, SshInteraction ssh, Action<ConnectionProfile> opened, int defaultRetainedRows,
-        Func<CancellationToken, Task<(int Columns, int Rows)>> viewport, RecordingSettings? recording) =>
+        CancellationToken token, SshInteraction? ssh = null, Action<ConnectionProfile>? opened = null, int defaultRetainedRows = 5000,
+        Func<CancellationToken, Task<(int Columns, int Rows)>>? viewport = null, RecordingSettings? recording = null) =>
         ConnectCoreAsync(path, token, ssh, opened, defaultRetainedRows, viewport, macro, profile, recording);
 
     private static async Task<TerminalSession> ConnectCoreAsync(string path, CancellationToken cancellationToken,
         SshInteraction? ssh, Action<ConnectionProfile>? opened, int defaultRetainedRows,
         Func<CancellationToken, Task<(int Columns, int Rows)>>? viewport, MacroRun? macro,
-        ConnectionProfile? reviewed = null, RecordingSettings? recordingSettings = null, RecordingOverrides overrides = default)
+        ConnectionProfile? reviewed = null, RecordingSettings? recordingSettings = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(defaultRetainedRows, 100);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(defaultRetainedRows, 100_000);
@@ -140,12 +135,7 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
         { throw new MacroError(MacroErrorCode.ProfileLoad); }
         if (profile.HasPostConnectionMacro && macro is null)
             throw new InvalidOperationException("This connection cannot run the configured post-connection macro.");
-        if (macro is not null)
-        {
-            if (reviewed is null && !macro.IsPostConnection)
-                macro.SetPostConnectionProgram(macro.CompilePostConnection(profile));
-            macro.ProfileLoaded(profile);
-        }
+        macro?.ProfileLoaded(profile);
         opened?.Invoke(profile);
         if (profile.Type == "ssh" && ssh is null)
             throw new InvalidOperationException("SSH requires host verification and authentication interaction.");
@@ -154,7 +144,7 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
         try
         {
             (recording, recordingPart) = await RecordingLifecycle.PrepareInitialAsync(path, profile, macro, cancellationToken,
-                recordingSettings, overrides).ConfigureAwait(false);
+                recordingSettings).ConfigureAwait(false);
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is
             (IOException or UnauthorizedAccessException or ArgumentException or InvalidDataException or NotSupportedException or
@@ -502,23 +492,24 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
     }
 
     public Task<IReadOnlyList<string>> SendEnterAsync(CancellationToken cancellationToken = default) =>
-        SendAsync(profile.Enter switch { "cr" => [13], "lf" => [10], _ => [13, 10] }, [13, 10], cancellationToken);
+        SendAsync(() => EncodeOperation(new(TerminalInputKind.Enter)), cancellationToken, captureRows: true);
 
     public Task<IReadOnlyList<string>> SendBackspaceAsync(CancellationToken cancellationToken = default) =>
-        SendAsync([profile.Backspace == "bs" ? (byte)8 : (byte)127], [8], cancellationToken);
+        SendAsync(() => EncodeOperation(new(TerminalInputKind.Backspace)), cancellationToken, captureRows: true);
 
     public Task<IReadOnlyList<string>> SendTabAsync(CancellationToken cancellationToken = default) =>
-        SendAsync([9], [9], cancellationToken);
+        SendAsync(() => EncodeOperation(new(TerminalInputKind.Tab)), cancellationToken, captureRows: true);
 
     public Task<IReadOnlyList<string>> SendKeyAsync(TerminalKey key, TerminalModifiers modifiers = TerminalModifiers.None,
         CancellationToken cancellationToken = default) =>
-        SendAsync(() => TerminalKeys.Encode(key, modifiers, terminal.ApplicationCursorKeys, terminal.ApplicationKeypad),
-            [], cancellationToken);
+        SendAsync(() => EncodeOperation(new(TerminalInputKind.Key, Key: key, Modifiers: modifiers)),
+            cancellationToken, captureRows: true);
 
     public Task<IReadOnlyList<string>> SendControlAsync(char letter, CancellationToken cancellationToken = default)
     {
         if (letter is < 'A' or > 'Z') throw new ArgumentOutOfRangeException(nameof(letter));
-        return SendAsync([(byte)(letter - 'A' + 1)], [], cancellationToken);
+        return SendAsync(() => EncodeOperation(new(TerminalInputKind.Control, letter.ToString())),
+            cancellationToken, captureRows: true);
     }
 
     internal Task DeliverInputAsync(TerminalInput input, CancellationToken token) =>
@@ -681,11 +672,10 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
                     EnsureConnected();
                     var text = paste.Text.AsSpan(chunk.Offset, chunk.Length);
                     payload = transmitter.Encode(text, profile.TransmitSevenBitKana);
-                    boundaries = transmitter.MapPasteBoundaries(paste.Text, chunk.Offset, chunk.Length,
-                        payload, profile.TransmitSevenBitKana);
+                    boundaries = transmitter.MapPasteBoundaries(text, payload, profile.TransmitSevenBitKana);
                     echo = LocalEcho;
-                    Func<int, byte[]>? closeCodec = transmitter.Id == "jis" ? bytes =>
-                        transmitter.PasteClosingBytes(paste.Text.AsSpan(chunk.Offset, boundaries.SourcePrefix(bytes)),
+                    Func<int, byte[]>? closeCodec = transmitter.CanClosePrefix ? bytes =>
+                        transmitter.ClosePrefix(paste.Text.AsSpan(chunk.Offset, boundaries.SourcePrefix(bytes)),
                             payload.AsSpan(0, bytes), profile.TransmitSevenBitKana) : null;
 
                     if (ai is null)
@@ -842,19 +832,10 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
         {
             token.ThrowIfCancellationRequested();
             var text = paste.Text.AsSpan(chunk.Offset, chunk.Length);
-            if (transmitter.IsUtf8) _ = NativeTerminalCore.CheckUtf8Input(text);
-            else if (transmitter.Id == "jis")
-            {
-                var bytes = transmitter.Encode(text, profile.TransmitSevenBitKana);
-                _ = transmitter.MapPasteBoundaries(paste.Text, chunk.Offset, chunk.Length, bytes, profile.TransmitSevenBitKana);
-            }
-            else _ = NativeTerminalCore.CheckLegacyInput(transmitter.NativePage, text, profile.TransmitSevenBitKana);
+            transmitter.PreflightPasteChunk(text, profile.TransmitSevenBitKana);
         }
         token.ThrowIfCancellationRequested();
     }
-
-    private Task<IReadOnlyList<string>> SendAsync(byte[] bytes, byte[] echo, CancellationToken cancellationToken) =>
-        SendAsync(() => bytes, echo, cancellationToken);
 
     private Task<IReadOnlyList<string>> SendAsync(Func<byte[]> encode, byte[] echo, CancellationToken cancellationToken,
         ResourceReservation? echoMemory = null, bool payloadAlreadyCharged = false, string? text = null,

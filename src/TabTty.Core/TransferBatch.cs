@@ -8,9 +8,6 @@ internal sealed class TransferBatch(IFileOperationIo files, Func<string, string,
 {
     private const int MaxDepth = 128;
     private readonly List<Plan> failed = [];
-    private readonly HashSet<Plan> completed = new(ReferenceEqualityComparer.Instance);
-    private int entries;
-    private long bytes;
     public bool CanRetry => failed.Count != 0;
     public void ClearRetry() => failed.Clear();
 
@@ -19,11 +16,9 @@ internal sealed class TransferBatch(IFileOperationIo files, Func<string, string,
         Action<string, string> result, Action<string, long, long?> progress, CancellationToken token)
     {
         failed.Clear();
-        completed.Clear();
-        entries = 0;
-        bytes = 0;
-        Plan[] plan = await PlanAsync(source, destination, 0, result, token);
-        await RunPlansAsync(plan, conflict, result, progress, token);
+        var traversal = new Traversal();
+        Plan[] plan = await PlanAsync(source, destination, 0, traversal, result, token);
+        await RunPlansAsync(plan, traversal, conflict, result, progress, token);
     }
 
     public async Task RetryAsync(Func<TransferItem, TransferPath, TransferAttributes, ValueTask<TransferChoice>> conflict,
@@ -31,11 +26,10 @@ internal sealed class TransferBatch(IFileOperationIo files, Func<string, string,
     {
         Plan[] retry = failed.ToArray();
         failed.Clear();
-        completed.Clear();
-        await RunPlansAsync(retry, conflict, result, progress, token);
+        await RunPlansAsync(retry, new Traversal(), conflict, result, progress, token);
     }
 
-    private async Task<Plan[]> PlanAsync(TransferItem[] items, TransferPath target, int depth,
+    private async Task<Plan[]> PlanAsync(TransferItem[] items, TransferPath target, int depth, Traversal traversal,
         Action<string, string> result, CancellationToken token)
     {
         if (depth > MaxDepth) throw new SftpException(SftpFailure.Capacity);
@@ -43,8 +37,8 @@ internal sealed class TransferBatch(IFileOperationIo files, Func<string, string,
         foreach (TransferItem item in items)
         {
             token.ThrowIfCancellationRequested();
-            bytes += files.Display(item.Path).Length * 2L + 256;
-            if (++entries > SftpClient.MaxEntries || bytes > 16 * 1024 * 1024)
+            traversal.Bytes += files.Display(item.Path).Length * 2L + 256;
+            if (++traversal.Entries > SftpClient.MaxEntries || traversal.Bytes > 16 * 1024 * 1024)
                 throw new SftpException(SftpFailure.Capacity);
             if (item.Attributes.Kind == TransferKind.Link)
             {
@@ -86,7 +80,7 @@ internal sealed class TransferBatch(IFileOperationIo files, Func<string, string,
                 if (current.Kind == TransferKind.Directory)
                 {
                     TransferItem[] children = await files.ListAsync(item.Source.Path, token);
-                    item = item with { Children = await PlanAsync(children, item.Target, depth + 1, result, token) };
+                    item = item with { Children = await PlanAsync(children, item.Target, depth + 1, traversal, result, token) };
                 }
                 plan.Add(item);
             }
@@ -96,7 +90,8 @@ internal sealed class TransferBatch(IFileOperationIo files, Func<string, string,
         return plan.ToArray();
     }
 
-    private async Task RunPlansAsync(Plan[] plan, Func<TransferItem, TransferPath, TransferAttributes, ValueTask<TransferChoice>> conflict,
+    private async Task RunPlansAsync(Plan[] plan, Traversal traversal,
+        Func<TransferItem, TransferPath, TransferAttributes, ValueTask<TransferChoice>> conflict,
         Action<string, string> result, Action<string, long, long?> progress, CancellationToken token)
     {
         for (int index = 0; index < plan.Length; index++)
@@ -114,33 +109,32 @@ internal sealed class TransferBatch(IFileOperationIo files, Func<string, string,
                     if (target is null) await files.CreateAsync(item.Target, token);
                     else if (target.Kind != TransferKind.Directory) throw new SftpException(SftpFailure.InvalidName);
                     result(files.Display(item.Target), "TransferDone");
-                    completed.Add(item);
-                    await RunPlansAsync(item.Children!, conflict, result, progress, token);
+                    traversal.Reported.Add(item);
+                    await RunPlansAsync(item.Children!, traversal, conflict, result, progress, token);
                 }
                 else
                 {
                     await CopyAsync(item with { Source = item.Source with { Attributes = current } }, conflict, result, progress, token);
-                    completed.Add(item);
+                    traversal.Reported.Add(item);
                 }
             }
             catch (OperationCanceledException)
             {
-                foreach (Plan remaining in plan[index..]) ReportTree(remaining, result);
+                foreach (Plan remaining in plan[index..]) ReportTree(remaining, traversal, result);
                 throw;
             }
             catch (Exception error) when (IsFileError(error))
             {
-                if (!completed.Contains(item))
+                if (traversal.Reported.Add(item))
                 {
                     result(files.Display(item.Target), ErrorKey(error));
-                    completed.Add(item);
                     if (error is not SftpException { Failure: SftpFailure.UnknownOutcome }) failed.Add(item);
                 }
                 if (item.Children is { } children)
-                    foreach (Plan child in children) ReportTree(child, result);
+                    foreach (Plan child in children) ReportTree(child, traversal, result);
                 if (error is SftpException { Failure: SftpFailure.Disconnected or SftpFailure.Timeout or SftpFailure.InvalidReply or SftpFailure.UnknownOutcome })
                 {
-                    foreach (Plan remaining in plan[(index + 1)..]) ReportTree(remaining, result);
+                    foreach (Plan remaining in plan[(index + 1)..]) ReportTree(remaining, traversal, result);
                     throw;
                 }
             }
@@ -226,11 +220,11 @@ internal sealed class TransferBatch(IFileOperationIo files, Func<string, string,
         }
     }
 
-    private void ReportTree(Plan plan, Action<string, string> result)
+    private void ReportTree(Plan plan, Traversal traversal, Action<string, string> result)
     {
-        if (completed.Add(plan)) result(files.Display(plan.Target), "TransferUnfinished");
+        if (traversal.Reported.Add(plan)) result(files.Display(plan.Target), "TransferUnfinished");
         if (plan.Children is { } children)
-            foreach (Plan child in children) ReportTree(child, result);
+            foreach (Plan child in children) ReportTree(child, traversal, result);
     }
 
     public static bool IsFileError(Exception error) => error is IOException or UnauthorizedAccessException or
@@ -245,4 +239,11 @@ internal sealed class TransferBatch(IFileOperationIo files, Func<string, string,
     };
 
     private sealed record Plan(TransferItem Source, TransferPath Target, Plan[]? Children = null);
+
+    private sealed class Traversal
+    {
+        public readonly HashSet<Plan> Reported = new(ReferenceEqualityComparer.Instance);
+        public int Entries;
+        public long Bytes;
+    }
 }

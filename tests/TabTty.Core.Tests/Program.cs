@@ -199,6 +199,9 @@ try
     Console.WriteLine("PASS TextTabsUseTheSerializedLogicalColumn");
     await PasteUsesNegotiatedBracketsWithoutAppendingEnter();
     Console.WriteLine("PASS PasteUsesNegotiatedBracketsWithoutAppendingEnter");
+    await SerialPasteStopsOnShortPhysicalWritesAsync();
+    await DirectKeypadEnterUsesSessionMappingAsync();
+    Console.WriteLine("PASS SerialPasteStopsOnShortPhysicalWrites and DirectKeypadEnterUsesSessionMapping");
     await FailedUtf8InputDoesNotEchoOrReplay();
     Console.WriteLine("PASS FailedUtf8InputDoesNotEchoOrReplay");
     CredentialInputBoundsPreserveValidEncodings();
@@ -1884,32 +1887,79 @@ static async Task TerminalSearchRevealsNearbyMatchesAndPrioritizesVisibleRows()
         new TerminalSnapshot.Row(index, index, 0, "match", false, default, null, null, 0)).ToArray(),
         false, 0, 0, 6, 1, 0, false, TerminalCursorShape.Block, false, default);
     var snapshot = Snapshot(10_005);
+    var startAggregation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var search = Task.Run(async () =>
+    {
+        await startAggregation.Task.WaitAsync(token);
+        return TerminalSearch.Aggregate(snapshot, "match", true, [(0, 2), (10_003, 10_005)], token);
+    }, token);
     foreach (var (backwards, anchorRow, expectedRow) in new[]
     {
         (false, 4096, 4097), (true, 4096, 4095), (false, 10_004, 0), (true, 0, 10_004),
     })
     {
-        var found = new TaskCompletionSource<TerminalMatch?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var search = TerminalSearch.ScanAsync(snapshot, "match", true, new TerminalMatch(anchorRow, 0, anchorRow, 5),
-            backwards, [(0, 2), (10_003, 10_005)], match =>
-            {
-                found.SetResult(match);
-                return resume.Task.WaitAsync(token);
-            }, token);
+        var anchor = new TerminalMatch(anchorRow, 0, anchorRow, 5);
+        TerminalMatch? found = TerminalSearch.FindNext(snapshot, "match", true, anchor, backwards, token);
+        if (found?.StartRow != expectedRow || search.IsCompleted)
+            throw new InvalidOperationException("Navigation required the count or returned the wrong nearest match.");
+    }
+    startAggregation.SetResult();
+    var result = await search;
+    if (result.Count != 10_001 || result.Matches.Length != 10_000 ||
+        !new[] { 0, 1, 10_003, 10_004 }.All(row => result.Matches.Any(match => match.StartRow == row)))
+        throw new InvalidOperationException("The search cache did not retain both visible sets.");
+    var exact = TerminalSearch.Aggregate(Snapshot(10_000), "match", true, [], token);
+    if (exact.Count != 10_000) throw new InvalidOperationException("Search marked exactly 10,000 results as partial.");
+}
+
+static async Task SerialPasteStopsOnShortPhysicalWritesAsync()
+{
+    var profile = ConnectionProfile.CreateSerial("Short write", new SerialSettings("COM15"), localEcho: true);
+    foreach (bool bracketed in new[] { false, true })
+    {
+        var wire = new PartialSerialWire(bracketed ? 2 : 1);
+        await using var session = new TerminalSession(wire, profile, null, 100);
+        if (bracketed) await session.ProcessPayloadAsync(TerminalReceiveSource.Data, "\u001b[?2004h"u8.ToArray(), default);
+        using var paste = TerminalPaste.Create(bracketed ? "界B" : "ABC");
         try
         {
-            if ((await found.Task.WaitAsync(token))?.StartRow != expectedRow || search.IsCompleted)
-                throw new InvalidOperationException("Search did not announce the nearest match before returning the count.");
+            await session.SendPasteAsync(paste, 0, 0);
+            throw new InvalidOperationException("A short physical write completed the paste.");
         }
-        finally { resume.TrySetResult(); }
-        var result = await search;
-        if (result.Count != 10_001 || result.Matches.Length != 10_000 ||
-            !new[] { 0, 1, 10_003, 10_004 }.All(row => result.Matches.Any(match => match.StartRow == row)))
-            throw new InvalidOperationException("The search cache did not retain both visible sets.");
+        catch (PasteWriteException) { }
+        var screen = await session.GetOutputAsync();
+        if (screen.Contains("A") == bracketed || screen.Any(line => line.Contains('界')) ||
+            wire.Requests.Count != (bracketed ? 2 : 1) || wire.Submitted[^1].Length != 1 || session.AcceptsInput)
+            throw new InvalidOperationException("A short serial write sent the remainder or confirmed incomplete input.");
+        await session.ReleaseRetainedOutputAsync();
     }
-    var exact = await TerminalSearch.ScanAsync(Snapshot(10_000), "match", true, null, false, [], null, token);
-    if (exact.Count != 10_000) throw new InvalidOperationException("Search marked exactly 10,000 results as partial.");
+
+    var healthy = new PartialSerialWire(0);
+    await using var connected = new TerminalSession(healthy, profile, null, 100);
+    using var full = TerminalPaste.Create(new string('a', 2000));
+    if (!await connected.SendPasteAsync(full, 0, 0) || !healthy.Requests.SequenceEqual([1024, 976]))
+        throw new InvalidOperationException("Complete physical writes were classified as short serial writes.");
+    await connected.ReleaseRetainedOutputAsync();
+}
+
+static async Task DirectKeypadEnterUsesSessionMappingAsync()
+{
+    var profile = ConnectionProfile.CreateSerial("Numeric keypad", new SerialSettings("COM15"), localEcho: true);
+    var draft = JsonNode.Parse(profile.ToEditorJson())!;
+    draft["terminal"]!["enter"] = "lf";
+    profile = profile.Edit(draft.ToJsonString());
+    var wire = new PartialSerialWire(0);
+    await using var session = new TerminalSession(wire, profile, null, 100);
+    await session.ProcessPayloadAsync(TerminalReceiveSource.Data, "A"u8.ToArray(), default);
+    await session.SendKeyAsync(TerminalKey.KeypadEnter);
+    await session.ProcessPayloadAsync(TerminalReceiveSource.Data, "B\u001b="u8.ToArray(), default);
+    await session.SendKeyAsync(TerminalKey.KeypadEnter);
+    await session.ProcessPayloadAsync(TerminalReceiveSource.Data, "C"u8.ToArray(), default);
+    ExpectBytes(wire.Submitted[0], [10]);
+    ExpectBytes(wire.Submitted[1], "\u001bOM"u8.ToArray());
+    if (!(await session.GetOutputAsync()).Take(2).SequenceEqual(["A", "BC"]))
+        throw new InvalidOperationException("Keypad Enter did not apply the numeric and application echo rules.");
+    await session.ReleaseRetainedOutputAsync();
 }
 
 static async Task FailedUtf8InputDoesNotEchoOrReplay()
@@ -2360,7 +2410,9 @@ static async Task RecordingPreservesUnicodeAcrossLargeLogBuffers()
     await profile.SaveNewAsync(path);
     var recording = SessionRecording.Open(path, profile);
     var terminal = new TerminalOutput(1024, 5000, 4);
-    var projections = new TerminalRecordings(terminal, profile, recording, 5000, (1024, 4));
+    using var order = new SemaphoreSlim(1);
+    var lifecycle = new RecordingLifecycle(terminal, order, () => true, () => { }, _ => { }, null, recording, 1);
+    lifecycle.Bind(profile, 5000, (1024, 4));
     // The first surrogate pair straddles the builder's original 16-character chunk.
     // The combined line is wider than the stack scratch buffer in UTF-16, but fits the grid.
     string cluster = "\U0001F642" + new string('\u0301', 10);
@@ -2368,8 +2420,8 @@ static async Task RecordingPreservesUnicodeAcrossLargeLogBuffers()
     byte[] expected = System.Text.Encoding.UTF8.GetBytes(text);
     try
     {
-        projections.Receive(TerminalReceiveSource.Data, expected);
-        projections.CompleteReceive();
+        lifecycle.Receive(TerminalReceiveSource.Data, expected, CancellationToken.None);
+        lifecycle.CompleteReceive(keepInterval: false);
     }
     finally { await recording.FinishAsync(); }
     if (recording.Failure is { } failure) throw new InvalidOperationException(failure);
@@ -2406,6 +2458,26 @@ sealed class PausedSendWire : ISessionWire
         Writes++;
     }
     public void Dispose() => Resume();
+}
+
+sealed class PartialSerialWire(int shortRequest) : ISessionWire
+{
+    internal List<int> Requests { get; } = [];
+    internal List<byte[]> Submitted { get; } = [];
+    public ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken token) => ValueTask.FromResult(0);
+    public ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken token)
+    {
+        _ = WriteSomeAsync(buffer, token);
+        return ValueTask.CompletedTask;
+    }
+    public ValueTask<int> WriteSomeAsync(ReadOnlyMemory<byte> buffer, CancellationToken token)
+    {
+        Requests.Add(buffer.Length);
+        int count = Requests.Count == shortRequest ? 1 : buffer.Length;
+        Submitted.Add(buffer[..count].ToArray());
+        return ValueTask.FromResult(count);
+    }
+    public void Dispose() { }
 }
 
 sealed class InterruptedInputWire : ISessionWire

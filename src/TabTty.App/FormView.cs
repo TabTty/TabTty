@@ -51,7 +51,8 @@ internal sealed class FormView : DockPanel
         Children.Add(scroller);
     }
 
-    public MainWindow? TabOwner { get; set; }
+    internal MainWindow.WindowTab? Tab { get; set; }
+    public MainWindow? TabOwner => Tab?.Host;
     public Window OwnerWindow => (Window?)TabOwner ?? Window.GetWindow(this) ??
         throw new InvalidOperationException("The form is not hosted.");
     public bool IsBusy { get; private set; }
@@ -540,6 +541,9 @@ internal sealed class FormView : DockPanel
                 break;
             case ComboBox { IsEditable: true } editable:
                 TrackValue(() => editable.Text, value => editable.Text = value);
+                break;
+            case FixedChoiceBox fixedChoice:
+                TrackValue(() => fixedChoice.SelectedId, value => fixedChoice.SelectedId = value);
                 break;
             case ComboBox choice:
                 TrackValue(() => choice.SelectedIndex, value => choice.SelectedIndex = value);

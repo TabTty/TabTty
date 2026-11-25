@@ -278,6 +278,21 @@ They define acceptance in the macro-enabled build.
 | [#108](https://github.com/TabTty/TabTty/issues/108) | With two index helpers that each record one call, run `rows[Outer()][Inner()] += 3;` and observe the changed element through its original alias. Check outer then inner evaluation, invalid outer with no inner/RHS call, and invalid inner with no write. Each bounds error identifies its own bracket. Both checkers reject string writes, fresh result receivers and incompatible RHS types, including in unused functions. Compare writes to Macro.Args, a saved copy of capture text and the original match. |
 | [#109](https://github.com/TabTty/TabTty/issues/109) | Exercise M09 through launch validation, VS Code diagnostics and session submission, including an ordinary directive path and its verbatim counterpart. |
 
+## Editor acceptance
+
+Both editors use the checker's accepted local declarations, types and scope
+ranges for completion. VS Code uses the same result for hover and Go to Definition.
+An invalid inner duplicate leaves only the accepted outer local visible and
+still reports `DuplicateLocal`. A declaration with a missing initializer keeps
+its diagnostic and is visible in VS Code after the declaration, with its explicit
+type or unknown for an inferred type. It is outside its own initializer's scope.
+Exercise parameters, sibling blocks, loop initializers, catch variables and
+unfinished calls. The profile editor filters visible locals by the expected
+argument type. See [#192](https://github.com/TabTty/TabTty/issues/192).
+
+The existing VS Code extension's completion benchmark and decision on reducing
+analysis passes are recorded in [the #197 measurements](macro-completion-latency.md).
+
 ## Performance and responsiveness validation plan
 
 Use the existing Windows 11 x64 reference machine/workload from

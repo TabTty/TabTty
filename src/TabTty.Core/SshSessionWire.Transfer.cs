@@ -391,21 +391,13 @@ internal sealed partial class SshSessionWire
 
         private async Task ReturnAsync(int count)
         {
-            while (count != 0)
+            try
             {
-                using var packet = Message(93);
-                packet.Number((uint)count);
-                int grant = count;
-                try
-                {
-                    await owner.SendTransferPacketAsync(packet.Memory, owner.stop.Token, () => !Closing && !Finished, () =>
-                    {
-                        lock (gate) window.CommitGrant(grant);
-                    }).ConfigureAwait(false);
-                }
-                catch (SftpException error) when (error.Failure == SftpFailure.Disconnected) { return; }
-                lock (gate) count = Closing ? 0 : window.CompleteGrant();
+                await SubmitReceiveGrantsAsync(count, window, gate, Message,
+                    (packet, commit) => owner.SendTransferPacketAsync(packet, owner.stop.Token,
+                        () => !Closing && !Finished, commit), () => !Closing).ConfigureAwait(false);
             }
+            catch (SftpException error) when (error.Failure == SftpFailure.Disconnected) { }
         }
 
         private byte[]? CloseMessage()

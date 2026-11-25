@@ -164,11 +164,19 @@ Overlong/dense lines receive no partial overlay.
 
 The terminal tab owns the active highlight rule set revision and the rules
 suspended in its current session. A timeout in any pane suspends that rule
-in every pane of the tab, including panes opened later. Notify once per
-suspension. Other tabs using the same set continue with their own suspension
-state. Each pane evaluates its visible rows and owns its drawing results.
-Discard late results if the rule set or suspension state has changed since
-the evaluation began.
+in every pane of the tab, including panes opened later. The tab observes its
+shared suspension state directly and updates its status indicator. Notify once
+per suspension. Other tabs using the same set keep their own suspension state.
+Each pane evaluates its visible rows, caches its drawing results and redraws
+when the shared state changes. Discard late results if the rule set or
+suspension state has changed since the evaluation began.
+
+The tab resolves the profile's highlight rule set selection. An empty selection
+turns highlighting off. If a selected set cannot be found, the tab shows a
+nonfatal missing-set warning and the panes display the underlying terminal
+attributes. The localized missing-set warning takes precedence over the
+suspension status and updates on a display-language change. Resume from the
+tab refreshes all panes. See [#199](https://github.com/TabTty/TabTty/issues/199).
 
 When a rule is suspended, remove its styling from all panes immediately.
 If the remaining rules already establish the correct style for a range, draw it
@@ -180,8 +188,8 @@ Reception and drawing continue during reevaluation.
 tab. Saving a change to a suspended rule's pattern or Ignore case setting
 clears the suspension for that rule. Changes to its name, style, position or
 enabled flag alone preserve the suspension, as do edits to other rules.
-Only enabled rules are evaluated. A fresh terminal session starts with no
-suspended rules.
+Reuse valid match spans after a style-only edit. Only enabled rules are
+evaluated. A fresh terminal session starts with no suspended rules.
 
 Search remains literal, ordinal case-insensitive by default, normal retained
 content only, query <=1024 UTF-16 units. Cache at most 10000 matches but continue
@@ -189,7 +197,7 @@ bounded navigation through uncached content; reaching the cache cap is not the
 end of search. Bound work by the same revision/cancellation and worker policy.
 Terminal content, selection/copy, logging, and transport never wait for a match.
 
-One search owner per terminal tab manages the query, case option, active scan,
+One search owner per terminal tab manages the query, case option, search work,
 shared match ranges and their memory reservation. Each pane keeps its own
 current match. With no current match, Next starts at the beginning of the
 invoking pane's visible area and Previous starts at its end.
@@ -203,21 +211,29 @@ query or case option, or closing the search bar, discards pending moves for
 the previous search. Editing either search condition refreshes highlights
 and the count while preserving every pane's scroll position.
 
-Closing the search bar cancels its scan, clears match overlays and releases the
-retained-result reservation. Keep the query and case option for reopening in
-the same tab. Removing the tab ends its search owner and releases the retained
-results immediately. A late navigation notification or scan result cannot
-restore them. A cancelled scan retains its worker slot and temporary workspace
-until it actually finishes. Moving a tab preserves its search state.
+Closing the search bar cancels navigation and aggregation, clears match
+overlays and releases the retained-result reservation. Keep the query and case
+option for reopening in the same tab. Removing the tab ends its search owner
+and releases the retained results immediately. Discard late results from either
+operation. Each cancelled operation retains its worker slot and temporary
+workspace until its work finishes. Moving a tab preserves its search state.
 
-For a pane's Next or Previous command, use the same bounded scan to find the
-navigation target and collect matches for highlighting. As soon as the nearest
+Next and Previous use a bounded directional search. As soon as the nearest
 match in the requested direction is certain, reveal and outline it in the
-invoking pane. For a wrapped result, first rule out any match between the
-navigation anchor and the end in that direction. Continue collecting highlights
-and updating the count without moving any pane again. Show a searching or partial
-state while the count is undetermined. Discard results superseded by a query or
-content revision.
+invoking pane, even while the count is pending. Before wrapping, rule
+out any match between the navigation anchor and the end in that direction.
+A separate bounded background scan uses the same query and case option to
+collect shared highlights and update the count. Keep navigation anchors and
+navigation callbacks out of the aggregation operation. Publishing its results
+preserves each pane's position and current match. Show a searching or partial
+state while the count is undetermined. Both operations use the shared worker
+and memory limits and discard results superseded by query, case or content
+changes.
+
+Using comparable long histories and pane positions, record process CPU time,
+time to reveal the nearest match and time to finish the count before and after
+separating the operations. Preserve the existing resource limits and report any
+extra work from scanning history twice. See [#204](https://github.com/TabTty/TabTty/issues/204).
 
 Within the tab's shared cache of 10,000 match ranges, give matches visible in
 its panes priority over offscreen matches. A pane can navigate to and outline
@@ -307,10 +323,11 @@ The [desktop and device acceptance inventory](desktop-acceptance-inventory.md) t
 | Deployment | Clean supported Windows 11 x64 with no additional runtime installation; bundled native dependencies; absence of optional fonts/device drivers handled as specified |
 | Localization/theme | English/Japanese/system language including fallback; live saved theme changes and OS app-preference changes; terminal fixed defaults and ANSI/highlight composition |
 | Highlight suspension in split panes | Time out a rule in one pane while another pane is evaluating it. Check both panes, a newly opened pane and a separate tab using the same rule set. Verify one notification, removal of the stopped style, and correct underlying colors while the replacement is pending. Resume two suspended rules from the other pane. In a separate case, save a style edit and then a pattern correction to verify that only the correction resumes the affected rule. |
+| Highlight status on the tab | Verify that splitting, focusing or closing a pane preserves the tab's suspension indication while a rule remains suspended. Check that an empty set selection leaves highlighting off without a warning and an unresolved selection shows the missing-set warning. |
 | Profiles/settings | All transport fields/defaults; basic activation versus editor validation; unknown optional preservation; version/corruption recovery; copied/moved/missing profiles; relative/UNC/case-sensitive/long paths; no secret fields |
-| Search navigation before the count is known | Invoke Next with a nearby match and a long unsearched tail. The invoking pane reveals the nearest match while the count is pending. Finishing the scan preserves both panes' positions and current matches. Repeat with Previous, including a case where wrapping is necessary. |
+| Search navigation before the count is known | Keep the background count pending and invoke Next with a nearby match and a long unsearched tail. The invoking pane reveals the nearest match before aggregation finishes. Completing aggregation preserves both panes' positions and current matches. Repeat with Previous and exercise wrapping in both directions. |
 | First navigation in a split tab | Put matches on rows 1, 55, 59 and 90. In a pane showing rows 50–60 with no current match, Next reveals row 55. From the same initial state, Previous reveals row 59. The other pane keeps its position and current match in both cases. |
-| Close a tab with cached results while a scan is still running | The retained-result reservation returns on tab removal without waiting for garbage collection. Late scan notifications cannot restore results or move a pane. The worker slot and temporary workspace return when the scan exits. |
+| Close a tab with cached results during search | Exercise pending navigation and pending aggregation. The retained-result reservation returns on tab removal without waiting for garbage collection. Late results cannot restore highlights or move a pane. Each running operation releases its worker slot and temporary workspace when it exits. |
 | Search highlights in split panes | Show early and late output in separate panes with more than 10,000 matches across the tab and only a few visible in each pane. Both visible sets receive highlights within the shared cap. Navigate to an uncached match and verify its outline. Compare exactly 10,000 matches with 10,001 to check the count indicator. |
 | Windows | Double-click ordering, modal queue/cancel, shared unlock, last-tab detach/merge, closure racing activation, per-monitor DPI/removal, disconnected retained output |
 | Terminal/encoding | Every supported control family and reset; Tera Term reference vectors and declared differences; every codec identity; all relevant byte splits; malformed prefixes; JIS/kana/extensions; combining/emoji/right-edge edits/reflow |

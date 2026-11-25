@@ -584,6 +584,9 @@
   <data name="MacroHistoryLost" xml:space="preserve"><value>Some received text was lost. A truncated line is ignored through its next line ending, so an unfinished prompt may be missed. Continue or stop the macro.</value></data>
   <data name="MacroRecordingFailed" xml:space="preserve"><value>Recording failed. Retry recording or stop the macro.</value></data>
   <data name="MacroRecordingReady" xml:space="preserve"><value>Recording restarted in a new part. Resume the macro when ready.</value></data>
+  <data name="MacroHistoryLossFact" xml:space="preserve"><value>Some received text was lost.</value></data>
+  <data name="MacroRecordingFailureFact" xml:space="preserve"><value>Recording failed during the macro.</value></data>
+  <data name="MacroRecordingRecoveryFact" xml:space="preserve"><value>Recording restarted after a failure.</value></data>
   <data name="MacroPlaintextNotice" xml:space="preserve"><value>This connection has no TabTty encryption. A password echoed by the remote side may appear in recordings or shared output.</value></data>
   <data name="MacroReadFailed" xml:space="preserve"><value>The macro file could not be read.</value></data>
   <data name="MacroLocation" xml:space="preserve"><value>Line {0}, column {1}: {2}</value></data>

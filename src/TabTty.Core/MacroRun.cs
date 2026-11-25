@@ -13,9 +13,11 @@ internal sealed record MacroRunStatus(MacroRunState State, MacroHold Holds, stri
     string? Result, long HistoryLossRevision, bool PlaintextNotice, string? DisplayDetail, bool PostConnection,
     MacroAction Actions);
 
+internal readonly record struct MacroConnection(TerminalSession Session, MacroProgram? PostConnection);
+
 internal interface IMacroHost
 {
-    Task<TerminalSession> ConnectAsync(MacroRun run, string profilePath, RecordingOverrides recording, CancellationToken token);
+    Task<MacroConnection> ConnectAsync(MacroRun run, string profilePath, RecordingOverrides recording, CancellationToken token);
     Task<VaultSecret?> ReadPasswordAsync(CredentialReference reference, CancellationToken token);
     Task<MacroDialogResult> DialogAsync(MacroDialogRequest request, CancellationToken token);
     Task SetMinimizedAsync(bool minimized, CancellationToken token);
@@ -77,7 +79,6 @@ internal sealed partial class MacroRun : IDisposable
     }
 
     private MacroProgram? programSnapshot;
-    private MacroProgram? pendingPostConnection;
     private bool executingPostConnection;
     private bool retryingRecording;
     private MacroProgram Program => programSnapshot!;
@@ -159,11 +160,8 @@ internal sealed partial class MacroRun : IDisposable
                 operation = "";
                 inFlight = false;
                 history.Clear();
-                pendingPostConnection?.Dispose();
-                pendingPostConnection = null;
                 programSnapshot = null;
-                arguments.Items.Clear();
-                arguments.Items.TrimExcess();
+                arguments.ReleaseContents();
                 session = null;
                 Pulse();
             }
@@ -239,7 +237,11 @@ internal sealed partial class MacroRun : IDisposable
     }
     public void RecordingRecovered()
     {
-        lock (gate) ChangeHolds((holds & ~MacroHold.RecordingFailure) | MacroHold.RecordingReady);
+        lock (gate)
+        {
+            if (!IsActive || state == MacroRunState.Stopping || !holds.HasFlag(MacroHold.RecordingFailure)) return;
+            ChangeHolds((holds & ~MacroHold.RecordingFailure) | MacroHold.RecordingReady);
+        }
         Notify();
     }
     private void SetHold(MacroHold hold, bool enabled)
@@ -260,15 +262,6 @@ internal sealed partial class MacroRun : IDisposable
     }
 
     internal MacroProgram? CompilePostConnection(ConnectionProfile profile) => profile.CompilePostConnectionMacro(memory);
-
-    internal void SetPostConnectionProgram(MacroProgram? program)
-    {
-        lock (gate)
-        {
-            pendingPostConnection?.Dispose();
-            pendingPostConnection = program;
-        }
-    }
 
     internal void ProfileLoaded(ConnectionProfile profile)
     {
@@ -487,7 +480,7 @@ internal sealed partial class MacroRun : IDisposable
         long size = value switch
         {
             string text => 32 + text.Length * 2L,
-            MacroList list => 32 + list.Items.Capacity * 16L,
+            MacroList list => list.ReservedBytes,
             MacroCandidate[] candidates => 32 + candidates.Length * 16L,
             MacroPattern pattern => 64 + pattern.Text.Length * 4L,
             MacroMatch match => 64 + match.Text.Length * 2L + match.Groups.Sum(g => 64L + g.Name.Length * 2L + g.Value.Length * 2L + g.Captures.Sum(c => 32L + c.Length * 2L)),

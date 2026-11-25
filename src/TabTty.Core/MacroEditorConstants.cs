@@ -32,44 +32,23 @@ internal sealed partial class MacroEditorSymbols
         IReadOnlyList<MacroConstantsDeclaration> declarations, IReadOnlyDictionary<string, string> sources,
         IReadOnlyDictionary<string, int>? knownBytes)
     {
-        var bindings = new List<MacroConstantsBinding>();
-        var parsed = new Dictionary<string, (MacroConstantsFile? File, string? Error)>(StringComparer.Ordinal);
-        var budget = new MacroConstantsBudget();
-        foreach (var declaration in declarations)
+        var staged = new Dictionary<string, List<MacroEditorSymbol>>(StringComparer.Ordinal);
+        return MacroConstantsBinder.BindAsync(macroPath, declarations, Capture,
+            dependency: (declaration, path) => Dependencies.Add(new(declaration.Alias, path, declaration.AliasPosition, declaration.Position)),
+            report: Report, definition: (path, token, value) =>
+            {
+                if (!staged.TryGetValue(path, out var members)) staged[path] = members = [];
+                members.Add(new(token.Text, MacroChecker.ScalarType(value).ToString(), token.Position));
+            }, admitted: file => constantSymbols.Add(file.FullPath, staged.GetValueOrDefault(file.FullPath) ?? []))
+            .GetAwaiter().GetResult()!;
+
+        ValueTask<MacroConstantsCapture?> Capture(string path, int remainingBytes)
         {
-            string? path = null;
-            try { path = declaration.Resolve(macroPath); }
-            catch (MacroSourceException error) { Report(error); }
-            Dependencies.Add(new(declaration.Alias, path, declaration.AliasPosition, declaration.Position));
-            if (path is null) continue;
-            if (knownBytes?.TryGetValue(path, out int size) == true && budget.CrossedByteLimit(path, size))
-                Report(new("ConstantsLimit", declaration.Position, macroPath));
             if (!sources.TryGetValue(path, out var text))
-            {
-                Report(new("ConstantsRead", declaration.Position, macroPath));
-                continue;
-            }
-            if (!parsed.TryGetValue(path, out var result))
-            {
-                var members = new List<MacroEditorSymbol>();
-                try
-                {
-                    var file = MacroConstantsFile.Parse(path, "", text, budget.RemainingMembers, () => { },
-                        (token, value) => members.Add(new(token.Text, MacroChecker.ScalarType(value).ToString(), token.Position)));
-                    budget.AddDefinitions(file);
-                    constantSymbols.Add(path, members);
-                    result = (file, null);
-                }
-                catch (MacroSourceException error)
-                {
-                    result = (null, error.Code == "ConstantsLimit" ? error.Code : "ConstantsInvalid");
-                }
-                parsed.Add(path, result);
-            }
-            if (result.File is { } valid) bindings.Add(new(declaration.Alias, valid));
-            else Report(new(result.Error!, declaration.Position, macroPath));
+                throw new MacroSourceException("ConstantsRead", new(1, 1), path);
+            int? size = knownBytes?.TryGetValue(path, out int encoded) == true ? encoded : null;
+            return ValueTask.FromResult<MacroConstantsCapture?>(new(text, "", size));
         }
-        return bindings;
 
         void Report(MacroSourceException error)
         {

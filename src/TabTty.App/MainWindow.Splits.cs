@@ -362,7 +362,8 @@ internal sealed partial class MainWindow
         broadcastBand.Visibility = terminal is null && text.Length != 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private TabControl? GroupOf(TabItem item) => Groups.FirstOrDefault(group => group.Items.Contains(item));
+    private TabControl? GroupOf(TabItem item) =>
+        item is WindowTab { Placement: { } placement } && placement.Window == this ? placement.Group : null;
 
     private void UpdateWelcomePanel() => welcomePanel.Visibility = !closing && !Groups.Skip(1).Any() && !AllTabs.Any()
         ? Visibility.Visible : Visibility.Collapsed;

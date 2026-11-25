@@ -105,12 +105,27 @@ internal static class JsonStoreRecovery
     private static void Restore(string path, string backup, byte[]? original, Action<string> validate,
         Func<byte[], byte[]>? sanitize = null)
     {
-        using var input = File.OpenRead(backup);
-        if (input.Length is <= 0 or > 16 * 1024 * 1024) throw new InvalidDataException(Text("StoreRecoveryInvalid"));
-        byte[] bytes = new byte[(int)input.Length];
-        input.ReadExactly(bytes);
-        if (input.ReadByte() >= 0) throw new InvalidDataException(Text("StoreRecoveryInvalid"));
+        byte[] bytes = ReadBounded(backup, "StoreRecoveryInvalid")!;
         Commit(path, sanitize?.Invoke(bytes) ?? bytes, original, recovery: true, validate);
+    }
+
+    internal static byte[]? ReadBounded(string path, string invalidMessage, bool allowMissing = false)
+    {
+        FileStream file;
+        try { file = File.OpenRead(path); }
+        catch (Exception error) when (allowMissing && error is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return null;
+        }
+        using (file)
+        {
+            long length = file.Length;
+            if (length is <= 0 or > MaximumStoreBytes) throw new InvalidDataException(Text(invalidMessage));
+            byte[] bytes = new byte[(int)length];
+            file.ReadExactly(bytes);
+            if (file.ReadByte() >= 0) throw new InvalidDataException(Text(invalidMessage));
+            return bytes;
+        }
     }
 
     public static void Save(string path, byte[] bytes, byte[]? original, Action<string> validate) =>

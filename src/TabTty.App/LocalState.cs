@@ -48,17 +48,24 @@ internal static class LocalState
         return ReadSnapshot().State;
     }
 
-    public static void Change(Action<JsonObject> update)
+    public static void Change(Action<JsonObject> update) => TryChange(state =>
+    {
+        update(state);
+        return true;
+    });
+
+    public static bool TryChange(Func<JsonObject, bool> update)
     {
         if (temporaryDefaults) throw new InvalidOperationException(App.Text("UseTemporaryState"));
         if (VerifiedFilePublication.HasPendingPublication(StatePath))
             throw new IOException(App.Text("StoreSaveUnverified"));
         var (state, original) = ReadSnapshot();
-        update(state);
+        if (!update(state)) return false;
         byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(state);
         if (bytes.Length > 16 * 1024 * 1024) throw new InvalidDataException(App.Text("LocalStateInvalid"));
         JsonStoreRecovery.Save(StatePath, bytes, original, path => _ = ReadSnapshot(path));
         Volatile.Write(ref verifiedBytes, bytes);
+        return true;
     }
 
     private static JsonObject Defaults() => new()
@@ -74,7 +81,7 @@ internal static class LocalState
         path ??= StatePath;
         if (live && VerifiedFilePublication.HasPendingPublication(path))
             return Parse(Volatile.Read(ref verifiedBytes));
-        byte[]? bytes = File.Exists(path) ? ReadBytes(path) : null;
+        byte[]? bytes = JsonStoreRecovery.ReadBounded(path, "LocalStateInvalid", allowMissing: live);
         if (live && VerifiedFilePublication.HasPendingPublication(path))
             return Parse(Volatile.Read(ref verifiedBytes));
         var snapshot = Parse(bytes);
@@ -135,13 +142,4 @@ internal static class LocalState
         return (state, bytes);
     }
 
-    private static byte[] ReadBytes(string path)
-    {
-        using var file = File.OpenRead(path);
-        if (file.Length is <= 0 or > 16 * 1024 * 1024) throw new InvalidDataException(App.Text("LocalStateInvalid"));
-        byte[] bytes = new byte[(int)file.Length];
-        file.ReadExactly(bytes);
-        if (file.ReadByte() >= 0) throw new InvalidDataException(App.Text("LocalStateInvalid"));
-        return bytes;
-    }
 }

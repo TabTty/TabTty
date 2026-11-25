@@ -361,9 +361,13 @@ group and no inner splits. Both layouts are run-local.
 Remove an empty group immediately and focus the first remaining group in layout
 order. When removing a group with tabs, move them directly to the only remaining
 group in that window. If several groups remain, offer them as destinations
-identified by position and selected-tab label. Append the tabs in their current
-order, preserve all sessions and checks, and focus the destination. Collapse
-the removed layout branch. The final group cannot be removed.
+identified by position and selected-tab label. Use the ordinary tab move
+operation to append the tabs in their current order, committing each move
+individually and preserving all sessions and checks.
+If a move fails, stop there. Previously moved tabs stay in the destination. The
+source group stays open with the failed tab and the remaining tabs in order.
+After all moves succeed, focus the destination and collapse the source branch.
+The final group cannot be removed.
 
 Expose distinct group-split and terminal-pane-split commands through the main
 menu and appropriate tab/group context menus; enable them according to the

@@ -115,10 +115,20 @@ A remembered execution decision still requires read permission for any path
 that may contact a remote source. If the user cancels a read, end the request
 before contacting that path, creating a run or saving a trust decision.
 
+Launch and editing use one traversal to reuse normalized paths, count each
+successfully parsed file's definitions once and bind aliases in declaration
+order. Preserve distinct files in case-sensitive directories. Launch owns read
+permission and byte capture. The editor owns open-document selection and
+recoverable diagnostics. All aliases of an open document use the same current
+snapshot. If it changes during analysis, retire the stale result and use the
+updated snapshot for all its aliases. Reuse an invalid-file parse result and
+report it at each affected directive. An unknown editor byte length leaves
+that part of the total unknown and preserves any excess already proved by the
+known sizes. Check the 1 MiB and 4,096-definition limits across distinct files.
+See [#195](https://github.com/TabTty/TabTty/issues/195) and
+[admission and accounting](macro-validation.md#admission-and-accounting).
+
 Capture each distinct normalized absolute dependency path once per launch.
-Reuse the captured bytes for identical normalized path spellings. Preserve case
-distinctions in case-sensitive directories. Enforce the bounds as files are
-loaded. [Admission and accounting](macro-validation.md#admission-and-accounting)
 Decode each file independently using the same strict BOM rules as the macro
 source. Hash the exact bytes of each file, including any BOM and original
 line endings. Parse all definitions and bind the read-only values to their
@@ -176,11 +186,13 @@ argument boundaries, order, case, whitespace and Unicode spelling. Thus
 `[]`, `[""]`, `["a b"]` and `["a", "b"]` are four different lists. CLI quoting
 that produces the same parsed strings gives the same match.
 
-| Decision for this content and argument list | Launch behavior |
-| --- | --- |
-| Allow | Run the validated snapshot at ordinary user privileges without an execution confirmation. |
-| Block | End the request before creating a run or tab. The picker also honors the block. |
-| No decision | Offer **Run once**, **Always allow with these arguments**, **Always block with these arguments** and **Cancel**. Cancel is the default. |
+| Decision for this content and argument list | Ordinary rights | Elevated rights |
+| --- | --- | --- |
+| Allow | Run the validated snapshot immediately. | Offer **Run once** and **Cancel**. |
+| Block | End the request before creating a run or tab. | End the request before creating a run or tab. |
+| No decision | Offer **Run once**, **Always allow with these arguments**, **Always block with these arguments** and **Cancel**. | Offer **Run once**, **Always block with these arguments** and **Cancel**. |
+
+Cancel is the default in every review. The picker also honors blocks.
 
 Show the full source digest, normalized absolute path and all ordered arguments
 on the review screen. For each declared file, show its alias, resolved path
@@ -197,16 +209,31 @@ saved passwords. The usual SSH host-key review, vault unlock and authentication
 rules apply on every connection, including SSH's continuation rules when a
 saved credential is unavailable. [SSH authentication](../specification/transports-and-authentication.md#authentication-and-user-facing-messages)
 
+Source inspection, constants inspection and paste confirmation share read-only
+preview navigation. The nominal page width is 8,192 UTF-16 code units. Page
+boundaries can shift by one unit to keep surrogate pairs and CRLF together. Use the
+existing visible control markers and page-end behavior. For empty and single-page
+content, hide navigation controls. The localized content-field accessible name
+conveys the content label and current and total pages once, including page 1 of 1.
+Each dialog owns its captured input, budget and actions. Inspecting a later page
+uses the same captured content even if a file is edited or deleted. Verify actual
+screen-reader output in English and Japanese. See [#194](https://github.com/TabTty/TabTty/issues/194).
+
 Capture the final, validated argument list before looking up the decision. The
 picker can combine review and argument editing. An edit invalidates the review
 and requires lookup for the edited list before admission. Initialize `Macro.Args`
 from the approved list. Later script edits to that run-local copy do not alter
 the remembered decision.
 
-**Run once** uses the reviewed source, constants and arguments. **Cancel** or
-closing the review ends the request. Neither saves a decision. **Always allow**
-saves the decision before starting this run. **Always block** saves it and ends
-the request. TabTty accepts decision changes only through its local UI.
+One trust policy performs the lookup, offers choices and finalizes the answer.
+The window supplies its elevation status, presents the captured review and
+checks that it can still open a tab. Recheck expiry and the current saved decision
+when applying the answer. **Run once** uses the reviewed source, constants and
+arguments without saving a decision. **Cancel** or closing the review ends the
+request without saving. **Always allow** saves the decision before starting this
+run. **Always block** saves it before ending the request. A failed save creates
+no tab or run. TabTty accepts decision changes only through its local UI.
+See [#196](https://github.com/TabTty/TabTty/issues/196).
 
 In Settings, group decisions by source digest. Within a group, display each
 decision, its fingerprint and its constants version digest when applicable.
@@ -220,11 +247,12 @@ individually, even after deleting the source or the constants files.
 Settings also offers a single reset for all remembered macro allows and blocks
 for this Windows account on this PC. Forgetting one entry affects its exact
 combination. Resetting all entries returns every combination to review on its
-next launch. Order these operations and launch admission across windows so pending reviews respect
-each individual removal or new block. A macro review already
-open when the reset completes expires, including one for a previously unseen
-combination. An old dialog cannot admit a run or recreate a decision. Admitted runs
-and connections continue. The reset affects only macro decisions. Profile
+next launch. Order these operations and launch admission across windows. An
+individual removal or new persistent decision invalidates reviews for the same
+combination. An unrelated removal leaves a review usable. A macro review open
+when the reset completes expires, including one for a previously unseen
+combination. An expired review cannot admit a run or recreate a record. Ask
+the user to reopen the macro. Admitted runs and connections continue. Profile
 trust and profile registrations retain their own lifetimes.
 
 #### Fingerprints and compatible records
@@ -309,8 +337,12 @@ Telnet TCP connection opens, or serial port configuration completes.
 Telnet readiness does not prove account login. The macro cannot send terminal
 input until readiness, but startup history is available to its first wait.
 
-If the approved profile contains a post-connection macro, execute its
-statement body after readiness and finish it before returning from `Connect`.
+If the approved profile contains a post-connection macro, compile the statement
+body once per attempt through the normal reviewed connection entry point. The
+attempt owns that program and its reservation until it hands both the program
+and the ready session to the calling run. Transfer once. Failure or cancellation
+before readiness releases the program and reservation. Execute the body after
+readiness and finish it before returning from `Connect`.
 The embedded body uses its own variables. Both phases share a single tab,
 connection, recording, input owner, and receive history and cursor. The caller
 inherits the submission boundary, the suffix of any partially consumed line,
@@ -318,6 +350,7 @@ and later unread output. Stop or any error in the embedded body ends both
 phases and reports the embedded location. A caller catch cannot resume that
 run. A healthy terminal remains usable manually after send cleanup. A blank
 body lets `Connect` return at transport readiness.
+See [#189](https://github.com/TabTty/TabTty/issues/189).
 
 The optional [named connection recording options](macro-language.md#connection-recording-options)
 follow `profilePath`. See the [recording contract](receive-logging-issue.md#log-filename-template-redesign)
@@ -523,6 +556,17 @@ display and healthy recording continue. Report one notification per unresolved
 incident rather than one per dropped unit. A stream may continue dropping older
 history while that incident is unresolved; account the growing gap.
 
+Derive the earliest retained line from the first completed line or, when there
+are no completed lines, the current incoming line. Reject an evicted match in
+constant time. Removing a completed prefix line subtracts its full retained
+length in the same operation. The send boundary, match consumption and overflow
+each choose how much history to retain and share that accounting. Only overflow
+reports loss. A retained line keeps its complete regex subject, even after its
+cursor advances. In `abcdef` with the first three characters consumed, `^def`
+fails and `(?<=abc)def` can match. A send boundary after `prefix` still permits
+the next wait to match `OK` received during the send using `prefix` as context.
+See [#191](https://github.com/TabTty/TabTty/issues/191).
+
 Continue acknowledges loss and rechecks retained unconsumed history for a pending
 wait; End permanently stops the run. Never concatenate across a gap, treat a
 truncated line as an intact line, replay a command, or clear unrelated holds.
@@ -625,6 +669,16 @@ Raw/Terminal eligibility and incomplete I/O handling retain the recording
 contract. No macro execution-trace file is introduced. Show run state, location
 and bounded error details without copying arguments, sent text or captures into
 diagnostics automatically.
+
+Recording owns file recovery. The run decides under its state lock whether a
+recovery applies to its current recording-failure hold. From acceptance of Stop,
+the macro panel and tab status stop offering retry, resume or continue actions
+for that run. Keep the factual failure history and show Stopping until cleanup
+ends, then show the end reason and source position. A successful retry that
+finishes after accepted Stop can restore recording on a healthy terminal. The
+run remains stopped and submits no further input. On recovery, update the status
+bar only if it still shows the matching recording failure. Keep a newer disconnect
+or unrelated error visible. See [#190](https://github.com/TabTty/TabTty/issues/190).
 
 Macro ownership preserves broadcast checks but excludes the session from newly
 captured eligible recipients; other eligible selected sessions still receive.

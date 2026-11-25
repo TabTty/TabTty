@@ -134,12 +134,12 @@ internal sealed class SshHostTrust(App app, string pathName, Action<string, stri
         path ??= pathName;
         if (live && VerifiedFilePublication.IsPublicationActive(path)) throw new IOException(Text("FileOperationPending"));
         if (live && VerifiedFilePublication.IsUnresolved(path)) throw new IOException(Text("StoreSaveUnverified"));
-        if (!File.Exists(path))
+        byte[]? bytes = JsonStoreRecovery.ReadBounded(path, "HostStoreInvalid", allowMissing: live);
+        if (bytes is null)
             return (new JsonObject
             {
                 ["schemaVersion"] = 1, ["requiredFeatures"] = new JsonArray(), ["destinations"] = new JsonArray(),
             }, null);
-        byte[] bytes = ReadBytes(path);
         JsonObject document = JsonStoreRecovery.ParseObject(bytes);
         if (document["schemaVersion"]?.GetValue<int>() != 1 ||
             document["requiredFeatures"] is not JsonArray { Count: 0 } ||
@@ -172,16 +172,6 @@ internal sealed class SshHostTrust(App app, string pathName, Action<string, stri
             }
         }
         return (document, bytes);
-    }
-
-    private static byte[] ReadBytes(string path)
-    {
-        using var file = File.OpenRead(path);
-        if (file.Length is <= 0 or > 16 * 1024 * 1024) throw InvalidStore();
-        byte[] bytes = new byte[(int)file.Length];
-        file.ReadExactly(bytes);
-        if (file.ReadByte() >= 0) throw InvalidStore();
-        return bytes;
     }
 
     private async Task SaveAsync(JsonObject document, byte[]? original, CancellationToken token = default)

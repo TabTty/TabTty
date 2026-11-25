@@ -142,6 +142,34 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
         return new ReadOnlySpan<byte>(output, checked((int)written)).ToArray();
     }
 
+    internal static int TransmitBoundaries(uint page, ReadOnlySpan<char> text, ReadOnlySpan<byte> encoded,
+        bool shiftKana, bool paste, int confirmed, Span<int> bytes, Span<int> source, out int sourcePrefix)
+    {
+        if (text.IsEmpty) { sourcePrefix = 0; return 0; }
+        fixed (char* input = text)
+        fixed (byte* prepared = encoded)
+        fixed (int* byteEnds = bytes, sourceEnds = source)
+        {
+            uint flags = (shiftKana ? 8U : 0U) | (paste ? 16U : 0U);
+            Check(Native.TransmitBoundaries(page, input, (uint)text.Length, flags, prepared, (uint)encoded.Length,
+                (uint)confirmed, byteEnds, sourceEnds, (uint)bytes.Length, out uint count, out uint prefix), "transmit boundaries");
+            sourcePrefix = checked((int)prefix);
+            return checked((int)count);
+        }
+    }
+
+    internal static byte[] TransmitClosure(uint page, ReadOnlySpan<char> text, ReadOnlySpan<byte> submitted, bool shiftKana)
+    {
+        Span<byte> suffix = stackalloc byte[16];
+        fixed (char* input = text)
+        fixed (byte* prefix = submitted, output = suffix)
+        {
+            Check(Native.TransmitClosure(page, input, (uint)text.Length, shiftKana ? 8U : 0U,
+                prefix, (uint)submitted.Length, output, (uint)suffix.Length, out uint count), "transmit closure");
+            return suffix[..checked((int)count)].ToArray();
+        }
+    }
+
     internal static TerminalMouseMode DecodeMouseMode(uint tracking, int generation) =>
         new((int)(tracking & 0x7FFF_FFFF), (tracking & 0x8000_0000) != 0, generation);
 
@@ -188,7 +216,7 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
         if (sizeof(EffectsView) != 72 || sizeof(CellView) != 32 || sizeof(RowView) != 88 ||
             sizeof(SnapshotView) != 48 || sizeof(HistoryProofView) != 48 || sizeof(HistoryRowView) != 40 ||
             sizeof(MouseInput) != 20 || sizeof(ScreenStateView) != 48 || sizeof(ScreenRowView) != 56 ||
-            Native.AbiVersion() != 11)
+            Native.AbiVersion() != 12)
             throw new InvalidOperationException("The native terminal ABI does not match this application.");
         this.quota = quota;
         // Admission precedes native allocation; unused temporary allowance is released
@@ -886,6 +914,13 @@ internal sealed unsafe class NativeTerminalCore : IDisposable
         [DllImport(Library, EntryPoint = "tc_encode_legacy", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int EncodeLegacy(uint page, char* input, uint length, uint flags,
             byte* output, uint capacity, out uint required);
+        [DllImport(Library, EntryPoint = "tc_transmit_boundaries", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int TransmitBoundaries(uint page, char* input, uint length, uint flags,
+            byte* encoded, uint encodedLength, uint confirmed, int* byteEnds, int* sourceEnds, uint capacity,
+            out uint written, out uint sourcePrefix);
+        [DllImport(Library, EntryPoint = "tc_transmit_closure", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int TransmitClosure(uint page, char* input, uint length, uint flags, byte* prefix,
+            uint prefixLength, byte* output, uint capacity, out uint written);
         [DllImport(Library, EntryPoint = "tc_legacy_open", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int LegacyOpen(uint page, uint shiftKana, out nint receiver);
         [DllImport(Library, EntryPoint = "tc_legacy_step", CallingConvention = CallingConvention.Cdecl)]

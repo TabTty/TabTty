@@ -52,47 +52,35 @@ internal sealed class MacroProgram : IDisposable
             var program = ParseSource(path, macro.Text, quota, retained, out var declarations);
             program.SourceDigest = macro.Digest;
 
-            var budget = new MacroConstantsBudget();
-            var files = new Dictionary<string, MacroConstantsFile>(StringComparer.Ordinal);
-            var bindings = new List<MacroConstantsBinding>(declarations.Count);
-            foreach (var declaration in declarations)
-            {
-                token.ThrowIfCancellationRequested();
-                string fullPath = declaration.Resolve(path);
-
-                if (!files.TryGetValue(fullPath, out var file))
+            var bindings = await MacroConstantsBinder.BindAsync(path, declarations, CaptureConstants, token,
+                reserveParse: captured =>
                 {
-                    CapturedText? captured;
-                    try
-                    {
-                        captured = await CaptureAsync(fullPath, false, confirmRead, budget.RemainingBytes,
-                            "ConstantsLimit", quota, retained, token).ConfigureAwait(false);
-                    }
-                    catch (Exception error) when (error is not ResourceLimitException &&
-                        error is IOException or UnauthorizedAccessException or NotSupportedException)
-                    { throw new MacroSourceException("ConstantsRead", new(1, 1), fullPath); }
-                    if (captured is null) return null;
-                    if (budget.CrossedByteLimit(fullPath, captured.ByteCount))
-                        throw new MacroSourceException("ConstantsLimit", declaration.Position, path);
-
-                    // Reserve for temporary lexer tokens and string decoding. Retained
-                    // string values and names fit in the original UTF-16 character count.
-                    using var scratch = quota.Reserve(512 + captured.Text.Length * 6L);
+                    // Reserve temporary lexer and decoding storage alongside the captured text.
                     retained.Add(128 + captured.Text.Length * 2L);
-                    file = MacroConstantsFile.Parse(fullPath, captured.Digest, captured.Text,
-                        budget.RemainingMembers, () => retained.Add(224));
-                    files.Add(fullPath, file);
-                    budget.AddDefinitions(file);
+                    return quota.Reserve(512 + captured.Text.Length * 6L);
+                }, admitMember: () => retained.Add(224), admitted: file =>
+                {
                     foreach (var value in file.Values.Values)
-                    {
                         if (value is string text)
                             (program.capturedStrings ??= new(ReferenceEqualityComparer.Instance)).Add(text);
-                    }
+                }).ConfigureAwait(false);
+            if (bindings is null) return null;
+            retained.Add(bindings.Count * 128L);
+            program.Constants = bindings;
+
+            async ValueTask<MacroConstantsCapture?> CaptureConstants(string fullPath, int remainingBytes)
+            {
+                try
+                {
+                    var captured = await CaptureAsync(fullPath, false, confirmRead, remainingBytes,
+                        "ConstantsLimit", quota, retained, token).ConfigureAwait(false);
+                    return captured is null ? null : new(captured.Text, captured.Digest, captured.ByteCount);
                 }
-                retained.Add(128);
-                bindings.Add(new(declaration.Alias, file));
+                catch (Exception error) when (error is not ResourceLimitException &&
+                    error is IOException or UnauthorizedAccessException or NotSupportedException)
+                { throw new MacroSourceException("ConstantsRead", new(1, 1), fullPath); }
             }
-            program.Constants = bindings.AsReadOnly();
+
             new MacroChecker(program).Check();
             token.ThrowIfCancellationRequested();
             program.snapshotBytes = retained.Size;

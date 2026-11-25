@@ -143,134 +143,6 @@ pub struct FormatView {
     pub column: u32,
     pub scalar: u32,
 }
-#[cfg(test)]
-#[repr(C)]
-pub struct ExportRow {
-    pub view: RowView,
-    pub tabs: *const TabView,
-    pub submitted: *const u16,
-    pub content_revision: i64,
-    pub logical_cluster_offset: i64,
-    pub submitted_revision: i64,
-    pub tab_count: u32,
-    pub submitted_length: u32,
-    pub formats: *const FormatView,
-    pub format_count: u32,
-    pub recorded: *const TabView,
-    pub recorded_count: u32,
-    pub excluded: u32,
-}
-#[cfg(test)]
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct SourceView {
-    pub pending: *const u8,
-    pub parameters: *const u8,
-    pub last_graphic: *const u32,
-    pub pending_count: u32,
-    pub parameter_count: u32,
-    pub last_graphic_count: u32,
-    pub flags: u32,
-    pub escape: u32,
-    pub reserved: u32,
-    pub pending_interval: u32,
-    pub escape_interval: u32,
-    pub previous_interval: u32,
-}
-#[cfg(test)]
-impl SourceView {
-    const fn empty() -> Self {
-        Self {
-            pending: ptr::null(),
-            parameters: ptr::null(),
-            last_graphic: ptr::null(),
-            pending_count: 0,
-            parameter_count: 0,
-            last_graphic_count: 0,
-            flags: 0,
-            escape: 0,
-            reserved: 0,
-            pending_interval: 0,
-            escape_interval: 0,
-            previous_interval: 0,
-        }
-    }
-}
-#[cfg(test)]
-#[repr(C)]
-pub struct ExportState {
-    pub snapshot: SnapshotView,
-    pub rows: *const ExportRow,
-    pub sources: *const SourceView,
-    pub cluster: *const u32,
-    pub recorded_cluster: *const u32,
-    pub cluster_row: i64,
-    pub cluster_count: u32,
-    pub cluster_column: u32,
-    pub cluster_width: u32,
-    pub cursor_row: u32,
-    pub style_foreground: u32,
-    pub style_background: u32,
-    pub style_flags: u32,
-    pub cluster_foreground: u32,
-    pub cluster_background: u32,
-    pub cluster_flags: u32,
-    pub mode_flags: u32,
-    pub recorded_column: u32,
-    pub recorded_known: u32,
-    pub recorded_count: u32,
-    pub row_count: u32,
-    pub source_count: u32,
-    pub reserved0: u32,
-    pub reserved1: u32,
-    pub editing: *const EditingView,
-}
-
-#[cfg(test)]
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct EditingView {
-    pub margin_top: u32,
-    pub margin_bottom: u32,
-    pub position_row: i32,
-    pub position_column: u32,
-    pub saved_row: u32,
-    pub saved_column: u32,
-    pub saved_fg: u32,
-    pub saved_bg: u32,
-    pub saved_style: u32,
-    pub saved_flags: u32,
-    pub tab_stops: [u64; 16],
-    pub parked: PageView,
-    pub alternate: PageView,
-    pub normal_return: CursorView,
-}
-
-#[cfg(test)]
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-pub struct PageView {
-    pub first: u32,
-    pub count: u32,
-    pub row: u32,
-    pub column: u32,
-    pub columns: u32,
-    pub rows: u32,
-    pub wrap: u32,
-}
-
-#[cfg(test)]
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-pub struct CursorView {
-    pub row: u32,
-    pub column: u32,
-    pub fg: u32,
-    pub bg: u32,
-    pub style: u32,
-    pub flags: u32,
-    pub active: u32,
-}
 fn valid<T>(p: *const T) -> bool {
     !p.is_null() && (p as usize) % align_of::<T>() == 0
 }
@@ -290,7 +162,7 @@ fn run<F: FnOnce() -> Result<(), i32>>(f: F) -> i32 {
 }
 #[no_mangle]
 pub extern "C" fn tc_abi_version() -> u32 {
-    11
+    12
 }
 
 #[no_mangle]
@@ -304,7 +176,11 @@ pub unsafe extern "C" fn tc_analyze_paste(
         return 1;
     }
     run(|| {
-        let text = if length == 0 { &[] } else { slice::from_raw_parts(text, length as usize) };
+        let text = if length == 0 {
+            &[]
+        } else {
+            slice::from_raw_parts(text, length as usize)
+        };
         let (count, line_count) = unicode::Unicode::new().analyze_paste(text)?;
         graphemes.write(count as u32);
         lines.write(line_count as u32);
@@ -321,12 +197,21 @@ pub unsafe extern "C" fn tc_paste_chunk(
     line_delay: u32,
     output: *mut [u32; 4],
 ) -> i32 {
-    if length == 0 || !valid(text) || !valid(output) || character_delay > 10_000 || line_delay > 10_000 {
+    if length == 0
+        || !valid(text)
+        || !valid(output)
+        || character_delay > 10_000
+        || line_delay > 10_000
+    {
         return 1;
     }
     run(|| {
-        output.write(unicode::Unicode::new().paste_chunk(slice::from_raw_parts(text, length as usize),
-            context, character_delay, line_delay)?);
+        output.write(unicode::Unicode::new().paste_chunk(
+            slice::from_raw_parts(text, length as usize),
+            context,
+            character_delay,
+            line_delay,
+        )?);
         Ok(())
     })
 }
@@ -346,7 +231,11 @@ pub unsafe extern "C" fn tc_next_grapheme(
         return 1;
     }
     run(|| {
-        let text = if length == 0 { &[] } else { slice::from_raw_parts(text, length as usize) };
+        let text = if length == 0 {
+            &[]
+        } else {
+            slice::from_raw_parts(text, length as usize)
+        };
         consumed.write(unicode::Unicode::new().next_grapheme(text)? as u32);
         Ok(())
     })
@@ -479,6 +368,91 @@ pub unsafe extern "C" fn tc_encode_legacy(
             }
         }
         required.write(plan as u32);
+        Ok(())
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tc_transmit_boundaries(
+    page: u32,
+    input: *const u16,
+    length: u32,
+    flags: u32,
+    encoded: *const u8,
+    encoded_length: u32,
+    confirmed: u32,
+    byte_ends: *mut u32,
+    source_ends: *mut u32,
+    capacity: u32,
+    written: *mut u32,
+    source_prefix: *mut u32,
+) -> i32 {
+    if !valid(input)
+        || !valid(encoded)
+        || !valid(written)
+        || !valid(source_prefix)
+        || (capacity != 0 && (capacity < length || !valid(byte_ends) || !valid(source_ends)))
+        || confirmed > encoded_length
+        || encoded_length > 1024 * 1024
+        || length > 1024 * 1024
+    {
+        return 1;
+    }
+    run(|| {
+        let mut count = 0;
+        let mut prefix = 0;
+        legacy_encode::visit_transmit_units(
+            page,
+            slice::from_raw_parts(input, length as usize),
+            flags,
+            slice::from_raw_parts(encoded, encoded_length as usize),
+            |source, bytes| {
+                if capacity != 0 {
+                    byte_ends.add(count).write(bytes as u32);
+                    source_ends.add(count).write(source as u32);
+                }
+                count += 1;
+                if bytes <= confirmed as usize {
+                    prefix = source as u32;
+                }
+            },
+        )?;
+        written.write(count as u32);
+        source_prefix.write(prefix);
+        Ok(())
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tc_transmit_closure(
+    page: u32,
+    input: *const u16,
+    length: u32,
+    flags: u32,
+    prefix: *const u8,
+    prefix_length: u32,
+    output: *mut u8,
+    capacity: u32,
+    written: *mut u32,
+) -> i32 {
+    if !valid(input)
+        || !valid(prefix)
+        || !valid(output)
+        || !valid(written)
+        || length > 1024 * 1024
+        || prefix_length > 1024 * 1024
+    {
+        return 1;
+    }
+    run(|| {
+        let size = legacy_encode::closure(
+            page,
+            slice::from_raw_parts(input, length as usize),
+            flags,
+            slice::from_raw_parts(prefix, prefix_length as usize),
+            slice::from_raw_parts_mut(output, capacity as usize),
+        )?;
+        written.write(size as u32);
         Ok(())
     })
 }
@@ -1135,57 +1109,25 @@ mod tests {
         assert_eq!(t.snapshot().unwrap().row_count, 1);
     }
     #[test]
-    fn export_preserves_empty_screen_and_all_abi_layouts() {
-        assert_eq!(size_of::<TabView>(), 8);
-        assert_eq!(size_of::<ExportRow>(), 168);
-        assert_eq!(size_of::<SourceView>(), 64);
-        assert_eq!(size_of::<ExportState>(), 168);
-        assert_eq!(size_of::<EditingView>(), 256);
+    fn edited_snapshot_preserves_prior_recording_and_independent_sources() {
         let mut t = Model::new(16, 4, 100, 1);
-        let e = t.export().unwrap();
-        assert_eq!(e.snapshot.row_count, 0);
-        assert_eq!(e.row_count, 1);
-        assert_eq!(e.source_count, 3);
-        unsafe {
-            assert_eq!((*e.rows).submitted_length, u32::MAX);
-        }
-    }
-    #[test]
-    fn export_preserves_stale_submitted_text_and_partial_sources() {
-        let mut t = Model::new(16, 4, 100, 1);
-        t.feed(0, b"A\r\n\x1b[1;1HB", 3).unwrap();
+        assert_eq!(t.snapshot().unwrap().row_count, 0);
+        t.feed(0, b"A\r\n", 3).unwrap();
+        let recorded = effects(&t).0;
+        t.feed(0, b"\x1b[1;1HB", 3).unwrap();
+        assert_eq!(row_text(&mut t, 0), "B");
+        assert_eq!(recorded, b"A\r\n");
+        assert!(effects(&t).0.is_empty());
+
         t.feed(0, &[0xe7], 3).unwrap();
         t.feed(1, b"\x1b[3", 3).unwrap();
-        let e = t.export().unwrap();
-        unsafe {
-            let row = &*e.rows;
-            assert_eq!(
-                String::from_utf16(slice::from_raw_parts(
-                    row.view.text,
-                    row.view.text_length as usize
-                ))
-                .unwrap(),
-                "B"
-            );
-            assert_eq!(
-                slice::from_raw_parts(row.submitted, row.submitted_length as usize),
-                &[65]
-            );
-            assert_ne!(row.content_revision, row.submitted_revision);
-            let data = &*e.sources;
-            assert_eq!(data.pending_count, 1);
-            assert_eq!(*data.pending, 0xe7);
-            let stderr = &*e.sources.add(1);
-            assert_eq!(stderr.escape, 2);
-            assert_eq!(
-                slice::from_raw_parts(stderr.parameters, stderr.parameter_count as usize),
-                b"3"
-            );
-            assert_eq!(
-                slice::from_raw_parts(data.last_graphic, data.last_graphic_count as usize),
-                &[66]
-            );
-        }
+        t.feed(0, &[0x95, 0x8c], 3).unwrap();
+        assert_eq!(effects(&t).1, "界".as_bytes());
+        t.feed(1, b"1m", 3).unwrap();
+        assert_eq!(effects(&t).1, b"\x1b[31m");
+        t.feed(0, b"\x1b[1b", 3).unwrap();
+        assert_eq!(effects(&t).1, "界".as_bytes());
+        assert_eq!(row_text(&mut t, 0), "B界界");
     }
     #[test]
     fn unsupported_preflight_and_admission_leave_native_state_unchanged() {
@@ -1237,10 +1179,9 @@ mod tests {
         t.feed(0, &vec![b'0'; 4096], 1).unwrap();
         assert_eq!(t.preflight(0, 0, b"0m", 1), Err(2));
         assert_eq!(row_text(&mut t, 0), "before");
-        let e = t.export().unwrap();
-        unsafe {
-            assert_eq!((*e.sources).parameter_count, 4096);
-        }
+        t.feed(0, b"\x18after", 1).unwrap();
+        assert_eq!(row_text(&mut t, 0), "beforeafter");
+        assert_eq!(effects(&t).1, b"after");
     }
     #[test]
     fn oversized_text_effect_refuses_recording_and_preserves_terminal_effects() {
@@ -1256,7 +1197,6 @@ mod tests {
         assert_eq!(t.effects().text_length, 0);
         assert_ne!(t.effects().reply_length, 0);
         assert!(t.snapshot().unwrap().row_count > 1000);
-        assert!(t.export().unwrap().row_count > 1000);
     }
     #[test]
     fn submitted_tab_history_has_no_effect_and_revisit_keeps_exact_text() {
@@ -1295,12 +1235,11 @@ mod tests {
         assert_eq!(text, b"user$ echo ok\r\n");
         assert_eq!(terminal, b"\x1b[?2004huser$ echo ok\r\n");
         assert_eq!(t.effects().reserved0 & 16, 16);
-        assert_eq!(t.export().unwrap().mode_flags & 16, 16);
         t.feed(0, b"\x1b[?2004l", 3).unwrap();
         assert_eq!(t.effects().reserved0 & 16, 0);
     }
     #[test]
-    fn osc_escape_reprocesses_csi_and_exports_partial_count() {
+    fn osc_escape_reprocesses_csi_and_resumes_after_terminator() {
         let mut t = Model::new(32, 4, 100, 1);
         let input = "A\x1b]0;界\r\n\x1b[31mB";
         t.preflight(0, 0, input.as_bytes(), 3).unwrap();
@@ -1308,45 +1247,34 @@ mod tests {
         assert_eq!(effects(&t).1, b"A\x1b[31mB");
         assert_eq!(row_text(&mut t, 0), "AB");
         t.feed(0, "\x1b]0;界\x1b".as_bytes(), 3).unwrap();
-        let e = t.export().unwrap();
-        unsafe {
-            assert_eq!((*e.sources).escape, 4);
-            assert_eq!((*e.sources).flags & 8, 8);
-            assert_eq!((*e.sources).reserved, 5);
-        }
         assert_eq!(t.preflight(0, 0, b"[6n", 3 | 128 << 8), Err(4));
         t.feed(0, b"\\C\r\n", 3).unwrap();
         assert_eq!(effects(&t).1, b"C\r\n");
         assert_eq!(effects(&t).0, b"ABC\r\n");
     }
     #[test]
-    fn osc_size_limit_hands_off_without_consuming_overflow() {
+    fn osc_size_limit_recovers_without_consuming_overflow() {
         let mut t = Model::new(32, 4, 100, 1);
         t.feed(0, b"before\x1b]", 0).unwrap();
         t.feed(0, &vec![b'x'; 1024 * 1024], 0).unwrap();
         assert_eq!(t.preflight(0, 0, b"x", 0), Err(2));
         assert_eq!(row_text(&mut t, 0), "before");
-        let e = t.export().unwrap();
-        unsafe {
-            assert_eq!((*e.sources).escape, 3);
-            assert_eq!((*e.sources).reserved, 1024 * 1024);
-        }
         t.preflight(0, 0, b"\x18after", 0).unwrap();
         t.feed(0, b"\x18after", 0).unwrap();
         assert_eq!(row_text(&mut t, 0), "beforeafter");
     }
     #[test]
-    fn export_retains_logical_cluster_prefix_after_retirement() {
+    fn history_keeps_logical_offsets_after_retirement() {
         let mut t = Model::new(4, 1, 100, 1);
         let text = "e\u{301}ABC".repeat(130);
         t.feed(0, text.as_bytes(), 0).unwrap();
-        let e = t.export().unwrap();
-        unsafe {
-            let first = &*e.rows;
-            assert!(first.view.logical_offset > 0);
-            assert!(first.logical_cluster_offset > 0);
-            assert!(first.logical_cluster_offset < first.view.logical_offset);
-        }
+        assert_eq!(t.prepare_history([101, 103], true).unwrap(), 100);
+        let first = t.history_row_view(0).unwrap();
+        assert!(first.offset > 0);
+        assert!(first.cluster_offset > 0);
+        assert_eq!(first.offset * 4, first.cluster_offset * 5);
+        let retained = unsafe { slice::from_raw_parts(first.text, first.length as usize) };
+        assert_eq!(String::from_utf16(retained).unwrap(), "e\u{301}ABC");
     }
 
     #[test]

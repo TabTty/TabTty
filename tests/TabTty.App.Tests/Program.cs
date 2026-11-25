@@ -3204,7 +3204,8 @@ internal static partial class Program
     private static async Task HighlightWaitsForIdleOrViewportChange()
     {
         var surface = new TerminalSurface();
-        var highlight = new TerminalHighlightView(surface);
+        var rules = new TerminalHighlightState();
+        var highlight = new TerminalHighlightView(surface, rules);
         var tab = new TabControl();
         var terminalTab = new TabItem { Content = surface.Scroller };
         var otherTab = new TabItem { Content = new TextBlock { Text = "Other" } };
@@ -3219,7 +3220,7 @@ internal static partial class Program
             window.Show();
             terminal.Receive(TerminalReceiveSource.Data, "ERROR\r\n"u8);
             SetSnapshot();
-            highlight.SetRules(new HighlightSet(Guid.NewGuid(), "Test", true,
+            rules.SetRules(new HighlightSet(Guid.NewGuid(), "Test", true,
                 [new TerminalHighlightRule(Guid.NewGuid(), "Error", "ERROR", true, false, new(0xFF0000, null, null, null))]));
             await WaitForHighlight();
             for (int i = 0; i < 27; i++)

@@ -30,7 +30,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
     }
     private event Action? SaveRecoveryChanged;
     private event Action<string, string, ConnectionProfile>? CredentialReferenceSaved;
-    private event Action? ProfileSaved;
+    private event Action<string?>? ProfileSaved;
     private event Action? CatalogFolderChanged;
     private event Action? RegistrationUsed;
     private (long Sequence, string? Location) lastCreatedProfile;
@@ -136,11 +136,11 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 SaveRecoveryChanged?.Invoke();
             }
         }
-        if (updated != 0) ProfileSaved?.Invoke();
+        if (updated != 0) ProfileSaved?.Invoke(null);
         return (updated, problems);
     }
 
-    public async Task<string> RememberAsync(string path, ConnectionProfile profile, bool used)
+    public async Task RememberUsageAsync(string path, ConnectionProfile profile)
     {
         string location = path;
         try
@@ -152,18 +152,17 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 location = await NormalizeLocationAsync(path, timeout.Token);
             }
             catch (OperationCanceledException) { }
-            if (app.Dispatcher.HasShutdownStarted) return location;
+            if (app.Dispatcher.HasShutdownStarted) return;
             RememberMetadata(location, profile);
-            bool changed = false;
-            LocalState.Change(state =>
+            bool saved = LocalState.TryChange(state =>
             {
-                if (FindRegistration(state, location) is not { } registration) return;
-                changed = used || registration["groupName"]?.GetValue<string>() != profile.GroupName;
+                if (FindRegistration(state, location) is not { } registration) return false;
                 StoreRegistrationGroup(registration, profile.GroupName);
-                if (used) registration["lastUsed"] = DateTimeOffset.UtcNow;
+                registration["lastUsed"] = DateTimeOffset.UtcNow;
+                return true;
             });
             stateErrorShown = false;
-            if (changed) RegistrationUsed?.Invoke();
+            if (saved) RegistrationUsed?.Invoke();
         }
         catch (Exception exception) when (IsFileProblem(exception))
         {
@@ -173,7 +172,6 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 MainWindow.ShowError(owner, new IOException(Text("LocalStateInvalid")));
             }
         }
-        return location;
     }
 
     public IReadOnlyList<Registration> ReadRegistrations() => ReadRegistrations(LocalState.Read());
@@ -282,6 +280,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
             TabItem? contentTab = null;
             IReadOnlyList<Registration> registrations = [];
             bool reloading = false;
+            bool observing = false;
             long lastSelectedCreation = 0;
             CancellationTokenSource? detailsLoad = null;
             var menu = new ContextMenu();
@@ -370,16 +369,20 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
             };
             form.Loaded += (_, _) =>
             {
-                ProfileSaved += Reload;
+                if (observing) return;
+                observing = true;
+                ProfileSaved += ReloadAfterSave;
                 CatalogFolderChanged += ReloadFolder;
+                RegistrationUsed += Reload;
                 ReloadFolder();
             };
-            RegistrationUsed += ReloadAfterConnection;
             form.Unloaded += (_, _) =>
             {
-                ProfileSaved -= Reload;
+                if (!observing) return;
+                observing = false;
+                ProfileSaved -= ReloadAfterSave;
                 CatalogFolderChanged -= ReloadFolder;
-                RegistrationUsed -= ReloadAfterConnection;
+                RegistrationUsed -= Reload;
                 detailsLoad?.Cancel();
             };
 
@@ -419,7 +422,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 try
                 {
                     await ReadRegistrationDetailsAsync(registrations, load.Token);
-                    if (!load.IsCancellationRequested) Reload();
+                    if (observing && ReferenceEquals(detailsLoad, load) && !load.IsCancellationRequested) Reload();
                 }
                 finally { if (ReferenceEquals(detailsLoad, load)) detailsLoad = null; }
             }
@@ -476,18 +479,16 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                         else target["favorite"] = !target["favorite"]!.GetValue<bool>();
                     });
                     if (remove) removals[selected.Path] = removals.GetValueOrDefault(selected.Path) + 1;
-                    ProfileSaved?.Invoke();
+                    ProfileSaved?.Invoke(null);
                     if (!remove && list.SelectedItem is Registration item && item.Id == selected.Id)
                         list.ScrollIntoView(item);
                 }
                 catch (Exception exception) when (IsFileProblem(exception)) { MainWindow.ShowError(form.OwnerWindow, exception); }
             }
 
-            void ReloadAfterConnection() => ReloadCore(followMovedSelection: false);
+            void Reload() => ReloadAfterSave(null);
 
-            void Reload() => ReloadCore(followMovedSelection: true);
-
-            void ReloadCore(bool followMovedSelection)
+            void ReloadAfterSave(string? editedPath)
             {
                 try
                 {
@@ -502,11 +503,11 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                         list.SelectedItems.Cast<Registration>().Select(item => item.Id).ToHashSet();
                     string? group = (groupTabs.SelectedItem as TabItem)?.Tag as string;
                     if (group is not null && selected is not null &&
-                        (created is not null || followMovedSelection && list.SelectedItems.Count == 1))
+                        (created is not null || selected.Path == editedPath && list.SelectedItems.Count == 1))
                         group = selected.GroupName ?? "";
                     reloading = true;
                     if (created is not null && !MatchesSearch(created, search.Text)) search.Clear();
-                    RefreshGroupTabs(group, preserveEmpty: !followMovedSelection);
+                    RefreshGroupTabs(group);
                     RefreshList(selectedIds);
                     if (created is not null && list.SelectedItem is { } item) list.ScrollIntoView(item);
                 }
@@ -519,10 +520,10 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 finally { reloading = false; }
             }
 
-            void RefreshGroupTabs(string? selected, bool preserveEmpty = false)
+            void RefreshGroupTabs(string? selected)
             {
                 var names = registrations.Select(item => item.GroupName ?? "");
-                if (preserveEmpty && selected is not null) names = names.Append(selected);
+                if (selected is not null) names = names.Append(selected);
                 names = names.Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.CurrentCultureIgnoreCase);
                 string?[] keys = [null, .. names];
                 if (!keys.SequenceEqual(groupTabs.Items.OfType<TabItem>().Select(item => item.Tag as string)))
@@ -668,7 +669,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                     {
                         RetirePendingSave(pending);
                         CredentialReferenceSaved?.Invoke(pending.Attempted, kind, committed);
-                        ProfileSaved?.Invoke();
+                        ProfileSaved?.Invoke(null);
                         progress.Dispose();
                         ShowCleanupWarning(committed, pending.Attempted);
                         return;
@@ -877,7 +878,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
 
         completion.CompletedPath = path;
         RetirePendingSave(completion);
-        if (previous is not null) ProfileSaved?.Invoke();
+        if (previous is not null) ProfileSaved?.Invoke(path);
         return path;
     }
 

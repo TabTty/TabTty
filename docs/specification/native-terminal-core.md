@@ -438,6 +438,16 @@ test surface. Existing real file, transport, WPF, UIA, and publication checks
 remain necessary. Test-only C# comparisons can preserve a migration reference;
 independent specified expected output also remains required.
 
+Replace tests of the obsolete managed-handoff export with production snapshots,
+history reads, recording effects and follow-up input. Check edited screen text
+against previously recorded text, independently fragmented UTF-8 and SSH stderr
+control sequences, and repetition of the last graphic. Check parser recovery
+after CSI and OSC limit rejection and surviving grapheme and UTF-16 offsets
+after scrollback retirement. Preserve ABI and preparation-invalidation tests.
+Once these checks cover the observable effects, retire the test-only exporter,
+its types and buffers. Live reflow and observation keep their own data.
+See [#179](https://github.com/TabTty/TabTty/issues/179).
+
 | Verification group | Required observations |
 | --- | --- |
 | Windows x64 terminal distribution | Remove each required file in turn from a prepared bundle and verify the publish precheck names it. Repeat in the publish directory before archiving. A complete Release bundle passes. A Debug DLL with its matching Debug record, a record for a different target, and a DLL hash mismatch each prevent ZIP creation. |

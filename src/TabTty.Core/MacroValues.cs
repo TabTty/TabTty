@@ -63,9 +63,50 @@ internal sealed record MacroType(string Name, MacroType? Element = null)
 
 internal sealed class MacroList(MacroType element, IEnumerable<object> values)
 {
+    private readonly List<object> items = new(values);
     public MacroType Element { get; } = element;
-    public List<object> Items { get; } = new(values);
-    public long Revision { get; set; }
+    public IReadOnlyList<object> Items => items;
+    public long Revision { get; private set; }
+    public long ReservedBytes => StorageBytes(items.Capacity);
+
+    public void Insert(int index, object value, Action<long> reserve)
+    {
+        if (items.Count == MacroLimits.ListItems) throw new MacroError(MacroErrorCode.PayloadLimit);
+        if (items.Count == items.Capacity)
+        {
+            int capacity = Math.Max(4, items.Capacity * 2);
+            reserve(StorageBytes(capacity));
+            items.Capacity = capacity;
+        }
+        items.Insert(index, value);
+        Revision++;
+    }
+
+    public void Replace(int index, object value)
+    {
+        items[index] = value;
+        Revision++;
+    }
+
+    public void RemoveAt(int index)
+    {
+        items.RemoveAt(index);
+        Revision++;
+    }
+
+    public void Clear()
+    {
+        items.Clear();
+        Revision++;
+    }
+
+    public void ReleaseContents()
+    {
+        Clear();
+        items.Capacity = 0;
+    }
+
+    private static long StorageBytes(int capacity) => 32 + capacity * 16L;
 }
 
 internal static class MacroLimits

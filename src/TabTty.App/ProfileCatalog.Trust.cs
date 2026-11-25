@@ -70,7 +70,7 @@ internal sealed partial class ProfileCatalog
         if (reset != trustReset || Path.GetDirectoryName(location) != ActiveFolder) throw new IOException(Text("ProfileTrustWriteFailed"));
         CommitRegistration(location, path, profile, used: false, profile.TrustVersion);
         if (selectNewProfile) lastCreatedProfile = (lastCreatedProfile.Sequence + 1, location);
-        ProfileSaved?.Invoke();
+        ProfileSaved?.Invoke(null);
         return location;
     }
 

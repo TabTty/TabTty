@@ -12,20 +12,14 @@ internal static class TerminalSearch
         return null;
     }
 
-    internal static async Task<(int Count, TerminalMatch[] Matches)> ScanAsync(TerminalSnapshot snapshot,
-        string query, bool matchCase, TerminalMatch? anchor, bool backwards, (int First, int End)[] viewports,
-        Func<TerminalMatch?, Task>? navigate, CancellationToken token)
+    internal static (int Count, TerminalMatch[] Matches) Aggregate(TerminalSnapshot snapshot,
+        string query, bool matchCase, (int First, int End)[] viewports, CancellationToken token)
     {
         var visible = new List<TerminalMatch>();
         var offscreen = new List<TerminalMatch>();
         int count = 0;
-        foreach (TerminalMatch match in OrderedMatches(snapshot, query, matchCase, navigate is null ? null : anchor, backwards, token))
+        foreach (TerminalMatch match in snapshot.FindMatches(query, matchCase, token))
         {
-            if (navigate is not null)
-            {
-                await navigate(match).ConfigureAwait(false);
-                navigate = null;
-            }
             if (count <= Limit) count++;
             if (viewports.Any(view => match.StartRow < view.End && match.EndRow >= view.First))
             {
@@ -35,9 +29,7 @@ internal static class TerminalSearch
             }
             else if (visible.Count + offscreen.Count < Limit) offscreen.Add(match);
         }
-        if (navigate is not null) await navigate(null).ConfigureAwait(false);
         return (count, [.. visible, .. offscreen]);
-
     }
 
     private static IEnumerable<TerminalMatch> OrderedMatches(TerminalSnapshot snapshot, string query, bool matchCase,

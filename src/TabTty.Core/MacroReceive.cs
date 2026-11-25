@@ -76,7 +76,6 @@ internal sealed class MacroReceiveHistory
     private long currentId;
     private int currentFloor;
     private long lostPrefix;
-    private long firstRetainedLine;
     private int units;
     private readonly bool[] previousCr = new bool[2];
     public bool Eof { get; set; }
@@ -119,9 +118,8 @@ internal sealed class MacroReceiveHistory
         while (lines.Count != 0 && (units > MacroLimits.HistoryUnits || lines.Count + 1 > MacroLimits.HistoryLines ||
             units * 2L + (lines.Count + 1) * 160L > 7L * 1024 * 1024))
         {
-            units -= lines.First!.Value.Text.Length;
-            firstRetainedLine = lines.First.Value.Id + 1;
-            lines.RemoveFirst(); lost = true;
+            RemoveFirstLine();
+            lost = true;
         }
         if (lost) LossRevision++;
         return lost;
@@ -166,16 +164,12 @@ internal sealed class MacroReceiveHistory
     public void MarkBoundary(MacroReceiveCutoff boundary)
     {
         while (lines.First is { } first && first.Value.Id < boundary.Line)
-        {
-            units -= first.Value.Text.Length;
-            lines.RemoveFirst();
-        }
+            RemoveFirstLine();
         // The sampled line may have completed while the command was in flight.
         if (boundary.Line == currentId && lostPrefix == 0)
             currentFloor = Math.Max(currentFloor, boundary.Length);
         else if (lines.First is { Value: var line } node && line.Id == boundary.Line && !line.Truncated)
             node.Value = line with { Floor = Math.Max(line.Floor, boundary.Length) };
-        firstRetainedLine = lines.First?.Value.Id ?? currentId;
     }
 
     public bool Consume(long id, int end)
@@ -183,19 +177,25 @@ internal sealed class MacroReceiveHistory
         if (id == currentId)
         {
             if (lostPrefix != 0 || end < currentFloor || end > current.Length) return false;
-            foreach (var line in lines) units -= line.Text.Length;
-            lines.Clear(); currentFloor = end; firstRetainedLine = currentId; return true;
+            while (lines.First is not null) RemoveFirstLine();
+            currentFloor = end;
+            return true;
         }
-        if (id < firstRetainedLine) return false;
+        if (id < (lines.First?.Value.Id ?? currentId)) return false;
         var node = lines.First;
         while (node is not null && node.Value.Id != id) node = node.Next;
         if (node is null || node.Value.Truncated || end < node.Value.Floor || end > node.Value.Text.Length) return false;
-        while (lines.First != node) { units -= lines.First!.Value.Text.Length; lines.RemoveFirst(); }
+        while (lines.First != node) RemoveFirstLine();
         if (end == node.Value.Text.Length)
-        { units -= node.Value.Text.Length; lines.RemoveFirst(); }
+            RemoveFirstLine();
         else node.Value = node.Value with { Floor = end };
-        firstRetainedLine = lines.First?.Value.Id ?? currentId;
         return true;
+    }
+
+    private void RemoveFirstLine()
+    {
+        units -= lines.First!.Value.Text.Length;
+        lines.RemoveFirst();
     }
 
     public static async Task<((long Line, MacroMatch Match)? Match, long ScannedThrough)> SearchAsync(

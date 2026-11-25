@@ -14,6 +14,7 @@ internal sealed class RecordingLifecycle(TerminalOutput terminal, SemaphoreSlim 
     private readonly object gate = new();
     private SessionRecording? part = initial;
     private int number = initialPart;
+    private int interval;
     private volatile bool active = initial is not null;
     private volatile bool protectedClose;
     private TerminalRecordings? projections;
@@ -41,7 +42,9 @@ internal sealed class RecordingLifecycle(TerminalOutput terminal, SemaphoreSlim 
     internal void Bind(ConnectionProfile profile, int retainedRows, (int Columns, int Rows) grid)
     {
         if (part is not { } current) return;
-        projections = new TerminalRecordings(terminal, profile, current, retainedRows, grid);
+        projections = new TerminalRecordings(terminal, profile, retainedRows, grid, RefuseActiveRecording);
+        try { projections.Start(current, checked(++interval)); }
+        catch { projections.ReleaseReceiveOnlyState(); throw; }
         ObserveFailure(current);
     }
 
@@ -49,7 +52,7 @@ internal sealed class RecordingLifecycle(TerminalOutput terminal, SemaphoreSlim 
     {
         StopFailedPart();
         if (projections is null) terminal.Receive(source, payload, token);
-        else projections.Receive(source, payload, token);
+        else projections.Receive(source, payload, active ? part : null, token);
         StopFailedPart();
     }
 
@@ -72,9 +75,24 @@ internal sealed class RecordingLifecycle(TerminalOutput terminal, SemaphoreSlim 
     // These ordered methods run within terminalOrder. File completion is independently owned.
     internal void CompleteReceive(bool keepInterval)
     {
-        if (projections is null) terminal.CompleteReceive();
-        else projections.CompleteReceive(keepInterval);
-        if (!keepInterval) Cutoff();
+        try
+        {
+            if (projections is null) terminal.CompleteReceive();
+            else projections.CompleteReceive(flushText: keepInterval && active);
+        }
+        finally
+        {
+            if (keepInterval)
+            {
+                StopFailedPart();
+                if (active) part?.FlushReceived();
+            }
+            else
+            {
+                try { Cutoff(); }
+                finally { ReleaseReceiveOnlyState(); }
+            }
+        }
     }
 
     internal Task<RecordingOperationResult> CompleteDisconnectAsync()
@@ -84,16 +102,14 @@ internal sealed class RecordingLifecycle(TerminalOutput terminal, SemaphoreSlim 
 
     internal void Cutoff()
     {
-        projections?.Cutoff();
-        active = false;
+        EndInterval();
         Volatile.Read(ref part)?.FinishAsync();
     }
 
     internal void MarkIncomplete(string message)
     {
-        active = false;
-        projections?.Abort();
         Volatile.Read(ref part)?.MarkIncomplete(message);
+        EndInterval();
     }
 
     internal void ReleaseReceiveOnlyState() => projections?.ReleaseReceiveOnlyState();
@@ -159,14 +175,13 @@ internal sealed class RecordingLifecycle(TerminalOutput terminal, SemaphoreSlim 
                 {
                     activation.ThrowIfCancellationRequested();
                     if (protectedClose || !canActivate()) throw new IOException("The terminal session has ended.");
-                    projections!.Cutoff();
-                    projections.Start(candidate);
+                    projections!.Start(candidate, checked(++interval));
                     Volatile.Write(ref part, candidate);
                     active = true;
                     ObserveFailure(candidate);
                     candidate = null;
                 }
-                if (macro?.Status.Holds.HasFlag(MacroHold.RecordingFailure) == true) macro.RecordingRecovered();
+                macro?.RecordingRecovered();
                 return new(Status, Changed: true);
             }
             finally { terminalOrder.Release(); }
@@ -236,9 +251,27 @@ internal sealed class RecordingLifecycle(TerminalOutput terminal, SemaphoreSlim 
 
     private void StopFailedPart()
     {
-        if (!active || part?.Failure is null) return;
+        if (part?.Failure is not null) EndInterval();
+    }
+
+    private void RefuseActiveRecording()
+    {
+        var failure = new ResourceLimitException();
+        if (!active) throw failure;
+        MarkIncomplete(failure.Message);
+    }
+
+    private void EndInterval()
+    {
+        if (!active || part is not { } current) return;
         active = false;
-        projections?.Abort();
+        int cutoff = checked(++interval);
+        try { projections?.End(cutoff, abort: current.Failure is not null); }
+        catch (ResourceLimitException error)
+        {
+            current.MarkIncomplete(error.Message);
+            projections?.End(cutoff, abort: true);
+        }
     }
 
     internal static async Task<(SessionRecording? Recording, int Part)> PrepareInitialAsync(

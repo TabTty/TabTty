@@ -11,34 +11,27 @@ internal sealed partial class MacroRun
     private async Task ExecuteProgramAsync()
     { await ExecuteBlockAsync(Program.Body).ConfigureAwait(false); }
 
-    private async Task ExecutePostConnectionAsync()
+    private async Task ExecutePostConnectionAsync(MacroProgram embedded)
     {
-        MacroProgram? embedded;
         lock (gate)
         {
-            embedded = pendingPostConnection;
-            if (embedded is null) return;
-            pendingPostConnection = null;
             executingPostConnection = true;
             position = new(1, 1);
         }
         Notify();
-        using (embedded)
+        var caller = Program;
+        var callerScopes = scopes;
+        programSnapshot = embedded;
+        scopes = [];
+        try
         {
-            var caller = Program;
-            var callerScopes = scopes;
-            programSnapshot = embedded;
-            scopes = [];
-            try
-            {
-                await ExecuteProgramAsync().ConfigureAwait(false);
-                await CheckpointAsync(position).ConfigureAwait(false);
-            }
-            finally
-            {
-                programSnapshot = caller;
-                scopes = callerScopes;
-            }
+            await ExecuteProgramAsync().ConfigureAwait(false);
+            await CheckpointAsync(position).ConfigureAwait(false);
+        }
+        finally
+        {
+            programSnapshot = caller;
+            scopes = callerScopes;
         }
         lock (gate)
         {
@@ -88,8 +81,7 @@ internal sealed partial class MacroRun
                     if (list is not null)
                     {
                         Index((long)index, list.Items.Count, at: assignment.Target.Position);
-                        list.Items[index] = value;
-                        list.Revision++;
+                        list.Replace(index, value);
                     }
                     else scope![name] = value;
                     break;

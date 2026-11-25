@@ -96,20 +96,18 @@ internal sealed partial class MainWindow
         var key = MacroTrustKey.Create(program.SourceDigest!, arguments, MacroTrustKey.ConstantsVersion(program.Constants));
         try
         {
-            MacroTrustDecision? remembered = MacroTrust.Read(key);
-            if (remembered == MacroTrustDecision.Block) return false;
             using var identity = WindowsIdentity.GetCurrent(TokenAccessLevels.Query);
             var token = AiPipe.ReadTokenIdentity(identity.AccessToken);
             bool elevated = token.Elevated ||
                 int.Parse(token.IntegritySid.AsSpan("S-1-16-".Length), CultureInfo.InvariantCulture) >= 0x3000;
-            if (remembered == MacroTrustDecision.Allow && !elevated) return true;
-
-            using var pending = MacroTrust.BeginReview(key);
+            var admission = MacroTrust.Evaluate(key, elevated);
+            using var pending = admission.Review;
+            if (pending is null) return admission.RunImmediately;
             // Bound escaped metadata, input/control copies and the active inspection page.
             long reviewUnits = program.FullPath.Length + arguments.Sum(value => (long)value.Length + 16) +
                 program.Constants.Sum(binding => (long)binding.Alias.Length + binding.File.FullPath.Length + 64);
             int largestText = program.Constants.Aggregate(program.Source.Length, (length, binding) => Math.Max(length, binding.File.Source.Length));
-            using var reviewMemory = program.ReserveReview(16_384 + 96 * (reviewUnits + Math.Min(largestText, MacroReviewPageUnits + 1)));
+            using var reviewMemory = program.ReserveReview(16_384 + 96 * (reviewUnits + Math.Min(largestText, ReadOnlyPreview.PageUnits + 1)));
             var review = new FormWindow(this, Text("MacroReview")) { Width = 600 };
             review.AddPinnedNotice(Text(elevated ? "MacroElevatedNotice" : "MacroTrustNotice"));
             review.AddField("MacroSourceFile", ReadOnlyMacroValue(PermissionDisplay.Literal(program.FullPath)));
@@ -139,20 +137,16 @@ internal sealed partial class MainWindow
                     InspectMacroText(review, "MacroInspectConstants", program.Constants[aliases.SelectedIndex].File.Source));
             }
             MacroTrustDecision? choice = null;
-            if (remembered is null)
-            {
-                if (!elevated) review.AddAction("MacroAlwaysAllow", () => Select(MacroTrustDecision.Allow));
+            if (pending.CanRemember(MacroTrustDecision.Allow))
+                review.AddAction("MacroAlwaysAllow", () => Select(MacroTrustDecision.Allow));
+            if (pending.CanRemember(MacroTrustDecision.Block))
                 review.AddAction("MacroAlwaysBlock", () => Select(MacroTrustDecision.Block));
-            }
             review.AddButtons(() => { }, acceptKey: "MacroRunOnce", cancelDefault: true);
             if (app.Modal(review.ShowDialog) != true || !CanAcceptTabs) return false;
-            if (pending.Expired || MacroTrust.Read(key) != remembered)
-            {
+            var result = pending.Confirm(choice);
+            if (result == MacroReviewResult.Expired)
                 ShowMacroLaunchError(Text("MacroTrustChanged"));
-                return false;
-            }
-            if (choice is { } decision) MacroTrust.Save(key, decision);
-            return choice != MacroTrustDecision.Block;
+            return result == MacroReviewResult.Run;
 
             void Select(MacroTrustDecision decision)
             {
@@ -167,42 +161,14 @@ internal sealed partial class MainWindow
         }
     }
 
-    private const int MacroReviewPageUnits = 8192;
-
     private void InspectMacroText(Window owner, string titleKey, string text)
     {
         var dialog = new FormWindow(owner, Text(titleKey)) { Width = 780 };
         var contents = ReadOnlyMacroValue("");
         contents.MaxHeight = Math.Max(180, SystemParameters.WorkArea.Height - 240);
-        dialog.AddField(titleKey, contents);
-        var position = ReadOnlyMacroValue("");
-        int page = 0;
-        int pages = Math.Max(1, (text.Length + MacroReviewPageUnits - 1) / MacroReviewPageUnits);
-        if (pages > 1)
-        {
-            dialog.AddField("PastePreviewPageLabel", position);
-            dialog.AddAction("PastePreviousPage", () => { if (page > 0) ShowPage(page - 1); });
-            dialog.AddAction("PasteNextPage", () => { if (page + 1 < pages) ShowPage(page + 1); });
-        }
-        ShowPage(0);
+        ReadOnlyPreview.Add(dialog, titleKey, contents, text);
         dialog.AddButtons(() => { }, acceptKey: "OK");
         app.Modal(dialog.ShowDialog);
-
-        void ShowPage(int index)
-        {
-            page = index;
-            int start = Boundary(page);
-            contents.Text = PermissionDisplay.PastePage(text.AsSpan(start, Boundary(page + 1) - start));
-            position.Text = string.Format(CultureInfo.CurrentCulture, Text("PastePreviewPage"), page + 1, pages);
-        }
-
-        int Boundary(int index)
-        {
-            int offset = index * MacroReviewPageUnits;
-            if (offset >= text.Length) return text.Length;
-            if (offset > 0 && (char.IsLowSurrogate(text[offset]) || text[offset] == '\n' && text[offset - 1] == '\r')) return offset - 1;
-            return offset;
-        }
     }
 
     private static TextBox ReadOnlyMacroValue(string value) => new()

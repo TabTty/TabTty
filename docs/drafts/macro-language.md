@@ -373,6 +373,14 @@ captures the list identity/revision, yields a read-only loop variable, and raise
 an alias/helper or element replacement. Mutating an element's separate nested
 list does not mutate the outer list's revision. Bounds and ownership are charged.
 
+The list owns its contents, revision and capacity. Add and Insert reuse allocated
+slots before requesting growth. With three elements in a four-slot integer list,
+either operation can fill the fourth slot with its existing 96-byte reservation.
+If growth exceeds the available memory budget, stop with `MemoryLimit` before
+changing contents, revision or reservation. The separate 65,536-element ceiling
+retains its catchable `PayloadLimit`. Rejected mutations keep the old revision.
+See [#193](https://github.com/TabTty/TabTty/issues/193).
+
 Builtin value types are `Instant`, `WaitPattern`, `WaitMatch`,
 `CaptureGroup`, `DialogResult`, `MacroError`, `ErrorCode`,
 `DialogButtons` and `DialogButton`. They expose only

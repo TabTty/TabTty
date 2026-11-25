@@ -888,7 +888,8 @@ internal sealed partial class SshSessionWire : ISessionWire
     {
         try
         {
-            await SendCreditAsync(count, stop.Token).ConfigureAwait(false);
+            await SubmitReceiveGrantsAsync(count, channelWindow, creditGate, type => ChannelMessage(type),
+                (packet, commit) => SendControlAsync(packet, stop.Token, commit)).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is IOException or SocketException or CryptographicException
             or OperationCanceledException or ObjectDisposedException)
@@ -902,18 +903,20 @@ internal sealed partial class SshSessionWire : ISessionWire
         }
     }
 
-    private async Task SendCreditAsync(int count, CancellationToken token)
+    private static async Task SubmitReceiveGrantsAsync(int count, SshChannelWindow window, object gate,
+        Func<byte, SshWriter> channelMessage, Func<ReadOnlyMemory<byte>, Action, Task> submit,
+        Func<bool>? canContinue = null)
     {
         while (count != 0)
         {
-            using var adjust = ChannelMessage(93);
+            using var adjust = channelMessage(93);
             adjust.Number((uint)count);
             int grant = count;
-            await SendControlAsync(adjust.Memory, token, () =>
+            await submit(adjust.Memory, () =>
             {
-                lock (creditGate) channelWindow.CommitGrant(grant);
+                lock (gate) window.CommitGrant(grant);
             }).ConfigureAwait(false);
-            lock (creditGate) count = channelWindow.CompleteGrant();
+            lock (gate) count = canContinue?.Invoke() == false ? 0 : window.CompleteGrant();
         }
     }
 

@@ -138,9 +138,30 @@ internal sealed class FileOperations
             AddResult, Report, token), transfer: true);
 
     public Task<string>? Retry(Func<TransferQuestion, ValueTask<TransferChoice>> confirm)
-        => !CanRetry ? null : Start(token => batch.RetryAsync(
-            (item, path, attributes) => AskAsync(new(TransferQuestionKind.Overwrite, path, item, attributes), confirm, token),
-            AddResult, Report, token), transfer: true);
+    {
+        if (!CanRetry) return null;
+        var previous = current.ToArray();
+        return Start(async token =>
+        {
+            var updated = new HashSet<string>(StringComparer.Ordinal);
+            try
+            {
+                await batch.RetryAsync(
+                    (item, path, attributes) => AskAsync(new(TransferQuestionKind.Overwrite, path, item, attributes), confirm, token),
+                    (path, key) =>
+                    {
+                        updated.Add(path);
+                        AddResult(path, key);
+                    }, Report, token);
+            }
+            finally
+            {
+                foreach (var entry in previous)
+                    if (entry.Reason == Omission) MarkOmitted();
+                    else if (IsUnresolved(entry.Reason) || !updated.Contains(entry.Path)) AddResult(entry.Path, entry.Reason);
+            }
+        }, transfer: true);
+    }
 
     public Task<string>? Create(TransferPath parent, string name) => Start(async token =>
     {

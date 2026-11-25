@@ -135,6 +135,20 @@ internal static partial class Program
             throw new InvalidOperationException("Copy did not obtain a fresh approval for a changed target.");
         io.CopyTargetVersions.Clear();
 
+        var b = new TransferItem(new TransferPath("b"), "b", "b", ControlledFiles.File);
+        var c = new TransferItem(new TransferPath("c"), "c", "c", ControlledFiles.File);
+        io.Staged.Clear();
+        io.FailStageFor = "b";
+        await ops.Copy([a, b, c], source, _ => ValueTask.FromResult(TransferChoice.Overwrite))!;
+        if (ops.Results.Count != 3 || !ops.CanRetry || !io.Staged.SequenceEqual(["a", "b", "c"]))
+            throw new InvalidOperationException("A partial batch did not retain its results and retryable item.");
+        io.Staged.Clear();
+        io.FailStageFor = null;
+        await ops.Retry(_ => ValueTask.FromResult(TransferChoice.Overwrite))!;
+        if (!io.Staged.SequenceEqual(["b"]) || ops.CanRetry || ops.Results.Count != 3 ||
+            ops.Results.Any(entry => entry.Reason != "TransferDone"))
+            throw new InvalidOperationException("Retry copied completed files or discarded their results.");
+
         io.LoseCommit = true;
         if (await ops.Copy([a], source, _ => ValueTask.FromResult(TransferChoice.Overwrite))! != "SftpUnknownOutcome" ||
             ops.CanRetry || !owner.NeedsRefresh || io.Removed.Any(path => path.EndsWith(".part")))
@@ -191,6 +205,8 @@ internal static partial class Program
         public bool LoseCommit;
         public bool FailRecheck;
         public bool FailManyCleanups;
+        public string? FailStageFor;
+        public List<string> Staged { get; } = [];
         public Queue<TransferAttributes> CopyTargetVersions = new();
         public int RecycleCalls;
         public bool IsOpen => true;
@@ -227,6 +243,8 @@ internal static partial class Program
         }
         public Task<bool> StageAsync(TransferPath source, TransferPath temporary, TransferAttributes snapshot, Action<long> progress, Action created, CancellationToken token)
         {
+            Staged.Add(Display(source));
+            if (FailStageFor is not null && source.Local == FailStageFor) throw new IOException("Synthetic staging failure.");
             if (FailManyCleanups && source.Local == "unknown") return Task.FromResult(false);
             created();
             if (FailManyCleanups && source.Local?.StartsWith("cleanup", StringComparison.Ordinal) == true)

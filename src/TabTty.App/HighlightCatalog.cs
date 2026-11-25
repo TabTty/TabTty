@@ -255,8 +255,8 @@ internal sealed class HighlightCatalog(App app, string pathName, Action<string, 
     private IReadOnlyList<HighlightSet> GetSets()
     {
         if (sets is not null) return sets;
-        if (!File.Exists(pathName)) return sets = [];
-        byte[] bytes = ReadBytes(pathName);
+        byte[]? bytes = JsonStoreRecovery.ReadBounded(pathName, "HighlightStoreInvalid", allowMissing: true);
+        if (bytes is null) return sets = [];
         sets = ReadSets(bytes, out originalDocument);
         original = bytes;
         return sets;
@@ -330,15 +330,7 @@ internal sealed class HighlightCatalog(App app, string pathName, Action<string, 
         Changed?.Invoke();
     }
 
-    private static byte[] ReadBytes(string path)
-    {
-        using var file = File.OpenRead(path);
-        if (file.Length is <= 0 or > 16 * 1024 * 1024) throw new InvalidDataException(Text("HighlightStoreInvalid"));
-        byte[] bytes = new byte[(int)file.Length];
-        file.ReadExactly(bytes);
-        if (file.ReadByte() >= 0) throw new InvalidDataException(Text("HighlightStoreInvalid"));
-        return bytes;
-    }
+    private static byte[] ReadBytes(string path) => JsonStoreRecovery.ReadBounded(path, "HighlightStoreInvalid")!;
 
     private static bool InvalidStore(Exception exception) => exception is IOException or InvalidDataException
         or JsonException or ArgumentException or FormatException or InvalidOperationException or UnauthorizedAccessException;

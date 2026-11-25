@@ -401,6 +401,17 @@ Only proved-uncommitted grants can be cancelled and their reservation reused.
 Uncertain issue retains effects/ownership until the connection outcome settles;
 never return credit twice or infer cancellation from a stopped observer.
 
+Terminal and SFTP share one procedure to build and submit each `WINDOW_ADJUST`,
+commit the grant through the writer, and collect the next eligible grant for
+that channel. The existing per-channel eligibility and failure rules govern
+the procedure. Verify that a four-byte queued grant adds no peer credit, its
+commitment permits exactly four bytes before local completion, and consumption
+while it is outstanding contributes once to the next grant. Closing SFTP with
+a grant queued preserves terminal reception. A terminal-side send failure
+follows the existing connection failure path.
+See [#180](https://github.com/TabTty/TabTty/issues/180) and
+[RFC 4254 §5.2](https://www.rfc-editor.org/rfc/rfc4254#section-5.2).
+
 Terminal credit eligibility follows Rust processing, separately accounted
 recording admission or its narrow failure, bounded generated-reply admission and
 payload allocation release. It awaits neither reply/WINDOW_ADJUST transmission,
@@ -571,6 +582,16 @@ affected session, preserving available output and marking capture incomplete.
 Report framing/parity errors explicitly; do not claim Raw includes bytes the
 driver never delivered. Reads continue independently of slow log storage.
 Cancellation requests do not release buffers until actual completion.
+
+Use the same COM request sizing and completion classification for ordinary
+input and paste. Compare bytes completed with the physical request, which is
+at most 1,024 bytes. A short physical write during paste confirms its prefix
+and takes the paste-failure disconnect path. Echo only complete confirmed
+units. Skip the remaining input, codec suffix and closing paste marker. A
+full 1,024-byte write followed by a full 976-byte write completes a 2,000-byte
+paste. TCP retains its ordinary progress on a positive short write.
+See [#185](https://github.com/TabTty/TabTty/issues/185) and
+[Win32 `WriteFile`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-writefile).
 
 ## Evidence and later verification
 

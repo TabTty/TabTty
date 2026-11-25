@@ -26,6 +26,7 @@ internal static partial class MacroContracts
         await MacroConstantsLoadTests.RunAsync();
         Console.WriteLine("PASS SharedConstantsLoadAndBudgets");
         await LanguageAsync();
+        ListMutationsOnlyReserveGrowth();
         Console.WriteLine("PASS MacroFixedTypesControlFlowListsAndInvariantValues");
         await RethrowAsync();
         Console.WriteLine("PASS MacroRethrowPreservesActiveError");
@@ -53,6 +54,28 @@ internal static partial class MacroContracts
         Console.WriteLine("PASS MacroPausedConnectionAndAlternateScreen");
         await PathAndSendPreflightAsync();
         Console.WriteLine("PASS MacroBaseDirectoryAndStrictSendPreflight");
+    }
+
+    private static void ListMutationsOnlyReserveGrowth()
+    {
+        foreach (int insertion in new[] { 1, 3 })
+        {
+            var list = new MacroList(MacroType.Long, [0L, 1L, 2L, 3L]);
+            list.RemoveAt(3);
+            var memory = new ResourceQuota(96);
+            using var reservation = memory.Reserve(list.ReservedBytes);
+            list.Insert(insertion, 4L, reservation.Resize);
+            Check(list.Items.Count == 4 && (long)list.Items[insertion] == 4L && list.Revision == 2 && memory.Used == 96,
+                "Adding to allocated capacity charged growth or missed the revision.");
+            try
+            {
+                list.Insert(4, 5L, reservation.Resize);
+                throw new InvalidOperationException("Growth bypassed the exhausted list budget.");
+            }
+            catch (ResourceLimitException) { }
+            Check(list.Items.Count == 4 && list.Revision == 2 && reservation.Size == 96,
+                "A rejected insertion changed list content, revision or memory.");
+        }
     }
 
     internal static async Task SshEarlyDataAsync(int port)
@@ -479,11 +502,22 @@ internal static partial class MacroContracts
         public TaskCompletionSource FinishConnect { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int passwordReads;
         public TerminalSession? Session;
-        public async Task<TerminalSession> ConnectAsync(MacroRun run, string profilePath, RecordingOverrides recording, CancellationToken token)
+        public async Task<MacroConnection> ConnectAsync(MacroRun run, string profilePath, RecordingOverrides recording, CancellationToken token)
         {
             if (OpenRealProfile)
-                return Session = await TerminalSession.ConnectMacroAsync(profilePath, run, token, Ssh,
-                    viewport: _ => Task.FromResult((120, 40)), overrides: recording);
+            {
+                var reviewed = await ConnectionProfile.LoadAsync(profilePath, token);
+                MacroProgram? program = run.CompilePostConnection(reviewed);
+                try
+                {
+                    var logging = reviewed.RecordsOutput ? RecordingSettings.Resolve(profilePath, reviewed,
+                        run.RecordingMacroName, overrides: recording) : null;
+                    Session = await TerminalSession.ConnectReviewedAsync(profilePath, reviewed, run, token, Ssh,
+                        viewport: _ => Task.FromResult((120, 40)), recording: logging);
+                    return new(Session, program);
+                }
+                catch { program?.Dispose(); throw; }
+            }
             ConnectedPath = profilePath;
             Recording = recording;
             var profile = ConnectionProfile.CreateTelnet("Macro", "localhost", transmitEncoding: TransmitEncoding);
@@ -493,7 +527,7 @@ internal static partial class MacroContracts
             ConnectionEntered.TrySetResult();
             if (WaitAtConnect) await FinishConnect.Task.WaitAsync(token);
             ConnectionFinished = true;
-            return Session;
+            return new(Session, null);
         }
         public Task<VaultSecret?> ReadPasswordAsync(CredentialReference reference, CancellationToken token)
         {

@@ -323,7 +323,7 @@ internal sealed class SessionTransport
                 {
                     token.ThrowIfCancellationRequested();
                     int requested = bytes.Length - definite;
-                    if (IsSerial) requested = Math.Min(requested, SerialSessionWire.WriteChunkBytes);
+                    if (IsSerial) requested = SerialSessionWire.WriteRequestLength(requested);
                     if (definite == 0) onFirstSubmission?.Invoke();
                     issued = true;
                     int count = await connection.WriteSomeAsync(bytes.Slice(definite, requested), token).ConfigureAwait(false);
@@ -332,8 +332,7 @@ internal sealed class SessionTransport
                     definite += count;
                     issued = false;
                     if (count == 0 && !IsSerial) throw new IOException("The terminal write made no progress.");
-                    if (IsSerial && count < requested)
-                        throw new IOException("COM write timed out before sending the entire chunk.");
+                    if (IsSerial) SerialSessionWire.RequireFullWrite(count, requested);
                 }
                 return new(TransportSubmission.Submitted, bytes.Length, null);
             }
@@ -396,12 +395,15 @@ internal sealed class SessionTransport
                     if (stop.IsCancellationRequested && boundary) break;
                     // Once part of a scalar or protocol unit was issued, complete only that unit.
                     int requested = boundary ? framed.Length - position : wireEnds[complete] - position;
+                    if (IsSerial) requested = SerialSessionWire.WriteRequestLength(requested);
                     attempted = true;
                     int count = await ConnectedWire.WriteSomeAsync(framed.AsMemory(position, requested), lifetime).ConfigureAwait(false);
-                    if (count <= 0 || count > requested) throw new IOException("The terminal write did not make valid progress.");
+                    if (count < 0 || count > requested || count == 0 && !IsSerial)
+                        throw new IOException("The terminal write did not make valid progress.");
                     position += count;
                     while (complete < wireEnds.Length && wireEnds[complete] <= position) complete++;
                     if (complete > 0) definite = encodedEnds[complete - 1];
+                    if (IsSerial) SerialSessionWire.RequireFullWrite(count, requested);
                 }
                 submitted = complete == 0 ? 0 : encodedEnds[complete - 1];
             }

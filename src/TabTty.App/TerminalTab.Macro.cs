@@ -94,13 +94,15 @@ internal sealed partial class TerminalTab
             label += "\n" + (state.Position.Line > 0
                 ? string.Format(Text("MacroLocation"), state.Position.Line, state.Position.Column, state.DisplayDetail ?? MacroErrorLabel(result))
                 : state.DisplayDetail ?? MacroErrorLabel(result));
-        if (state.Holds.HasFlag(MacroHold.HistoryLoss)) label += "\n" + Text("MacroHistoryLost");
-        if (state.Holds.HasFlag(MacroHold.RecordingFailure)) label += "\n" + Text("MacroRecordingFailed");
-        if (state.Holds.HasFlag(MacroHold.RecordingReady)) label += "\n" + Text("MacroRecordingReady");
+        bool active = state.Actions.HasFlag(MacroAction.Stop);
+        if (state.Holds.HasFlag(MacroHold.HistoryLoss)) label += "\n" + Text(active ? "MacroHistoryLost" : "MacroHistoryLossFact");
+        if (state.Holds.HasFlag(MacroHold.RecordingFailure)) label += "\n" + Text(active ? "MacroRecordingFailed" : "MacroRecordingFailureFact");
+        if (state.Holds.HasFlag(MacroHold.RecordingReady)) label += "\n" + Text(active ? "MacroRecordingReady" : "MacroRecordingRecoveryFact");
         if (state.PlaintextNotice) label += "\n" + Text("MacroPlaintextNotice");
         macroStatus.Text = label;
         foreach (var (key, button) in macroButtons) button.Content = Text(key);
         macroButtons["MacroPause"].IsEnabled = state.Actions.HasFlag(MacroAction.Pause);
+        ShowWhen("MacroResume", active);
         macroButtons["MacroResume"].IsEnabled = state.Actions.HasFlag(MacroAction.Resume);
         macroButtons["MacroStop"].IsEnabled = state.Actions.HasFlag(MacroAction.Stop);
         ShowWhen("MacroRetry", state.Holds.HasFlag(MacroHold.RecordingFailure) && state.Actions.HasFlag(MacroAction.Stop));
@@ -114,13 +116,22 @@ internal sealed partial class TerminalTab
     private async Task RetryMacroRecordingAsync()
     {
         if (session is not { } active || Macro is not { } run) return;
-        try { await run.RetryRecordingAsync(() => active.RetryRecordingAsync(stop.Token)); }
+        try
+        {
+            int recoveringPart = active.RecordingStatus.Part;
+            await run.RetryRecordingAsync(() => active.RetryRecordingAsync(stop.Token));
+            ShowRecordingRecovery(active, recoveringPart);
+        }
         catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or
             ArgumentException or InvalidDataException or NotSupportedException or OperationCanceledException)
         {
             if (active.RecordingStartFailure is { } failure) SetStatus("Failed", LogStartError(failure));
-            else SetStatus(statusKey, Text("MacroRecordingFailed"));
+            else if (run.Status.Actions.HasFlag(MacroAction.Stop))
+            {
+                SetStatus(statusKey, Text("MacroRecordingFailed"));
+                displayedRecordingFailure = active.RecordingStatus.Part;
+            }
         }
     }
 
@@ -143,9 +154,9 @@ internal sealed partial class TerminalTab
 
     private sealed class MacroHost(TerminalTab tab) : IMacroHost
     {
-        public async Task<TerminalSession> ConnectAsync(MacroRun run, string profilePath, RecordingOverrides recording, CancellationToken token)
+        public async Task<MacroConnection> ConnectAsync(MacroRun run, string profilePath, RecordingOverrides recording, CancellationToken token)
         {
-            var ready = new TaskCompletionSource<TerminalSession>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var ready = new TaskCompletionSource<MacroConnection>(TaskCreationOptions.RunContinuationsAsynchronously);
             await tab.Dispatcher.InvokeAsync(() =>
             {
                 if (tab.MacroWindow is not { IsClosing: false }) throw new MacroError(MacroErrorCode.UserCancelled);

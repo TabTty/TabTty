@@ -26,18 +26,16 @@ internal sealed class TerminalHighlightView
     private bool activateOnNextSnapshot;
     private (int First, int End) lastViewport;
 
-    public event Action<bool>? Suspended;
-
-    public TerminalHighlightView(TerminalSurface surface, TerminalHighlightState? owner = null)
+    public TerminalHighlightView(TerminalSurface surface, TerminalHighlightState state)
     {
         this.surface = surface;
-        state = owner ?? new TerminalHighlightState();
+        this.state = state;
         state.Changed += RulesChanged;
         timer = new DispatcherTimer(DispatcherPriority.Background, surface.Dispatcher)
         {
             Interval = TimeSpan.FromMilliseconds(100),
         };
-        RulesChanged(false);
+        RulesChanged(HighlightChange.Rules);
         timer.Tick += async (_, _) => await UpdateAsync();
         surface.ViewportChanged += ViewportChanged;
         surface.PresentationChanged += () =>
@@ -55,10 +53,6 @@ internal sealed class TerminalHighlightView
         };
     }
 
-    public void SetRules(HighlightSet? updated) => state.SetRules(updated);
-
-    public void Resume() => state.Resume();
-
     public void Detach()
     {
         state.Changed -= RulesChanged;
@@ -66,10 +60,10 @@ internal sealed class TerminalHighlightView
         work?.Cancel();
     }
 
-    private void RulesChanged(bool preserveKnownSpans)
+    private void RulesChanged(HighlightChange change)
     {
         rules = state.Matcher;
-        if (preserveKnownSpans)
+        if (change == HighlightChange.Suspension)
         {
             cacheReusable = false;
             work?.Cancel();
@@ -77,12 +71,17 @@ internal sealed class TerminalHighlightView
             Publish();
             Queue(immediately: true);
         }
+        else if (change == HighlightChange.Styles)
+        {
+            work?.Cancel();
+            Publish();
+            if (work is not null) Queue(immediately: true);
+        }
         else
         {
             cacheReusable = true;
             Reset();
         }
-        Suspended?.Invoke(state.Suspended.Count > 0);
     }
 
     public void SetSnapshot(TerminalSnapshot updated)
@@ -250,7 +249,7 @@ internal sealed class TerminalHighlightView
                     int end = offset + view[row].Length;
                     var ranges = line.Spans.Where(span => !state.Suspended.Contains(span.RuleId) && span.Start < end && span.End > offset)
                         .Select(span => span with { Start = Math.Max(0, span.Start - offset),
-                            End = Math.Min(end, span.End) - offset }).ToArray();
+                            End = Math.Min(end, span.End) - offset, Style = state.Style(span.RuleId) }).ToArray();
                     if (ranges.Length != 0) overlays.Add(row, ranges);
                     offset = end;
                 }

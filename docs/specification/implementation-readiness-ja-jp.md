@@ -1,5 +1,19 @@
 # TabTty 初期実装の準備状況
 
+## 2026-11-25 のリファクタリング
+
+3つの親 Issue に、実装24件と調査1件がある。各実装 Issue に対象の操作、維持する挙動、受け入れ条件がそろっている。端末と永続化の計画は #178 から始める。#187 は #186 が用意する入力境界を使うため、#186 を先に実装する。それ以外の子 Issue は各計画内で独立して着手できる。
+
+| 計画 | 関連する仕様と結果 |
+| --- | --- |
+| [#177 端末、トランスポート、記録、永続化](https://github.com/TabTty/TabTty/issues/177) | [ローカルストアと利用履歴](persistence-and-windows-ja-jp.md)、[端末の観測](native-terminal-core-ja-jp.md)、[SSH クレジットとシリアルの完了判定](transports-and-authentication-ja-jp.md)、[ファイル転送](file-transfer-ja-jp.md)、[セッション入力と記録](session-and-recording-ja-jp.md) |
+| [#188 マクロ設計の追加対応](https://github.com/TabTty/TabTty/issues/188) | [マクロの動作](../drafts/macro-specification.md)、[リストの変更](../drafts/macro-language-ja-jp.md)、[エディターの受け入れ条件](../drafts/macro-validation.md#editor-acceptance)。[#197 の補完計測](../drafts/macro-completion-latency.md)では、分析回数を減らす最適化の見送りを推奨した。 |
+| [#198 WPF のリファクタリング](https://github.com/TabTty/TabTty/issues/198) | [プロファイル、編集画面、タブの所属](persistence-and-windows-ja-jp.md)、[グループの解除](broadcast-and-split-views-ja-jp.md)、[ファイル転送の実行条件](file-transfer-ja-jp.md)、[強調表示と検索](resources-and-validation-ja-jp.md) |
+
+実動作の受け入れ検証は実装後に行う。#186 は貼り付けのメモリ使用量のピーク、#187 は短い入力の割り当て量、#204 は検索の CPU 時間と応答時間を、それぞれ同等の条件で変更前後に測る。#194 は英語と日本語で実際のスクリーンリーダーの読み上げを確認する。
+
+## 以前の決定と計画
+
 2026-11-18 の[コードベース全体の設計検討](../drafts/whole-codebase-architecture-deepening.md)で、6候補すべて（記録の終了処理、端末のトランスポート、検証付きファイル確定、保管庫管理操作、共通のSSHチャネル、書記素処理の責任分担）を確定した。ユーザーは候補6の改訂した契約全体と39項目の将来の検証計画を Q23 で承認し、設計検討を完了した。貼り付けは当初の原文共有・既存入力予算による計上を採用し、設定可能な本文上限の既定 512 MiB と、CR/LF または本文が 1 KiB 超の場合の確認を維持する。後続の独立予算案 Q28～Q29 は置き換わる。6候補の合意事項は英語・日本語の仕様へ集約済みであり、別途依頼される実装に進める状態である。検証計画は今後必要な証拠を定めるもので、実行済みの試験ではない。この検討では文書の確認のみを行い、新たな実行時検証や実装・試作の許可は含まない。
 
 2026-11-18 にユーザーが6候補のチケット分割と発行を承認した。[コードベース全体の実装計画 #40](https://github.com/TabTty/TabTty/issues/40) と子Issue 27件（実装26件・所有責任をまたぐ統合検証1件）を公開済み。本文・ラベル・親子関係27件・ブロック関係34件を読み戻して確認した。合意済みの検証134項目を各チケットへ割り当てている。発行によって実装・試作を開始するものではなく、開始には別途の明示的な依頼が必要。
