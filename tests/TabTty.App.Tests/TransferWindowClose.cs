@@ -214,6 +214,9 @@ internal static partial class Program
                 !ReferenceEquals(retry.Parent, cancel.Parent) || Math.Abs(cancel.TranslatePoint(new Point(cancel.ActualWidth, 0), layout).X - layout.ActualWidth) > 1 ||
                 buttons.Any(button => Equals(button.Content, App.Text("TransferRename")) || Equals(button.Content, App.Text("TransferDelete"))))
                 throw new InvalidOperationException("The transfer controls did not use the center arrows, right-aligned footer, and row menus.");
+            if (Math.Abs(upload.ActualWidth - upload.ActualHeight) > 1 ||
+                Math.Abs(download.ActualWidth - download.ActualHeight) > 1)
+                throw new InvalidOperationException("The transfer direction buttons were not square.");
             while (!create[1].IsEnabled) await Task.Delay(10, deadline.Token);
             editors[0].Text = directory;
             Press(editors[0], Key.Enter);

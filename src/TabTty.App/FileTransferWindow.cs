@@ -317,9 +317,12 @@ internal sealed class FileTransferWindow : Window
 
     private Button DirectionButton(string key, string glyph, Action action)
     {
+        const double size = 36;
         var button = Button(key, action, track: false);
         button.Content = glyph;
-        button.MinWidth = 36;
+        button.MinWidth = size;
+        button.Width = size;
+        button.Height = size;
         button.Margin = new Thickness(2, 4, 2, 4);
         LabelDirectionButton(button, key);
         return button;

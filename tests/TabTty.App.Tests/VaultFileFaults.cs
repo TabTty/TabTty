@@ -183,6 +183,30 @@ internal static partial class Program
         draftName.Text = "Unsaved draft";
         try
         {
+            var target = new TerminalTab(saved);
+            target.ResolveTabHost(() => host);
+            var read = app.Vault.ReadSavedPasswordAsync(host, new CredentialReference(original, "password"), token, tab: target);
+            var targetedUnlock = await FindDialogAsync("UnlockVault", form: true);
+            try
+            {
+                targetedUnlock.UpdateLayout();
+                var body = (FrameworkElement)targetedUnlock.Content;
+                var labels = FindControls<TextBlock>(targetedUnlock).ToArray();
+                var tabLabel = labels.Single(label => label.Text == string.Format(App.Text("DecisionTargetTab"), target.TabCaption));
+                var pathLabel = labels.Single(label => label.Text == $"{App.Text("VaultPath")}:\n{ProfileLocation.Normalize(vaultPath)}");
+                var masterLabel = labels.Single(label => label.Text == App.Text("MasterPassword"));
+                double offset = pathLabel.TranslatePoint(new Point(), body).X - tabLabel.TranslatePoint(new Point(), body).X;
+                double gap = masterLabel.TranslatePoint(new Point(), body).Y -
+                    pathLabel.TranslatePoint(new Point(0, pathLabel.ActualHeight), body).Y;
+                if (Math.Abs(offset) > 1 || gap < 16)
+                    throw new InvalidOperationException($"Vault unlock layout: path offset {offset:F1} DIP, password label gap {gap:F1} DIP.");
+            }
+            finally
+            {
+                targetedUnlock.Close();
+                using var unused = await read.WaitAsync(token);
+            }
+
             Task management = host.Dispatcher.InvokeAsync(() => app.Vault.ManageAsync(host)).Task.Unwrap();
             var unlock = await FindDialogAsync("UnlockVault", form: true);
             string expectedPath = $"{App.Text("VaultPath")}:\n{ProfileLocation.Normalize(vaultPath)}";

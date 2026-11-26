@@ -17,7 +17,7 @@ ready for separately authorized implementation.
 Use the same compact row height as connection profile and vault management in
 both panes.
 
-Place the upload `＞` and download `＜` buttons between the two file lists.
+Place square upload `＞` and download `＜` buttons between the two file lists.
 Give both buttons localized accessible names and tooltips. Align **Retry failed
 items** and **Cancel** at the right edge below the results.
 

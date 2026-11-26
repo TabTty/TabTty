@@ -1097,6 +1097,8 @@ In the vault unlock prompt, show the localized **Credential vault path:**
 label above the master password field. Start the full path of the file being
 unlocked on the next line. Wrap long paths within the available width and
 make both the label and the full path available to assistive technology.
+Align the path text with the target-tab notice when shown. Leave vertical
+space between the end of the path and the master password label.
 Verify the layout in English and Japanese, including a long path.
 
 For Restore and Archive, the main menu, management tab and standalone editor
