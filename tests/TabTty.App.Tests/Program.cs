@@ -9,6 +9,7 @@ using System.Windows.Automation.Provider;
 using System.Windows.Automation.Text;
 using System.Windows.Automation.Peers;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Input;
@@ -1673,6 +1674,16 @@ internal static partial class Program
         finally { label.Text = original; }
     }
 
+    private static void CheckMenuDidNotAnimate(ContextMenu menu)
+    {
+        menu.Dispatcher.Invoke(() => { }, DispatcherPriority.Normal);
+        var popup = menu.Parent as Popup;
+        var slide = (menu.Template?.FindName("Border", menu) as Border)?.RenderTransform as TranslateTransform;
+        if (popup?.PopupAnimation != PopupAnimation.None || slide is not null && (slide.HasAnimatedProperties || slide.Y != 0))
+            throw new InvalidOperationException($"The context menu still animated. Parent: {menu.Parent?.GetType().Name}, " +
+                $"popup: {popup?.PopupAnimation}, slide: {slide?.HasAnimatedProperties}, offset: {slide?.Y}.");
+    }
+
     private static void CheckTabStripNavigation(Window window, TabControl tabs)
     {
         var root = (FrameworkElement)window.Content;
@@ -1707,6 +1718,7 @@ internal static partial class Program
                     new[] { App.Text("Settings"), App.Text("HighlightSets"), App.Text("ProfileCatalog") }) ||
                     !entries[0].IsChecked || entries.Skip(1).Any(item => item.IsChecked))
                     throw new InvalidOperationException("The tab list did not include every tab in order and mark the active tab.");
+                CheckMenuDidNotAnimate(menu);
                 entries[^1].RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent, entries[^1]));
             }
             finally { menu.IsOpen = false; }

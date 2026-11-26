@@ -164,7 +164,7 @@ passphrases, decrypted ASN.1, or OpenSSL error data containing secrets.
 | --- | --- | --- |
 | Master interaction | Input, normalized UTF-8, confirmation copies | Derivation completed, cancelled, or failed, after actual native use ends |
 | KDF/wrapping operation | Argon memory, KEK, provisional root | Actual completion; only an authenticated root can transfer to a surviving authorized vault owner |
-| Selected vault owner | Root and authenticated encrypted snapshot shared by connections, management tabs, and the file's editor | Full app exit, end of selection without an open editor, or completed archive, after dependent work settles |
+| Selected vault owner | Root and authenticated encrypted snapshot shared by connections, management tabs, and the file's editor | Manual lock, full app exit, end of selection without an open editor, or completed archive, after dependent work settles |
 | Editor for another vault | Root and authenticated encrypted snapshot of the opened file | Editor closure unless that file has become selected, or completed archive, after dependent work settles |
 | Payload operation | Derived key and full provisional plaintext | Tag/schema failure or selected extraction/save completion |
 | Authentication owner | Selected credential and native private key | Authentication success/failure/cancel/disconnect |
@@ -181,6 +181,13 @@ stale can be freshly unlocked after its owner is released and the file reopened.
 This does not clear an independent partial/unresolved publication restriction
 from the application's own save. Reconciliation below concerns that save and
 does not clear independent external-stale restrictions.
+
+Manual lock clears the selected vault's owned root through the same disposal
+path used on exit. External-stale restrictions survive disposal. An unresolved
+publication that still needs the unlocked owner must be reconciled before
+manual lock. The 2026-11-26 guidance check confirmed the existing owned-buffer
+cleanup approach. [Microsoft ZeroMemory](https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.cryptographicoperations.zeromemory?view=net-10.0),
+[OWASP handling secrets in memory](https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html#25-handling-secrets-in-memory)
 
 A selection change transfers roles between owners after affected operations
 settle. Promote an already unlocked, usable editor owner when its file becomes

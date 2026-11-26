@@ -100,13 +100,17 @@ internal static partial class Program
                 VaultContainer.MinimumMasterLength, VaultContainer.MaximumMasterLength);
             string expectedPrompt = empty ? $"{App.Text("InitializeEmptyVaultDescription")}\n\n{caption}" : caption;
             var fields = FindControls<PasswordBox>(prompt).ToArray();
-            bool showsPath = FindControls<TextBox>(prompt).Any(field => field.Text == ProfileLocation.Normalize(path));
-            bool showsExpectedPrompt = FindControls<TextBlock>(prompt).Any(label => label.Text == expectedPrompt);
-            if (fields.Length != 2 || showsPath != empty || !showsExpectedPrompt)
+            string expectedPath = string.Format(App.Text("VaultPathDisplay"), ProfileLocation.Normalize(path));
+            var labels = FindControls<TextBlock>(prompt).ToArray();
+            bool showsPathLabel = labels.Any(label => label.Text == expectedPath);
+            bool showsExpectedPrompt = labels.Any(label => label.Text == expectedPrompt);
+            bool hasTextBox = FindControls<TextBox>(prompt).Any();
+            if (fields.Length != 2 || showsPathLabel != empty || !showsExpectedPrompt || hasTextBox)
             {
                 prompt.Close();
                 throw new InvalidOperationException(
-                    $"Vault setup fields: {fields.Length} passwords, target path shown: {showsPath}, expected prompt shown: {showsExpectedPrompt}.");
+                    $"Vault setup fields: {fields.Length} passwords, path label: {showsPathLabel}, " +
+                    $"expected prompt: {showsExpectedPrompt}, text box: {hasTextBox}.");
             }
             foreach (var field in fields) field.Password = "fixture password for vault first use";
             var save = FindControls<Button>(prompt).Single(button => Equals(button.Content, App.Text("Save")));
@@ -123,14 +127,11 @@ internal static partial class Program
                 (!empty && !FindControls<Button>(host).Any(button => Equals(button.Content, App.Text("AddVaultPassword")))))
                 throw new InvalidOperationException("First use did not publish the new vault.");
 
+            if (!app.Vault.IsSelectedUnlocked)
+                throw new InvalidOperationException("Vault initialization did not retain the shared unlock.");
             await app.Vault.UnlockFromMenuAsync(host).WaitAsync(deadline.Token);
-            await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.ApplicationIdle);
-            if (!FindControls<TextBlock>(host).Any(label => label.IsVisible && label.Text.Contains(App.Text("VaultUnlocked"))))
-            {
-                string states = string.Join(" | ", FindControls<TextBlock>(host).Where(label => label.ToolTip is string)
-                    .Select(label => $"{label.Text} ({label.IsVisible})"));
-                throw new InvalidOperationException($"Explicit vault unlock left no visible state (empty={empty}): {states}.");
-            }
+            if (FindControls<TextBlock>(host).Any(label => label.IsVisible && label.Text == App.Text("VaultUnlocked")))
+                throw new InvalidOperationException("An already unlocked vault repeated the unlock message.");
 
             Task choose = host.Dispatcher.InvokeAsync(ChooseSavedPassword).Task.Unwrap();
             (await FindDialogAsync("SelectSavedPassword")).Close();
@@ -182,12 +183,48 @@ internal static partial class Program
         {
             Task management = host.Dispatcher.InvokeAsync(() => app.Vault.ManageAsync(host)).Task.Unwrap();
             var unlock = await FindDialogAsync("UnlockVault", form: true);
+            string expectedPath = string.Format(App.Text("VaultPathDisplay"), ProfileLocation.Normalize(vaultPath));
+            if (!FindControls<TextBlock>(unlock).Any(label => label.Text == expectedPath) ||
+                FindControls<TextBox>(unlock).Any())
+            {
+                unlock.Close();
+                throw new InvalidOperationException("Vault unlock must display the vault path as a label.");
+            }
             FindControls<PasswordBox>(unlock).Single().Password = master;
             Click(unlock, "UnlockVault");
             await management.WaitAsync(token);
             ListView? list;
             while ((list = FindControls<ListView>(host).FirstOrDefault(control => control.Items.OfType<VaultEntryInfo>().Any())) is null)
                 await Task.Delay(15, token);
+
+            byte[] beforeLock = File.ReadAllBytes(vaultPath);
+            var peer = app.CreateWindow(restorePlacement: false);
+            peer.ShowActivated = false;
+            peer.Show();
+            try
+            {
+                var hostCommand = VaultLockCommand(host);
+                var peerCommand = VaultLockCommand(peer);
+                if (!Equals(hostCommand.Header, App.Text("LockVault")) || !Equals(peerCommand.Header, App.Text("LockVault")))
+                    throw new InvalidOperationException("The unlocked vault did not show the lock command across windows.");
+
+                peerCommand.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                if (app.Vault.IsSelectedUnlocked || list.Items.Count != 0 ||
+                    !Equals(hostCommand.Header, App.Text("UnlockVault")) || !Equals(peerCommand.Header, App.Text("UnlockVault")) ||
+                    !beforeLock.AsSpan().SequenceEqual(File.ReadAllBytes(vaultPath)))
+                    throw new InvalidOperationException("Manual lock did not clear the shared unlock while preserving the vault file.");
+
+                hostCommand.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                unlock = await FindDialogAsync("UnlockVault", form: true);
+                FindControls<PasswordBox>(unlock).Single().Password = master;
+                Click(unlock, "UnlockVault");
+                await WaitIdleAsync();
+                if (!Equals(peerCommand.Header, App.Text("LockVault")) ||
+                    list.Items.OfType<VaultEntryInfo>().Single().Name != original ||
+                    !FindControls<TextBlock>(host).Any(label => label.IsVisible && label.Text.Contains(App.Text("VaultUnlocked"))))
+                    throw new InvalidOperationException("Unlocking again did not restore the shared entries and lock command.");
+            }
+            finally { peer.Close(); }
 
             var (edit, confirm) = await OpenRenameAsync(renamed);
             var warning = FindControls<TextBlock>(confirm).Single(block => block.Text.Contains(original, StringComparison.Ordinal));
@@ -354,6 +391,14 @@ internal static partial class Program
         static void Click(Window window, string key) => FindControls<Button>(window)
             .Single(button => Equals(button.Content, App.Text(key)))
             .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
+        static MenuItem VaultLockCommand(MainWindow window)
+        {
+            var tools = ((Menu)window.FindName("mainMenu")).Items.OfType<MenuItem>()
+                .Single(item => Equals(item.Header, App.Text("ToolsMenu")));
+            var vault = tools.Items.OfType<MenuItem>().Single(item => Equals(item.Header, App.Text("Vault")));
+            return (MenuItem)vault.Items[0];
+        }
 
         async Task WaitIdleAsync()
         {

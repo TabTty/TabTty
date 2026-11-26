@@ -194,7 +194,7 @@ internal sealed class FileTransferWindow : Window
 
         pane.List.SelectionMode = SelectionMode.Extended;
         pane.List.AllowDrop = true;
-        var view = new GridView();
+        var view = new CompactGridView();
         AddColumn("TransferName", 220, nameof(Row.Name));
         AddColumn("TransferSize", 85, nameof(Row.Size));
         AddColumn("TransferModified", 145, nameof(Row.Modified));
@@ -296,8 +296,10 @@ internal sealed class FileTransferWindow : Window
             _ = BrowseAsync(pane, _ => Task.FromResult(item.Path));
     }
 
-    private static Row? RowAt(Pane pane, object origin) => origin is DependencyObject element &&
-        ItemsControl.ContainerFromElement(pane.List, element) is ListViewItem row ? row.Content as Row : null;
+    private static ListViewItem? RowContainerAt(Pane pane, object origin) => origin is DependencyObject element
+        ? ItemsControl.ContainerFromElement(pane.List, element) as ListViewItem : null;
+
+    private static Row? RowAt(Pane pane, object origin) => RowContainerAt(pane, origin)?.Content as Row;
 
     private static TransferItem[] Selected(Pane pane) => pane.List.SelectedItems.Cast<Row>().Select(row => row.Item).ToArray();
 
@@ -334,8 +336,9 @@ internal sealed class FileTransferWindow : Window
             ClearDropPreview();
             return;
         }
-        Row? row = RowAt(pane, args.OriginalSource);
-        TransferPath target = row?.Item.Attributes.Kind == TransferKind.Directory ? row.Item.Path : pane.Directory;
+        ListViewItem? container = RowContainerAt(pane, args.OriginalSource);
+        var folder = container?.Content is Row { Item.Attributes.Kind: TransferKind.Directory } row ? row.Item : null;
+        TransferPath target = folder?.Path ?? pane.Directory;
         if (commit && (drag.PreviewPane != pane || drag.PreviewRevision != pane.Revision || !ReferenceEquals(drag.PreviewTarget, target)))
         {
             ClearDropPreview();
@@ -348,7 +351,7 @@ internal sealed class FileTransferWindow : Window
             drag.PreviewTarget = target;
             drag.PreviewPane = pane;
             drag.PreviewRevision = pane.Revision;
-            Highlight(args.OriginalSource is DependencyObject element ? ItemsControl.ContainerFromElement(pane.List, element) as ListViewItem : null);
+            Highlight(folder is null ? null : container);
             SetOperationStatus(Format("TransferDropTarget", files!.Display(target)));
         }
     }

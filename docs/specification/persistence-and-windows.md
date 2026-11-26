@@ -1061,6 +1061,13 @@ open at the same path and refresh its state.
 
 ### Vault selection and operation hosting
 
+The vault menu shows **Unlock vault** while the selected vault is locked and
+**Relock vault** while it is unlocked. Manual lock ends the shared unlock in all
+main windows and the selected file's editor. The next use of its saved
+credentials requires the master password again. Established sessions continue.
+While dependent vault work is active, report Busy and let the user retry after
+it finishes.
+
 For Restore and Archive, the main menu, management tab and standalone editor
 each call the same file-bound operation for the requested action. The menu
 and management tab target the selected vault at invocation. A standalone

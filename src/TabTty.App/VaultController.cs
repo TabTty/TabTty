@@ -21,6 +21,7 @@ internal sealed class VaultController(App app) : IDisposable
     private VaultFileController? selected;
     private (VaultFileController Previous, VaultFileController Next)? selectionTransition;
     internal long SelectionEpoch { get; private set; }
+    internal bool IsSelectedUnlocked => selected?.Unlocked is not null;
     internal bool HasActiveOperations => selectionTransition is not null || files.Values.Any(file => file.HasActiveWork);
     internal bool IsInitializingFor(Window host) => files.Values.Any(file => file.IsInitializingFor(host));
     internal event Action? ManagementChanged;
@@ -46,6 +47,11 @@ internal sealed class VaultController(App app) : IDisposable
     internal bool MustRestart(VaultFileController file) =>
         (file.IsStale && IsSelected(file)) || staleSelectedPaths.Contains(file.FilePath) ||
         staleSelectedPaths.Any(path => ProfileLocation.SameVaultOpeningPath(path, file.FilePath));
+
+    internal void RememberStalePath(VaultFileController file)
+    {
+        if (file.IsStale) staleSelectedPaths.Add(ProfileLocation.VaultOpeningPath(file.FilePath));
+    }
 
     private void ReleaseIfUnused(VaultFileController file)
     {
@@ -98,7 +104,7 @@ internal sealed class VaultController(App app) : IDisposable
             SelectionEpoch++;
             prior.ChangeRole();
             selected.ChangeRole();
-            if (prior.IsStale) staleSelectedPaths.Add(ProfileLocation.VaultOpeningPath(prior.FilePath));
+            RememberStalePath(prior);
             ReleaseIfUnused(prior);
         }
         NotifyManagementChanged();
@@ -155,6 +161,7 @@ internal sealed class VaultController(App app) : IDisposable
     }
 
     public Task UnlockFromMenuAsync(MainWindow owner) => Selected.UnlockFromMenuAsync(owner);
+    public Task LockFromMenuAsync(MainWindow owner) => Selected.LockFromMenuAsync(owner);
     public Task ManageAsync(MainWindow owner) => Selected.ManageAsync(owner);
     public Task RestoreFromMenuAsync(MainWindow owner) => Selected.RestoreAsync(owner);
     public Task ArchiveAsync(MainWindow owner) => Selected.ArchiveAsync(owner);

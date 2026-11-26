@@ -225,9 +225,10 @@ internal static partial class Program
             string dropSource = Directory.CreateDirectory(Path.Combine(directory, "drop-source")).FullName;
             Directory.CreateDirectory(Path.Combine(dropSource, "inbox"));
             await File.WriteAllTextAsync(Path.Combine(dropSource, "note.txt"), "SFTP drop fixture", deadline.Token);
+            await File.WriteAllTextAsync(Path.Combine(dropSource, "other.txt"), "SFTP drop onto a file", deadline.Token);
             editors[0].Text = dropSource;
             Press(editors[0], Key.Enter);
-            while (!localList.IsEnabled || localList.Items.Count != 2) await Task.Delay(10, deadline.Token);
+            while (!localList.IsEnabled || localList.Items.Count != 3) await Task.Delay(10, deadline.Token);
             var remoteList = FindControls<ListView>(transfer).Last();
             localList.SelectedIndex = 0; // Folders precede files in both panes.
             upload.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -235,6 +236,9 @@ internal static partial class Program
                 await Task.Delay(10, deadline.Token);
             transfer.UpdateLayout();
             var folderRow = (ListViewItem)remoteList.ItemContainerGenerator.ContainerFromIndex(0);
+            double folderHeight = folderRow.ActualHeight;
+            if (folderRow.MinHeight != 24)
+                throw new InvalidOperationException("File transfer did not use the compact management row height.");
             localList.SelectedIndex = 1;
             var drag = StartFileDrag();
             long revision = transfer.OperationRevision;
@@ -243,6 +247,7 @@ internal static partial class Program
                 throw new InvalidOperationException("A drop on a folder absent from the last preview was accepted.");
             drag = StartFileDrag();
             if (RouteDrag(folderRow, DragDrop.DragOverEvent, drag) != DragDropEffects.Copy ||
+                folderRow.ReadLocalValue(Control.BackgroundProperty) == DependencyProperty.UnsetValue ||
                 !FindControls<TextBlock>(transfer).Any(text => text.Text.Contains("/home/inbox", StringComparison.Ordinal)) ||
                 RouteDrag(folderRow, DragDrop.DropEvent, drag) != DragDropEffects.Copy || transfer.OperationRevision == revision)
                 throw new InvalidOperationException("The folder shown by the drop preview did not accept the source file.");
@@ -255,6 +260,22 @@ internal static partial class Program
             if (remoteList.Items.Count != 1 || !Equals(remoteList.SelectedValue, "note.txt"))
                 throw new InvalidOperationException("The SFTP server did not list note.txt in the previewed folder.");
             Console.WriteLine("PASS SftpDropRequiresPreviewedFolder");
+
+            transfer.UpdateLayout();
+            var fileRow = (ListViewItem)remoteList.ItemContainerGenerator.ContainerFromIndex(0);
+            if (fileRow.ActualHeight != folderHeight)
+                throw new InvalidOperationException("Files and folders have different transfer row heights.");
+            localList.SelectedIndex = 2;
+            drag = StartFileDrag();
+            if (RouteDrag(fileRow, DragDrop.DragOverEvent, drag) != DragDropEffects.Copy ||
+                fileRow.ReadLocalValue(Control.BackgroundProperty) != DependencyProperty.UnsetValue ||
+                RouteDrag(fileRow, DragDrop.DropEvent, drag) != DragDropEffects.Copy)
+                throw new InvalidOperationException("Dropping on a file must target the displayed folder without highlighting the file.");
+            while (!remoteList.IsEnabled || remoteList.Items.Count != 2 || !create[1].IsEnabled)
+                await Task.Delay(10, deadline.Token);
+            remoteList.SelectedIndex = 1;
+            if (!Equals(remoteList.SelectedValue, "other.txt"))
+                throw new InvalidOperationException("Dropping on the file did not copy into its displayed folder.");
 
             IDataObject StartFileDrag() => transfer.CreateDragData(localList, localList.SelectedItem)
                 ?? throw new InvalidOperationException("The selected local file could not start a drag.");

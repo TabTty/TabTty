@@ -4,7 +4,7 @@
   <resheader name="version"><value>2.0</value></resheader>
   <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
   <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
-  <data name="ConstantsDeclaration" xml:space="preserve"><value>Invalid constants declaration.</value></data>
+  <data name="ConstantsDeclaration" xml:space="preserve"><value>The constants file declaration is invalid.</value></data>
   <data name="ConstantsAlias" xml:space="preserve"><value>The constants file alias conflicts with another name.</value></data>
   <data name="ConstantsLimit" xml:space="preserve"><value>The declared constants exceed the permitted limit.</value></data>
   <data name="NumericLiteral" xml:space="preserve"><value>The numeric literal is malformed or out of range.</value></data>
@@ -18,16 +18,16 @@
   <data name="ConstantsMissing" xml:space="preserve"><value>Shared constants file was not found.</value></data>
   <data name="ConstantsTooLarge" xml:space="preserve"><value>The shared constants file is too large.</value></data>
   <data name="ConstantsUnreadable" xml:space="preserve"><value>The shared constants file could not be read.</value></data>
-  <data name="ConstantsOpenRequired" xml:space="preserve"><value>Open the shared constants file to analyze it.</value></data>
+  <data name="ConstantsOpenRequired" xml:space="preserve"><value>Open the shared constants file.</value></data>
   <data name="MemoryLimit" xml:space="preserve"><value>The macro memory limit was reached.</value></data>
-  <data name="RethrowOutsideCatch" xml:space="preserve"><value>Rethrow is only valid inside a catch in this function.</value></data>
+  <data name="RethrowOutsideCatch" xml:space="preserve"><value>Rethrow is only valid inside a catch in the same function.</value></data>
   <data name="ExpectedToken" xml:space="preserve"><value>A required word or symbol is missing or out of place.</value></data>
   <data name="TypeMismatch" xml:space="preserve"><value>The value type does not match the operation.</value></data>
   <data name="NamedOptionExpected" xml:space="preserve"><value>A named option is required here.</value></data>
   <data name="UnknownOption" xml:space="preserve"><value>This option is not defined for this call.</value></data>
   <data name="DuplicateOption" xml:space="preserve"><value>This option has already been supplied.</value></data>
   <data name="AlternativeNameExpected" xml:space="preserve"><value>Give each wait pattern a non-reserved name followed by a colon.</value></data>
-  <data name="DuplicateAlternative" xml:space="preserve"><value>This wait already has an alternative with this name.</value></data>
+  <data name="DuplicateAlternative" xml:space="preserve"><value>A wait alternative with this name already exists.</value></data>
   <data name="SourceEncoding" xml:space="preserve"><value>The file contains invalid text for its encoding.</value></data>
   <data name="PostConnectionSubset" xml:space="preserve"><value>This operation or syntax is unavailable in a post-connection macro. Prompt waits require a timeout.</value></data>
   <data name="ExpressionExpected" xml:space="preserve"><value>Enter an expression here.</value></data>
@@ -50,9 +50,9 @@
   <data name="InterpolationBrace" xml:space="preserve"><value>Check the braces in the interpolated string.</value></data>
   <data name="UnterminatedInterpolation" xml:space="preserve"><value>Close the interpolation with a right brace.</value></data>
   <data name="SourceLimit" xml:space="preserve"><value>The macro source exceeds the size limit.</value></data>
-  <data name="SyntaxLimit" xml:space="preserve"><value>The macro exceeds the syntax size limit.</value></data>
-  <data name="NestingLimit" xml:space="preserve"><value>The macro exceeds the nesting limit.</value></data>
-  <data name="ParameterLimit" xml:space="preserve"><value>This call or declaration has too many parameters.</value></data>
+  <data name="SyntaxLimit" xml:space="preserve"><value>The number of syntax elements in the macro exceeds the limit.</value></data>
+  <data name="NestingLimit" xml:space="preserve"><value>The macro exceeds the nesting depth limit.</value></data>
+  <data name="ParameterLimit" xml:space="preserve"><value>The number of arguments or parameters exceeds the limit.</value></data>
   <data name="TypeNestingLimit" xml:space="preserve"><value>This type exceeds the nesting limit.</value></data>
   <data name="LocalLimit" xml:space="preserve"><value>The macro declares too many local variables.</value></data>
   <data name="ReservedNameWithSymbol" xml:space="preserve"><value>“{0}” is reserved by the macro language. Choose another name.</value></data>

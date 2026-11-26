@@ -394,6 +394,12 @@ internal sealed partial class MainWindow
 
     private void UpdateVaultStatus()
     {
+        if (vaultLockMenuItem is not null)
+        {
+            string key = VaultLockMenuKey;
+            vaultLockMenuItem.Tag = key;
+            vaultLockMenuItem.Header = Text(key);
+        }
         if (explicitlyUnlockedVault is { } file && (file.Unlocked is null || !app.Vault.IsSelected(file)))
             explicitlyUnlockedVault = null;
         vaultHint.Text = explicitlyUnlockedVault is null ? Text("VaultHint") : Text("VaultUnlocked");

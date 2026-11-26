@@ -1,0 +1,73 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Style TargetType="ContextMenu">
+        <Setter Property="Foreground" Value="{DynamicResource ContextMenuForeground}" />
+        <Setter Property="Background" Value="{DynamicResource ContextMenuBackground}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource ContextMenuBorderBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="MinWidth" Value="140" />
+        <Setter Property="Grid.IsSharedSizeScope" Value="True" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ContextMenu">
+                    <Border x:Name="Border" Padding="0,3" CornerRadius="8"
+                            Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}">
+                        <ScrollViewer CanContentScroll="True" HorizontalScrollBarVisibility="Disabled"
+                                      VerticalScrollBarVisibility="Auto" Focusable="False">
+                            <ItemsPresenter x:Name="ItemsPresenter" ClipToBounds="True"
+                                            KeyboardNavigation.DirectionalNavigation="Cycle" />
+                        </ScrollViewer>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <ControlTemplate x:Key="ContextSubmenuTemplate" TargetType="MenuItem">
+        <Grid>
+            <Border x:Name="HeaderBorder" Margin="4,1" Padding="6,3" MinHeight="26"
+                    Background="{TemplateBinding Background}" CornerRadius="4">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="24" SharedSizeGroup="MenuItemIcon" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <ContentPresenter x:Name="MenuIcon" ContentSource="Icon" VerticalAlignment="Center" />
+                    <TextBlock x:Name="Checkmark" Text="✓" VerticalAlignment="Center" Visibility="Collapsed" />
+                    <ContentPresenter Grid.Column="1" ContentSource="Header"
+                                      RecognizesAccessKey="True" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="2" Text="&#xE76C;" Margin="12,0,0,0"
+                               FontFamily="Segoe MDL2 Assets" FontSize="10" VerticalAlignment="Center" />
+                </Grid>
+            </Border>
+            <Popup x:Name="PART_Popup" Placement="Right" PlacementTarget="{Binding ElementName=HeaderBorder}"
+                   AllowsTransparency="True" Focusable="False" PopupAnimation="None"
+                   IsOpen="{TemplateBinding IsSubmenuOpen}">
+                <Border Padding="0,3" BorderThickness="1" CornerRadius="8" MinWidth="140"
+                        Background="{DynamicResource ContextMenuBackground}"
+                        BorderBrush="{DynamicResource ContextMenuBorderBrush}">
+                    <ScrollViewer CanContentScroll="True" HorizontalScrollBarVisibility="Disabled"
+                                  VerticalScrollBarVisibility="Auto" Focusable="False">
+                        <ItemsPresenter x:Name="ItemsPresenter" Grid.IsSharedSizeScope="True"
+                                        KeyboardNavigation.DirectionalNavigation="Cycle" />
+                    </ScrollViewer>
+                </Border>
+            </Popup>
+        </Grid>
+        <ControlTemplate.Triggers>
+            <Trigger Property="IsHighlighted" Value="True">
+                <Setter TargetName="HeaderBorder" Property="Background" Value="{DynamicResource MenuBarItemBackgroundSelected}" />
+            </Trigger>
+            <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="MenuIcon" Property="Visibility" Value="Collapsed" />
+                <Setter TargetName="Checkmark" Property="Visibility" Value="Visible" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" />
+            </Trigger>
+        </ControlTemplate.Triggers>
+    </ControlTemplate>
+</ResourceDictionary>

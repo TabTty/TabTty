@@ -80,19 +80,19 @@ internal sealed class DetailsColumns
     }
 
     private sealed record Column(string Label, string Member, bool ShowHeader, ListSortDirection InitialDirection);
+}
 
-    private sealed class CompactGridView : GridView
+internal sealed class CompactGridView : GridView
+{
+    protected override void PrepareItem(ListViewItem item)
     {
-        protected override void PrepareItem(ListViewItem item)
-        {
-            base.PrepareItem(item);
-            item.MinHeight = 24;
-        }
+        base.PrepareItem(item);
+        item.MinHeight = 24;
+    }
 
-        protected override void ClearItem(ListViewItem item)
-        {
-            item.ClearValue(FrameworkElement.MinHeightProperty);
-            base.ClearItem(item);
-        }
+    protected override void ClearItem(ListViewItem item)
+    {
+        item.ClearValue(FrameworkElement.MinHeightProperty);
+        base.ClearItem(item);
     }
 }

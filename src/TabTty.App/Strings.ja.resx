@@ -169,6 +169,7 @@
   <data name="Vault" xml:space="preserve"><value>認証情報 vault</value></data>
   <data name="VaultFiles" xml:space="preserve"><value>TabTty 認証情報 vault</value></data>
   <data name="UnlockVault" xml:space="preserve"><value>vault のロックを解除</value></data>
+  <data name="LockVault" xml:space="preserve"><value>vault をロック状態に戻す</value></data>
   <data name="ManageVault" xml:space="preserve"><value>vault の管理</value></data>
   <data name="InitializeVault" xml:space="preserve"><value>vault のマスターパスワードを設定</value></data>
   <data name="InitializeEmptyVaultDescription" xml:space="preserve"><value>選択した空ファイルを新しい暗号化 vault として初期化します。</value></data>

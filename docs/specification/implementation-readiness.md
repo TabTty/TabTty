@@ -182,7 +182,7 @@ development tasks within these contracts, not unresolved product choices.
   transfer window opens. See the [SFTP contract](file-transfer.md).
 - Raw and Text receive-only, Terminal includes enabled local echo; exact mode
   semantics, filenames, pause/retry, resize/retirement, and failure policies stand.
-- Portable shared `.tttykey`, one first-use unlock per app run, transient selected
+- Portable shared `.tttykey`, shared unlock until manual lock or exit, transient selected
   secrets, explicit host-key trust/replacement, and UTF-8-only source-key import
   passphrases without normalization or automatic encoding retries.
 - Regex match-only highlighting, retained-output search, native IME/accessibility,

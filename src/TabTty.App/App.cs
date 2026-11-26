@@ -5,6 +5,8 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using TabTty.Core;
 
 namespace TabTty.App;
@@ -87,12 +89,29 @@ public sealed class App : Application
 
     public App() : this(DefaultSettingsPath) { }
 
+    internal static void ApplyContextSubmenuTemplates(ItemsControl menu)
+    {
+        foreach (MenuItem item in menu.Items.OfType<MenuItem>())
+        {
+            if (!item.HasItems) continue;
+            item.Template = (ControlTemplate)Current.Resources["ContextSubmenuTemplate"];
+            ApplyContextSubmenuTemplates(item);
+        }
+    }
+
     internal App(string settingsPath, Action<string, string, string?>? issueSettings = null,
         Action<string, string, string?>? issueMasterPassword = null, Action<string, string, string?>? issueProfiles = null,
         VaultFileHooks? vaultFiles = null, Action<string, string, string?>? issueOtherStores = null,
         Action<string>? validateProfileStage = null)
     {
         WindowFrameAccent.Register();
+        Resources[SystemParameters.MenuPopupAnimationKey] = PopupAnimation.None;
+        var menuResources = new ResourceDictionary
+        {
+            Source = new Uri("/TabTty;component/MenuStyles.xaml", UriKind.Relative),
+        };
+        Resources[typeof(ContextMenu)] = menuResources[typeof(ContextMenu)];
+        Resources["ContextSubmenuTemplate"] = menuResources["ContextSubmenuTemplate"];
         Resources.MergedDictionaries.Add(new ResourceDictionary
         {
             Source = new Uri("/TabTty;component/DetailsTabs.xaml", UriKind.Relative),

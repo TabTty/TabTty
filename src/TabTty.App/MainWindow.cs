@@ -19,6 +19,8 @@ internal sealed partial class MainWindow : Window
     private readonly Func<bool> hasForeground;
     private readonly TerminalClosure terminalClosure;
     private MenuItem? currentMenu;
+    private MenuItem? vaultLockMenuItem;
+    private string VaultLockMenuKey => app.Vault.IsSelectedUnlocked ? "LockVault" : "UnlockVault";
     private bool closing;
     private bool readyToClose;
     private bool closed;
@@ -287,7 +289,12 @@ internal sealed partial class MainWindow : Window
         BeginMenu("ToolsMenu", Key.T);
         AddButton("ProfileCatalog", () => app.Profiles.Show(this));
         var vaultMenu = new MenuItem { Header = Text("Vault") };
-        vaultMenu.Items.Add(MenuAction("UnlockVault", async () => await app.Vault.UnlockFromMenuAsync(this)));
+        vaultLockMenuItem = MenuAction(VaultLockMenuKey, async () =>
+        {
+            if (app.Vault.IsSelectedUnlocked) await app.Vault.LockFromMenuAsync(this);
+            else await app.Vault.UnlockFromMenuAsync(this);
+        });
+        vaultMenu.Items.Add(vaultLockMenuItem);
         vaultMenu.Items.Add(MenuAction("ManageVault", async () => await app.Vault.ManageAsync(this)));
         vaultMenu.Items.Add(MenuAction("RestoreVault", async () => await app.Vault.RestoreFromMenuAsync(this)));
         vaultMenu.Items.Add(MenuAction("ArchiveVault", async () => await app.Vault.ArchiveAsync(this)));
@@ -651,6 +658,7 @@ internal sealed partial class MainWindow : Window
         }
         if (profiles.Count > 0) menu.Items.Add(new Separator());
         menu.Items.Add(MenuAction("ProfileCatalog", () => app.Profiles.Show(this)));
+        ApplyContextSubmenuTemplates(menu);
         menu.Closed += (_, _) => button.ClearValue(ContextMenuProperty);
         button.ContextMenu = menu;
         menu.IsOpen = true;
@@ -1107,6 +1115,7 @@ internal sealed partial class MainWindow : Window
                     var panes = new MenuItem { Header = Text("TerminalPanes") };
                     terminal.FillPaneCommands(panes);
                     menu.Items.Add(panes);
+                    ApplyContextSubmenuTemplates(menu);
                 };
                 targetCheck.Click += (_, _) =>
                 {

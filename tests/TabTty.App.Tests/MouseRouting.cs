@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using TabTty.App;
 using TabTty.Core;
 
@@ -36,6 +37,26 @@ internal static partial class Program
             var header = (FrameworkElement)FindControls<TabItem>(window).Single(item => item.Content == tab).Header;
             var tabMenu = header.ContextMenu;
             var paneMenu = surface.ContextMenu;
+            tabMenu.PlacementTarget = header;
+            tabMenu.IsOpen = true;
+            try
+            {
+                CheckMenuDidNotAnimate(tabMenu);
+                var submenu = tabMenu.Items.OfType<MenuItem>().First(item => item.HasItems);
+                if (!ReferenceEquals(submenu.Template, app.Resources["ContextSubmenuTemplate"]))
+                    throw new InvalidOperationException("The tab context submenu did not receive the menu template.");
+                submenu.ApplyTemplate();
+                var opened = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                submenu.SubmenuOpened += (_, _) => opened.TrySetResult();
+                submenu.IsSubmenuOpen = true;
+                await opened.Task.WaitAsync(token);
+                var popup = submenu.Template.FindName("PART_Popup", submenu) as Popup;
+                if (popup is not { PopupAnimation: PopupAnimation.None })
+                    throw new InvalidOperationException($"The tab context submenu did not open without animation: {popup?.PopupAnimation}.");
+            }
+            finally { tabMenu.IsOpen = false; }
+            if (FindCommand(tabMenu, "UseMouseInTabTty") is not null)
+                throw new InvalidOperationException("The tab offered local mouse routing before the host requested tracking.");
             await stream.WriteAsync("\u001b[?1049h\u001b[?1000h\u001b[?1006h"u8.ToArray(), token);
             await WaitForTrackingAsync(true);
             if (!surface.CanReportMouse || !Shows("MouseDestinationHost") || !Shows("MouseSentToHostNotice") ||
@@ -51,8 +72,9 @@ internal static partial class Program
 
             await stream.WriteAsync("\u001b[?1000l"u8.ToArray(), token);
             await WaitForTrackingAsync(false);
-            if (FindCommand(paneMenu, "SendMouseToHost") is not null || Shows("MouseDestinationTabTty"))
-                throw new InvalidOperationException("The pane offered host mouse routing without tracking.");
+            if (FindCommand(paneMenu, "SendMouseToHost") is not null ||
+                FindCommand(tabMenu, "SendMouseToHost") is not null || Shows("MouseDestinationTabTty"))
+                throw new InvalidOperationException("A menu offered host mouse routing without tracking.");
 
             await stream.WriteAsync("\u001b[?1000h"u8.ToArray(), token);
             await WaitForTrackingAsync(true);

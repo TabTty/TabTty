@@ -14,6 +14,9 @@ ready for separately authorized implementation.
 
 ## Transfer window and operation ownership
 
+Use the same compact row height as connection profile and vault management in
+both panes.
+
 The tab header command targets the clicked connected SSH terminal tab, including
 an inactive tab in another tab group. Open or focus one transfer window for
 that tab. Bind it to the tab's current connection generation and show the
@@ -56,9 +59,10 @@ for the same action. While copying is unavailable, including during a required
 refresh, suppress the copy cursor and target highlight.
 Buttons capture the selected source entries and the opposite pane's displayed
 directory at invocation. A cross-pane drop captures the highlighted directory,
-or the displayed directory for a drop on a file row or empty space. Accept a
-drop only if copying is still available and its destination matches the last
-preview for that drag. Both use the same copy operation. Discard a drag if its
+or the displayed directory for a drop on a file row or empty space. Highlight
+only folder rows during the drag. Accept a drop only if copying is still
+available and its destination matches the last preview for that drag. Both use
+the same copy operation. Discard a drag if its
 selection or either captured listing generation is stale. After capture,
 navigation and refresh leave the batch's paths intact. A second batch and
 file-management mutations in that window

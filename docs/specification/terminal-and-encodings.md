@@ -276,7 +276,7 @@ Enter/Backspace and local shortcuts retain Q88 and the interaction draft's
 protocol defaults; fixed SSH echo Off and temporary Telnet/serial behavior
 remain. Ctrl+Shift+C/V are local copy/paste; Ctrl+C/V remain remote input.
 Each connection defaults to sending eligible mouse input when the host requests
-tracking. During a connection, the tab context menu offers one action to switch
+tracking. While the host requests tracking, the tab context menu offers one action to switch
 between **Use the mouse in TabTty** and **Send mouse input to the host**. The
 choice covers clicks, drags, pointer motion, and the wheel across the tab's panes
 and resets on reconnect. A pane's local context menu also offers **Send mouse

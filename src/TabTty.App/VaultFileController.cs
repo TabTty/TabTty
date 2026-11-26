@@ -71,12 +71,23 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
 
     public Task UnlockFromMenuAsync(MainWindow owner) => RunAsync(owner, async () =>
     {
-        bool wasLocked = vault is null;
-        if (await UnlockFileAsync(owner, allowInitialization: true) is { } opened && owner.IsLoaded)
-        {
-            if (wasLocked && opened.InitializationResult is not null) owner.OpenForm("ManageVault", app.Vault.BuildManagement);
-            else owner.ShowUnlockedVault(this);
-        }
+        if (vault is not null || await UnlockFileAsync(owner, allowInitialization: true) is not { } opened || !owner.IsLoaded)
+            return;
+        if (opened.InitializationResult is not null) owner.OpenForm("ManageVault", app.Vault.BuildManagement);
+        else owner.ShowUnlockedVault(this);
+    });
+
+    internal Task LockFromMenuAsync(MainWindow owner) => RunAsync(owner, () =>
+    {
+        if (vault is not { } opened) return Task.CompletedTask;
+        if (credentialReads != 0 || interaction?.IsPending == true)
+            throw new InvalidOperationException(Text("VaultBusy"));
+        if (opened.HasUnverifiedPublication)
+            throw new IOException(Text("StoreSaveUnverified"));
+
+        app.Vault.RememberStalePath(this);
+        ClearUnlocked();
+        return Task.CompletedTask;
     });
 
     public Task ManageAsync(MainWindow owner) => RunAsync(owner, async () =>
@@ -183,7 +194,7 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         ClearUnlocked();
     }
 
-    public void ClearUnlocked()
+    private void ClearUnlocked()
     {
         vault?.Dispose();
         vault = null;
@@ -1033,7 +1044,16 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         var password = new PasswordBox { MaxLength = VaultContainer.MaximumMasterInputLength };
         var repeated = new PasswordBox { MaxLength = VaultContainer.MaximumMasterInputLength };
         if (path is not null)
-            form.AddField("VaultPath", new TextBox { Text = path, IsReadOnly = true, TextWrapping = TextWrapping.Wrap });
+        {
+            var pathDisplay = new TextBlock
+            {
+                Text = string.Format(Text("VaultPathDisplay"), path),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(5, 6, 5, 6),
+            };
+            form.AddDisplay("VaultPath", pathDisplay);
+            AutomationProperties.SetName(pathDisplay, pathDisplay.Text);
+        }
         if (confirm)
         {
             string caption = FormatLength("MasterPasswordWithLength");

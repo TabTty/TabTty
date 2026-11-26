@@ -68,10 +68,9 @@ for cryptographic operations. Before SSH design or changes, read
 Before designing or changing authentication, credential storage, macro access to
 secrets, or diagnostic logging, read `docs/drafts/authentication-issue.md`.
 Before vault storage or unlocking changes, also read
-`docs/drafts/credential-vault-issue.md`: the vault must be portable between PCs
-with a master password and remain unlocked until the application exits after
-its first unlock in that application run. One vault is shared across all
-connection profiles and windows in the initial release.
+`docs/drafts/credential-vault-issue.md`. The selected vault must be portable
+between PCs with a master password. All connection profiles and windows share
+its unlock state until the user locks it or the application exits.
 Use current Microsoft, OpenSSH, and OpenSSL guidance and applicable IETF and
 OWASP recommendations. Recheck affected guidance when these behaviors change
 or relevant dependencies change, at implementation start, and before release;

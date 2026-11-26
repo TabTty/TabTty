@@ -116,13 +116,12 @@ identities. Complete exact normalization/schema rules without alias inheritance.
   do not create a cache spanning connections or lasting until application exit.
 - Request unsaved credentials again on reconnection. Explicitly saved credentials
   may be retrieved again from the unlocked vault.
-- Ask for the vault master password on first use in an application run. Keep the
-  vault unlocked until application exit and do not repeat that prompt for later
-  connections. Discard the master password after deriving the necessary key;
-  retain required vault decryption key material until exit. This is distinct from
+- Ask for the vault master password when the locked vault is needed. Reuse
+  the unlock across connections until the user locks the vault or TabTty exits.
+  Discard the master password after deriving the necessary key. Retain required
+  vault decryption key material for the duration of the unlock. This is distinct from
   retaining plaintext connection credentials or an unsaved-credential cache.
-- Additional windows and tab detach/merge operations share that unlock state;
-  only the end of the application run ends its agreed lifetime.
+- Additional windows and tab detach/merge operations share that unlock state.
 
 The role of any Windows credential storage in this new design is not selected.
 It must not make the vault dependent on the original computer or silently bypass

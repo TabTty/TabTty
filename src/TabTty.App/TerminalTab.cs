@@ -809,6 +809,7 @@ internal sealed partial class TerminalTab : UserControl
         };
         menu.Items.Add(details);
 
+        ApplyContextSubmenuTemplates(menu);
         menu.IsOpen = true;
 
         Task SetLine(bool dtr, bool enabled)
@@ -916,6 +917,7 @@ internal sealed partial class TerminalTab : UserControl
             var splits = new MenuItem { Header = Text("TerminalPanes") };
             FillPaneCommands(splits, pane);
             menu.Items.Add(splits);
+            ApplyContextSubmenuTemplates(menu);
         };
         pane.ContextMenu = menu;
     }

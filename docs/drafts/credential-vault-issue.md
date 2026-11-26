@@ -33,9 +33,9 @@ the vault master-password policy.
   backed up and opened on another PC using a master password. The original
   Windows account/computer must not be required for decryption.
 - Use `.tttykey` for the credential vault, distinct from imported SSH key files.
-- Ask for the master password when the application first needs the locked vault.
-  After successful unlock, do not ask again during ordinary use until TabTty
-  exits. A later application run needs a new unlock.
+- Ask for the master password when the application needs the locked vault.
+  Reuse a successful unlock until the user chooses **Relock vault** or TabTty
+  exits. See the [shared lock behavior](../specification/persistence-and-windows.md#vault-selection-and-operation-hosting).
 - Keep the vault unlocked across connection changes, disconnect/reconnect, idle
   periods, and Windows screen locking. Do not add automatic relocking that
   contradicts the chosen application-run lifetime.

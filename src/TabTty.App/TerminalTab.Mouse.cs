@@ -21,12 +21,13 @@ internal sealed partial class TerminalTab
 
     internal void AddMouseRoutingCommand(ContextMenu menu, TerminalSurface? pane = null)
     {
-        if (InputSession is null || pane is not null && (sendMouseToHost || !pane.MouseTrackingRequested)) return;
+        var surface = pane ?? output;
+        if (InputSession is null || !surface.MouseTrackingRequested || pane is not null && sendMouseToHost) return;
         bool send = !sendMouseToHost;
         object generation = ConnectionGeneration;
         menu.Items.Add(MainWindow.NamedAction(Text(send ? "SendMouseToHost" : "UseMouseInTabTty"), () =>
         {
-            if (ConnectionGeneration != generation || InputSession is null) return;
+            if (ConnectionGeneration != generation || InputSession is null || !surface.MouseTrackingRequested) return;
             SetMouseRouting(send);
         }));
     }
