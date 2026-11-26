@@ -1076,10 +1076,10 @@ status bar, starting with its first display. Keep it visible on the welcome
 screen with no tabs, on terminal, settings and management tabs, and across
 split views. A new window immediately shows the current shared state.
 
-Show **Vault: Unlocked** whenever the selected vault is unlocked in this
+Show **Vault lock: Unlocked** whenever the selected vault is unlocked in this
 application run, whether through the menu, a connection, a credential picker,
 management, initialization, or its standalone editor. Otherwise show
-**Vault: Not unlocked**, including at startup before first use and when the
+**Vault lock: Not unlocked**, including at startup before first use and when the
 selected file is missing or uninitialized. Reading the shared state for display
 does not open, create or unlock the file. Relocking or changing the selected
 vault updates every main window immediately. A standalone vault editor shows
@@ -1194,9 +1194,9 @@ final-exit rules. No hidden lifetime or session-recording timeout is introduced.
 | Open or edit one `.tttykey`, or select multiple vault files | Single-file verbs open one editor. A vault invocation carrying multiple paths is rejected before opening or unlocking a file. |
 | Choose **Manage vault** with a missing or zero-byte target | Cancelling setup keeps the current view. Verified initialization opens the management tab. The backup restore command remains available in the vault menu before setup. |
 | Archive the selected vault or switch to a missing or zero-byte target while its management tab is open | Show the resulting state without prompting. The next **Manage vault** command offers setup. |
-| Start with a missing or locked selected vault and open a second main window | Each window shows **Vault: Not unlocked** on the right from its first display, including before any terminal opens. Displaying the state leaves the file untouched and does not prompt. |
-| Choose **Unlock vault** with a missing, zero-byte, or existing valid target | Verified creation or initialization opens the management tab in the issuing window. After success, every main window shows **Vault: Unlocked** without requiring acknowledgement. |
-| Unlock during a connection, then relock from another window | The right-hand state in every main window changes to **Vault: Unlocked**, then to **Vault: Not unlocked**, including in a window showing Settings. |
+| Start with a missing or locked selected vault and open a second main window | Each window shows **Vault lock: Not unlocked** on the right from its first display, including before any terminal opens. Displaying the state leaves the file untouched and does not prompt. |
+| Choose **Unlock vault** with a missing, zero-byte, or existing valid target | Verified creation or initialization opens the management tab in the issuing window. After success, every main window shows **Vault lock: Unlocked** without requiring acknowledgement. |
+| Unlock during a connection, then relock from another window | The right-hand state in every main window changes to **Vault lock: Unlocked**, then to **Vault lock: Not unlocked**, including in a window showing Settings. |
 | Choose **Manage vault** in the profile password or key picker | The action is present with an empty or populated list. Preserve the draft, close the picker, and use the standalone vault editor if no main window is open. Reopening the picker shows current committed entries. |
 | Change a selected vault entry in a standalone window | The in-app management view and the next credential lookup see the same committed revision without another unlock. |
 | Edit a copy of the selected vault at another path | Save to the copy. Connections keep using the selected file. Closing the copy's editor releases its unlock. |
