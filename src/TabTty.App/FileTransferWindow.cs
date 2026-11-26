@@ -38,7 +38,7 @@ internal sealed class FileTransferWindow : Window
     private FileOperations? operations;
     private Task work = Task.CompletedTask;
     private bool disconnected, closing, closed;
-    private bool dismissalApproved;
+    private bool dismissalApproved, closeReportFailed;
     private Task<TransferWindowCloseResult>? closeRequest;
     private long lastProgress;
     private Point dragStart;
@@ -114,11 +114,12 @@ internal sealed class FileTransferWindow : Window
         foreach (var (control, key) in labels) control.Content = Text(key);
         foreach (var (column, key) in columns) column.Header = Text(key);
         if (results.ItemsSource is not null) results.Items.Refresh();
+        if (closeReportFailed) status.Text = Text("SftpCloseReportFailed");
     }
 
     private async Task InitializeAsync()
     {
-        status.Text = Text("Connecting");
+        SetOperationStatus(Text("Connecting"));
         try
         {
             SftpClient connected = await session.OpenFileTransferAsync(connection.Token);
@@ -129,13 +130,19 @@ internal sealed class FileTransferWindow : Window
             operations = new FileOperations(files, ownership, connection.Token);
             results.ItemsSource = operations.Results;
             operations.Changed += OperationChanged;
-            status.Text = "";
+            SetOperationStatus("");
             string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-            await Task.WhenAll(NavigateAsync(local, documents), NavigateAsync(remote, "."));
-            await RefreshAfterOperationAsync();
+            local.Path.Text = documents;
+            remote.Path.Text = ".";
+            refreshingAfterOperation = true;
+            long? initialRevision = ownership.RefreshRevision;
+            try { await Task.WhenAll(NavigateAsync(local, documents), NavigateAsync(remote, ".")); }
+            finally { refreshingAfterOperation = false; }
+            if (initialRevision is null && ownership.RefreshRevision is not null && local.IsListed && remote.IsListed)
+                await RefreshAfterOperationAsync();
         }
         catch (OperationCanceledException) { }
-        catch (Exception error) when (TransferBatch.IsFileError(error)) { status.Text = Text(TransferBatch.ErrorKey(error)); }
+        catch (Exception error) when (TransferBatch.IsFileError(error)) { SetOperationStatus(Text(TransferBatch.ErrorKey(error))); }
         finally { UpdateActions(); }
     }
 
@@ -250,6 +257,7 @@ internal sealed class FileTransferWindow : Window
         pane.Load?.Cancel();
         using var load = CancellationTokenSource.CreateLinkedTokenSource(connection.Token);
         pane.Load = load;
+        pane.RefreshRevision = null;
         activeDrag = null;
         dragRow = null;
         UpdateActions();
@@ -257,6 +265,7 @@ internal sealed class FileTransferWindow : Window
         {
             TransferPath path = await target(load.Token);
             if (path is null) return false;
+            long? refreshRevision = ownership.RefreshRevision;
             TransferItem[] items = await files.ListAsync(path, load.Token);
             if (pane.Load != load || load.IsCancellationRequested) return false;
             Row[] rows = items.OrderByDescending(item => item.Attributes.Kind == TransferKind.Directory)
@@ -267,12 +276,15 @@ internal sealed class FileTransferWindow : Window
             pane.ListedPath = files.Display(path);
             pane.Load = null;
             if (!preserveDraft) pane.Path.Text = pane.ListedPath;
+            pane.RefreshRevision = refreshRevision;
+            if (refreshRevision is { } observed && local.RefreshRevision == observed && remote.RefreshRevision == observed)
+                ownership.Refreshed(observed);
             return true;
         }
         catch (OperationCanceledException) { return false; }
         catch (Exception error) when (TransferBatch.IsFileError(error))
         {
-            if (pane.Load == load) status.Text = Text(TransferBatch.ErrorKey(error));
+            if (pane.Load == load) SetOperationStatus(Text(TransferBatch.ErrorKey(error)));
             return false;
         }
         finally { if (pane.Load == load) pane.Load = null; UpdateActions(); }
@@ -337,7 +349,7 @@ internal sealed class FileTransferWindow : Window
             drag.PreviewPane = pane;
             drag.PreviewRevision = pane.Revision;
             Highlight(args.OriginalSource is DependencyObject element ? ItemsControl.ContainerFromElement(pane.List, element) as ListViewItem : null);
-            status.Text = Format("TransferDropTarget", files!.Display(target));
+            SetOperationStatus(Format("TransferDropTarget", files!.Display(target)));
         }
     }
 
@@ -380,7 +392,7 @@ internal sealed class FileTransferWindow : Window
     {
         string key = await result;
         if (closed || closing) return;
-        status.Text = Text(disconnected ? "SftpDisconnected" : key);
+        SetOperationStatus(Text(disconnected ? "SftpDisconnected" : key));
         progress.IsIndeterminate = false;
         UpdateActions();
         if (key != "SftpCapacity") await RefreshAfterOperationAsync();
@@ -392,7 +404,7 @@ internal sealed class FileTransferWindow : Window
         switch (update)
         {
             case FileOperationUpdate.Started:
-                status.Text = Text("TransferWorking");
+                SetOperationStatus(Text("TransferWorking"));
                 progress.IsIndeterminate = true;
                 UpdateActions();
                 break;
@@ -417,9 +429,7 @@ internal sealed class FileTransferWindow : Window
         refreshingAfterOperation = true;
         try
         {
-            bool[] refreshed = await Task.WhenAll(RefreshAsync(local), RefreshAsync(remote));
-            if (!closed && !closing && refreshed.All(value => value) && ownership.NeedsRefresh)
-                ownership.Refreshed();
+            await Task.WhenAll(RefreshAsync(local), RefreshAsync(remote));
         }
         finally { refreshingAfterOperation = false; UpdateActions(); }
     }
@@ -442,7 +452,7 @@ internal sealed class FileTransferWindow : Window
     {
         public object Convert(object value, Type targetType, object parameter, CultureInfo culture) =>
             value is FileOperationUpdate.Entry entry
-                ? entry.Path.Length == 0 ? Text(entry.Reason) : $"{Text(entry.Reason)}  {entry.Path}"
+                ? ResultDetails(entry)
                 : "";
 
         public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) =>
@@ -454,7 +464,7 @@ internal sealed class FileTransferWindow : Window
         long now = Environment.TickCount64;
         if (bytes != 0 && bytes != total && now - lastProgress < 60) return;
         lastProgress = now;
-        status.Text = Format("TransferProgress", label, bytes.ToString("N0"), total?.ToString("N0") ?? Text("TransferUnavailable"));
+        SetOperationStatus(Format("TransferProgress", label, bytes.ToString("N0"), total?.ToString("N0") ?? Text("TransferUnavailable")));
         progress.IsIndeterminate = total is null;
         progress.Value = total > 0 ? Math.Min(100, 100d * bytes / total.Value) : 0;
     }
@@ -552,7 +562,7 @@ internal sealed class FileTransferWindow : Window
         if (disconnected) return;
         disconnected = true;
         connection.Cancel();
-        status.Text = Text("SftpDisconnected");
+        SetOperationStatus(Text("SftpDisconnected"));
         UpdateActions();
     }
 
@@ -592,9 +602,9 @@ internal sealed class FileTransferWindow : Window
             var unresolved = operations?.UnresolvedForClose() ?? [];
             if (uncertain || ownership.IsBusy || ownership.NeedsRefresh || unresolved.Length != 0)
             {
-                string counts = string.Join("\n", unresolved.GroupBy(entry => entry.Reason)
-                    .Select(group => $"{Text(group.Key)}  ({group.Count():N0})"));
-                var entries = unresolved.Select(entry => $"{Text(entry.Reason)}  {entry.Path}").ToArray();
+                string counts = string.Join("\n", unresolved.GroupBy(entry => (entry.Mutation, entry.Reason))
+                    .Select(group => $"{ResultLabel(group.First())}  ({group.Count():N0})"));
+                var entries = unresolved.Select(ResultDetails).ToArray();
                 string[] summary = [Text("SftpUnknownOutcome"), counts, .. entries.Take(10)];
                 try
                 {
@@ -630,11 +640,30 @@ internal sealed class FileTransferWindow : Window
         }
     }
 
+    private void SetOperationStatus(string message)
+    {
+        if (!closeReportFailed) status.Text = message;
+    }
+
     private TransferWindowCloseResult ReportFailed()
     {
-        status.Text = Text("SftpUnknownOutcome");
+        closeReportFailed = true;
+        status.Text = Text("SftpCloseReportFailed");
         return new(TransferWindowCloseStatus.ReportFailed, ownership.IsBusy);
     }
+
+    private static string ResultDetails(FileOperationUpdate.Entry entry) =>
+        entry.Path.Length == 0 ? Text(entry.Reason) : $"{ResultLabel(entry)}  {entry.DisplayPath}";
+
+    private static string ResultLabel(FileOperationUpdate.Entry entry) => entry.Mutation is { } mutation
+        ? $"{Text(mutation switch
+        {
+            FileMutation.CreateFolder => "TransferNewFolder",
+            FileMutation.Rename => "TransferRename",
+            FileMutation.Delete => "TransferDelete",
+            _ => throw new ArgumentOutOfRangeException(nameof(entry)),
+        })}　{Text(entry.Reason)}"
+        : Text(entry.Reason);
 
     protected override void OnClosing(CancelEventArgs e)
     {
@@ -671,6 +700,7 @@ internal sealed class FileTransferWindow : Window
         public bool IsListed => Directory is not null && Load is null && Path.Text == ListedPath;
         public CancellationTokenSource? Load;
         public int Revision;
+        public long? RefreshRevision;
     }
 
     private sealed record Row(TransferItem Item)

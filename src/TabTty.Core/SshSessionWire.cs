@@ -743,37 +743,53 @@ internal sealed partial class SshSessionWire : ISessionWire
         _ = await WriteChannelAsync(buffer, cancellationToken, new(buffer.Length)).ConfigureAwait(false);
 
     internal ValueTask<int> WriteChannelAsync(ReadOnlyMemory<byte> buffer, CancellationToken token, SshSendProgress progress,
-        Action? onFirstSubmission = null) =>
-        WriteObservedAsync(buffer, token, default, default, progress, null, onFirstSubmission);
+        Action? onFirstSubmission = null, InputCutoff? cutoff = null) =>
+        WriteObservedAsync(buffer, token, cutoff?.Token ?? default, default, progress, onFirstSubmission, cutoff: cutoff);
 
-    internal ValueTask<int> WritePreparedPasteAsync(ReadOnlyMemory<byte> data, ReadOnlyMemory<int> encodedEnds, CancellationToken lifetime,
-        CancellationToken stopInput, Action<int>? confirmed = null) =>
-        WriteObservedAsync(data, lifetime, stopInput, encodedEnds, new(data.Length), confirmed);
+    internal ValueTask<int> WriteBoundedPayloadAsync(ReadOnlyMemory<byte> data, ReadOnlyMemory<int> encodedEnds, CancellationToken lifetime,
+        CancellationToken stopInput, SshSendProgress progress, Action? onFirstSubmission = null,
+        CancellationToken beforeFirstSubmission = default, Func<bool>? stopRequested = null) =>
+        WriteObservedAsync(data, lifetime, stopInput, encodedEnds, progress, onFirstSubmission, beforeFirstSubmission, stopRequested);
 
     private async ValueTask<int> WriteObservedAsync(ReadOnlyMemory<byte> buffer, CancellationToken lifetime,
-        CancellationToken stopInput, ReadOnlyMemory<int> encodedEnds, SshSendProgress progress, Action<int>? confirmed,
-        Action? onFirstSubmission = null)
+        CancellationToken stopInput, ReadOnlyMemory<int> encodedEnds, SshSendProgress progress,
+        Action? onFirstSubmission, CancellationToken beforeFirstSubmission = default, Func<bool>? stopRequested = null,
+        InputCutoff? cutoff = null)
     {
-        try { return await WriteChannelBytesAsync(buffer, lifetime, stopInput, encodedEnds, progress, confirmed, onFirstSubmission).ConfigureAwait(false); }
+        try
+        {
+            return await WriteChannelBytesAsync(buffer, lifetime, stopInput, encodedEnds, progress,
+                onFirstSubmission, beforeFirstSubmission, stopRequested, cutoff).ConfigureAwait(false);
+        }
         finally { progress.Settle(); }
     }
 
     private async ValueTask<int> WriteChannelBytesAsync(ReadOnlyMemory<byte> buffer, CancellationToken lifetime,
-        CancellationToken stopInput, ReadOnlyMemory<int> encodedEnds, SshSendProgress progress, Action<int>? confirmed,
-        Action? onFirstSubmission)
+        CancellationToken stopInput, ReadOnlyMemory<int> encodedEnds, SshSendProgress progress,
+        Action? onFirstSubmission, CancellationToken beforeFirstSubmission, Func<bool>? stopRequested, InputCutoff? cutoff)
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(lifetime, stop.Token);
         using var beforeUnit = stopInput.CanBeCanceled
             ? CancellationTokenSource.CreateLinkedTokenSource(linked.Token, stopInput) : null;
+        using var beforeFirst = beforeFirstSubmission.CanBeCanceled
+            ? CancellationTokenSource.CreateLinkedTokenSource(linked.Token, beforeFirstSubmission) : null;
         int submitted = 0;
-        int confirmedBytes = 0;
+        int? stopAt = null;
         while (submitted < buffer.Length)
         {
             linked.Token.ThrowIfCancellationRequested();
-            bool boundary = beforeUnit is null || IsCompleteBoundary(submitted);
-            CancellationToken admission = boundary && beforeUnit is not null ? beforeUnit.Token : linked.Token;
-            int requested = buffer.Length - submitted;
-            if (beforeUnit is not null && !boundary)
+            if (cutoff?.IsStopped() == true)
+            {
+                stopAt ??= cutoff.BoundaryAtOrAfter(submitted);
+                if (stopAt == submitted) return submitted;
+            }
+            bool finishing = stopAt.HasValue;
+            bool boundary = cutoff is not null ? !finishing : beforeUnit is null || IsCompleteBoundary(submitted);
+            if (cutoff is null && boundary && InputStopped()) return submitted;
+            CancellationToken admission = submitted == 0 && beforeFirst is not null ? beforeFirst.Token :
+                boundary && beforeUnit is not null ? beforeUnit.Token : linked.Token;
+            int requested = (stopAt ?? buffer.Length) - submitted;
+            if (cutoff is null && beforeUnit is not null && !boundary)
             {
                 requested = 1;
                 while (!IsCompleteBoundary(submitted + requested)) requested++;
@@ -800,6 +816,8 @@ internal sealed partial class SshSessionWire : ISessionWire
                         {
                             await packets.SendChannelAsync(data.Memory, stop.Token, admission, () =>
                             {
+                                if (!finishing && cutoff?.IsStopped() == true) throw new OperationCanceledException(cutoff.Token);
+                                if (cutoff is null && boundary && InputStopped()) throw new OperationCanceledException(stopInput);
                                 if (submitted == 0) onFirstSubmission?.Invoke();
                                 lock (creditGate) channelWindow.CommitSend(count);
                             }, progress, count).ConfigureAwait(false);
@@ -815,20 +833,12 @@ internal sealed partial class SshSessionWire : ISessionWire
                             throw;
                         }
                         submitted += count;
-                        if (confirmed is not null)
-                        {
-                            int boundaryIndex = encodedEnds.Span.BinarySearch(submitted);
-                            if (boundaryIndex < 0) boundaryIndex = ~boundaryIndex - 1;
-                            if (boundaryIndex >= 0 && encodedEnds.Span[boundaryIndex] > confirmedBytes)
-                            {
-                                confirmedBytes = encodedEnds.Span[boundaryIndex];
-                                confirmed(confirmedBytes);
-                            }
-                        }
                     }
                 }
                 catch (Exception error) when (error is TransportAdmissionRejectedException ||
-                    error is OperationCanceledException && admission.IsCancellationRequested && !stop.IsCancellationRequested &&
+                    error is OperationCanceledException && (admission.IsCancellationRequested ||
+                        !finishing && cutoff?.IsStopped() == true || cutoff is null && boundary && InputStopped()) &&
+                    !stop.IsCancellationRequested &&
                     progress.State.Uncertain is null)
                 {
                     throw;
@@ -841,7 +851,12 @@ internal sealed partial class SshSessionWire : ISessionWire
                 finally { send.Release(); }
                 if (waitForCredit is not null) await waitForCredit.WaitAsync(admission).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (boundary && stopInput.IsCancellationRequested && !linked.IsCancellationRequested &&
+            catch (OperationCanceledException) when (!finishing && cutoff?.IsStopped() == true && !linked.IsCancellationRequested &&
+                progress.State.Uncertain is null)
+            {
+                // A queued packet was not issued. Reenter to finish only an already-started input unit.
+            }
+            catch (OperationCanceledException) when (boundary && InputStopped() && !linked.IsCancellationRequested &&
                 progress.State.Uncertain is null)
             {
                 return submitted;
@@ -851,6 +866,7 @@ internal sealed partial class SshSessionWire : ISessionWire
 
         bool IsCompleteBoundary(int offset) => encodedEnds.IsEmpty ? Utf8Cutoff(buffer.Span, offset) :
             offset == 0 || encodedEnds.Span.BinarySearch(offset) >= 0;
+        bool InputStopped() => stopInput.IsCancellationRequested || stopRequested?.Invoke() == true;
     }
 
     private static bool Utf8Cutoff(ReadOnlySpan<byte> encoded, int index) =>

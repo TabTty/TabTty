@@ -66,6 +66,8 @@ pub struct MouseInput {
     pub row: i32,
     pub generation: i32,
     pub flags: u32,
+    pub fallback_column: i32,
+    pub fallback_row: i32,
 }
 
 pub(crate) fn mouse(
@@ -75,7 +77,7 @@ pub(crate) fn mouse(
     columns: i32,
     rows: i32,
     mut output: &mut [u8],
-) -> Result<usize, i32> {
+) -> Result<(usize, i32, i32), i32> {
     if input.flags > 31 || columns < 1 || rows < 1 {
         return Err(1);
     }
@@ -91,7 +93,7 @@ pub(crate) fn mouse(
         || (motion && !matches!(tracking, 1002 | 1003))
         || (motion && tracking == 1002 && input.button == 3)
     {
-        return Ok(0);
+        return Ok((0, 0, 0));
     }
     let modifiers = (input.flags & 7) * 4;
     let mut button = if input.button >= 4 {
@@ -103,8 +105,18 @@ pub(crate) fn mouse(
     if motion {
         button |= 32;
     }
-    let x = input.column.saturating_add(1).clamp(1, columns);
-    let y = input.row.saturating_add(1).clamp(1, rows);
+    if !release && (!(0..columns).contains(&input.column) || !(0..rows).contains(&input.row)) {
+        return Ok((0, 0, 0));
+    }
+    let mut x = input.column.saturating_add(1).clamp(1, columns);
+    let mut y = input.row.saturating_add(1).clamp(1, rows);
+    if !sgr && (x > 223 || y > 223) {
+        if !release || !(0..223).contains(&input.fallback_column) || !(0..223).contains(&input.fallback_row) {
+            return Ok((0, 0, 0));
+        }
+        x = x.min(223);
+        y = y.min(223);
+    }
     if sgr {
         write!(
             output,
@@ -125,10 +137,10 @@ pub(crate) fn mouse(
                 b'[',
                 b'M',
                 (32 + button) as u8,
-                (32 + x.min(223)) as u8,
-                (32 + y.min(223)) as u8,
+                (32 + x) as u8,
+                (32 + y) as u8,
             ])
             .map_err(|_| 3)?;
     }
-    Ok(capacity - output.len())
+    Ok((capacity - output.len(), x - 1, y - 1))
 }

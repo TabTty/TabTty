@@ -13,6 +13,21 @@ using static TabTty.App.App;
 
 namespace TabTty.App;
 
+internal sealed class VaultEntryBinding(VaultFileController file)
+{
+    private readonly WeakReference<CredentialVault>? owner = file.Unlocked is { } opened ? new(opened) : null;
+    internal VaultFileController File { get; } = file;
+    internal bool Active { get; private set; } = true;
+    internal bool Matches(CredentialVault? current) => owner is null ? current is null :
+        owner.TryGetTarget(out CredentialVault? opened) && ReferenceEquals(opened, current);
+    internal void Retire() => Active = false;
+}
+
+internal sealed record VaultEntrySelection(VaultEntryBinding Binding, long RoleGeneration, long Revision,
+    (string Name, string Kind)[] Entries);
+
+internal sealed class VaultEntrySelectionChangedException() : InvalidOperationException(Text("VaultEntrySelectionChanged"));
+
 internal sealed record VaultFileHooks(Action<VaultInitializationStep, string, string>? MoveForInitialization = null,
     Func<Task>? BeforeCredentialHandoff = null, Func<Window, string?>? SelectRestoreFile = null,
     Action<string, string, string?>? IssueRestore = null, Action<string, string>? MoveForArchive = null);
@@ -32,6 +47,9 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
     });
     private CredentialVault? vault;
     private long managementRevision = -1;
+    internal long ManagementRevision => managementRevision;
+    internal long RoleGeneration { get; private set; }
+    internal void ChangeRole() => RoleGeneration++;
     public IReadOnlyList<VaultEntryInfo> ManagementEntries { get; private set; } = [];
     public CredentialVault? Unlocked => vault;
     public string FilePath => filePath;
@@ -307,7 +325,11 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         try
         {
             var secret = await ReadSavedPasswordAsync(owner, reference, token, sshAuthentication: false, tab);
-            token.ThrowIfCancellationRequested();
+            if (token.IsCancellationRequested)
+            {
+                secret?.Dispose();
+                token.ThrowIfCancellationRequested();
+            }
             return secret;
         }
         catch (CredentialLookupException error) { throw new MacroError(error.Code); }
@@ -691,51 +713,53 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         finally { password.Clear(); }
     }
 
-    private (CredentialVault Owner, long Revision) CurrentEntry(VaultEntryInfo requested)
+    private CredentialVault RequireCurrentSelection(VaultEntrySelection selection)
     {
-        CheckAvailable();
-        if (vault is not { } unlocked || unlocked.HasUnverifiedPublication || unlocked.Revision != managementRevision ||
-            !ManagementEntries.Any(entry => ReferenceEquals(entry, requested)))
-            throw new InvalidOperationException(Text("ManagementTabOutdated"));
-        return (unlocked, managementRevision);
+        if (!selection.Binding.Active || selection.Binding.File != this || selection.RoleGeneration != RoleGeneration ||
+            vault is not { HasUnverifiedPublication: false, IsStale: false } unlocked ||
+            !selection.Binding.Matches(unlocked) ||
+            unlocked.Revision != selection.Revision || managementRevision != selection.Revision)
+            throw new VaultEntrySelectionChangedException();
+        return unlocked;
     }
 
-    internal bool HasCurrentSelection(IReadOnlyList<VaultEntryInfo> selection)
+    internal VaultEntryInfo[] ResolveEntries(VaultEntrySelection selection)
     {
-        if (vault is not { HasUnverifiedPublication: false } current || current.Revision != managementRevision)
-            return false;
-        var identities = ManagementEntries.ToHashSet(ReferenceEqualityComparer.Instance);
-        return selection.Count != 0 && selection.All(identities.Contains);
+        RequireCurrentSelection(selection);
+        var byIdentity = ManagementEntries.ToDictionary(entry => (entry.Name, entry.Kind));
+        var resolved = new VaultEntryInfo[selection.Entries.Length];
+        for (int index = 0; index < resolved.Length; index++)
+        {
+            if (!byIdentity.TryGetValue(selection.Entries[index], out var entry))
+                throw new VaultEntrySelectionChangedException();
+            resolved[index] = entry;
+        }
+        return resolved;
     }
 
-    internal string CurrentCredentialName(VaultEntryInfo entry)
+    public async Task DeleteEntriesAsync(Window owner, VaultEntrySelection selection, IReadOnlyList<VaultEntryInfo> entries, FormView form)
     {
-        CurrentEntry(entry);
-        return entry.Name;
-    }
-
-    public async Task DeleteEntriesAsync(Window owner, IReadOnlyList<VaultEntryInfo> entries, FormView form)
-    {
-        if (entries.Count == 0) return;
-        var (unlocked, revision) = CurrentEntry(entries[0]);
-        foreach (VaultEntryInfo entry in entries.Skip(1)) CurrentEntry(entry);
+        var unlocked = RequireCurrentSelection(selection);
         string warning = entries.Count == 1 ? Text("DeleteCredentialWarning") :
             $"{string.Format(Text("DeleteCredentialsWarning"), entries.Count)}\n\n" +
             string.Join("\n", entries.Select(entry => PermissionDisplay.Literal(entry.Name)));
-        if (await ConfirmImpactAsync(owner, unlocked, entries, warning))
+        if (await ConfirmImpactAsync(owner, unlocked, entries, warning, selection))
         {
+            RequireCurrentSelection(selection);
             using (form.BeginProgress("SavingChanges"))
-                await unlocked.DeleteEntriesAsync(entries.Select(entry => entry.Name), revision);
+                await unlocked.DeleteEntriesAsync(entries.Select(entry => entry.Name), selection.Revision);
             RefreshManagement();
         }
     }
 
-    public async Task EditEntryAsync(Window owner, VaultEntryInfo entry, FormView management)
+    public async Task EditEntryAsync(Window owner, VaultEntrySelection selection, VaultEntryInfo entry, FormView management)
     {
-        var (unlocked, revision) = CurrentEntry(entry);
+        var unlocked = RequireCurrentSelection(selection);
+        long revision = selection.Revision;
         var form = new MainWindow.FormWindow(owner, Text("EditCredential"), WindowIcons.Vault);
         form.AddStatusBar();
         Action? showRenameResult = null;
+        VaultEntrySelectionChangedException? stale = null;
         var name = new TextBox { Text = entry.Name, MaxLength = 512 };
         var replace = new CheckBox { Margin = new Thickness(0, 10, 0, 3) };
         var password = new PasswordBox { MaxLength = 16 * 1024, IsEnabled = false };
@@ -758,6 +782,17 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         }
         form.AddAsyncButtons(async () =>
         {
+            try { return await SaveEntryAsync(); }
+            catch (VaultEntrySelectionChangedException error) { stale = error; return true; }
+        }, acceptKey: "OK", acceptOnEnter: false);
+        try { app.Modal(form.ShowDialog); }
+        finally { password.Clear(); }
+        if (stale is not null) throw stale;
+        showRenameResult?.Invoke();
+
+        async Task<bool> SaveEntryAsync()
+        {
+            RequireCurrentSelection(selection);
             string newName = name.Text;
             if (!validName()) return false;
             bool passwordChanged = replace.IsChecked == true;
@@ -776,18 +811,19 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
                 if (secretChanged) warning += "\n\n" + Text("UpdateCredentialWarning");
                 MessageBoxResult choice = ConfirmRename(form, selected ? ImpactMessage(warning, impact) : warning, selected);
                 if (choice == MessageBoxResult.Cancel) return false;
+                RequireCurrentSelection(selection);
                 if (selected != app.Vault.IsSelected(this) || selected && !IsCurrentSelection(epoch))
                     throw new InvalidOperationException(Text("ManagementTabOutdated"));
                 if (choice == MessageBoxResult.Yes) update = impact;
             }
-            else if (secretChanged && !await ConfirmImpactAsync(form, unlocked, [entry], Text("UpdateCredentialWarning")))
+            else if (secretChanged && !await ConfirmImpactAsync(form, unlocked, [entry], Text("UpdateCredentialWarning"), selection))
                 return false;
+            RequireCurrentSelection(selection);
             if (replacementPath is not null)
             {
                 if (!await ImportKeyFileAsync(form, replacementPath, "ReplacePrivateKey", async (source, passphrase) =>
                 {
-                    if (!ReferenceEquals(vault, unlocked) || unlocked.Revision != revision)
-                        throw new InvalidOperationException(Text("ManagementTabOutdated"));
+                    RequireCurrentSelection(selection);
                     using var progress = form.BeginProgress("SavingChanges");
                     await unlocked.ReplacePrivateKeySourceAsync(entry.Name, newName, source, passphrase, revision);
                 })) return false;
@@ -828,10 +864,7 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
                 }
             }
             return true;
-        }, acceptKey: "OK", acceptOnEnter: false);
-        try { app.Modal(form.ShowDialog); }
-        finally { password.Clear(); }
-        showRenameResult?.Invoke();
+        }
     }
 
     private MessageBoxResult ConfirmRename(Window owner, string message, bool selected)
@@ -893,7 +926,7 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
     }
 
     private async Task<bool> ConfirmImpactAsync(Window owner, CredentialVault unlocked, IReadOnlyList<VaultEntryInfo> entries,
-        string warning)
+        string warning, VaultEntrySelection? selection = null)
     {
         long revision = unlocked.Revision;
         long selectionEpoch = app.Vault.SelectionEpoch;
@@ -903,6 +936,7 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         if (app.Modal(() => ThemedMessageBox.ShowVault(owner, message, Text("Vault"), MessageBoxButton.YesNo,
             MessageBoxImage.Warning, MessageBoxResult.No)) != MessageBoxResult.Yes) return false;
         var current = await FindImpactAsync(entries);
+        if (selection is not null) RequireCurrentSelection(selection);
         if (!ReferenceEquals(vault, unlocked) || unlocked.Revision != revision ||
             app.Vault.SelectionEpoch != selectionEpoch ||
             current.Unavailable != impact.Unavailable || !current.Paths.SequenceEqual(impact.Paths, StringComparer.Ordinal))

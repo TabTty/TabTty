@@ -117,7 +117,7 @@ internal sealed partial class ProfileCatalog
                 return null;
             }
             importToken.ThrowIfCancellationRequested();
-            CommitRegistration(registeredPath, registeredPath, imported, used, imported.TrustVersion);
+            CommitRegistration(registeredPath, imported, used, imported.TrustVersion);
             owned = null;
             configuredFolder = null;
             SelectImportedProfile(registeredPath, used);

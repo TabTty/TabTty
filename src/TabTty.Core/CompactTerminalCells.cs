@@ -10,6 +10,8 @@ internal sealed class CompactTerminalCells
     private readonly long expandedCharge;
     private Cell[]? compact;
     private string? arena;
+    private TerminalTextPosition[]? positions;
+    private readonly int textLength;
     private TerminalCell[]? expanded;
     private int expandedCount;
     private readonly record struct Cell(uint Offset, ushort Length, short Width, uint Foreground, uint Background, uint Flags);
@@ -40,8 +42,10 @@ internal sealed class CompactTerminalCells
     }
 
     internal CompactTerminalCells(ReadOnlySpan<NativeTerminalCore.CellView> cells,
-        ReadOnlySpan<char> text, ResourceReservation admittedCopies)
+        ReadOnlySpan<char> text, int textLength, TerminalTextPosition[]? positions, ResourceReservation admittedCopies)
     {
+        this.positions = positions;
+        this.textLength = textLength;
         var packed = new Cell[cells.Length];
         long stringBytes = 0;
         for (int index = 0; index < cells.Length; index++)
@@ -94,7 +98,7 @@ internal sealed class CompactTerminalCells
             }
             else
             {
-                int textOffset = 0;
+                int position = 0;
                 for (int column = 0; column < source.Length; column++)
                 {
                     Cell cell = source[column];
@@ -109,15 +113,20 @@ internal sealed class CompactTerminalCells
                     }
                     var style = new TerminalStyle(NativeTerminalCore.Color(cell.Foreground),
                         NativeTerminalCore.Color(cell.Background), (TerminalStyleFlags)cell.Flags);
-                    result[destination++] = new TerminalCell(column, Math.Max(1, (int)cell.Width),
-                        textOffset, value, style, cell.Width == 0);
-                    textOffset += value.Length;
+                    int textOffset = Math.Min(column, textLength);
+                    if (positions is { } spans)
+                    {
+                        while (position < spans.Length && (spans[position].Column < column || spans[position].Width == 0)) position++;
+                        textOffset = position < spans.Length && spans[position].Column == column ? spans[position].Start : textLength;
+                    }
+                    result[destination++] = new TerminalCell(column, Math.Max(1, (int)cell.Width), textOffset, value, style, cell.Width == 0);
                 }
             }
             expandedCount = destination;
             Volatile.Write(ref expanded, result);
             compact = null;
             arena = null;
+            positions = null;
             memory.Resize(expandedCharge);
             Interlocked.Increment(ref NativeTerminalCoreDiagnostics.MaterializedCellRows);
             Interlocked.Add(ref NativeTerminalCoreDiagnostics.MaterializedCells, destination);

@@ -17,7 +17,6 @@ internal sealed partial class MainWindow
         // Only presentation is serialized here. Resource work can finish while a review is open.
         private readonly SemaphoreSlim prompts = new(1);
         private Task<CloseDisposition>? windowRequest;
-        private Task? disconnectedRequest;
 
         internal Task<CloseResult> CloseTabAsync(WindowTab item) => CloseTabAsync(item, false);
 
@@ -40,8 +39,7 @@ internal sealed partial class MainWindow
             return request.Completion.Task;
         }
 
-        internal Task CloseDisconnectedTabsAsync() =>
-            disconnectedRequest ??= CloseManyAsync(false);
+        internal Task CloseDisconnectedTabsAsync() => CloseManyAsync(false);
 
         internal Task<CloseDisposition> CloseWindowAsync() =>
             windowRequest ??= CloseManyAsync(true);
@@ -146,7 +144,6 @@ internal sealed partial class MainWindow
                     window.UpdateWelcomePanel();
                 }
                 if (entireWindow) windowRequest = null;
-                else disconnectedRequest = null;
             }
         }
 
@@ -188,11 +185,10 @@ internal sealed partial class MainWindow
 
         private void Begin(Request request)
         {
-            request.Started = request.Target.Item.IsClosing = true;
-            request.Target.Terminal.ClosePending = true;
+            request.Target.Terminal.ClosureDecision = request.Decision.Task;
+            request.Decision.TrySetResult(true);
             window.app.Ai.EndSharing(request.Target.Terminal);
             request.Target.Terminal.ProtectRecordingClose();
-            request.Decision.TrySetResult();
             _ = ExecuteAsync(request);
         }
 
@@ -219,7 +215,11 @@ internal sealed partial class MainWindow
                 adopted = await wait;
                 transferOutcome = await transfer;
                 if (!transferOutcome.Value.Dismissed)
+                {
                     outcome = CloseDisposition.TransferRetained;
+                    if (transferOutcome.Value.Status == TransferWindowCloseStatus.ReportFailed)
+                        terminal.ReportTransferCloseFailure();
+                }
                 else if (adopted || await actualCleanup == CleanupDisposition.Completed)
                 {
                     if (!ReferenceEquals(terminal.ConnectionGeneration, target.Generation))
@@ -302,11 +302,10 @@ internal sealed partial class MainWindow
 
         private void Finish(Request request, CloseResult result)
         {
-            request.Decision.TrySetResult();
+            request.Decision.TrySetResult(false);
             if (result.Disposition != CloseDisposition.Removed)
             {
-                request.Target.Item.IsClosing = false;
-                request.Target.Terminal.ClosePending = false;
+                if (request.Started) request.Target.Terminal.ClosureDecision = null;
                 request.Target.Terminal.Macro?.SetCloseReview(false);
                 requests.Remove(request.Target.Item);
             }
@@ -315,16 +314,16 @@ internal sealed partial class MainWindow
 
         private Target? Capture(WindowTab item)
         {
-            if (item.Content is not TerminalTab terminal || window.GroupOf(item) is not { } group) return null;
+            if (item.Content is not TerminalTab terminal || item.Placement is not { } placement || placement.Window != window) return null;
             var transfer = terminal.TransferWindow;
-            return new(item, terminal, group, terminal.ConnectionGeneration, transfer, transfer?.OperationRevision ?? 0, terminal.Macro);
+            return new(item, terminal, placement.Group, terminal.ConnectionGeneration, transfer, transfer?.OperationRevision ?? 0, terminal.Macro);
         }
 
         private bool TargetMatches(Target target)
         {
             var terminal = target.Terminal;
             var transfer = terminal.TransferWindow;
-            return window.GroupOf(target.Item) == target.Group && ReferenceEquals(target.Item.Content, terminal) &&
+            return target.Item.Placement == (window, target.Group) && ReferenceEquals(target.Item.Content, terminal) &&
                 ReferenceEquals(terminal.ConnectionGeneration, target.Generation) &&
                 (transfer is null || (ReferenceEquals(transfer, target.Transfer) && transfer.OperationRevision == target.TransferRevision)) &&
                 (terminal.Macro is null || ReferenceEquals(terminal.Macro, target.Macro));
@@ -355,11 +354,11 @@ internal sealed partial class MainWindow
         private sealed class Request(Target target)
         {
             internal Target Target { get; } = target;
-            internal TaskCompletionSource Decision { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            internal TaskCompletionSource<bool> Decision { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
             internal TaskCompletionSource<CloseResult> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
             internal Task? Cleanup;
             internal TaskCompletionSource LossAccepted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            internal bool Started;
+            internal bool Started => Decision.Task is { IsCompletedSuccessfully: true, Result: true };
         }
 
         internal enum CloseDisposition { Declined, TargetChanged, ReviewFailed, TransferRetained, CleanupFailed, Removed }

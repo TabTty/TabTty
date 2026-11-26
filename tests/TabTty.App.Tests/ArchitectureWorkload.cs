@@ -99,7 +99,7 @@ internal static partial class Program
             var uploadItem = (await files.ListAsync(upload, token)).Single(item => item.Label == "payload.bin");
 
             // Start the fixture producers only once the windows and all streams are ready.
-            await tabs[19].InputSession!.SendTextAsync("START", token);
+            await tabs[19].InputSession!.DeliverInputAsync(new(TerminalInputKind.Text, "START"), token);
             await Task.Delay(TimeSpan.FromSeconds(35), token);
             peers.Add(app.Ai.Attach("synthetic history peer A", "history host", 1)!);
             peers.Add(app.Ai.Attach("synthetic history peer B", "history host", 1)!);
@@ -188,7 +188,7 @@ internal static partial class Program
                         }
                         else
                         {
-                            _ = tabs[19].InputSession!.SendTextAsync("sample", token).ContinueWith(
+                            _ = tabs[19].InputSession!.DeliverInputAsync(new(TerminalInputKind.Text, "sample"), token).ContinueWith(
                                 task => _ = task.Exception, TaskContinuationOptions.OnlyOnFaulted);
                         }
                     }, DispatcherPriority.Input, token).Task.ConfigureAwait(false);

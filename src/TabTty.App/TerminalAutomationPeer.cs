@@ -46,8 +46,12 @@ internal sealed class TerminalAutomationPeer : FrameworkElementAutomationPeer, I
     public ITextRangeProvider[] GetVisibleRanges() => OnUi(() =>
     {
         var (first, end) = surface.VisibleRows();
+        var (left, right) = surface.VisibleColumns();
         return Enumerable.Range(first, end - first).Select(row =>
-            (ITextRangeProvider)Range(document.Offset(row, 0), document.Offset(row, document.View![row].Length))).ToArray();
+        {
+            var (start, finish) = document.View![row].Length == 0 ? (0, 0) : document.View.VisibleText(row, left, right);
+            return (ITextRangeProvider)Range(document.Offset(row, start), document.Offset(row, finish));
+        }).ToArray();
     });
     public ITextRangeProvider RangeFromChild(IRawElementProviderSimple childElement) =>
         throw new ArgumentException("The terminal has no text-provider children.", nameof(childElement));
@@ -177,6 +181,11 @@ internal sealed class TerminalAutomationPeer : FrameworkElementAutomationPeer, I
         {
             var first = Point(start);
             var last = Point(end);
+            if (end > start && last.Offset == 0 && last.Row > 0 && View!.IsSoftWrapped(last.Row - 1))
+            {
+                var previous = Point(end - 1);
+                last = (previous.Row, previous.Offset + 1);
+            }
             return new TerminalMatch(first.Row, first.Offset, last.Row, last.Offset);
         }
 

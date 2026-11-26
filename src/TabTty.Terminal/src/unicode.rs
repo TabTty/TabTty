@@ -93,22 +93,31 @@ impl Unicode {
         count
     }
 
-    pub fn analyze_paste(&self, text: &[u16]) -> Result<(usize, usize), i32> {
-        let mut state = GraphemeState::default();
-        let (mut characters, mut lines) = (0, 1);
-        for c in char::decode_utf16(text.iter().copied()) {
+    pub fn analyze_paste_page(&self, text: &[u16], context: u32) -> Result<[u32; 4], i32> {
+        let mut length = text.len().min(1024);
+        if length < text.len() && (0xd800..=0xdbff).contains(&text[length - 1]) {
+            length -= 1;
+        }
+        let mut state = GraphemeState::decode(context);
+        let mut newline = context & (1 << 14) != 0;
+        let (mut characters, mut lines) = (0, 0);
+        for c in char::decode_utf16(text[..length].iter().copied()) {
             let c = c.map_err(|_| 1)?;
             if c.is_control() && !matches!(c, '\t' | '\r' | '\n') {
                 return Err(1);
             }
+            let had_grapheme = state.previous.is_some();
             if state.push(self, c as u32) {
-                characters += 1;
-                if matches!(c, '\r' | '\n') {
-                    lines += 1;
-                }
+                characters += u32::from(had_grapheme);
+                lines += u32::from(had_grapheme && newline);
+                newline = matches!(c, '\r' | '\n');
             }
         }
-        Ok((characters, lines))
+        if length == text.len() && state.previous.is_some() {
+            characters += 1;
+            lines += u32::from(newline);
+        }
+        Ok([length as u32, characters, lines, state.encode() | (u32::from(newline) << 14)])
     }
 
     pub fn paste_chunk(

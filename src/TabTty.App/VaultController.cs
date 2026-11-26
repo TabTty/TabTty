@@ -31,6 +31,10 @@ internal sealed class VaultController(App app) : IDisposable
     {
         if (!files.TryGetValue(path, out VaultFileController? file))
         {
+            // A reserved path may have acquired its on-disk spelling since the reservation.
+            foreach (VaultFileController candidate in files.Values)
+                if (ProfileLocation.SameVaultOpeningPath(candidate.FilePath, path))
+                    return candidate;
             file = new VaultFileController(app, path, NotifyManagementChanged, ReleaseIfUnused);
             files.Add(path, file);
         }
@@ -40,7 +44,8 @@ internal sealed class VaultController(App app) : IDisposable
     internal bool IsSelected(VaultFileController file) => ReferenceEquals(file, Selected);
 
     internal bool MustRestart(VaultFileController file) =>
-        staleSelectedPaths.Contains(file.FilePath) || (file.IsStale && IsSelected(file));
+        (file.IsStale && IsSelected(file)) || staleSelectedPaths.Contains(file.FilePath) ||
+        staleSelectedPaths.Any(path => ProfileLocation.SameVaultOpeningPath(path, file.FilePath));
 
     private void ReleaseIfUnused(VaultFileController file)
     {
@@ -62,8 +67,8 @@ internal sealed class VaultController(App app) : IDisposable
         if (string.Equals(priorPath, nextPath, StringComparison.Ordinal)) return null;
         VaultFileController prior = Selected;
         string target = ProfileLocation.Normalize(nextPath);
-        if (prior.FilePath == target) return null;
         VaultFileController next = GetFile(target);
+        if (prior == next) return null;
         if (prior.IsBusy || next.IsBusy) throw new InvalidOperationException(Text("VaultBusy"));
         selectionTransition = (prior, next);
         return new SelectionReservation(this);
@@ -84,14 +89,16 @@ internal sealed class VaultController(App app) : IDisposable
         }
     }
 
-    public void SelectionChanged(string priorPath)
+    public void SelectionChanged()
     {
-        VaultFileController prior = selected ?? GetFile(ProfileLocation.Normalize(priorPath));
-        selected = GetFile(ProfileLocation.Normalize(app.VaultPath));
+        VaultFileController prior = Selected;
+        selected = selectionTransition?.Next ?? prior;
         if (prior != selected)
         {
             SelectionEpoch++;
-            if (prior.IsStale) staleSelectedPaths.Add(prior.FilePath);
+            prior.ChangeRole();
+            selected.ChangeRole();
+            if (prior.IsStale) staleSelectedPaths.Add(ProfileLocation.VaultOpeningPath(prior.FilePath));
             ReleaseIfUnused(prior);
         }
         NotifyManagementChanged();
@@ -220,18 +227,20 @@ internal sealed class VaultController(App app) : IDisposable
         var vaultPath = new TextBlock { TextWrapping = TextWrapping.Wrap };
         var requiresVault = new List<Button>();
         VaultFileController? listedFile = null;
+        VaultEntryBinding? listedBinding = null;
+        long listedRevision = -1, listedRole = -1;
         IReadOnlyList<VaultEntryInfo>? listedEntries = null;
         bool listedUnlocked = false;
         int statusRevision = 0;
 
         var menu = new ContextMenu();
         list.ContextMenu = menu;
-        (VaultFileController File, VaultEntryInfo[] Entries)? menuTarget = null;
-        MenuItem editEntry = AddEntryAction("VaultEditEntry", (file, window, entry) => file.EditEntryAsync(window, entry, form));
-        MenuItem copyMacroReference = AddEntryAction("CopyMacroReference", static (file, _, entry) =>
+        VaultEntrySelection? menuTarget = null;
+        MenuItem editEntry = AddEntryAction("VaultEditEntry", (file, window, selection, entry) => file.EditEntryAsync(window, selection, entry, form));
+        MenuItem copyMacroReference = AddEntryAction("CopyMacroReference", static (_, _, _, entry) =>
         {
             if (entry.Kind == "password")
-                Clipboard.SetText(JsonSerializer.Serialize(file.CurrentCredentialName(entry)));
+                Clipboard.SetText(JsonSerializer.Serialize(entry.Name));
             return Task.CompletedTask;
         });
         menu.Items.Add(new Separator());
@@ -240,7 +249,7 @@ internal sealed class VaultController(App app) : IDisposable
         deleteEntries.Click += async (_, _) =>
         {
             if (menuTarget is { } selected)
-                await RunAction(selected.File, selected.Entries, (file, window) => file.DeleteEntriesAsync(window, selected.Entries, form));
+                await DeleteSelectionAsync(selected);
         };
         menu.Items.Add(deleteEntries);
 
@@ -298,8 +307,7 @@ internal sealed class VaultController(App app) : IDisposable
         };
         menu.Opened += (_, _) =>
         {
-            var entries = list.SelectedItems.Cast<VaultEntryInfo>().ToArray();
-            menuTarget = listedFile is { Unlocked: not null } file && entries.Length != 0 ? (file, entries) : null;
+            menuTarget = CaptureSelection(list.SelectedItems.Cast<VaultEntryInfo>());
             editEntry.IsEnabled = menuTarget is { Entries.Length: 1 };
             deleteEntries.IsEnabled = menuTarget is not null;
             copyMacroReference.Visibility = menuTarget is { Entries: [{ Kind: "password" }] }
@@ -308,21 +316,25 @@ internal sealed class VaultController(App app) : IDisposable
         list.PreviewMouseLeftButtonDown += async (_, args) =>
         {
             if (args.ClickCount != 2 || columns.RowAt(args.OriginalSource)?.Content is not VaultEntryInfo entry ||
-                listedFile is not { Unlocked: not null } file) return;
+                CaptureSelection([entry]) is not { } selected) return;
             args.Handled = true;
-            await RunEntryAction(file, entry, (current, window, item) => current.EditEntryAsync(window, item, form));
+            await RunAction(selected, (file, window, entries) => file.EditEntryAsync(window, selected, entries[0], form));
         };
         list.PreviewKeyDown += async (_, args) =>
         {
             if (args.Key != Key.Delete || args.KeyboardDevice.Modifiers != ModifierKeys.None ||
-                listedFile is not { Unlocked: not null } file || list.SelectedItems.Count == 0) return;
+                CaptureSelection(list.SelectedItems.Cast<VaultEntryInfo>()) is not { } selected) return;
             args.Handled = true;
             if (args.IsRepeat) return;
-            var entries = list.SelectedItems.Cast<VaultEntryInfo>().ToArray();
-            await RunAction(file, entries, (current, window) => current.DeleteEntriesAsync(window, entries, form));
+            await DeleteSelectionAsync(selected);
         };
         form.Loaded += (_, _) => { ManagementChanged += UpdateEntries; UpdateEntries(); };
-        form.Unloaded += (_, _) => ManagementChanged -= UpdateEntries;
+        form.Unloaded += (_, _) =>
+        {
+            ManagementChanged -= UpdateEntries;
+            listedBinding?.Retire();
+            listedBinding = null;
+        };
 
         Button Add(string key, Func<VaultFileController, Window, Task> action) => form.AddAsyncAction(key, () =>
         {
@@ -331,30 +343,40 @@ internal sealed class VaultController(App app) : IDisposable
             return file.RunAsync(window, () => action(file, window), form);
         });
 
-        MenuItem AddEntryAction(string key, Func<VaultFileController, Window, VaultEntryInfo, Task> action)
+        MenuItem AddEntryAction(string key, Func<VaultFileController, Window, VaultEntrySelection, VaultEntryInfo, Task> action)
         {
             var item = new MenuItem();
             form.AddLocalizedUpdate(() => item.Header = Text(key));
             item.Click += async (_, _) =>
             {
-                if (menuTarget is { Entries: [var entry] } selected)
-                    await RunEntryAction(selected.File, entry, action);
+                if (menuTarget is { Entries.Length: 1 } selected)
+                    await RunAction(selected, (file, window, entries) => action(file, window, selected, entries[0]));
             };
             menu.Items.Add(item);
             return item;
         }
 
-        Task RunEntryAction(VaultFileController file, VaultEntryInfo entry,
-            Func<VaultFileController, Window, VaultEntryInfo, Task> action) =>
-            RunAction(file, [entry], (current, window) => action(current, window, entry));
+        VaultEntrySelection? CaptureSelection(IEnumerable<VaultEntryInfo> entries)
+        {
+            if (listedBinding is not { Active: true } binding || !listedUnlocked) return null;
+            var identities = entries.Select(entry => (entry.Name, entry.Kind)).ToArray();
+            return identities.Length == 0 ? null : new(binding, listedRole, listedRevision, identities);
+        }
 
-        Task RunAction(VaultFileController file, IReadOnlyList<VaultEntryInfo> entries,
-            Func<VaultFileController, Window, Task> action) => form.RunAsync(() =>
+        Task DeleteSelectionAsync(VaultEntrySelection selected) =>
+            RunAction(selected, (file, window, entries) => file.DeleteEntriesAsync(window, selected, entries, form));
+
+        Task RunAction(VaultEntrySelection selected,
+            Func<VaultFileController, Window, VaultEntryInfo[], Task> action) => form.RunAsync(() =>
         {
             Window window = form.OwnerWindow;
+            VaultFileController file = selected.Binding.File;
             if (!ReferenceEquals(file, target())) return ShowStaleSelection();
-            return file.RunAsync(window, () => file.HasCurrentSelection(entries)
-                ? action(file, window) : ShowStaleSelection(), form);
+            return file.RunAsync(window, async () =>
+            {
+                try { await action(file, window, file.ResolveEntries(selected)); }
+                catch (VaultEntrySelectionChangedException) { await ShowStaleSelection(); }
+            }, form);
 
             Task ShowStaleSelection()
             {
@@ -376,6 +398,13 @@ internal sealed class VaultController(App app) : IDisposable
             AutomationProperties.SetName(vaultPath, vaultPath.Text);
             bool sameFile = ReferenceEquals(listedFile, file);
             bool unlocked = file.Unlocked is not null;
+            if (!sameFile || listedBinding?.Matches(file.Unlocked) != true)
+            {
+                listedBinding?.Retire();
+                listedBinding = new(file);
+            }
+            listedRevision = file.ManagementRevision;
+            listedRole = file.RoleGeneration;
             if (!sameFile || !ReferenceEquals(listedEntries, file.ManagementEntries) || listedUnlocked != unlocked || refreshLabels)
             {
                 listedFile = file;

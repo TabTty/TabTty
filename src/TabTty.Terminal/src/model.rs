@@ -1,6 +1,6 @@
 use crate::unicode::{GraphemeState, Unicode};
 use crate::{
-    account, CellView, Effects, FormatView, ReceiveObservation, RowView, ScreenRowView,
+    account, CellView, Effects, FormatView, ReceiveObservation, RowView, ScreenRowView, TextPosition,
     ScreenState, SnapshotView, Stats, TabView, LIVE_MODELS,
 };
 #[cfg(windows)]
@@ -18,7 +18,8 @@ mod admission_tests;
 mod history;
 #[path = "reflow.rs"]
 mod reflow;
-pub use history::{HistoryProof, HistoryRowView, HistorySlice};
+pub use history::{HistoryFragmentView, HistoryMatchView, HistoryPageView, HistoryPoint, HistoryProof, HistoryRange,
+    HistorySearchCheckpoint, HistorySearchPageView, HistorySearchWindow, OrdinalEquals};
 // Native identities are process-unique and disjoint from C#'s positive row IDs.
 static NEXT_ROW_ID: AtomicI64 = AtomicI64::new(-1);
 fn next_row_id() -> i64 {
@@ -109,19 +110,27 @@ impl CellView {
         }
     }
 }
+#[derive(Clone, Copy)]
+struct LogicalPosition { id: i64, utf16: i64, stored: i64 }
+#[derive(Clone, Copy)]
+struct RowContinuation(Option<LogicalPosition>);
+
+impl LogicalPosition {
+    fn start(id: i64) -> Self { Self { id, utf16: 0, stored: 0 } }
+}
+
 struct Row {
     id: i64,
-    logical_id: i64,
-    logical_offset: i64,
+    logical: LogicalPosition,
     revision: i64,
     content_revision: i64,
     submitted_revision: i64,
     tab_revision: u64,
     submitted_tab_revision: u64,
-    logical_cluster_offset: i64,
     cells: Vec<CellView>,
     arena: Vec<u16>,
     plain: Vec<u16>,
+    positions: Vec<TextPosition>,
     submitted: Option<Vec<u16>>,
     tabs: Vec<(usize, usize)>,
     formats: Vec<FormatView>,
@@ -134,17 +143,16 @@ impl Row {
     fn new(id: i64, columns: usize) -> Self {
         Self {
             id,
-            logical_id: id,
-            logical_offset: 0,
+            logical: LogicalPosition::start(id),
             revision: 1,
             content_revision: 1,
             submitted_revision: -1,
             tab_revision: 0,
             submitted_tab_revision: 0,
-            logical_cluster_offset: 0,
             cells: Vec::with_capacity(columns),
             arena: Vec::with_capacity(columns * 2),
             plain: Vec::new(),
+            positions: Vec::new(),
             submitted: None,
             tabs: Vec::new(),
             formats: Vec::new(),
@@ -156,17 +164,16 @@ impl Row {
     }
     fn recycle(&mut self, id: i64) {
         self.id = id;
-        self.logical_id = id;
-        self.logical_offset = 0;
+        self.logical = LogicalPosition::start(id);
         self.revision = 1;
         self.content_revision = 1;
         self.submitted_revision = -1;
         self.tab_revision = 0;
         self.submitted_tab_revision = 0;
-        self.logical_cluster_offset = 0;
         self.cells.clear();
         self.arena.clear();
         self.plain.clear();
+        self.positions = Vec::new();
         self.submitted = None;
         self.tabs.clear();
         self.formats.clear();
@@ -179,6 +186,7 @@ impl Row {
         self.cells.capacity() * size_of::<CellView>()
             + self.arena.capacity() * 2
             + self.plain.capacity() * 2
+            + self.positions.capacity() * size_of::<TextPosition>()
             + self.submitted.as_ref().map_or(0, |s| s.capacity() * 2)
             + self.tabs.capacity() * size_of::<(usize, usize)>()
             + self.formats.capacity() * size_of::<FormatView>()
@@ -499,35 +507,59 @@ impl Row {
     }
     // Enumerate the units emitted by serialize(false, None) without
     // segmenting the resulting concatenation, which has lost VT cutoffs.
-    fn spans(&self, mut visit: impl FnMut(usize, usize) -> bool) {
-        let end = self.text_end().max(self.formats.last().map_or(0, |mark| mark.column as usize));
+    fn position_spans(&self) -> Vec<TextPosition> {
+        if self.formats.is_empty() && !self.cells.iter().any(|cell| cell.width > 1 || (cell.width > 0 && cell.length > 1)) {
+            return Vec::new();
+        }
+        let end = self.text_end();
         let mut marks = self.formats.iter().peekable();
-        let mut offset = 0;
+        let mut positions = Vec::with_capacity(end + self.formats.len());
+        let mut offset = 0u32;
         for column in 0..=end {
             while marks.next_if(|mark| mark.column as usize == column).is_some() {
-                if !visit(offset, offset + 1) { return; }
+                positions.push(TextPosition { start: offset, end: offset + 1, column: column as u16, width: 0 });
                 offset += 1;
             }
             if column == end { break; }
-            let length = match self.cells.get(column) {
-                Some(cell) if cell.width > 0 => cell.length as usize,
-                Some(cell) if cell.width < 0 => 0,
-                _ => 1,
+            let (length, width) = match self.cells.get(column) {
+                Some(cell) if cell.width > 0 => (cell.length as u32, cell.width as u16),
+                Some(cell) if cell.width < 0 => continue,
+                _ => (1, 1),
             };
-            if length != 0 && !visit(offset, offset + length) { return; }
+            positions.push(TextPosition { start: offset, end: offset + length, column: column as u16, width });
             offset += length;
+        }
+        positions
+    }
+
+    fn spans(&self, mut visit: impl FnMut(usize, usize) -> bool) {
+        if self.positions.is_empty() {
+            for offset in 0..self.plain.len() {
+                if !visit(offset, offset + 1) { break; }
+            }
+        } else {
+            for position in &self.positions {
+                if !visit(position.start as usize, position.end as usize) { break; }
+            }
         }
     }
 
-    fn span_count(&self) -> usize {
-        let mut count = 0;
-        self.spans(|_, _| { count += 1; true });
-        count
+    fn continuation(&self) -> RowContinuation {
+        RowContinuation(self.soft.then(|| LogicalPosition {
+            id: self.logical.id,
+            utf16: self.logical.utf16 + self.plain.len() as i64,
+            stored: self.logical.stored + if self.positions.is_empty() { self.plain.len() } else { self.positions.len() } as i64,
+        }))
+    }
+
+    fn start_after(&mut self, prior: RowContinuation) {
+        self.logical = prior.0.unwrap_or_else(|| LogicalPosition::start(self.id));
     }
 
     fn refresh_plain(&mut self) {
         if self.dirty {
             self.plain = self.serialize(false, None);
+            self.positions = self.position_spans();
             self.dirty = false;
         }
     }
@@ -794,6 +826,7 @@ pub struct Model {
     feed_bytes: u64,
     feed_batches: u64,
     snapshots: u64,
+    receive_only: bool,
     unsupported: u64,
     accounted: u64,
     peak_owned: u64,
@@ -882,6 +915,7 @@ impl Model {
             feed_bytes: 0,
             feed_batches: 0,
             snapshots: 0,
+            receive_only: false,
             unsupported: 0,
             accounted: 0,
             peak_owned: 0,
@@ -1035,7 +1069,14 @@ impl Model {
         self.sources[index] = source;
         self.finish_result(result)
     }
+    pub fn set_receive_only(&mut self) { self.receive_only = true; }
+
+    #[cfg(test)]
     pub fn complete(&mut self, flags: u32) -> Result<(), i32> {
+        self.complete_receive(flags, false)
+    }
+
+    pub fn complete_receive(&mut self, flags: u32, flush_text: bool) -> Result<(), i32> {
         self.start_call(flags)?;
         if self.finished {
             return Ok(());
@@ -1052,6 +1093,9 @@ impl Model {
         }
         self.finished = true;
         self.flush_alternate_cr();
+        if result.is_ok() && flush_text && flags & 2 != 0 && self.parked.is_none() {
+            self.flush_normal_text();
+        }
         self.finish_result(result)
     }
     pub fn flush(&mut self, flags: u32) -> Result<(), i32> {
@@ -1662,21 +1706,11 @@ impl Model {
             self.screen[self.cursor_row].soft = soft;
             self.screen[self.cursor_row].revision += 1;
         }
-        let prev_id = self.screen[self.cursor_row].logical_id;
-        let prev_offset = self.screen[self.cursor_row].logical_offset;
-        let prev_len = if soft {
-            self.screen[self.cursor_row].refresh_plain();
-            self.screen[self.cursor_row].plain.len()
-        } else {
-            0
-        };
-        let prev_cluster_offset = self.screen[self.cursor_row].logical_cluster_offset;
-        let excluded = self.screen[self.cursor_row].excluded;
-        let prev_clusters = if soft {
-            self.screen[self.cursor_row].span_count()
-        } else {
-            0
-        };
+        let row = &mut self.screen[self.cursor_row];
+        if soft { row.refresh_plain(); }
+        let excluded = row.excluded;
+        let preceding_id = row.id;
+        let continuation = row.continuation();
         if self.cursor_row == self.margin_bottom {
             self.scroll_region(self.margin_top, self.margin_bottom, 1, false);
         } else if self.cursor_row < self.screen_rows - 1 {
@@ -1685,11 +1719,9 @@ impl Model {
         }
         if soft {
             self.screen[self.cursor_row].excluded |= excluded;
-            self.screen[self.cursor_row].logical_id = prev_id;
-            self.screen[self.cursor_row].logical_offset = prev_offset + prev_len as i64;
-            self.screen[self.cursor_row].logical_cluster_offset =
-                prev_cluster_offset + prev_clusters as i64;
         }
+        let next = &mut self.screen[self.cursor_row];
+        if next.id != preceding_id { next.start_after(continuation); }
     }
     fn scroll_region(&mut self, top: usize, bottom: usize, count: usize, down: bool) {
         self.cluster_row = 0;
@@ -1730,7 +1762,7 @@ impl Model {
             }
             let mut old = self.history.pop_front().unwrap();
             if let Some(index) = &mut self.history_index {
-                index.remove_front(old.logical_id);
+                index.remove_front(old.logical.id);
             }
             self.history_bytes -= old.bytes();
             self.history_pending_units -= old.pending_units();
@@ -2016,6 +2048,7 @@ impl Model {
 
     fn csi(&mut self, source: &mut Source, final_byte: u8, command: Csi) -> Result<(), i32> {
         if let Csi::Reply(reply) = command {
+            if self.receive_only { return Ok(()); }
             use std::io::Write;
             let length_at = self.replies.len();
             self.replies.push(0);
@@ -2362,6 +2395,9 @@ impl Model {
                 384 + row.cells.len() as u64 * 158
                     + row.arena.len() as u64 * 6
                     + row.format_units() as u64 * 6
+                    + if row.dirty || !row.positions.is_empty() {
+                        (row.cells.len() + row.format_units()) as u64 * size_of::<TextPosition>() as u64
+                    } else { 0 }
             })
             .sum::<u64>()
     }
@@ -2385,9 +2421,7 @@ impl Model {
         };
         if let Some(first) = self.screen.front_mut() {
             if self.parked.is_some() {
-                first.logical_id = first.id;
-                first.logical_offset = 0;
-                first.logical_cluster_offset = 0;
+                first.logical = LogicalPosition::start(first.id);
             }
         }
         for row in &mut self.screen {
@@ -2505,7 +2539,7 @@ impl Model {
             }
             let mut probe = Probe::from_source(&self.sources[source], self);
             probe.decode_source(&self.sources[source], payload, false)?;
-            if probe.reply_count + pending_replies > MAX_REPLIES {
+            if !self.receive_only && probe.reply_count + pending_replies > MAX_REPLIES {
                 return Err(4);
             }
             revisits_rows = probe.revisits_rows;
@@ -2606,7 +2640,7 @@ impl Model {
                 .filter(|r| r.dirty)
                 .map(|r| (r.arena.len() + r.cells.len() + r.format_units()) as u64)
                 .sum::<u64>();
-            owned + text * 4 + rows * size_of::<RowView>() as u64 * 2 + 128 * 1024
+            owned + text * (4 + size_of::<TextPosition>() as u64) + rows * size_of::<RowView>() as u64 * 2 + 128 * 1024
         };
         Ok(required)
     }
@@ -2638,29 +2672,21 @@ impl Drop for Model {
         LIVE_MODELS.fetch_sub(1, Ordering::Relaxed);
     }
 }
-fn normalize_row(row: &mut Row, previous: &mut Option<(i64, i64, usize, bool)>) {
-    if let Some((id, offset, len, soft)) = *previous {
-        row.logical_id = if soft { id } else { row.id };
-        row.logical_offset = if soft { offset + len as i64 } else { 0 };
-    }
-    *previous = Some((
-        row.logical_id,
-        row.logical_offset,
-        row.plain.len(),
-        row.soft,
-    ));
+fn normalize_row(row: &mut Row, previous: &mut Option<RowContinuation>) {
+    if let Some(prior) = *previous { row.start_after(prior); }
+    *previous = Some(row.continuation());
 }
 fn view(r: &Row) -> RowView {
     RowView {
         id: r.id,
-        logical_id: r.logical_id,
-        logical_offset: r.logical_offset,
+        logical_id: r.logical.id,
+        logical_offset: r.logical.utf16,
         display_revision: r.revision,
         cells: r.cells.as_ptr(),
         text: r.plain.as_ptr(),
         cell_text: r.arena.as_ptr(),
-        formats: r.formats.as_ptr(),
-        format_count: r.formats.len() as u32,
+        positions: r.positions.as_ptr(),
+        position_count: r.positions.len() as u32,
         cell_count: r.cells.len() as u32,
         text_length: r.plain.len() as u32,
         cell_text_length: r.arena.len() as u32,

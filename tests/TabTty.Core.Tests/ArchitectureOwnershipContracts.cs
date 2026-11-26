@@ -52,6 +52,15 @@ internal static partial class ArchitectureOwnershipContracts
         await TelnetGeometryReportsSupersessionAndFailureAsync();
         await TelnetConsumerFailureSettlesOnlyItsOriginalDeliveryAsync();
         await OrdinarySendsReportTheirDefinitePrefixAsync();
+        await TelnetPayloadProgressSurvivesIacEscapingAsync();
+        await AiOrdinaryInputStopsAtACompleteUnitAsync("utf-8", "ABC", 1, "A"u8.ToArray(), "A", 1, takeover: true);
+        await AiOrdinaryInputStopsAtACompleteUnitAsync("utf-8", "ABC", 1, "A"u8.ToArray(), "A", 1);
+        await AiOrdinaryInputStopsAtACompleteUnitAsync("utf-8", "😀Z", 2, "😀"u8.ToArray(), "😀", 4);
+        await AiOrdinaryInputStopsAtACompleteUnitAsync("utf-8", "😀Z", 1, "\u001b😀"u8.ToArray(), "😀", 5, alt: true);
+        await AiOrdinaryInputStopsAtACompleteUnitAsync("iso-8859-1", "ÿZ", 1, [255, 255], "ÿ", 1);
+        await AiOrdinaryInputStopsAtACompleteUnitAsync("jis", "日本語", 4, [27, 36, 66, 0x46, 0x7c, 27, 40, 66], "日", 5);
+        await AiOrdinaryInputReservesBeforeEncodingAsync();
+        await KeyboardSendCompletesBeforeAnyScreenReadAsync();
         await OrdinaryTextEchoKeepsOnlyDefiniteCompleteUnitsAsync();
         await QueuedKeysUseTheirTargetModeAsync(broadcast: false);
         await QueuedKeysUseTheirTargetModeAsync(broadcast: true);
@@ -145,14 +154,21 @@ internal static partial class ArchitectureOwnershipContracts
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
         await VerifyAsync("utf-8", "A😀Z", [27, 65, 0xf0, 0x9f], "A",
-            (session, input) => session.SendTextAsync(input.Text, deadline.Token, altPrefix: true), alt: true);
+            (session, input) => session.DeliverInputAsync(new(TerminalInputKind.Text, input.Text, Alt: true), deadline.Token), alt: true);
+        await VerifyAsync("utf-8", "A😀Z", [27], "",
+            (session, input) => session.DeliverInputAsync(input, deadline.Token), alt: true);
         await VerifyAsync("iso-8859-1", "AÿZ", [65, 255], "A", async (session, input) =>
         {
             using var prepared = await session.PrepareInputAsync(input, null, deadline.Token);
-            await prepared!.SendAsync(deadline.Token);
+            try { await prepared!.SendAsync(deadline.Token); }
+            finally
+            {
+                if (prepared!.DefinitePayloadBytes != 1)
+                    throw new InvalidOperationException("A broadcast report lost its confirmed payload prefix.");
+            }
         });
         await VerifyAsync("jis", "日本語", [27, 36, 66, 0x46, 0x7c, 0x4b], "日",
-            (session, input) => session.SendTextAsync(input.Text, deadline.Token));
+            (session, input) => session.DeliverInputAsync(new(TerminalInputKind.Text, input.Text), deadline.Token));
         await VerifyAsync("utf-8", "A😀Z", [65, 0xf0, 0x9f], "A", async (session, input) =>
         {
             var lease = session.TryGrantAiInput() ?? throw new InvalidOperationException("AI ownership was not admitted.");
@@ -161,7 +177,7 @@ internal static partial class ArchitectureOwnershipContracts
                 long layout = await session.ObserveAiAsync((_, state) => state.LayoutEpoch, deadline.Token);
                 var attempt = new AiInputAttempt(lease, layout, deadline.Token);
                 try { await session.SendAiInputAsync(input, null, attempt, deadline.Token); }
-                catch (IOException) when (attempt.Admitted && attempt.CompletedWrites == 1) { throw; }
+                catch (IOException) when (attempt.Admitted && attempt.CompletedWrites == 1 && attempt.DefinitePayloadBytes == 3) { throw; }
                 catch (IOException error) { throw new InvalidOperationException("AI input lost its definite submitted prefix.", error); }
             }
             finally { await session.ReleaseAiInputAsync(lease); }
@@ -183,6 +199,91 @@ internal static partial class ArchitectureOwnershipContracts
             if (!wire.First.AsSpan().SequenceEqual(first) || wire.Calls != 2 || echoed != expectedEcho)
                 throw new InvalidOperationException($"The {encoding} ordinary send echoed a partial unit or retried its suffix.");
         }
+    }
+
+    private static async Task TelnetPayloadProgressSurvivesIacEscapingAsync()
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        byte[] framed = [0x41, 0xff, 0xff, 0x5a];
+        var profile = ConnectionProfile.CreateTelnet("Telnet IAC", "127.0.0.1", transmitEncoding: "iso-8859-1");
+        foreach (int wireCount in new[] { 2, 3 })
+        foreach (bool pasteInput in new[] { false, true })
+        {
+            using var wire = new ShortWriteWire(wireCount);
+            await using var session = new TerminalSession(wire, profile, null, 100);
+            try
+            {
+                if (pasteInput)
+                {
+                    using var paste = TerminalPaste.Create("AÿZ");
+                    await session.SendPasteAsync(paste, 0, 0, cancellationToken: deadline.Token);
+                }
+                else await session.DeliverInputAsync(new(TerminalInputKind.Text, "AÿZ"), deadline.Token);
+                throw new InvalidOperationException("A short write was accepted as a full send.");
+            }
+            catch (IOException) { }
+            string echoed = string.Concat(await session.GetOutputAsync(deadline.Token));
+            if (!wire.First.SequenceEqual(framed.Take(wireCount)) || wire.Calls != 2 || echoed != (wireCount == 2 ? "A" : "Aÿ"))
+                throw new InvalidOperationException("IAC framing advanced the echo by an incomplete payload byte.");
+        }
+
+        using var halfIac = new ShortWriteWire(1);
+        var transport = new SessionTransport(halfIac, profile, (80, 24), (_, _, _) => Task.CompletedTask,
+            (_, _) => Task.CompletedTask, (_, _) => Task.CompletedTask);
+        try
+        {
+            var outcome = await transport.SubmitPayloadAsync([0xff, 0x5a], deadline.Token);
+            if (outcome is not { DefiniteBytes: 0, Status: TransportSubmission.Uncertain, Error: IOException } ||
+                !halfIac.First.SequenceEqual(new byte[] { 0xff }))
+                throw new InvalidOperationException("A half-escaped IAC erased evidence of an attempted write.");
+        }
+        finally { await transport.DisconnectAsync(); }
+
+        foreach (var (text, wireCount, definite) in new[] { ("AÿZ", 2, 1), ("ÿZ", 1, 0) })
+        {
+            using var wire = new ShortWriteWire(wireCount);
+            await using var session = new TerminalSession(wire, profile, null, 100);
+            var lease = session.TryGrantAiInput() ?? throw new InvalidOperationException("AI ownership was not admitted.");
+            try
+            {
+                var layout = await session.ObserveAiAsync((_, state) => state.LayoutEpoch, deadline.Token);
+                var attempt = new AiInputAttempt(lease, layout, deadline.Token);
+                try
+                {
+                    await session.SendAiInputAsync(new(TerminalInputKind.Text, text), null, attempt, deadline.Token);
+                    throw new InvalidOperationException("An uncertain AI write looked successful.");
+                }
+                catch (IOException) when (attempt.Admitted && attempt.DefinitePayloadBytes == definite) { }
+            }
+            finally { await session.ReleaseAiInputAsync(lease); }
+        }
+    }
+
+    private static async Task KeyboardSendCompletesBeforeAnyScreenReadAsync()
+    {
+        const long capacity = 8 * 1024 * 1024;
+        var quota = new ResourceQuota(capacity, collectOnPressure: false);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var wire = new HeldWriteWire([]);
+        wire.ReleaseWrite.SetResult();
+        var profile = ConnectionProfile.CreateSerial("Echo", new("COM254"), localEcho: true);
+        await using var session = new TerminalSession(wire, profile, null, 100, terminalState: quota);
+        long exports = Interlocked.Read(ref NativeTerminalCoreDiagnostics.SnapshotExports);
+        await session.DeliverInputAsync(new(TerminalInputKind.Text, "x"), deadline.Token);
+        if (Interlocked.Read(ref NativeTerminalCoreDiagnostics.SnapshotExports) != exports)
+            throw new InvalidOperationException("Keyboard submission exported the terminal screen.");
+        using (quota.Reserve(capacity - quota.Used))
+        {
+            try
+            {
+                _ = await session.GetOutputAsync(deadline.Token);
+                throw new InvalidOperationException("The explicitly requested read exceeded its quota.");
+            }
+            catch (ResourceLimitException) { }
+        }
+        await session.ProcessPayloadAsync(TerminalReceiveSource.Data, "peer"u8.ToArray(), deadline.Token);
+        if (string.Concat(await session.GetOutputAsync(deadline.Token)) != "xpeer" || !wire.Written.ToArray().AsSpan().SequenceEqual("x"u8))
+            throw new InvalidOperationException("The explicit read omitted intervening output or the send replayed its input.");
     }
 
     private sealed class ShortWriteWire(int firstWrite = 2) : ISessionWire
@@ -208,13 +309,13 @@ internal static partial class ArchitectureOwnershipContracts
         using var wire = new HeldWriteWire("\u001b[?1h"u8.ToArray());
         var profile = ConnectionProfile.CreateTelnet("Queued key", "127.0.0.1");
         await using var session = new TerminalSession(wire, profile, null, 100);
-        var first = session.SendTextAsync("x", token);
+        var first = session.DeliverInputAsync(new(TerminalInputKind.Text, "x"), token);
         await wire.WriteStarted.Task.WaitAsync(token);
         try
         {
             using var key = broadcast ? await session.PrepareInputAsync(
                 new TerminalInput(TerminalInputKind.Key, Key: TerminalKey.Up), null, token) : null;
-            Task second = broadcast ? key!.SendAsync(token) : session.SendKeyAsync(TerminalKey.Up, cancellationToken: token);
+            Task second = broadcast ? key!.SendAsync(token) : session.DeliverInputAsync(new(TerminalInputKind.Key, Key: TerminalKey.Up), token);
             if (!await session.ProcessOutputAsync(token) || second.IsCompleted)
                 throw new InvalidOperationException("A queued key ran before receive changed the target mode.");
             wire.ReleaseWrite.SetResult();
@@ -678,7 +779,7 @@ internal static partial class ArchitectureOwnershipContracts
                     session.RecordingReleasePending || replacement.RecordingStatus.Disposition != RecordingDisposition.Active)
                     throw new InvalidOperationException("A late flush did not settle only the original recording generation.");
                 replacementWire.ReleaseWrite.SetResult();
-                await replacement.SendTextAsync("alive", deadline.Token);
+                await replacement.DeliverInputAsync(new(TerminalInputKind.Text, "alive"), deadline.Token);
                 await replacement.PauseRecordingAsync(deadline.Token);
                 if (!replacementWire.Written.ToArray().AsSpan().SequenceEqual("alive"u8) ||
                     !replacementFile.Bytes.ToArray().AsSpan().SequenceEqual("replacement"u8))
@@ -858,7 +959,7 @@ internal static partial class ArchitectureOwnershipContracts
     {
         using var stop = new CancellationTokenSource();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        using var wire = new PartialPasteWire(firstWrite, stop);
+        using var wire = new PartialInputWire(firstWrite, stop.Cancel);
         var profile = ConnectionProfile.CreateTelnet("Partial paste", "127.0.0.1", transmitEncoding: encoding);
         await using var session = new TerminalSession(wire, profile, null, 100);
         using var paste = TerminalPaste.Create(source);
@@ -883,7 +984,68 @@ internal static partial class ArchitectureOwnershipContracts
             throw new InvalidOperationException($"A stopped {encoding} paste split a unit or echoed unsubmitted text.");
     }
 
-    private sealed class PartialPasteWire(int firstWrite, CancellationTokenSource stop) : ISessionWire
+    private static async Task AiOrdinaryInputStopsAtACompleteUnitAsync(string encoding, string source,
+        int firstWrite, byte[] expected, string echo, int definite, bool takeover = false, bool alt = false)
+    {
+        using var stop = new CancellationTokenSource();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        AiInputLease? lease = null;
+        using var wire = new PartialInputWire(firstWrite, () =>
+        {
+            if (takeover) lease!.Revoke();
+            else stop.Cancel();
+        });
+        var profile = ConnectionProfile.CreateTelnet("Stopped AI input", "127.0.0.1", transmitEncoding: encoding);
+        await using var session = new TerminalSession(wire, profile, null, 100);
+        lease = session.TryGrantAiInput() ?? throw new InvalidOperationException("AI input was not admitted.");
+        try
+        {
+            long layout = await session.ObserveAiAsync((_, observed) => observed.LayoutEpoch, deadline.Token);
+            var attempt = new AiInputAttempt(lease, layout, stop.Token);
+            try
+            {
+                await session.SendAiInputAsync(new(TerminalInputKind.Text, source, Alt: alt), null, attempt, deadline.Token);
+                throw new InvalidOperationException("An interrupted AI send reported full submission.");
+            }
+            catch (OperationCanceledException) when (attempt.Submission == TransportSubmission.Partial &&
+                attempt.DefinitePayloadBytes == definite) { }
+            if (!wire.Bytes.ToArray().AsSpan().SequenceEqual(expected) ||
+                string.Concat(await session.GetOutputAsync(deadline.Token)) != echo)
+                throw new InvalidOperationException($"An interrupted AI {encoding} send split a unit or sent its remaining text.");
+        }
+        finally { await session.ReleaseAiInputAsync(lease); }
+    }
+
+    private static async Task AiOrdinaryInputReservesBeforeEncodingAsync()
+    {
+        using var wire = new PartialInputWire(1, () => throw new InvalidOperationException("Unreserved input reached the wire."));
+        await using var session = new TerminalSession(wire, ConnectionProfile.CreateTelnet("AI quota", "127.0.0.1"), null, 100);
+        var lease = session.TryGrantAiInput() ?? throw new InvalidOperationException("AI input was not admitted.");
+        try
+        {
+            long layout = await session.ObserveAiAsync((_, observed) => observed.LayoutEpoch, default);
+            var quota = (ResourceQuota)typeof(TerminalSession).GetField("inputBytes",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(session)!;
+            using var held = quota.Reserve(2 * 1024 * 1024);
+            foreach (int length in new[] { 128, 128 * 1024 })
+            {
+                var attempt = new AiInputAttempt(lease, layout, default);
+                var input = new TerminalInput(TerminalInputKind.Text, new string('A', length));
+                long start = GC.GetAllocatedBytesForCurrentThread();
+                try
+                {
+                    await session.SendAiInputAsync(input, null, attempt, default);
+                    throw new InvalidOperationException("AI text exceeded the available session input budget.");
+                }
+                catch (ResourceLimitException) when (!attempt.Admitted) { }
+                if (GC.GetAllocatedBytesForCurrentThread() - start > 16 * 1024 || wire.Bytes.Length != 0)
+                    throw new InvalidOperationException("Rejected AI text allocated input-sized buffers or wrote to the wire.");
+            }
+        }
+        finally { await session.ReleaseAiInputAsync(lease); }
+    }
+
+    private sealed class PartialInputWire(int firstWrite, Action afterFirst) : ISessionWire
     {
         public MemoryStream Bytes { get; } = new();
         private bool first = true;
@@ -901,7 +1063,7 @@ internal static partial class ArchitectureOwnershipContracts
             }
             first = false;
             await WriteAsync(buffer[..firstWrite], token);
-            stop.Cancel();
+            afterFirst();
             return firstWrite;
         }
 
@@ -920,7 +1082,7 @@ internal static partial class ArchitectureOwnershipContracts
         var file = new HeldRecordingFile(holdFlush: true);
         var part = new SessionRecording([RecordingFormat.Raw], TimeProvider.System, _ => file);
         await using var session = new TerminalSession(wire, profile, part, 100);
-        Task<IReadOnlyList<string>> sending = session.SendTextAsync("manual", deadline.Token);
+        Task sending = session.DeliverInputAsync(new(TerminalInputKind.Text, "manual"), deadline.Token);
         using var transfer = await session.OpenFileTransferAsync(deadline.Token);
         try
         {
@@ -995,7 +1157,7 @@ internal static partial class ArchitectureOwnershipContracts
         while (new FileInfo(raw).Length < 5 || new FileInfo(text).Length < 7 || new FileInfo(terminal).Length < 7)
             await Task.Delay(10, token);
 
-        await session.SendTextAsync("reverse input", token);
+        await session.DeliverInputAsync(new(TerminalInputKind.Text, "reverse input"), token);
         await session.WaitForTerminalPeerCloseAsync(token);
         await session.PauseRecordingAsync(token);
         byte[] expectedRaw = [0x74, 0x61, 0x69, 0x6c, 0xe3];
@@ -1439,7 +1601,7 @@ internal static partial class ArchitectureOwnershipContracts
             if (!wire.Written.ToArray().AsSpan().SequenceEqual("A😀"u8) ||
                 Interlocked.Read(ref NativeTerminalCoreDiagnostics.EchoBytes) - echoed != 1)
                 throw new InvalidOperationException("The first echo was double-charged or the unsent suffix was sent.");
-            await other.SendTextAsync("alive", deadline.Token);
+            await other.DeliverInputAsync(new(TerminalInputKind.Text, "alive"), deadline.Token);
             if (!otherWire.Written.ToArray().AsSpan().SequenceEqual("alive"u8))
                 throw new InvalidOperationException("Echo capacity pressure affected an independent session.");
         }
@@ -1521,7 +1683,7 @@ internal static partial class ArchitectureOwnershipContracts
             catch (OperationCanceledException) when (observer.IsCancellationRequested) { }
 
             wire.ReleaseWrite.SetResult();
-            await session.SendTextAsync("terminal remains active", deadline.Token);
+            await session.DeliverInputAsync(new(TerminalInputKind.Text, "terminal remains active"), deadline.Token);
             var pause = session.ChangeRecordingAsync(resume: false, deadline.Token);
             if (timeOut)
             {

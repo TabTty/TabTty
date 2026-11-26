@@ -38,10 +38,11 @@ public sealed class TerminalHighlightRules
         => MatchCore(line, suspended, includeRuleIds: false, cancellationToken);
 
     internal TerminalHighlightResult MatchWithRuleIds(ReadOnlySpan<char> line, IReadOnlySet<Guid> suspended,
-        CancellationToken cancellationToken) => MatchCore(line, suspended, includeRuleIds: true, cancellationToken);
+        CancellationToken cancellationToken, Action<Guid>? onTimeout = null) =>
+        MatchCore(line, suspended, includeRuleIds: true, cancellationToken, onTimeout);
 
     private TerminalHighlightResult MatchCore(ReadOnlySpan<char> line, IReadOnlySet<Guid> suspended,
-        bool includeRuleIds, CancellationToken cancellationToken)
+        bool includeRuleIds, CancellationToken cancellationToken, Action<Guid>? onTimeout = null)
     {
         if (line.Length > 65536) return new TerminalHighlightResult([], [], true);
         var spans = new List<TerminalHighlightSpan>();
@@ -67,6 +68,7 @@ public sealed class TerminalHighlightRules
             {
                 spans.RemoveRange(previous, spans.Count - previous);
                 timeouts.Add(rule.Id);
+                onTimeout?.Invoke(rule.Id);
             }
         }
         return new TerminalHighlightResult(spans.ToArray(), timeouts.ToArray(), false);

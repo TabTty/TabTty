@@ -39,7 +39,10 @@ internal sealed partial class MacroRun : IDisposable
     private readonly MacroReceiveHistory history = new();
     private TaskCompletionSource changed = Signal();
     private MacroHold holds;
-    private MacroRunState state = MacroRunState.Running;
+    private MacroRunState? lifecycle;
+    private MacroRunState State => lifecycle ?? (holds != MacroHold.None
+        ? inFlight ? MacroRunState.PauseRequested : MacroRunState.Paused
+        : operation.Length == 0 ? MacroRunState.Running : MacroRunState.Waiting);
     private string operation = "", reason = "Stopped";
     private string? displayDetail;
     private MacroPosition position;
@@ -50,8 +53,6 @@ internal sealed partial class MacroRun : IDisposable
     private long sliceStart;
     private TerminalSession? session;
     private MacroWait? currentWait;
-    private CredentialReference? profilePassword;
-    private string transport = "";
     private string baseDirectory;
     private readonly MacroList arguments;
     private sealed class MacroWait(long start, long? budget)
@@ -69,6 +70,7 @@ internal sealed partial class MacroRun : IDisposable
         try { initialMemory = program.AdmitRun(out memory); }
         catch { MacroLimits.Runs.Release(); throw new MacroSourceException("MemoryLimit", new(1, 1)); }
         programSnapshot = program;
+        position = program.EntryPosition;
         IsPostConnection = program.IsPostConnection;
         FullPath = program.FullPath;
         this.host = host; clock = time ?? TimeProvider.System; started = clock.GetTimestamp();
@@ -91,18 +93,18 @@ internal sealed partial class MacroRun : IDisposable
     public event Action? Changed;
     public MacroRunStatus Status
     {
-        get { lock (gate) return new(state, holds, operation, position, state is MacroRunState.Failed or MacroRunState.Stopped ? reason : null,
+        get { lock (gate) return new(State, holds, operation, position, lifecycle is MacroRunState.Failed or MacroRunState.Stopped ? reason : null,
             history.LossRevision, plaintextNotice, displayDetail, IsPostConnection || executingPostConnection, AvailableActions); }
     }
     private MacroAction AvailableActions =>
-        state is MacroRunState.Stopping or MacroRunState.Stopped or MacroRunState.Completed or MacroRunState.Failed
+        lifecycle is not null
             ? MacroAction.None
             : MacroAction.Stop
               | (holds.HasFlag(MacroHold.UserPause) ? MacroAction.None : MacroAction.Pause)
               | ((holds & (MacroHold.UserPause | MacroHold.RecordingReady)) != 0 ? MacroAction.Resume : MacroAction.None)
               | (holds.HasFlag(MacroHold.RecordingFailure) && !retryingRecording ? MacroAction.RetryRecording : MacroAction.None)
               | (holds.HasFlag(MacroHold.HistoryLoss) ? MacroAction.ContinueAfterHistoryLoss : MacroAction.None);
-    public bool IsActive { get { lock (gate) return state is not (MacroRunState.Completed or MacroRunState.Stopped or MacroRunState.Failed); } }
+    public bool IsActive { get { lock (gate) return lifecycle is null or MacroRunState.Stopping; } }
     public CancellationToken StopToken => stop.Token;
     internal CancellationToken AttemptToken => attemptStop.Token;
     public void Start(TerminalSession? connected = null)
@@ -124,30 +126,30 @@ internal sealed partial class MacroRun : IDisposable
         {
             await ExecuteProgramAsync().ConfigureAwait(false);
             await CheckpointAsync(position).ConfigureAwait(false);
-            lock (gate) state = state == MacroRunState.Stopping ? MacroRunState.Stopped : MacroRunState.Completed;
+            lock (gate) lifecycle = lifecycle == MacroRunState.Stopping ? MacroRunState.Stopped : MacroRunState.Completed;
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested)
-        { lock (gate) state = MacroRunState.Stopped; }
+        { lock (gate) lifecycle = MacroRunState.Stopped; }
         catch (MacroTermination termination)
-        { lock (gate) { reason = termination.Reason; state = MacroRunState.Stopped; } }
+        { lock (gate) { reason = termination.Reason; lifecycle = MacroRunState.Stopped; } }
         catch (MacroError error)
         {
             lock (gate)
             {
-                if (state == MacroRunState.Stopping) state = MacroRunState.Stopped;
+                if (lifecycle == MacroRunState.Stopping) lifecycle = MacroRunState.Stopped;
                 else
                 {
                     reason = error.Code.ToString();
                     displayDetail = error.DisplayDetail ?? error.CaughtMessage;
-                    position = error.Position;
-                    state = MacroRunState.Failed;
+                    if (error.Position.Line > 0) position = error.Position;
+                    lifecycle = MacroRunState.Failed;
                 }
             }
         }
         catch (ResourceLimitException)
-        { lock (gate) { reason = "MemoryLimit"; state = MacroRunState.Stopped; } }
+        { lock (gate) { reason = "MemoryLimit"; lifecycle = MacroRunState.Stopped; } }
         catch (Exception error) when (error is IOException or ArgumentException or InvalidOperationException or OverflowException)
-        { lock (gate) { reason = "OperationUnavailable"; state = MacroRunState.Failed; } }
+        { lock (gate) { reason = "OperationUnavailable"; lifecycle = MacroRunState.Failed; } }
         finally
         {
             ReleaseWorker();
@@ -211,10 +213,10 @@ internal sealed partial class MacroRun : IDisposable
         lock (gate)
         {
             if (!IsActive) return;
-            if (state != MacroRunState.Stopping)
+            if (lifecycle != MacroRunState.Stopping)
             {
                 reason = result;
-                state = MacroRunState.Stopping;
+                lifecycle = MacroRunState.Stopping;
                 generation++;
                 Pulse();
             }
@@ -229,7 +231,7 @@ internal sealed partial class MacroRun : IDisposable
     {
         lock (gate)
         {
-            if (!IsActive || state == MacroRunState.Stopping) return;
+            if (lifecycle is not null) return;
             if ((holds & MacroHold.RecordingFailure) != 0) return;
             ChangeHolds((holds & ~MacroHold.RecordingReady) | MacroHold.RecordingFailure);
         }
@@ -239,7 +241,7 @@ internal sealed partial class MacroRun : IDisposable
     {
         lock (gate)
         {
-            if (!IsActive || state == MacroRunState.Stopping || !holds.HasFlag(MacroHold.RecordingFailure)) return;
+            if (lifecycle is not null || !holds.HasFlag(MacroHold.RecordingFailure)) return;
             ChangeHolds((holds & ~MacroHold.RecordingFailure) | MacroHold.RecordingReady);
         }
         Notify();
@@ -252,32 +254,34 @@ internal sealed partial class MacroRun : IDisposable
     private void ChangeHolds(MacroHold value)
     {
         if (holds == value) return;
+        if ((value & ~holds) != MacroHold.None && !inFlight) passwordPreparation?.Invalidate();
         long now = clock.GetTimestamp();
         if (holds == MacroHold.None && value != MacroHold.None) pauseStarted = now;
         if (holds != MacroHold.None && value == MacroHold.None) pausedTicks += now - pauseStarted;
         holds = value; generation++;
-        if (state is not (MacroRunState.Stopping or MacroRunState.Stopped or MacroRunState.Completed or MacroRunState.Failed))
-            state = holds != MacroHold.None ? inFlight ? MacroRunState.PauseRequested : MacroRunState.Paused : operation.Length == 0 ? MacroRunState.Running : MacroRunState.Waiting;
         Pulse();
     }
 
     internal MacroProgram? CompilePostConnection(ConnectionProfile profile) => profile.CompilePostConnectionMacro(memory);
 
-    internal void ProfileLoaded(ConnectionProfile profile)
+    internal void ObserveSession(TerminalSession value) { lock (gate) session = value; }
+
+    internal void ObserveReceive(TerminalReceiveEvent update)
     {
-        lock (gate)
+        switch (update.Kind)
         {
-            transport = profile.Type;
-            profilePassword = profile.Type == "ssh" ? profile.SshPassword : null;
+            case TerminalReceiveEventKind.Character: Receive(update.Source, update.Character, update.Literal); break;
+            case TerminalReceiveEventKind.AlternateScreen: Stop("AlternateScreen"); break;
+            case TerminalReceiveEventKind.Batch: ReceiveBatch(); break;
+            case TerminalReceiveEventKind.Eof: ReceiveEof(); break;
         }
     }
-    internal void ObserveSession(TerminalSession value) { lock (gate) session = value; }
     internal void Receive(TerminalReceiveSource source, Rune character, bool literal)
     {
         bool notify = false;
         lock (gate)
         {
-            if (!IsActive || state == MacroRunState.Stopping) return;
+            if (lifecycle is not null) return;
             CaptureDeadline();
             if (history.Append(source, character, literal) && !holds.HasFlag(MacroHold.HistoryLoss))
             {
@@ -359,7 +363,6 @@ internal sealed partial class MacroRun : IDisposable
                 if (holds != MacroHold.None) continue;
                 operation = name;
                 inFlight = finishing;
-                state = MacroRunState.Waiting;
                 Pulse();
                 break;
             }
@@ -371,7 +374,6 @@ internal sealed partial class MacroRun : IDisposable
             lock (gate)
             {
                 operation = ""; inFlight = false;
-                if (!stop.IsCancellationRequested) state = holds == MacroHold.None ? MacroRunState.Running : MacroRunState.Paused;
                 Pulse();
             }
             Notify();

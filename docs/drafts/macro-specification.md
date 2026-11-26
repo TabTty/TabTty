@@ -47,6 +47,55 @@ existing terminal or share script variables. A run has at most one connection
 attempt. A second `Connect` is a recoverable `ConnectionAlreadyAttempted` error,
 including after failure; restart the macro to start another attempt.
 
+## Macro refactoring decisions
+
+The following decisions apply to macro-enabled builds. Start with profile
+save validation, where the number of full checks is directly observable.
+The [acceptance cases](macro-validation.md#macro-refactoring-acceptance)
+cover the editing and execution paths.
+
+1. **Profile save validation.** An open profile editor keeps its most recent
+   strict result for the exact post-connection source text and language
+   version. Reuse a success or a deterministic source diagnostic, including
+   its position, when another setting changes or the same draft is saved.
+   Retry a transient failure such as memory exhaustion. A save without a
+   matching result checks the complete body before publication. Release the
+   compiled program after validation. Completion on unfinished input remains
+   a separate operation. Each connection compiles the approved profile snapshot.
+2. **Built-in members.** Define each supported member of `Macro`, `WaitMatch`,
+   `CaptureGroup`, `DialogResult` and `MacroError` together with its result
+   type and how to read it. Resolve that definition during whole-source
+   checking. Evaluate the receiver and read its current value when execution
+   reaches the expression. This removes the evaluator's second name lookup and
+   preserves fresh capture lists and the source position of `NoTextValue`.
+3. **Macro pause and stop.** The macro run derives Running, Waiting,
+   PauseRequested and Paused in one place from the holds, current operation
+   and any committed work that must finish. Stop immediately disables further
+   run controls. Manual input becomes available after pending send cleanup.
+   Recording recovery and a user's pause still require explicit Resume.
+4. **Profile password.** The terminal session supplies the transport kind and
+   default SSH password reference from the profile used for that connection.
+   Remove the copy of both fields in the macro run and its profile-loaded
+   notification. A send looks up the current value of the selected name in the
+   vault. Telnet and serial require an explicit name.
+5. **Shared macro constants.** The constants binder's resolved-path
+   dictionary decides when to read a file and charge its known byte count.
+   Remove the budget's second path set. Each declared alias still contributes
+   a binding and a file digest in declaration order, including repeated files.
+6. **Receive observation.** The terminal session attaches and releases one
+   subscription for a run's received characters and alternate-screen entry.
+   Deliver both kinds in native event order, preserving the receive source and
+   character classification. Keep batch completion and EOF at their existing
+   points. Release the subscription even when connection setup fails.
+7. **Editor diagnostics.** Ship the same English and Japanese messages for
+   shared macro-language diagnostic codes in the application and standalone
+   VS Code extension. Each editor uses its selected language and presents
+   its own fixes. For example, both explain that `WriteLine` is reserved
+   when used as a variable name.
+8. **Macro trust decisions.** Use the [single v1 record format](#macro-trust-record-v1)
+   for every declaration count. A development-build allow or block requires
+   a fresh decision when the user next launches that combination.
+
 ## Loading, launch and source identity
 
 Support the Run Macro file picker, attended command-line launch, and an optional
@@ -196,10 +245,10 @@ Cancel is the default in every review. The picker also honors blocks.
 
 Show the full source digest, normalized absolute path and all ordered arguments
 on the review screen. For each declared file, show its alias, resolved path
-and full SHA-256 digest and allow inspection of the captured declarations. Show the
-combined constants version digest defined below so the user can identify
-this version in Settings. Render quotes, control characters, empty strings
-and an empty argument list unambiguously. Let the user inspect the captured
+and full SHA-256 digest and allow inspection of the captured declarations. When
+the macro declares files, show the combined constants version digest defined
+below so the user can identify this version in Settings. Render quotes, control
+characters, empty strings and an empty argument list unambiguously. Let the user inspect the captured
 macro source. Explain that the decision covers identical copies of these
 files opened anywhere with these arguments, including later external
 requests. Moving the macro can change
@@ -236,7 +285,8 @@ no tab or run. TabTty accepts decision changes only through its local UI.
 See [#196](https://github.com/TabTty/TabTty/issues/196).
 
 In Settings, group decisions by source digest. Within a group, display each
-decision, its fingerprint and its constants version digest when applicable.
+decision and its fingerprint. Show the constants version digest for records
+whose digest differs from that of the empty declaration list.
 Let the user enter an argument list to find every matching decision in the
 group. Recompute a candidate fingerprint with the entered arguments and the
 stored digests for each record. Compare the result with that record's
@@ -255,7 +305,7 @@ combination. An expired review cannot admit a run or recreate a record. Ask
 the user to reopen the macro. Admitted runs and connections continue. Profile
 trust and profile registrations retain their own lifetimes.
 
-#### Fingerprints and compatible records
+#### Macro trust record v1
 
 Use SHA-256 over the concatenated fields in the orders below. Tags are exact
 ASCII bytes. Each digest occupies 32 raw bytes. Encode counts and lengths as
@@ -264,24 +314,29 @@ argument count. For each argument in order, append its strict UTF-8 byte
 length followed by its UTF-8 bytes, preserving the original string, without
 adding a BOM.
 
-| Source declarations | Decision fingerprint |
-| --- | --- |
-| Zero | Hash the tag `TabTty/MacroTrust/v2`, the source digest and the argument encoding. Consult only the v2 record at the resulting fingerprint. The existing v2 allow and block records continue to match. |
-| One or more | Compute a constants version digest by hashing the tag `TabTty/MacroConstants/v1`, the declaration count and one file digest per declaration in source order. Include repeated declarations under different aliases in their respective positions. Hash the tag `TabTty/MacroTrust/v3`, the source digest, the constants version digest and the argument encoding. |
+1. For the constants version digest, hash the tag `TabTty/MacroConstants/v1`,
+   the declaration count, then one captured file digest per declaration in
+   source order. If several aliases refer to one file, append its digest at
+   each declaration's position. For zero declarations, hash the tag and the four-byte zero count.
+2. For the decision fingerprint, hash the tag `TabTty/MacroTrust/v1`, the
+   captured source digest, the constants version digest and the argument
+   encoding. Both allow and block use this fingerprint.
 
-For a launch with declarations, consult only the v3 record for that exact
-fingerprint. A missing v3 decision goes to review even when a source-only or
-v2 decision exists. The constants and trust tags version the stored
-identities independently of the `#tttym 1` language header.
+The record version is independent of the `#tttym 1` language header. A macro
+whose only previous decision came from a development build requires a fresh
+review, whether that decision was allow or block. Cancel is the default.
+Reading or migrating development-build records is outside the release scope.
 
 Store one Windows Credential Manager generic credential per fingerprint,
 scoped to the current Windows user on this PC (`CRED_TYPE_GENERIC`,
-`CRED_PERSIST_LOCAL_MACHINE`). Use the fingerprint in its versioned target
-name. Verify the bounded record's version, source digest, fingerprint,
-decision and, for v3, constants version digest against the lookup before
-using it. Store the fixed-size digests and decision metadata. Keep paths,
-source text, constants file contents, argument values and passwords out of the record.
-Individual removal and reset cover both formats. Trust survives sign-out.
+`CRED_PERSIST_LOCAL_MACHINE`). Use `TabTty/MacroTrust/v1/` followed by the
+hexadecimal fingerprint as the target name. The 98-byte record contains the
+version byte (1), the decision byte (1 for allow, 2 for block), then the
+source digest, fingerprint and constants version digest in that order.
+Verify the record length, version, decision value and all digests before
+using the decision for a launch. Keep paths, source text, constants file
+contents, argument values and passwords out of the record. Lookup, listing,
+individual removal and reset cover the v1 records. Trust survives sign-out.
 Copying a macro, settings, profile or portable vault to another PC does not
 transfer its approval. Windows protects this store at the user-account boundary.
 Software running as that user

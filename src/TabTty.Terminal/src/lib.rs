@@ -7,7 +7,8 @@ mod model;
 mod unicode;
 #[cfg(windows)]
 mod windows_icu;
-use model::{HistoryProof, HistoryRowView, HistorySlice, Model};
+use model::{HistoryFragmentView, HistoryMatchView, HistoryPageView, HistoryPoint, HistoryRange,
+    HistorySearchCheckpoint, HistorySearchPageView, HistorySearchWindow, Model, OrdinalEquals};
 use std::ffi::c_void;
 use std::mem::align_of;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -44,6 +45,14 @@ pub struct CellView {
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
+pub struct TextPosition {
+    pub start: u32,
+    pub end: u32,
+    pub column: u16,
+    pub width: u16,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub struct RowView {
     pub id: i64,
     pub logical_id: i64,
@@ -52,8 +61,8 @@ pub struct RowView {
     pub cells: *const CellView,
     pub text: *const u16,
     pub cell_text: *const u16,
-    pub formats: *const FormatView,
-    pub format_count: u32,
+    pub positions: *const TextPosition,
+    pub position_count: u32,
     pub cell_count: u32,
     pub text_length: u32,
     pub cell_text_length: u32,
@@ -162,28 +171,21 @@ fn run<F: FnOnce() -> Result<(), i32>>(f: F) -> i32 {
 }
 #[no_mangle]
 pub extern "C" fn tc_abi_version() -> u32 {
-    12
+    15
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn tc_analyze_paste(
+pub unsafe extern "C" fn tc_analyze_paste_page(
     text: *const u16,
     length: u32,
-    graphemes: *mut u32,
-    lines: *mut u32,
+    context: u32,
+    output: *mut [u32; 4],
 ) -> i32 {
-    if !valid(graphemes) || !valid(lines) || (length != 0 && !valid(text)) {
+    if !valid(output) || !valid(text) || length == 0 {
         return 1;
     }
     run(|| {
-        let text = if length == 0 {
-            &[]
-        } else {
-            slice::from_raw_parts(text, length as usize)
-        };
-        let (count, line_count) = unicode::Unicode::new().analyze_paste(text)?;
-        graphemes.write(count as u32);
-        lines.write(line_count as u32);
+        output.write(unicode::Unicode::new().analyze_paste_page(slice::from_raw_parts(text, length as usize), context)?);
         Ok(())
     })
 }
@@ -268,20 +270,21 @@ pub unsafe extern "C" fn tc_encode_mouse(
     columns: i32,
     rows: i32,
     output: *mut u8,
-    written: *mut u32,
+    result: *mut [i32; 3],
 ) -> i32 {
-    if !valid(input) || output.is_null() || !valid(written) {
+    if !valid(input) || output.is_null() || !valid(result) {
         return 1;
     }
     run(|| {
-        written.write(input::mouse(
+        let (written, column, row) = input::mouse(
             &*input,
             tracking,
             generation,
             columns,
             rows,
             slice::from_raw_parts_mut(output, 32),
-        )? as u32);
+        )?;
+        result.write([written as i32, column, row]);
         Ok(())
     })
 }
@@ -419,6 +422,39 @@ pub unsafe extern "C" fn tc_transmit_boundaries(
         )?;
         written.write(count as u32);
         source_prefix.write(prefix);
+        Ok(())
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tc_transmit_cutoff(
+    page: u32,
+    input: *const u16,
+    length: u32,
+    flags: u32,
+    encoded: *const u8,
+    encoded_length: u32,
+    confirmed: u32,
+    cutoff: *mut u32,
+) -> i32 {
+    if !valid(input) || !valid(encoded) || !valid(cutoff) || confirmed > encoded_length
+        || encoded_length > 1024 * 1024 || length > 1024 * 1024
+    {
+        return 1;
+    }
+    run(|| {
+        let mut next = encoded_length;
+        legacy_encode::visit_transmit_units(
+            page,
+            slice::from_raw_parts(input, length as usize),
+            flags,
+            slice::from_raw_parts(encoded, encoded_length as usize),
+            |_, bytes| {
+                let end = bytes as u32;
+                if end >= confirmed { next = next.min(end); }
+            },
+        )?;
+        cutoff.write(next);
         Ok(())
     })
 }
@@ -637,13 +673,16 @@ pub unsafe extern "C" fn tc_preflight(
 #[no_mangle]
 pub unsafe extern "C" fn tc_feed(
     handle: *mut c_void,
+    receive_only: *mut c_void,
+    receive_flags: u32,
     source: u32,
     data: *const u8,
     length: u32,
     flags: u32,
     out: *mut Effects,
+    text_out: *mut Effects,
 ) -> i32 {
-    if !valid(out) {
+    if !valid(out) || !valid(text_out) || handle == receive_only || source == 2 && !receive_only.is_null() {
         return 1;
     }
     ptr::write_bytes(out, 0, 1);
@@ -660,25 +699,47 @@ pub unsafe extern "C" fn tc_feed(
             slice::from_raw_parts(data, length as usize)
         };
         let terminal = model(handle)?;
+        let mut text = if receive_only.is_null() { None } else { Some(model(receive_only)?) };
         terminal.admit(0, source as usize, bytes, flags)?;
+        if let Some(projection) = text.as_deref_mut() {
+            projection.admit(0, source as usize, bytes, receive_flags)?;
+        }
         terminal.feed(source as usize, bytes, flags)?;
+        if let Some(projection) = text {
+            projection.feed(source as usize, bytes, receive_flags)?;
+            text_out.write(projection.effects());
+        }
         out.write(terminal.effects());
         Ok(())
     })
 }
 #[no_mangle]
-pub unsafe extern "C" fn tc_complete(handle: *mut c_void, flags: u32, out: *mut Effects) -> i32 {
-    if !valid(out) {
+pub unsafe extern "C" fn tc_complete(handle: *mut c_void, receive_only: *mut c_void, receive_flags: u32,
+    flags: u32, flush_text: u32, out: *mut Effects, text_out: *mut Effects) -> i32 {
+    if !valid(out) || !valid(text_out) || handle == receive_only || flush_text > 1 {
         return 1;
     }
     ptr::write_bytes(out, 0, 1);
     run(|| {
         let t = model(handle)?;
         t.admit(1, 0, &[], flags)?;
-        t.complete(flags)?;
+        if !receive_only.is_null() {
+            let text = model(receive_only)?;
+            text.admit(1, 0, &[], receive_flags)?;
+            t.complete_receive(flags, false)?;
+            text.complete_receive(receive_flags, flush_text != 0)?;
+            text_out.write(text.effects());
+        } else {
+            t.complete_receive(flags, false)?;
+        }
         out.write(t.effects());
         Ok(())
     })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tc_receive_only(handle: *mut c_void) -> i32 {
+    run(|| { model(handle)?.set_receive_only(); Ok(()) })
 }
 #[no_mangle]
 pub unsafe extern "C" fn tc_flush_text(handle: *mut c_void, flags: u32, out: *mut Effects) -> i32 {
@@ -737,11 +798,12 @@ pub unsafe extern "C" fn tc_resize_required(
 #[no_mangle]
 pub unsafe extern "C" fn tc_resize_prepare(
     handle: *mut c_void,
+    receive_only: *mut c_void,
     columns: i32,
     rows: i32,
     out: *mut *mut c_void,
 ) -> i32 {
-    if !valid(out) {
+    if !valid(out) || handle == receive_only {
         return 1;
     }
     out.write(ptr::null_mut());
@@ -749,31 +811,45 @@ pub unsafe extern "C" fn tc_resize_prepare(
         if !(2..=1024).contains(&columns) || !(1..=512).contains(&rows) {
             return Err(1);
         }
-        let prepared = model(handle)?.prepare_resize(columns as usize, rows as usize)?;
-        out.write(Box::into_raw(Box::new(Some(prepared))) as *mut c_void);
+        let primary = model(handle)?.prepare_resize(columns as usize, rows as usize)?;
+        let text = if receive_only.is_null() { None } else {
+            Some(model(receive_only)?.prepare_resize(columns as usize, rows as usize)?)
+        };
+        out.write(Box::into_raw(Box::new(Some((primary, text)))) as *mut c_void);
         Ok(())
     })
 }
 #[no_mangle]
 pub unsafe extern "C" fn tc_resize_apply(
     handle: *mut c_void,
+    receive_only: *mut c_void,
     resize: *mut c_void,
     out: *mut Effects,
+    text_out: *mut Effects,
 ) -> i32 {
-    let plan = resize as *mut Option<model::PreparedResize>;
-    if !valid(out) || !valid(plan) {
+    let plan = resize as *mut ResizePlan;
+    if !valid(out) || !valid(text_out) || !valid(plan) || handle == receive_only {
         return 1;
     }
     run(|| {
         let t = model(handle)?;
-        t.apply_resize((*plan).take().ok_or(1)?)?;
+        let (primary, text) = (*plan).take().ok_or(1)?;
+        if text.is_some() != !receive_only.is_null() { return Err(1); }
+        t.apply_resize(primary)?;
+        if let Some(prepared) = text {
+            let projection = model(receive_only)?;
+            projection.apply_resize(prepared)?;
+            text_out.write(projection.effects());
+        }
         out.write(t.effects());
         Ok(())
     })
 }
+type ResizePlan = Option<(model::PreparedResize, Option<model::PreparedResize>)>;
+
 #[no_mangle]
 pub unsafe extern "C" fn tc_resize_drop(resize: *mut c_void) {
-    let plan = resize as *mut Option<model::PreparedResize>;
+    let plan = resize as *mut ResizePlan;
     if valid(plan) {
         drop(Box::from_raw(plan));
     }
@@ -838,96 +914,64 @@ pub unsafe extern "C" fn tc_history_prepare(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn tc_history_row(
-    handle: *mut c_void,
-    index: u32,
-    out: *mut HistoryRowView,
-) -> i32 {
-    if !valid(out) {
-        return 1;
-    }
+pub unsafe extern "C" fn tc_history_verify(handle: *mut c_void, range: *const HistoryRange) -> i32 {
+    if !valid(range) { return 1; }
+    run(|| model(handle)?.verify_history_range(&*range))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tc_history_read(handle: *mut c_void, requested: *const HistoryRange, position: *const HistoryPoint,
+    rows: u32, bytes: u32, output_budget: u32, fragments: *mut std::mem::MaybeUninit<HistoryFragmentView>,
+    output: *mut HistoryPageView) -> i32
+{
+    if !valid(output) || !valid(fragments) || !(1..=1000).contains(&rows) || !(1..=262144).contains(&bytes)
+        || output_budget > 384 * 1024 || !requested.is_null() && !valid(requested) || !position.is_null() && !valid(position)
+    { return 1; }
     run(|| {
-        out.write(model(handle)?.history_row_view(index as usize)?);
+        let fragments = slice::from_raw_parts_mut(fragments, rows as usize);
+        output.write(model(handle)?.read_history_page(requested.as_ref(), position.as_ref().copied(), bytes, output_budget, fragments)?);
         Ok(())
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn tc_history_line(
-    handle: *mut c_void,
-    line: i64,
-    first: *mut i32,
-    last: *mut i32,
-) -> i32 {
-    if !valid(first) || !valid(last) {
-        return 1;
-    }
+pub unsafe extern "C" fn tc_history_search_capture(handle: *mut c_void, checkpoint: *const HistorySearchCheckpoint,
+    query_length: u32, context: u32, milliseconds: u32, output: *mut *mut HistorySearchWindow) -> i32
+{
+    if !valid(output) || !(1..=1024).contains(&query_length) || !checkpoint.is_null() && !valid(checkpoint) { return 1; }
     run(|| {
-        let bounds = model(handle)?.history_line(line)?;
-        first.write(bounds.map_or(-1, |pair| pair.0 as i32));
-        last.write(bounds.map_or(-1, |pair| pair.1 as i32));
+        if context > 10 { return Err(1); }
+        let captured = model(handle)?.capture_history_search(checkpoint.as_ref(), query_length as usize, context as usize, milliseconds)?;
+        output.write(Box::into_raw(Box::new(captured)));
         Ok(())
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn tc_history_aggregate(
-    handle: *mut c_void,
-    start: u32,
-    end: u32,
-    out: *mut HistoryProof,
-) -> i32 {
-    if !valid(out) {
-        return 1;
-    }
+pub unsafe extern "C" fn tc_history_search_scan(window: *mut HistorySearchWindow, query: *const u16, query_length: u32,
+    case_sensitive: u32, limit: u32, output_budget: u32, milliseconds: u32, unicode_equals: Option<OrdinalEquals>) -> i32
+{
+    if !valid(window) || !valid(query) || !(1..=1024).contains(&query_length) || case_sensitive > 1
+        || !(1..=200).contains(&limit) || output_budget > 384 * 1024 { return 1; }
+    run(|| (*window).scan(slice::from_raw_parts(query, query_length as usize), case_sensitive != 0, limit as usize,
+        output_budget, milliseconds, unicode_equals.ok_or(1)?))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tc_history_search_complete(handle: *mut c_void, window: *const HistorySearchWindow,
+    context: u32, limit: u32, milliseconds: u32, matches: *mut std::mem::MaybeUninit<HistoryMatchView>, output: *mut HistorySearchPageView) -> i32
+{
+    if !valid(window) || !valid(matches) || !valid(output) || context > 10 || !(1..=200).contains(&limit) { return 1; }
     run(|| {
-        out.write(model(handle)?.history_aggregate(start as usize, end as usize)?);
+        let matches = slice::from_raw_parts_mut(matches, limit as usize);
+        output.write(model(handle)?.complete_history_search(&*window, context as usize, milliseconds, matches)?);
         Ok(())
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn tc_history_fragment(
-    handle: *mut c_void,
-    index: u32,
-    from: u32,
-    to: u32,
-    out: *mut HistoryProof,
-) -> i32 {
-    if !valid(out) {
-        return 1;
-    }
-    run(|| {
-        out.write(model(handle)?.history_fragment(index as usize, from as usize, to as usize)?);
-        Ok(())
-    })
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn tc_history_slice(
-    handle: *mut c_void,
-    index: u32,
-    from: u32,
-    to: u32,
-    kind: u32,
-    bytes: u32,
-    json: u32,
-    out: *mut HistorySlice,
-) -> i32 {
-    if !valid(out) {
-        return 1;
-    }
-    run(|| {
-        out.write(model(handle)?.history_slice(
-            index as usize,
-            from as usize,
-            to as usize,
-            kind,
-            bytes,
-            json,
-        )?);
-        Ok(())
-    })
+pub unsafe extern "C" fn tc_history_search_drop(window: *mut HistorySearchWindow) {
+    if valid(window) { drop(Box::from_raw(window)); }
 }
 
 #[no_mangle]
@@ -1008,6 +1052,13 @@ mod tests {
         assert_eq!(size_of::<Effects>(), 72);
         assert_eq!(size_of::<ScreenState>(), 48);
         assert_eq!(size_of::<ScreenRowView>(), 56);
+        assert_eq!(size_of::<TextPosition>(), 12);
+        assert_eq!(size_of::<input::MouseInput>(), 28);
+        assert_eq!(size_of::<HistoryRange>(), 88);
+        assert_eq!(size_of::<HistoryFragmentView>(), 40);
+        assert_eq!(size_of::<HistoryPageView>(), 200);
+        assert_eq!(size_of::<HistoryMatchView>(), 120);
+        assert_eq!(size_of::<HistorySearchPageView>(), 344);
         assert_eq!(size_of::<Stats>(), 56);
     }
     #[test]

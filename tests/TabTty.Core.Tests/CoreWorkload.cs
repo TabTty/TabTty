@@ -174,7 +174,7 @@ internal static class CoreWorkload
                     long input = Stopwatch.GetTimestamp();
                     TimeSpan paused = GC.GetTotalPauseDuration();
                     int collections = GC.CollectionCount(2);
-                    Task send = sessions[latency.Count % sessions.Count].SendTextAsync("x");
+                    Task send = sessions[latency.Count % sessions.Count].DeliverInputAsync(new(TerminalInputKind.Text, "x"));
                     double accepted = (Stopwatch.GetElapsedTime(started).TotalSeconds - due) * 1000;
                     await send;
                     double completed = (Stopwatch.GetElapsedTime(started).TotalSeconds - due) * 1000;

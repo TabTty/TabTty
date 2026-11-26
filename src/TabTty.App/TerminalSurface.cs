@@ -25,8 +25,8 @@ internal sealed class TerminalSurface : FrameworkElement
     private TerminalMatch? selection;
     private TerminalMatch? search;
     private IReadOnlyList<TerminalMatch> searchMatches = [];
-    private IReadOnlyDictionary<int, TerminalHighlightSpan[]> highlights = new Dictionary<int, TerminalHighlightSpan[]>();
-    private (int Row, int Offset)? dragStart;
+    private IReadOnlyDictionary<int, ReadOnlyMemory<TerminalHighlightSpan>> highlights = new Dictionary<int, ReadOnlyMemory<TerminalHighlightSpan>>();
+    private (int Row, int Leading, int Trailing)? dragStart;
     private bool connected;
     private bool mouseSnapshotCurrent = true;
     private bool sendMouseToHost = true;
@@ -78,7 +78,6 @@ internal sealed class TerminalSurface : FrameworkElement
     public event Action<long>? RemoteGestureEnded;
     public event Action<long>? RemoteCaptureLost;
     public event Action? RemoteCaptureFailed;
-    public Func<bool>? UnclampedMouse { get; set; }
     public double VerticalOffset => Scroller.VerticalOffset - viewportTranslation.Y;
     public double ExtentHeight => Scroller.ExtentHeight;
     public double ViewportHeight => Scroller.ViewportHeight;
@@ -329,8 +328,15 @@ internal sealed class TerminalSurface : FrameworkElement
     internal void ScrollTextRange(TerminalMatch range, bool top)
     {
         UpdateMetrics();
-        int row = top ? range.StartRow : range.EndRow + 1;
+        int lastCoveredRow = range.EndRow > range.StartRow && range.EndOffset == 0 ? range.EndRow - 1 : range.EndRow;
+        int row = top ? range.StartRow : lastCoveredRow + 1;
         Scroller.ScrollToVerticalOffset((top ? row : row - VisibleRowCount) * rowHeight);
+        if (snapshot is { } view)
+        {
+            while (range.EndRow > range.StartRow && range.EndOffset == 0)
+                range = range with { EndRow = range.EndRow - 1, EndOffset = view[range.EndRow - 1].Length };
+        }
+        RevealHorizontal(range, backwards: !top);
     }
 
     internal double[] TextRectangles(TerminalMatch range)
@@ -340,19 +346,15 @@ internal sealed class TerminalSurface : FrameworkElement
         var (first, end) = VisibleRows();
         for (int row = Math.Max(first, range.StartRow); row < Math.Min(end, range.EndRow + 1); row++)
         {
-            double left = double.PositiveInfinity, right = 0;
-            foreach (TerminalCell cell in snapshot.GetCells(row).Span)
-            {
-                if (!Covers(range, row, cell)) continue;
-                left = Math.Min(left, cell.Column * cellWidth + HorizontalInset);
-                right = Math.Max(right, (cell.Column + cell.Width) * cellWidth + HorizontalInset);
-            }
-            if (!double.IsFinite(left)) continue;
+            int start = row == range.StartRow ? range.StartOffset : 0;
+            int finish = row == range.EndRow ? range.EndOffset : snapshot[row].Length;
+            if (start == finish) continue;
+            var (leftColumn, rightColumn) = snapshot.ColumnRange(row, start, finish);
             Rect visible = viewportClip.Rect;
-            left = Math.Max(left, visible.Left);
-            right = Math.Min(right, visible.Right);
+            double left = Math.Max(leftColumn * cellWidth + HorizontalInset, visible.Left);
+            double right = Math.Min(rightColumn * cellWidth + HorizontalInset, visible.Right);
             if (left >= right) continue;
-            var a = PointToScreen(new Point(left, row * rowHeight));
+            var a = PointToScreen(new Point(left, Math.Max(row * rowHeight, visible.Top)));
             var b = PointToScreen(new Point(right, Math.Min((row + 1) * rowHeight, visible.Bottom)));
             result.AddRange([a.X, a.Y, b.X - a.X, b.Y - a.Y]);
         }
@@ -362,7 +364,9 @@ internal sealed class TerminalSurface : FrameworkElement
     internal (int Row, int Offset) TextBoundary(Point point)
     {
         UpdateMetrics();
-        return snapshot is { Count: > 0 } ? Boundary(point) : (0, 0);
+        if (snapshot is not { Count: > 0 }) return (0, 0);
+        var boundary = Boundary(point);
+        return (boundary.Row, boundary.Leading);
     }
 
     public void ConfigureFont(string family, double points)
@@ -398,7 +402,7 @@ internal sealed class TerminalSurface : FrameworkElement
         // Presses already sent retain their matching physical releases.
     }
 
-    public void SetSearch(TerminalMatch? value, IReadOnlyList<TerminalMatch> matches, bool scroll)
+    public void SetSearch(TerminalMatch? value, IReadOnlyList<TerminalMatch> matches, bool scroll, bool backwards = false)
     {
         search = value;
         searchMatches = matches;
@@ -406,15 +410,18 @@ internal sealed class TerminalSurface : FrameworkElement
         {
             UpdateMetrics();
             var (first, _) = VisibleRows();
-            if (current.StartRow < first || current.EndRow - current.StartRow + 1 > VisibleRowCount)
+            if (current.EndRow - current.StartRow + 1 > VisibleRowCount)
+                Scroller.ScrollToVerticalOffset((backwards ? current.EndRow + 1 - VisibleRowCount : current.StartRow) * rowHeight);
+            else if (current.StartRow < first)
                 Scroller.ScrollToVerticalOffset(current.StartRow * rowHeight);
             else if (current.EndRow >= first + VisibleRowCount)
                 Scroller.ScrollToVerticalOffset((current.EndRow + 1 - VisibleRowCount) * rowHeight);
+            RevealHorizontal(current, backwards);
         }
         InvalidateVisual();
     }
 
-    public void SetHighlights(IReadOnlyDictionary<int, TerminalHighlightSpan[]> value)
+    public void SetHighlights(IReadOnlyDictionary<int, ReadOnlyMemory<TerminalHighlightSpan>> value)
     {
         highlights = value;
         InvalidateVisual();
@@ -427,6 +434,42 @@ internal sealed class TerminalSurface : FrameworkElement
         int first = Math.Clamp((int)Math.Round(VerticalOffset / rowHeight), 0, count);
         int end = Math.Min(count, first + (int)Math.Ceiling(VisibleGridHeight / rowHeight - 1e-8));
         return (first, end);
+    }
+
+    internal (int First, int End) VisibleColumns()
+    {
+        UpdateMetrics();
+        int first = (int)Math.Round(FittedOffset(Scroller.HorizontalOffset, Scroller.ScrollableWidth, cellWidth) / cellWidth);
+        int columns = FittedCells(Scroller.ViewportWidth - 2 * HorizontalInset, cellWidth);
+        return (first, first + columns);
+    }
+
+    private void RevealHorizontal(TerminalMatch range, bool backwards)
+    {
+        if (snapshot is not { Count: > 0 } view) return;
+        var (first, end) = VisibleColumns();
+        int columns = end - first;
+        if (columns == 0) return;
+        int left = int.MaxValue, right = 0, firstCell = 0, lastCellEnd = 0;
+        for (int row = range.StartRow; row <= range.EndRow; row++)
+        {
+            int start = row == range.StartRow ? range.StartOffset : 0;
+            int finish = row == range.EndRow ? range.EndOffset : view[row].Length;
+            var covered = view.ColumnRange(row, start, finish);
+            if (covered.Start == covered.End) continue;
+            if (left == int.MaxValue) firstCell = covered.Start;
+            lastCellEnd = covered.End;
+            left = Math.Min(left, covered.Start);
+            right = Math.Max(right, covered.End);
+        }
+        if (left == int.MaxValue)
+        {
+            left = view.ColumnRange(range.StartRow, range.StartOffset, range.StartOffset).Start;
+            right = left + 1;
+        }
+        int desired = right - left > columns ? backwards ? lastCellEnd - columns : firstCell
+            : left < first ? left : right > end ? right - columns : first;
+        if (desired != first) Scroller.ScrollToHorizontalOffset(Math.Max(0, desired) * cellWidth);
     }
 
     protected override Size ArrangeOverride(Size finalSize)
@@ -454,12 +497,12 @@ internal sealed class TerminalSurface : FrameworkElement
         viewportTranslation.Y = Scroller.VerticalOffset - y;
         viewportClip.Rect = new Rect(HorizontalInset + x, y, columns * cellWidth, VisibleGridHeight);
         Clip = viewportClip;
+    }
 
-        static double FittedOffset(double offset, double limit, double cellSize)
-        {
-            double units = offset / cellSize;
-            return (AtEnd(offset, limit) ? Math.Ceiling(units - 1e-8) : Math.Floor(units + 1e-8)) * cellSize;
-        }
+    private static double FittedOffset(double offset, double limit, double cellSize)
+    {
+        double units = offset / cellSize;
+        return (AtEnd(offset, limit) ? Math.Ceiling(units - 1e-8) : Math.Floor(units + 1e-8)) * cellSize;
     }
 
     public (int Columns, int Rows) ViewportGrid(double width, double height)
@@ -560,7 +603,7 @@ internal sealed class TerminalSurface : FrameworkElement
             var rowPosition = new TranslateTransform(0, row * rowHeight);
             rowPosition.Freeze();
             drawing.PushTransform(rowPosition);
-            highlights.TryGetValue(row, out var rules);
+            var rules = highlights.GetValueOrDefault(row).Span;
             matches.TryGetValue(row, out var found);
             int backgroundStart = 0, backgroundEnd = 0;
             uint runBackground = 0;
@@ -573,7 +616,7 @@ internal sealed class TerminalSurface : FrameworkElement
                 var flags = style.Flags;
                 if (flags.HasFlag(TerminalStyleFlags.Inverse)) (foreground, background) = (background, foreground);
                 if (flags.HasFlag(TerminalStyleFlags.Faint)) foreground = (foreground >> 1) & 0x7F7F7F;
-                if (rules is not null)
+                if (!rules.IsEmpty)
                 {
                     foreach (TerminalHighlightSpan rule in rules)
                     {
@@ -612,6 +655,13 @@ internal sealed class TerminalSurface : FrameworkElement
                 Rect rect = CellRect(0, cell.Column, cell.Width);
                 if (!flags.HasFlag(TerminalStyleFlags.Conceal)) DrawGlyph(drawing, rect, cell.Text, foreground, flags);
                 if (current) drawing.DrawRectangle(null, new Pen(Brushes.White, 1), rect);
+            }
+            if (search is { } zero && row >= zero.StartRow && row <= zero.EndRow &&
+                snapshot.ZeroWidthColumn(row, row == zero.StartRow ? zero.StartOffset : 0,
+                    row == zero.EndRow ? zero.EndOffset : snapshot[row].Length) is { } marker)
+            {
+                double x = HorizontalInset + marker * cellWidth;
+                drawing.DrawLine(new Pen(Brushes.White, 1), new Point(x, 0), new Point(x, rowHeight));
             }
             drawing.Pop();
 
@@ -675,14 +725,15 @@ internal sealed class TerminalSurface : FrameworkElement
         if (CanReportMouse && dragStart is null)
         {
             Point point = e.GetPosition(this);
-            if (snapshot!.Mouse.Tracking is 1002 or 1003 && (remoteGesture || IsActiveScreenPoint(point)))
+            if (remoteGesture || snapshot!.Mouse.Tracking == 1003 && IsActiveScreenPoint(point))
                 ReportMouse(point, remoteGesture ? remoteButtons[^1] : 3, release: false, motion: true);
             return;
         }
         if (dragStart is not { } start || snapshot is not { Count: > 0 } || !IsMouseCaptured) return;
         var end = Boundary(e.GetPosition(this));
-        if (end.CompareTo(start) < 0) (start, end) = (end, start);
-        selection = new TerminalMatch(start.Row, start.Offset, end.Row, end.Offset);
+        if ((end.Row, end.Leading).CompareTo((start.Row, start.Leading)) < 0) (start, end) = (end, start);
+        selection = start.Row == end.Row && start.Leading >= end.Trailing ? null
+            : new TerminalMatch(start.Row, start.Leading, end.Row, end.Trailing);
         if (UIElementAutomationPeer.FromElement(this) is TerminalAutomationPeer automation) automation.SelectionChanged();
         Point view = e.GetPosition(Scroller);
         if (view.Y < 0) Scroller.LineUp();
@@ -727,11 +778,6 @@ internal sealed class TerminalSurface : FrameworkElement
         UpdateMetrics();
         int column = (int)Math.Floor((point.X - HorizontalInset) / cellWidth);
         int row = (int)Math.Floor(point.Y / rowHeight) - view.ScreenStartRow;
-        if (UnclampedMouse?.Invoke() != true)
-        {
-            column = Math.Clamp(column, 0, view.Columns - 1);
-            row = Math.Clamp(row, 0, view.ScreenRows - 1);
-        }
         if (motion && lastMouseCell == (button, column, row)) return;
         lastMouseCell = (button, column, row);
         ModifierKeys current = Keyboard.Modifiers;
@@ -747,15 +793,12 @@ internal sealed class TerminalSurface : FrameworkElement
         MouseButton.Left => 0, MouseButton.Middle => 1, MouseButton.Right => 2, _ => -1,
     };
 
-    private (int Row, int Offset) Boundary(Point point)
+    private (int Row, int Leading, int Trailing) Boundary(Point point)
     {
         int row = Math.Clamp((int)Math.Floor(point.Y / rowHeight), 0, snapshot!.Count - 1);
         double column = (point.X - HorizontalInset) / cellWidth;
-        foreach (TerminalCell cell in snapshot.GetCells(row).Span)
-        {
-            if (column < cell.Column + cell.Width / 2.0) return (row, cell.TextOffset);
-        }
-        return (row, snapshot[row].Length);
+        var (leading, trailing) = snapshot.TextBoundary(row, column);
+        return (row, leading, trailing);
     }
 
     private void UpdateMetrics()

@@ -75,7 +75,10 @@ internal sealed class AiInputAttempt(AiInputLease lease, long layoutEpoch, Cance
     internal long LayoutEpoch { get; } = layoutEpoch;
     internal CancellationToken Cancellation { get; } = cancellation;
     internal bool Admitted => Volatile.Read(ref admitted) != 0;
+    internal bool IsStopped() => Lease.Token.IsCancellationRequested || Cancellation.IsCancellationRequested;
     internal int CompletedWrites { get; private set; }
+    internal TransportSubmission? Submission { get; private set; }
+    internal long DefinitePayloadBytes { get; private set; }
     internal void MarkAdmitted()
     {
         Cancellation.ThrowIfCancellationRequested();
@@ -83,7 +86,20 @@ internal sealed class AiInputAttempt(AiInputLease lease, long layoutEpoch, Cance
             throw new AiInputRejectedException("stale_observation");
         Volatile.Write(ref admitted, 1);
     }
-    internal void CompleteWrite() => CompletedWrites++;
+    internal void CompleteWrite(int payloadBytes = 0)
+    {
+        CompletedWrites++;
+        DefinitePayloadBytes += payloadBytes;
+    }
+    internal void RecordOrdinarySubmission(TransportSendResult result)
+    {
+        Submission = result.Status;
+        if (result.Error is null || result.DefiniteBytes != 0) CompleteWrite(result.DefiniteBytes);
+    }
+    internal void RecordPasteFailure(PasteWriteException failure)
+    {
+        if (CompletedWrites == 0) Submission = failure.Submission;
+    }
 }
 
 internal readonly record struct AiTerminalState(long LayoutEpoch, int Revision, int Columns, int Rows,
@@ -131,16 +147,10 @@ public sealed partial class TerminalSession
             throw new AiInputRejectedException("stale_observation");
     }
 
-    private async ValueTask WriteInputAsync(byte[] bytes, CancellationToken deadline, AiInputAttempt? ai)
+    private void AdmitAiWrite(AiInputAttempt attempt)
     {
-        if (ai is null)
-        {
-            await transport.WriteAsync(bytes, deadline).ConfigureAwait(false);
-            return;
-        }
-        CheckAiInput(ai);
-        await ai.Lease.StartWrite(ai, () => transport.WriteAsync(bytes, deadline)).ConfigureAwait(false);
-        ai.CompleteWrite();
+        CheckAiInput(attempt);
+        attempt.Lease.AdmitWrite(attempt);
     }
 
     internal async Task<bool> SendAiPasteAsync(TerminalPaste paste, int characterDelay, int lineDelay,
@@ -149,8 +159,16 @@ public sealed partial class TerminalSession
         using var unit = inputUnits.Reserve(1);
         using var memory = ReservePasteWork(paste);
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(attempt.Lease.Token, attempt.Cancellation);
-        return await SendReservedPasteAsync(paste, characterDelay, lineDelay, stop.Token, lifetime, null,
-            ai: attempt, framePaste: framePaste).ConfigureAwait(false);
+        try
+        {
+            return await SendReservedPasteAsync(paste, characterDelay, lineDelay, stop.Token, lifetime, null,
+                ai: attempt, framePaste: framePaste).ConfigureAwait(false);
+        }
+        catch (PasteWriteException failure)
+        {
+            attempt.RecordPasteFailure(failure);
+            throw;
+        }
     }
 
     internal async Task<(int Row, int Column)?> SendAiInputAsync(TerminalInput input, AiMouseAction? mouse,
@@ -163,6 +181,7 @@ public sealed partial class TerminalSession
         TerminalMouseMode mode = default;
         byte[] echo, payload;
         bool localEcho;
+        InputCutoff? cutoff = null;
         ValueTask<TransportSendResult> submission;
         await state.WaitAsync(pending.Token).ConfigureAwait(false);
         using var deadline = PasteWriteDeadline(lifetime);
@@ -174,40 +193,41 @@ public sealed partial class TerminalSession
             {
                 mode = terminal.MouseMode;
                 report = GetAiMouseReport(attempt.Lease, mouseAction);
-                byte[] bytes = terminal.EncodeMouse(report);
-                if (bytes.Length == 0) throw new AiInputRejectedException("unsupported_action");
-                payload = bytes;
+                var plan = terminal.PlanMouse(report, attempt.Lease.Presses.TryGetValue(report.Button, out var previous) ? previous : null);
+                if (plan.Payload.Length == 0) throw new AiInputRejectedException("unsupported_action");
+                report = plan.Effective;
+                payload = plan.Payload;
                 echo = [];
             }
+            else if (input.Kind == TerminalInputKind.Text)
+            {
+                int length = transmitter.GetByteCount(input.Text, profile.TransmitSevenBitKana);
+                int alt = input.Alt ? 1 : 0;
+                int closure = transmitter.CanClosePrefix ? NativeTerminalCore.MaxTransmitClosureBytes : 0;
+                memory.Resize(StrictUtf8.GetByteCount(input.Text) + (length + alt + closure) * (IsTelnet ? 3L : 1L) + alt * length);
+                (payload, echo) = EncodeOperation(input, length);
+                cutoff = CreateAiTextCutoff(input.Text, payload, alt, attempt, pending.Token);
+            }
             else (payload, echo) = EncodeOperation(input);
-            memory.Resize(echo.LongLength + payload.LongLength * (!IsTelnet ? 1 : 3));
+            if (cutoff is null) memory.Resize(echo.LongLength + payload.LongLength * (IsTelnet ? 3L : 1L));
             localEcho = echo.Length != 0 && LocalEcho;
             submission = mouse.HasValue
                 ? attempt.Lease.StartWrite(attempt, () => SubmitInputAsync(payload, deadline.Token))
-                : SubmitInputAsync(payload, deadline.Token, () =>
-                {
-                    if (!ReferenceEquals(aiInputOwner, attempt.Lease) || IsMacroOwned || disconnected || ended)
-                        throw new AiInputRejectedException("control_required");
-                    if (attempt.LayoutEpoch != terminal.AiLayoutEpoch)
-                        throw new AiInputRejectedException("stale_observation");
-                    attempt.Lease.AdmitWrite(attempt);
-                });
+                : transport.SubmitPayloadAsync(payload, deadline.Token, () => AdmitAiWrite(attempt), cutoff);
         }
         finally { state.Release(); }
         var result = await submission.ConfigureAwait(false);
         int echoLength = ConfirmedInputEchoLength(result, payload, echo,
             input.Kind == TerminalInputKind.Text ? input.Text : null, input.Alt);
-        if (result.Error is null || echoLength != 0) attempt.CompleteWrite();
+        attempt.RecordOrdinarySubmission(result);
         await state.WaitAsync().ConfigureAwait(false);
         try
         {
             if (localEcho) await EchoSubmittedInputAsync(echo, echoLength).ConfigureAwait(false);
             if (result.Error is { } error) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(error);
             if (mouse is not { } action) return null;
-            int limit = mode.SgrCoordinates ? int.MaxValue : 223;
-            var effective = (Math.Min(action.Row, limit), Math.Min(action.Column, limit));
+            var effective = (report.Row + 1, report.Column + 1);
             if (terminalReleased || terminal.MouseMode.Generation != mode.Generation) return effective;
-            report = report with { Row = effective.Item1 - 1, Column = effective.Item2 - 1 };
             var presses = attempt.Lease.Presses;
             if (action.Action == "press" && mode.Tracking != 9) presses.Add(report.Button, report);
             if (action.Action == "release") presses.Remove(report.Button);
@@ -217,6 +237,24 @@ public sealed partial class TerminalSession
             return effective;
         }
         finally { state.Release(); }
+    }
+
+    private InputCutoff CreateAiTextCutoff(string text, byte[] payload, int alt, AiInputAttempt attempt, CancellationToken pending)
+    {
+        bool sevenBitKana = profile.TransmitSevenBitKana;
+        return new(pending, attempt.IsStopped,
+            offset =>
+            {
+                if (offset == 0 || offset == payload.Length) return offset;
+                // An Alt prefix belongs to the first encoded text unit.
+                return alt + NativeTerminalCore.TransmitCutoff(transmitter.NativePage, text, payload.AsSpan(alt),
+                    Math.Max(1, offset - alt), sevenBitKana);
+            }, transmitter.CanClosePrefix ? count =>
+            {
+                var confirmed = payload.AsSpan(alt, count - alt);
+                int length = transmitter.ConfirmedSourcePrefix(text, payload.AsSpan(alt), count - alt, sevenBitKana);
+                return transmitter.ClosePrefix(text.AsSpan(0, length), confirmed, sevenBitKana);
+            } : null);
     }
 
     private TerminalMouseInput GetAiMouseReport(AiInputLease lease, AiMouseAction action)
@@ -247,7 +285,7 @@ public sealed partial class TerminalSession
                 var releases = new List<byte[]>();
                 foreach (TerminalMouseInput press in lease.Presses.Values)
                 {
-                    byte[] release = terminal.EncodeMouse(press with { Release = true, Motion = false });
+                    byte[] release = terminal.PlanMouse(press with { Release = true, Motion = false }, press).Payload;
                     if (release.Length != 0) releases.Add(EncodeInput(release));
                 }
                 submission = transport.WriteBatchAsync(releases, deadline.Token);
@@ -289,12 +327,12 @@ public sealed partial class TerminalSession
     internal async Task<TerminalHistory.SearchPage> SearchRetainedHistoryAsync(TerminalHistory.SearchCursor? cursor,
         string query, bool caseSensitive, int limit, int context, long started, int outputBudget, CancellationToken token)
     {
-        var window = await ObserveAiAsync((model, _) => TerminalHistory.CaptureSearch(model, cursor, query, token, started), token)
+        using var window = await ObserveAiAsync((model, _) => model.CaptureHistorySearch(cursor, query, context, started, token), token)
             .ConfigureAwait(false);
-        var scanned = await Task.Run(() => TerminalHistory.Scan(window, query, caseSensitive, limit, token, outputBudget), token)
+        await Task.Run(() => window.Scan(query, caseSensitive, limit, started, outputBudget, token), token)
             .ConfigureAwait(false);
-        return await ObserveAiAsync((model, info) => TerminalHistory.CompleteSearch(model, info, window, scanned,
-            query, caseSensitive, limit, context, token), token).ConfigureAwait(false);
+        return await ObserveAiAsync((model, info) => model.CompleteHistorySearch(info, window,
+            query, caseSensitive, limit, context, started, token), token).ConfigureAwait(false);
     }
 
     internal bool TryPublishHistory(TerminalHistory.Span[] dependencies, Action publish,

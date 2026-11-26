@@ -1,5 +1,14 @@
 # TabTty initial implementation readiness
 
+## Macro refactoring, 2026-11-26
+
+The [eight decisions for macro-enabled builds](../drafts/macro-specification.md#macro-refactoring-decisions)
+are ready for implementation. Start with duplicate compilation on profile
+save. The [acceptance cases](../drafts/macro-validation.md#macro-refactoring-acceptance)
+cover the seven editing and execution changes. M56, M62 and M73 in the
+same document cover the single v1 trust record and its launch and reset behavior.
+Runtime verification is pending.
+
 ## Refactoring follow-up, 2026-11-25
 
 The three plans have 24 implementation tickets and one research ticket.

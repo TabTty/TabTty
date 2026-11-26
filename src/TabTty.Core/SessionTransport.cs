@@ -3,10 +3,12 @@ using System.Runtime.ExceptionServices;
 
 namespace TabTty.Core;
 
-internal sealed class PasteWriteException(Exception cause, int definiteBytes) :
-    IOException("The terminal may have received part of the attempted paste unit.", cause)
+internal sealed class PasteWriteException(Exception cause, int definiteBytes, TransportSubmission submission) :
+    IOException(submission == TransportSubmission.NotIssued ? cause.Message :
+        "The terminal may have received part of the attempted paste unit.", cause)
 {
     internal int DefiniteBytes { get; } = definiteBytes;
+    internal TransportSubmission Submission { get; } = submission;
 }
 
 internal enum ReceiveOutcome { Delivered, Completed, Ended }
@@ -17,6 +19,8 @@ internal readonly record struct TransportStatus(bool Ready, bool ReceiveEnded, E
 
 internal enum TransportSubmission { NotIssued, Submitted, Partial, Uncertain }
 internal class TransportAdmissionRejectedException(string reason) : InvalidOperationException(reason);
+internal sealed record InputCutoff(CancellationToken Token, Func<bool> IsStopped,
+    Func<int, int> BoundaryAtOrAfter, Func<int, byte[]>? ClosePrefix);
 internal readonly record struct TransportSendResult(TransportSubmission Status, int DefiniteBytes, Exception? Error,
     SshSendState? Ssh = null);
 internal enum GeometryNotification { NoNotification, Submitted, Superseded, Failed }
@@ -301,8 +305,12 @@ internal sealed class SessionTransport
         }
     }
 
-    internal async ValueTask<TransportSendResult> SubmitPreparedAsync(ReadOnlyMemory<byte> bytes, CancellationToken token,
-        SshSendProgress? progress = null, Action? onFirstSubmission = null)
+    internal ValueTask<TransportSendResult> SubmitPreparedAsync(ReadOnlyMemory<byte> bytes, CancellationToken token,
+        SshSendProgress? progress = null, Action? onFirstSubmission = null) => SubmitAsync(bytes, token, progress, onFirstSubmission);
+
+    private async ValueTask<TransportSendResult> SubmitAsync(ReadOnlyMemory<byte> bytes, CancellationToken token,
+        SshSendProgress? progress, Action? onFirstSubmission, TelnetProtocol.InputFraming? framing = null,
+        byte[]? payload = null, InputCutoff? cutoff = null)
     {
         bool issued = false;
         int definite = 0;
@@ -316,43 +324,87 @@ internal sealed class SessionTransport
                 if (connection is SshSessionWire ssh)
                 {
                     progress ??= new(bytes.Length);
-                    await ssh.WriteChannelAsync(bytes, token, progress, onFirstSubmission).ConfigureAwait(false);
-                    return new(TransportSubmission.Submitted, bytes.Length, null, progress.State);
+                    definite = await ssh.WriteChannelAsync(bytes, token, progress, onFirstSubmission, cutoff).ConfigureAwait(false);
                 }
-                while (definite < bytes.Length)
+                else
                 {
-                    token.ThrowIfCancellationRequested();
-                    int requested = bytes.Length - definite;
-                    if (IsSerial) requested = SerialSessionWire.WriteRequestLength(requested);
-                    if (definite == 0) onFirstSubmission?.Invoke();
-                    issued = true;
-                    int count = await connection.WriteSomeAsync(bytes.Slice(definite, requested), token).ConfigureAwait(false);
-                    if (count < 0 || count > requested)
-                        throw new IOException("The terminal write did not make valid progress.");
-                    definite += count;
-                    issued = false;
-                    if (count == 0 && !IsSerial) throw new IOException("The terminal write made no progress.");
-                    if (IsSerial) SerialSessionWire.RequireFullWrite(count, requested);
+                    int end = bytes.Length;
+                    bool stopping = false;
+                    while (definite < end)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        if (!stopping && cutoff?.IsStopped() == true)
+                        {
+                            end = WireCutoff(definite, cutoff, framing, payload);
+                            stopping = true;
+                            if (definite == end) break;
+                        }
+                        int requested = end - definite;
+                        if (IsSerial) requested = SerialSessionWire.WriteRequestLength(requested);
+                        if (definite == 0) onFirstSubmission?.Invoke();
+                        issued = true;
+                        int count = await connection.WriteSomeAsync(bytes.Slice(definite, requested), token).ConfigureAwait(false);
+                        if (count < 0 || count > requested)
+                            throw new IOException("The terminal write did not make valid progress.");
+                        definite += count;
+                        issued = false;
+                        if (count == 0 && !IsSerial) throw new IOException("The terminal write made no progress.");
+                        if (IsSerial) SerialSessionWire.RequireFullWrite(count, requested);
+                    }
                 }
-                return new(TransportSubmission.Submitted, bytes.Length, null);
+                if (definite == bytes.Length)
+                    return new(TransportSubmission.Submitted, payload?.Length ?? bytes.Length, null, progress?.State);
+                int confirmed = framing?.PayloadPrefix(payload, definite) ?? definite;
+                if (confirmed > 0 && cutoff?.ClosePrefix is { } close)
+                {
+                    byte[] suffix = close(confirmed);
+                    if (suffix.Length != 0) await connection.WriteAsync(EncodeInput(suffix), token).ConfigureAwait(false);
+                }
+                return new(confirmed == 0 ? TransportSubmission.NotIssued : TransportSubmission.Partial,
+                    confirmed, new OperationCanceledException(cutoff!.Token), progress?.State);
             }
             finally { writer.Release(); }
         }
-        catch (Exception error) when (error is IOException or SocketException or OperationCanceledException or ObjectDisposedException
-            or InvalidDataException or System.Security.Cryptography.CryptographicException)
+        catch (Exception error) when (IsSubmissionFailure(error))
         {
             if (progress is not null)
             {
                 progress.Settle();
                 SshSendState state = progress.State;
-                TransportSubmission status = state.Uncertain is not null ? TransportSubmission.Uncertain :
-                    state.DefiniteBytes == 0 ? TransportSubmission.NotIssued : TransportSubmission.Partial;
+                TransportSubmission status = FailedSubmission(state.DefiniteBytes, state.Uncertain is not null);
                 return new(status, state.DefiniteBytes, error, state);
             }
-            return new(issued ? TransportSubmission.Uncertain :
-                definite == 0 ? TransportSubmission.NotIssued : TransportSubmission.Partial, definite, error);
+            var outcome = FailedSubmission(definite, issued);
+            int confirmed = framing?.PayloadPrefix(payload, definite) ?? definite;
+            return new(outcome, confirmed, error);
         }
         finally { progress?.Settle(); }
+    }
+
+    private static bool IsSubmissionFailure(Exception error) => error is IOException or SocketException or
+        OperationCanceledException or ObjectDisposedException or InvalidDataException or System.Security.Cryptography.CryptographicException;
+
+    private static TransportSubmission FailedSubmission(int definiteWireBytes, bool uncertain) => uncertain
+        ? TransportSubmission.Uncertain : definiteWireBytes == 0 ? TransportSubmission.NotIssued : TransportSubmission.Partial;
+
+    private static int WireCutoff(int written, InputCutoff cutoff, TelnetProtocol.InputFraming? framing, byte[]? payload)
+    {
+        if (written == 0) return 0;
+        if (framing is not { } mapping) return cutoff.BoundaryAtOrAfter(written);
+        int raw = mapping.PayloadPrefix(payload, written);
+        if (mapping.WirePrefix(payload, raw) < written) raw++;
+        return mapping.WirePrefix(payload, cutoff.BoundaryAtOrAfter(raw));
+    }
+
+    internal ValueTask<TransportSendResult> SubmitPayloadAsync(byte[] payload, CancellationToken token,
+        Action? onFirstSubmission = null, InputCutoff? cutoff = null)
+    {
+        if (telnet is null) return SubmitAsync(payload, token, null, onFirstSubmission, cutoff: cutoff);
+        TelnetProtocol.InputFraming framing;
+        lock (protocolGate) framing = telnet.CaptureInputFraming();
+        byte[] framed = framing.Encode(payload, reusable: payload);
+        return ReferenceEquals(framed, payload) ? SubmitAsync(payload, token, null, onFirstSubmission, cutoff: cutoff)
+            : SubmitAsync(framed, token, null, onFirstSubmission, framing, payload, cutoff);
     }
 
     internal async ValueTask WriteAsync(ReadOnlyMemory<byte> bytes, CancellationToken token)
@@ -361,48 +413,70 @@ internal sealed class SessionTransport
         if (outcome.Error is { } error) ExceptionDispatchInfo.Throw(error);
     }
 
-    internal async ValueTask<int> WritePreparedPasteAsync(byte[] payload, int[] encodedEnds,
-        CancellationToken lifetime, CancellationToken stop, Func<int, byte[]>? codecClose = null)
+    internal async ValueTask<int> WriteBoundedPayloadAsync(byte[] payload, int[] encodedEnds,
+        CancellationToken lifetime, CancellationToken stop, Func<int, byte[]>? codecClose = null,
+        Action? onFirstSubmission = null, CancellationToken beforeFirstSubmission = default, bool secret = false,
+        Action? onQueued = null, Func<bool>? stopRequested = null)
     {
-        using var waiting = CancellationTokenSource.CreateLinkedTokenSource(lifetime, stop);
-        try { await writer.WaitAsync(waiting.Token).ConfigureAwait(false); }
+        using var waiting = beforeFirstSubmission.CanBeCanceled
+            ? CancellationTokenSource.CreateLinkedTokenSource(lifetime, stop, beforeFirstSubmission)
+            : CancellationTokenSource.CreateLinkedTokenSource(lifetime, stop);
+        try
+        {
+            Task acquisition = writer.WaitAsync(waiting.Token);
+            if (!acquisition.IsCompleted) onQueued?.Invoke();
+            await acquisition.ConfigureAwait(false);
+        }
         catch (OperationCanceledException) when (stop.IsCancellationRequested && !lifetime.IsCancellationRequested) { return 0; }
+        catch (OperationCanceledException error) when (lifetime.IsCancellationRequested)
+        { throw new PasteWriteException(error, 0, TransportSubmission.NotIssued); }
         int definite = 0;
-        bool attempted = false;
+        TelnetProtocol.InputFraming? framing = null;
+        SshSendProgress? progress = null;
+        bool issued = false;
+        byte[] framed = payload;
         try
         {
             int submitted;
             if (wire is SshSessionWire ssh)
             {
-                attempted = true;
-                submitted = await ssh.WritePreparedPasteAsync(payload, encodedEnds, lifetime, stop, count => definite = count)
+                progress = new(payload.Length);
+                submitted = await ssh.WriteBoundedPayloadAsync(payload, encodedEnds, lifetime, stop, progress,
+                    onFirstSubmission, beforeFirstSubmission, stopRequested)
                     .ConfigureAwait(false);
             }
             else
             {
-                byte[] framed = payload;
                 int[] wireEnds = encodedEnds;
                 if (telnet is not null)
                 {
                     wireEnds = encodedEnds.ToArray();
-                    lock (protocolGate) framed = telnet.EncodeInput(payload, wireEnds);
+                    lock (protocolGate) framing = telnet.CaptureInputFraming();
+                    framed = framing.Value.Encode(payload, wireEnds);
                 }
                 int position = 0, complete = 0;
                 while (position < framed.Length)
                 {
                     lifetime.ThrowIfCancellationRequested();
                     bool boundary = complete == 0 ? position == 0 : wireEnds[complete - 1] == position;
-                    if (stop.IsCancellationRequested && boundary) break;
+                    if (boundary && (stop.IsCancellationRequested || stopRequested?.Invoke() == true)) break;
                     // Once part of a scalar or protocol unit was issued, complete only that unit.
                     int requested = boundary ? framed.Length - position : wireEnds[complete] - position;
                     if (IsSerial) requested = SerialSessionWire.WriteRequestLength(requested);
-                    attempted = true;
-                    int count = await ConnectedWire.WriteSomeAsync(framed.AsMemory(position, requested), lifetime).ConfigureAwait(false);
-                    if (count < 0 || count > requested || count == 0 && !IsSerial)
+                    if (position == 0)
+                    {
+                        beforeFirstSubmission.ThrowIfCancellationRequested();
+                        onFirstSubmission?.Invoke();
+                    }
+                    var connection = ConnectedWire;
+                    issued = true;
+                    int count = await connection.WriteSomeAsync(framed.AsMemory(position, requested), lifetime).ConfigureAwait(false);
+                    if (count < 0 || count > requested)
                         throw new IOException("The terminal write did not make valid progress.");
-                    position += count;
+                    definite = position += count;
+                    issued = false;
+                    if (count == 0 && !IsSerial) throw new IOException("The terminal write made no progress.");
                     while (complete < wireEnds.Length && wireEnds[complete] <= position) complete++;
-                    if (complete > 0) definite = encodedEnds[complete - 1];
                     if (IsSerial) SerialSessionWire.RequireFullWrite(count, requested);
                 }
                 submitted = complete == 0 ? 0 : encodedEnds[complete - 1];
@@ -411,16 +485,26 @@ internal sealed class SessionTransport
             {
                 byte[] suffix = codecClose(submitted);
                 if (suffix.Length != 0)
+                {
+                    issued = true;
                     await ConnectedWire.WriteAsync(EncodeInput(suffix), lifetime).ConfigureAwait(false);
+                }
             }
             return submitted;
         }
-        catch (Exception error) when (attempted &&
-            error is IOException or SocketException or OperationCanceledException or ObjectDisposedException or InvalidDataException)
+        catch (Exception error) when (IsSubmissionFailure(error))
         {
-            throw new PasteWriteException(error, definite);
+            SshSendState? ssh = progress?.State;
+            definite = ssh?.DefiniteBytes ?? definite;
+            throw new PasteWriteException(error, framing?.PayloadPrefix(payload, definite) ?? definite,
+                FailedSubmission(definite, issued || ssh?.Uncertain is not null));
         }
-        finally { writer.Release(); }
+        finally
+        {
+            if (secret && !ReferenceEquals(framed, payload))
+                System.Security.Cryptography.CryptographicOperations.ZeroMemory(framed);
+            writer.Release();
+        }
     }
 
     internal async Task WriteBatchAsync(IEnumerable<byte[]> messages, CancellationToken token)

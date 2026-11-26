@@ -140,8 +140,8 @@ be confirmed. If capacity is still insufficient, report the capacity failure
 before starting the write for that file. Keep earlier unresolved details.
 
 When folder creation, rename, or deletion has an unknown outcome, the
-file-operation module records the operation kind and the affected paths once
-per item. The results list and close report show the path of the requested
+file-operation module records the operation kind and the full paths once
+per item. The results list and close report show the full path of the requested
 folder for creation, the old and new paths together for rename, and the path
 of the item for deletion. Both views count a rename as one unresolved item.
 A successful refresh of both panes leaves that record available for the
@@ -223,7 +223,7 @@ named operations, observation, answers, and cancellation used by the window.
 | Target changes during confirmation | Recheck detects it and obtains the required fresh decision. |
 | Cancellation/disconnect wins before an answer is used | A late approval causes no new mutation. |
 | A mutation may succeed but its reply is lost | Unknown outcome is retained; no automatic replay or final-path cleanup occurs. |
-| A folder creation, rename, or deletion is issued once, its reply is lost, both panes refresh, and the user closes the window | The latest results and close report each show one unknown outcome for the affected item with the same operation kind and path information. A rename shows the old and new paths on one row. The mutation was issued only once. |
+| A folder creation, rename, or deletion is issued once, its reply is lost, both panes refresh, and the user closes the window | The latest results and close report each show one unknown outcome for the affected item with the same operation kind and full path information. A rename shows the old and new full paths on one row. The mutation was issued only once. |
 | Ordinary results fill the display before a later temporary file's cleanup is unconfirmed | The close report still gives the temporary path. If space for another temporary path cannot be retained, that file's write never starts and the capacity failure is visible. |
 | During a transfer, an ordinary result is displaced and an unconfirmed cleanup is recorded | At the next display update, the list shows the retained entries in occurrence order, including the temporary path, with one omission notice at the end. Subsequent results appear above that notice. |
 | Reserving space for a temporary path displaces an ordinary entry and the write then waits | On the next display update the displaced row is gone and the omission notice is visible, even while the next file outcome is still pending. |

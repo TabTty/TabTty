@@ -1,5 +1,37 @@
 namespace TabTty.Core;
 
+internal sealed class PostConnectionValidation
+{
+    internal const int LanguageVersion = 1;
+
+    private readonly object gate = new();
+    private sealed record SourceSelection(string Text);
+    private (string Source, int Version, SourceSelection? Selection, MacroSourceException? Error)? last;
+    private SourceSelection? selected;
+
+    internal void SelectSource(string source) => Volatile.Write(ref selected, new(source));
+
+    internal MacroSourceException? Check(string source, int version = LanguageVersion, bool onlyCurrent = false)
+    {
+        if (version != LanguageVersion) throw new ArgumentOutOfRangeException(nameof(version));
+        if (string.IsNullOrWhiteSpace(source)) return null;
+        lock (gate)
+        {
+            var selection = Volatile.Read(ref selected);
+            if (onlyCurrent && selection?.Text != source) return null;
+            if (last is { } result && result.Version == version && result.Source == source && ReferenceEquals(result.Selection, selection))
+                return result.Error;
+
+            MacroSourceException? diagnostic = null;
+            try { using var program = MacroProgram.ParsePostConnection("profile.ttty", source); }
+            catch (MacroSourceException error) { diagnostic = error; }
+            if (diagnostic?.Code != "MemoryLimit" && ReferenceEquals(selection, Volatile.Read(ref selected)))
+                last = (source, version, selection, diagnostic);
+            return diagnostic;
+        }
+    }
+}
+
 internal static class PostConnectionMacro
 {
     internal static readonly string[] LocalTypes = ["bool", "long", "string", "WaitPattern", "WaitMatch"];

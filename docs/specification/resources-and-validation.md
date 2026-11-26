@@ -167,9 +167,19 @@ suspended in its current session. A timeout in any pane suspends that rule
 in every pane of the tab, including panes opened later. The tab observes its
 shared suspension state directly and updates its status indicator. Notify once
 per suspension. Other tabs using the same set keep their own suspension state.
-Each pane evaluates its visible rows, caches its drawing results and redraws
-when the shared state changes. Discard late results if the rule set or
-suspension state has changed since the evaluation began.
+The C# tab evaluates each logical output line visible in any of its panes
+once for the current text and matching rules. A visible wrapped fragment is
+enough to keep that line in scope. Panes draw from the shared matches, clipped
+to their own viewports. A change of focus preserves those matches. Discard
+late results after a content, matching-rule or suspension change. Remap valid
+matches after a layout-only reflow.
+
+Release a line's cached result when the last pane showing any part of that
+line leaves it. If the line becomes visible again, evaluate it under the
+existing worker and memory limits. Show the underlying terminal attributes
+until a valid result is available. Check that two panes displaying the same
+`ERROR` line use one evaluation, that moving focus leaves the highlight
+available, and that scrolling both panes away releases the result.
 
 The tab resolves the profile's highlight rule set selection. An empty selection
 turns highlighting off. If a selected set cannot be found, the tab shows a
@@ -201,6 +211,16 @@ One search owner per terminal tab manages the query, case option, search work,
 shared match ranges and their memory reservation. Each pane keeps its own
 current match. With no current match, Next starts at the beginning of the
 invoking pane's visible area and Previous starts at its end.
+
+Use both the visible row and column for that initial search position. If a
+match fits horizontally, scroll the invoking pane only as far as needed to
+show the whole match. A fully visible match requires no horizontal movement.
+If a match is wider than the pane, reveal its start for Next and its end for
+Previous. For example, with columns 40 through 69 visible and matches on the
+first visible row at columns 3 and 50, the first Next selects column 50
+without scrolling. A subsequent one-cell match at column 75 moves the pane
+six columns to the right. Check that the other pane and the session grid keep
+their positions and dimensions respectively.
 
 Apply explicit Next and Previous commands in the order invoked for each pane,
 even while an earlier match is still being located or the count is pending.

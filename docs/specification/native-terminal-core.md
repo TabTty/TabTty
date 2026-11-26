@@ -66,9 +66,35 @@ Text recording still needs a receive-only projection when configured. It and
 the combined receive/local-echo projection use the same Rust editing engine
 but can have different content and cursor positions. Two projections serve
 different recording semantics; they are not native/managed shadow copies.
+
+C# submits each receive, resize and receive-EOF event once in session order.
+Rust applies it to the display and, when configured, to the receive-only Text
+state. Only the display produces replies for transmission. Apply these three
+operations together when moving coordination into Rust. Verify that a cursor
+position query produces one reply and that EOF flushes an eligible Text tail
+once. Enabling Text must preserve the same display and cursor as disabling it.
+
 EOF finalizes reception, not retained display/history ownership. Disconnect
 and tab movement preserve the applicable Rust state until its actual owner
 releases it; reconnect creates a new session generation.
+
+### Positions within a wrapped logical output line
+
+Use one Rust rule to derive the next row's logical line ID and starting
+positions during receive, reflow, history indexing and display snapshot
+preparation. A soft wrap carries the ID forward. Advance the UTF-16 offset by
+the preceding row's retained UTF-16 length and the stored-character offset by
+its stored character count. A hard line break starts a new logical line with
+both offsets at zero. When the start of a normal-screen logical line leaves
+history, preserve the ID and offsets of the earliest surviving row. Each
+caller obtains only the positions it needs. In particular, display snapshots
+use the ID and UTF-16 offset without an additional scan to count characters.
+
+At four columns, feed `e` + U+0301 followed by `ABCD`. The row starting with
+`D` belongs to the same logical line and starts at UTF-16 offset 5 and
+stored-character offset 4. Check the position of `D` after reflow and after
+the first physical row leaves history. After an explicit CRLF the next line
+has a new ID and starts at zero in both units.
 
 ## Coverage that replaces managed execution
 

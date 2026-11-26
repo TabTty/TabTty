@@ -131,7 +131,7 @@ the records it will remove and defaults to **Cancel**.
 
 | Command | Records removed | Next use |
 | --- | --- | --- |
-| Reset all macro trust | Every remembered macro allow and block decision for this user on this PC | Apply the initial macro review on the next launch |
+| Reset all macro trust | Every [v1 macro allow and block record](../drafts/macro-specification.md#macro-trust-record-v1) for this user on this PC | Apply the initial macro review on the next launch |
 | Reset all connection profile trust | All trusted profile versions for this user on this PC, including unregistered locations | Apply the connection table on the next attempt. Keep the profile list, favorites and usage history. |
 
 Neither command removes the other kind of trust, SSH host keys or vault data.

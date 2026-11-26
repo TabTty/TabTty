@@ -5,7 +5,7 @@ namespace TabTty.Core;
 internal sealed class TerminalRecordings
 {
     private readonly TerminalOutput terminal;
-    private readonly TerminalOutput? receiveOnly;
+    private TerminalOutput? receiveOnly;
     private readonly bool raw, recordTerminal;
     private readonly Action refuse;
 
@@ -17,8 +17,11 @@ internal sealed class TerminalRecordings
         raw = profile.RecordRaw;
         recordTerminal = profile.RecordTerminal;
         if (profile.RecordText)
+        {
             receiveOnly = new TerminalOutput(grid.Columns, retainedRows, grid.Rows,
                 profile.ReceiveEncoding, profile.ReceiveSevenBitKana, profile.AmbiguousWidth, terminal.StateQuota);
+            receiveOnly.ConfigureReceiveOnly();
+        }
     }
 
     public void Start(SessionRecording recording, int interval)
@@ -42,19 +45,15 @@ internal sealed class TerminalRecordings
     {
         token.ThrowIfCancellationRequested();
         if (raw) recording?.Enqueue(RecordingFormat.Raw, payload);
-        if (!terminal.TryReceive(source, payload, token))
+        for (int offset = 0; offset < payload.Length; offset += TerminalOutput.ReceiveBatchBytes)
         {
-            refuse();
-            terminal.Receive(source, payload, token);
+            var batch = payload.AsSpan(offset, Math.Min(TerminalOutput.ReceiveBatchBytes, payload.Length - offset));
+            if (!terminal.TryReceive(source, batch, token, receiveOnly))
+            {
+                refuse();
+                terminal.Receive(source, batch, token, receiveOnly);
+            }
         }
-        if (receiveOnly is null) return;
-        // Once display has committed, the other projection must see the same input.
-        if (!receiveOnly.TryReceive(source, payload))
-        {
-            refuse();
-            receiveOnly.Receive(source, payload);
-        }
-        receiveOnly.TakeReplies();
     }
 
     public void Echo(ReadOnlySpan<byte> payload, ResourceReservation? prepaid)
@@ -66,29 +65,15 @@ internal sealed class TerminalRecordings
 
     public void Resize(int columns, int rows)
     {
-        using var displayResize = terminal.PrepareNativeResize(columns, rows);
-        using var receiveResize = receiveOnly?.PrepareNativeResize(columns, rows);
+        using var displayResize = terminal.PrepareNativeResize(columns, rows, receiveOnly);
         terminal.Resize(columns, rows, displayResize);
-        receiveOnly?.Resize(columns, rows, receiveResize);
     }
 
     public void CompleteReceive(bool flushText)
     {
-        Complete(terminal);
-        if (receiveOnly is null) return;
-        Complete(receiveOnly);
-        if (flushText)
-        {
-            try { receiveOnly.FlushText(); }
-            catch (ResourceLimitException) { refuse(); }
-        }
-    }
-
-    private void Complete(TerminalOutput output)
-    {
-        if (output.TryCompleteReceive()) return;
+        if (terminal.TryCompleteReceive(receiveOnly, flushText)) return;
         refuse();
-        output.CompleteReceive();
+        if (!terminal.TryCompleteReceive(receiveOnly)) throw new ResourceLimitException();
     }
 
     public void End(int interval, bool abort)
@@ -97,6 +82,10 @@ internal sealed class TerminalRecordings
         finally { terminal.EndRecording(interval, abort); }
     }
 
-    public void ReleaseReceiveOnlyState() => receiveOnly?.ReleaseNativeState();
+    public void ReleaseReceiveOnlyState()
+    {
+        receiveOnly?.ReleaseNativeState();
+        receiveOnly = null;
+    }
 
 }

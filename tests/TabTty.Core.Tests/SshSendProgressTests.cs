@@ -13,14 +13,14 @@ internal static partial class ArchitectureOwnershipContracts
         var interaction = new SshInteraction((_, _) => Task.FromResult(true),
             (_, _) => Task.FromResult<VaultSecret?>(new VaultSecret("local-test-password"u8.ToArray())));
         await using var session = await TerminalSession.ConnectAsync(path, token, interaction);
-        await session.SendTextAsync("burst", token);
+        await session.DeliverInputAsync(new(TerminalInputKind.Text, "burst"), token);
         for (int index = 0; index < 1536; index++)
             if (!await session.ProcessOutputAsync(token))
                 throw new InvalidOperationException("The terminal ended during the alternating data/stderr burst.");
         while (!(await session.ReadOutputAsync(token) ?? throw new IOException("The burst ended before its marker."))
             .Contains("burst finished")) { }
         if (!session.AcceptsInput) throw new InvalidOperationException("Exit status ended the reverse input direction.");
-        await session.SendTextAsync("reverse", token);
+        await session.DeliverInputAsync(new(TerminalInputKind.Text, "reverse"), token);
         IReadOnlyList<string>? last = null;
         while (await session.ReadOutputAsync(token) is { } output) last = output;
         if (last?.Contains("reverse confirmed") != true)
@@ -319,9 +319,63 @@ internal static partial class ArchitectureOwnershipContracts
             await pause.Issued.Task.WaitAsync(token);
             pause.Dispose();
             try { await sending.WaitAsync(token); throw new InvalidOperationException("An uncertain paste succeeded."); }
-            catch (PasteWriteException error) when (error.DefiniteBytes == 1) { }
+            catch (PasteWriteException error) when (error.DefiniteBytes == 4) { }
             if (packets.WritesSinceArm != 3)
                 throw new InvalidOperationException("The paste replayed bytes after the uncertain packet.");
+        }
+
+        await CheckAiCutoffAsync("ABC", expectedBytes: 2, expectedPackets: 1);
+        await CheckAiCutoffAsync("😀Z", expectedBytes: 4, expectedPackets: 2);
+        await CheckAiPasteWithoutCreditAsync();
+
+        async Task CheckAiPasteWithoutCreditAsync()
+        {
+            var initial = ConnectionProfile.CreateSsh("Zero credit", "127.0.0.1", "tabtty-ownership", port, methods: ["password"]);
+            var json = System.Text.Json.Nodes.JsonNode.Parse(initial.ToEditorJson())!;
+            json["connection"]!["waitSeconds"] = 2;
+            var zeroCredit = initial.Edit(json.ToJsonString());
+            await using var terminal = new TerminalSession(await OpenWireAsync(zeroCredit), zeroCredit, null, 100);
+            var lease = terminal.TryGrantAiInput() ?? throw new InvalidOperationException("AI input was not admitted.");
+            try
+            {
+                long layout = await terminal.ObserveAiAsync((_, observed) => observed.LayoutEpoch, token);
+                var attempt = new AiInputAttempt(lease, layout, token);
+                using var monitor = packets!.PauseWrite(int.MaxValue);
+                using var paste = TerminalPaste.Create("A");
+                try
+                {
+                    await terminal.SendAiPasteAsync(paste, 0, 0, false, attempt, token);
+                    throw new InvalidOperationException("A peer without credit received a paste.");
+                }
+                catch (PasteWriteException error) when (error is { Submission: TransportSubmission.NotIssued,
+                    DefiniteBytes: 0, InnerException: OperationCanceledException } && !token.IsCancellationRequested) { }
+                if (attempt.Admitted || attempt.Submission != TransportSubmission.NotIssued ||
+                    packets.WritesSinceArm != 0 || terminal.AiConnectionEnded)
+                    throw new InvalidOperationException("An SSH credit wait was treated as an issued paste or disconnected the session.");
+            }
+            finally { await terminal.ReleaseAiInputAsync(lease); }
+        }
+
+        async Task CheckAiCutoffAsync(string text, int expectedBytes, int expectedPackets)
+        {
+            await using var terminal = new TerminalSession(await OpenWireAsync(pasteProfile), pasteProfile, null, 100);
+            var lease = terminal.TryGrantAiInput() ?? throw new InvalidOperationException("AI input was not admitted.");
+            try
+            {
+                long layout = await terminal.ObserveAiAsync((_, observed) => observed.LayoutEpoch, token);
+                var attempt = new AiInputAttempt(lease, layout, token);
+                using var pause = packets!.PauseWrite(ordinal: 1, finishPacket: true);
+                var sending = terminal.SendAiInputAsync(new(TerminalInputKind.Text, text), null, attempt, token);
+                await pause.Issued.Task.WaitAsync(token);
+                lease.Revoke();
+                pause.Dispose();
+                try { await sending.WaitAsync(token); throw new InvalidOperationException("An interrupted SSH input succeeded."); }
+                catch (OperationCanceledException) when (!token.IsCancellationRequested &&
+                    attempt.Submission == TransportSubmission.Partial && attempt.DefinitePayloadBytes == expectedBytes) { }
+                if (packets.WritesSinceArm != expectedPackets || terminal.AiConnectionEnded)
+                    throw new InvalidOperationException("SSH input sent its tail or closed a healthy connection on takeover.");
+            }
+            finally { await terminal.ReleaseAiInputAsync(lease); }
         }
 
         async Task<SessionTransport> ConnectAsync()
@@ -342,10 +396,10 @@ internal static partial class ArchitectureOwnershipContracts
         private int writes;
         internal int WritesSinceArm => Volatile.Read(ref writes);
 
-        internal PausedWrite PauseWrite(int ordinal)
+        internal PausedWrite PauseWrite(int ordinal, bool finishPacket = false)
         {
             Volatile.Write(ref writes, 0);
-            var next = new PausedWrite(ordinal);
+            var next = new PausedWrite(ordinal, finishPacket);
             Volatile.Write(ref pause, next);
             return next;
         }
@@ -361,6 +415,11 @@ internal static partial class ArchitectureOwnershipContracts
             await stream.WriteAsync(buffer[..4], token);
             held.Issued.TrySetResult();
             await held.Release.Task.WaitAsync(token);
+            if (held.FinishPacket)
+            {
+                await stream.WriteAsync(buffer[4..], token);
+                return;
+            }
             throw new IOException("Controlled failure after the encrypted write was issued.");
         }
 
@@ -377,8 +436,9 @@ internal static partial class ArchitectureOwnershipContracts
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
         public override void SetLength(long value) => throw new NotSupportedException();
 
-        internal sealed class PausedWrite(int ordinal) : IDisposable
+        internal sealed class PausedWrite(int ordinal, bool finishPacket) : IDisposable
         {
+            internal bool FinishPacket { get; } = finishPacket;
             internal int Ordinal { get; } = ordinal;
             internal TaskCompletionSource Issued { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
             internal TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

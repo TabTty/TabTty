@@ -116,9 +116,9 @@ internal sealed partial class MainWindow
                 arguments.Select((value, index) => $"[{index}] \"{PermissionDisplay.Literal(value)}\""));
             review.AddField("MacroArguments", ReadOnlyMacroValue(values));
             review.AddAction("MacroInspectSource", () => InspectMacroText(review, "MacroInspectSource", program.Source));
-            if (key.ConstantsDigest is { } constantsDigest)
+            if (program.Constants.Count != 0)
             {
-                review.AddField("MacroConstantsVersion", ReadOnlyMacroValue(constantsDigest));
+                review.AddField("MacroConstantsVersion", ReadOnlyMacroValue(key.ConstantsDigest));
                 var aliases = new ComboBox { ItemsSource = program.Constants.Select(binding => binding.Alias).ToArray() };
                 var path = ReadOnlyMacroValue("");
                 var fileDigest = ReadOnlyMacroValue("");
@@ -234,7 +234,8 @@ internal sealed partial class MainWindow
                             _ => "MacroTrustInvalid",
                         });
                         string label = $"{entry.Fingerprint}  {status}";
-                        if (entry.ConstantsDigest is { } version) label += $"\n{Text("MacroConstantsVersion")}  {version}";
+                        if (entry.ConstantsDigest is { } version && version != MacroTrustKey.EmptyConstantsDigest)
+                            label += $"\n{Text("MacroConstantsVersion")}  {version}";
                         pairs.Items.Add(label);
                     }
                     pairs.SelectedIndex = entries.Length == 0 ? -1 : 0;
@@ -267,7 +268,7 @@ internal sealed partial class MainWindow
                     try
                     {
                         var entry = entries[pairs.SelectedIndex];
-                        MacroTrust.Forget(entry.Fingerprint, entry.Version);
+                        MacroTrust.Forget(entry.Fingerprint);
                         return Task.FromResult(true);
                     }
                     catch (Win32Exception)

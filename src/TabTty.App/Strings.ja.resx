@@ -477,6 +477,7 @@
   <data name="SftpUnsupported" xml:space="preserve"><value>サーバーがこの操作に対応していません。</value></data>
   <data name="SftpServerError" xml:space="preserve"><value>ファイル操作に失敗しました。</value></data>
   <data name="SftpUnknownOutcome" xml:space="preserve"><value>操作結果を確認できませんでした。再試行前に一覧を更新してください。</value></data>
+  <data name="SftpCloseReportFailed" xml:space="preserve"><value>必要なファイル転送レポートを表示できなかったため、終了を中止しました。</value></data>
   <data name="SftpInvalidName" xml:space="preserve"><value>この操作では、この名前または項目の種類を使用できません。</value></data>
   <data name="SftpCannotReplace" xml:space="preserve"><value>転送先が安全な上書きに対応していません。</value></data>
   <data name="SftpSourceChanged" xml:space="preserve"><value>処理中に転送元が変更されました。</value></data>
@@ -501,6 +502,7 @@
   <data name="BroadcastFailedTarget" xml:space="preserve"><value>失敗</value></data>
   <data name="BroadcastSubmitted" xml:space="preserve"><value>送信済み、または到達未確認</value></data>
   <data name="BroadcastNotSent" xml:space="preserve"><value>未送信</value></data>
+  <data name="BroadcastPasteFramingOnly" xml:space="preserve"><value>ブラケットペーストの開始・終了マーカーを送信して停止しました。本文の送信は 0 バイトです。</value></data>
   <data name="PasteTargetChanged" xml:space="preserve"><value>貼り付けの準備中に対象端末の状態が変わりました。</value></data>
   <data name="BroadcastMoveBusy" xml:space="preserve"><value>別ウィンドウへ移動するには、進行中の同時送信操作の完了を待つか、操作を停止してください。</value></data>
   <data name="TabGroups" xml:space="preserve"><value>タブグループ</value></data>
@@ -536,18 +538,7 @@
   <data name="MacroReadFilePath" xml:space="preserve"><value>ファイルのパス</value></data>
   <data name="MacroInspectConstants" xml:space="preserve"><value>定数ファイルの内容を確認</value></data>
   <data name="MacroShowAllDecisions" xml:space="preserve"><value>このマクロの判断をすべて表示</value></data>
-  <data name="MacroErrorConstantsDeclaration" xml:space="preserve"><value>定数ファイルの宣言が正しくありません。</value></data>
-  <data name="MacroErrorConstantsAlias" xml:space="preserve"><value>定数ファイルの別名が別の名前と重複しています。</value></data>
-  <data name="MacroErrorConstantsLimit" xml:space="preserve"><value>宣言した定数が上限を超えています。</value></data>
-  <data name="MacroErrorNumericLiteral" xml:space="preserve"><value>数値リテラルの形式または範囲が正しくありません。</value></data>
-  <data name="MacroErrorStringEscape" xml:space="preserve"><value>エスケープが不正です。\x の後には16進数字を2桁指定してください。</value></data>
-  <data name="MacroErrorConstantsDefinition" xml:space="preserve"><value>var または単一値の型で定数を宣言し、初期値とセミコロンを指定してください。</value></data>
-  <data name="MacroErrorConstantsLiteral" xml:space="preserve"><value>定数の初期値には、文字列、真偽値、または数値のリテラルを指定してください。</value></data>
-  <data name="MacroErrorConstantsName" xml:space="preserve"><value>定数名が重複しているか、使用できない名前です。</value></data>
-  <data name="MacroErrorConstantsType" xml:space="preserve"><value>リテラルが宣言された定数の型に一致しません。</value></data>
-  <data name="MacroErrorConstantsRead" xml:space="preserve"><value>定数ファイルを読み込めませんでした。</value></data>
   <data name="MacroErrorConstantFile" xml:space="preserve"><value>宣言した定数ファイルを利用できません。</value></data>
-  <data name="MacroErrorMemoryLimit" xml:space="preserve"><value>マクロのメモリ上限に達しました。</value></data>
   <data name="MacroRunOnce" xml:space="preserve"><value>今回だけ実行</value></data>
   <data name="MacroAlwaysAllow" xml:space="preserve"><value>この引数で常に許可</value></data>
   <data name="MacroAlwaysBlock" xml:space="preserve"><value>この引数で常に拒否</value></data>
@@ -590,7 +581,6 @@
   <data name="MacroReadFailed" xml:space="preserve"><value>マクロファイルを読み込めませんでした。</value></data>
   <data name="MacroLocation" xml:space="preserve"><value>{0} 行 {1} 列: {2}</value></data>
   <data name="MacroErrorCode" xml:space="preserve"><value>マクロエラー ({0})</value></data>
-  <data name="MacroErrorRethrowOutsideCatch" xml:space="preserve"><value>再送出は同じ関数の catch 内でのみ使用できます。</value></data>
   <data name="MacroStateRunning" xml:space="preserve"><value>マクロ実行中</value></data>
   <data name="MacroStateWaiting" xml:space="preserve"><value>マクロ待機中</value></data>
   <data name="MacroStatePauseRequested" xml:space="preserve"><value>マクロの一時停止を要求済み</value></data>
@@ -614,14 +604,6 @@
   <data name="MacroErrorUncertainDelivery" xml:space="preserve"><value>入力の一部が接続先に届いた可能性があります。再送信する前に接続先の状態を確認してください。</value></data>
   <data name="MacroErrorConnectionFailed" xml:space="preserve"><value>接続に失敗しました。</value></data>
   <data name="MacroErrorVaultStale" xml:space="preserve"><value>vault が変更されました。再度使用するには TabTty を再起動してください。</value></data>
-  <data name="MacroErrorExpectedToken" xml:space="preserve"><value>必要な語や記号が不足しているか、位置が正しくありません。</value></data>
-  <data name="MacroErrorTypeMismatch" xml:space="preserve"><value>値の型が操作に適合しません。</value></data>
-  <data name="MacroErrorNamedOptionExpected" xml:space="preserve"><value>名前付きオプションを指定してください。</value></data>
-  <data name="MacroErrorUnknownOption" xml:space="preserve"><value>この呼び出しでは使用できないオプションです。</value></data>
-  <data name="MacroErrorDuplicateOption" xml:space="preserve"><value>このオプションは既に指定されています。</value></data>
-  <data name="MacroErrorAlternativeNameExpected" xml:space="preserve"><value>各待機パターンに予約語以外の名前とコロンを指定してください。</value></data>
-  <data name="MacroErrorDuplicateAlternative" xml:space="preserve"><value>この名前の待機候補は既に指定されています。</value></data>
-  <data name="MacroErrorSourceEncoding" xml:space="preserve"><value>ファイルに文字コードとして無効なデータがあります。</value></data>
   <data name="MacroErrorMissingProfilePassword" xml:space="preserve"><value>プロファイルにパスワード参照が設定されていません。</value></data>
   <data name="MacroErrorWaitTimeout" xml:space="preserve"><value>端末の応答待機がタイムアウトしました。</value></data>
   <data name="MacroErrorEndOfInput" xml:space="preserve"><value>一致するテキストを受信する前に端末出力が終了しました。</value></data>
@@ -668,6 +650,7 @@ AI アプリは個別の確認なしでキーや複数行のコマンドを入�
   <data name="AiMacroOwnsInput" xml:space="preserve"><value>一時停止中もマクロが端末入力を占有します。</value></data>
   <data name="AiInputBusy" xml:space="preserve"><value>現在の入力を完了または中止してから、操作権を再度付与してください。</value></data>
   <data name="AiUncertainDelivery" xml:space="preserve"><value>AI の入力がどこまで届いたか確認できません。再送する前に端末を確認してください。</value></data>
+  <data name="ConfirmedInputPrefix" xml:space="preserve"><value>入力の先頭から送信を確認した範囲は {0:N0} バイトです。</value></data>
   <data name="AiEndpointUnavailable" xml:space="preserve"><value>AI コラボレーションのローカル接続口を開けませんでした。</value></data>
   <data name="AiSetupInstructions" xml:space="preserve"><value>AI アプリにブリッジを登録</value></data>
   <data name="AiSetupConfiguration" xml:space="preserve"><value>MCP 設定</value></data>
@@ -746,35 +729,9 @@ AI アプリは個別の確認なしでキーや複数行のコマンドを入�
   <data name="PostConnectionRoutineCommandRequired" xml:space="preserve"><value>コマンドを1つ以上入力してください。</value></data>
   <data name="PostConnectionRoutineVaultEntryRequired" xml:space="preserve"><value>有効な vault のパスワード項目名を入力してください。</value></data>
   <data name="PostConnectionRoutineInsert" xml:space="preserve"><value>挿入</value></data>
-  <data name="MacroErrorPostConnectionSubset" xml:space="preserve"><value>接続後マクロでは、この操作または構文を使えません。プロンプト待機にはタイムアウトが必要です。</value></data>
   <data name="PostConnectionCompletionKeys" xml:space="preserve"><value>Ctrl+Space で補完候補を表示します。上下キーで選択し、Tab または Enter で挿入、Esc で候補を閉じます。</value></data>
   <data name="PostConnectionCompletions" xml:space="preserve"><value>補完候補</value></data>
   <data name="PostConnectionCurrentArgument" xml:space="preserve"><value>{0}。現在の引数は {1} です。</value></data>
-  <data name="MacroErrorExpressionExpected" xml:space="preserve"><value>ここに式を入力してください。</value></data>
-  <data name="MacroErrorStatementExpected" xml:space="preserve"><value>ここに文を入力してください。</value></data>
-  <data name="MacroErrorIdentifierExpected" xml:space="preserve"><value>ここに名前を入力してください。</value></data>
-  <data name="MacroErrorBlockExpected" xml:space="preserve"><value>ブロックの末尾に閉じ波括弧を入力してください。</value></data>
-  <data name="MacroErrorTypeExpected" xml:space="preserve"><value>使用できる型名を入力してください。</value></data>
-  <data name="MacroErrorUnknownName" xml:space="preserve"><value>この名前は現在のスコープに定義されていません。</value></data>
-  <data name="MacroErrorUnknownMember" xml:space="preserve"><value>この値にその名前のメンバーはありません。</value></data>
-  <data name="MacroErrorUnknownFunction" xml:space="preserve"><value>この関数は定義されていません。</value></data>
-  <data name="MacroErrorReservedName" xml:space="preserve"><value>マクロ言語の予約名以外を指定してください。</value></data>
-  <data name="MacroErrorDuplicateLocal" xml:space="preserve"><value>同じ名前のローカル変数が既に定義されています。</value></data>
-  <data name="MacroErrorCallArguments" xml:space="preserve"><value>この呼び出しに指定した引数の数と型を確認してください。</value></data>
-  <data name="MacroErrorUnterminatedString" xml:space="preserve"><value>文字列の末尾に閉じ二重引用符を入力してください。</value></data>
-  <data name="MacroErrorUnterminatedComment" xml:space="preserve"><value>コメントの末尾に */ を入力してください。</value></data>
-  <data name="MacroErrorStringPrefix" xml:space="preserve"><value>文字列の接頭辞が正しくありません。</value></data>
-  <data name="MacroErrorStringExpected" xml:space="preserve"><value>文字列リテラルの先頭に二重引用符を入力してください。</value></data>
-  <data name="MacroErrorStringNewline" xml:space="preserve"><value>行末の前に文字列を閉じるか、逐語的文字列を使用してください。</value></data>
-  <data name="MacroErrorUnexpectedCharacter" xml:space="preserve"><value>ここではこの文字を使用できません。</value></data>
-  <data name="MacroErrorInterpolationBrace" xml:space="preserve"><value>補間文字列の波括弧を確認してください。</value></data>
-  <data name="MacroErrorUnterminatedInterpolation" xml:space="preserve"><value>文字列内の補間式の末尾に閉じ波括弧を入力してください。</value></data>
-  <data name="MacroErrorSourceLimit" xml:space="preserve"><value>マクロ本文のサイズが上限を超えています。</value></data>
-  <data name="MacroErrorSyntaxLimit" xml:space="preserve"><value>マクロの構文要素数が上限を超えています。</value></data>
-  <data name="MacroErrorNestingLimit" xml:space="preserve"><value>マクロの入れ子の深さが上限を超えています。</value></data>
-  <data name="MacroErrorParameterLimit" xml:space="preserve"><value>引数の数が上限を超えています。</value></data>
-  <data name="MacroErrorTypeNestingLimit" xml:space="preserve"><value>型の入れ子の深さが上限を超えています。</value></data>
-  <data name="MacroErrorLocalLimit" xml:space="preserve"><value>ローカル変数の宣言数が上限を超えています。</value></data>
   <data name="DecisionTargetTab" xml:space="preserve"><value>対象タブ：{0}</value></data>
   <data name="PasteTargets" xml:space="preserve"><value>貼り付け先</value></data>
   <data name="NoticeStackShow" xml:space="preserve"><value>通知を表示 ({0})</value></data>

@@ -1,15 +1,19 @@
 using System.Collections;
+using System.Runtime.InteropServices;
 
 namespace TabTty.Core;
 
 public readonly record struct TerminalMatch(int StartRow, int StartOffset, int EndRow, int EndOffset);
+
+[StructLayout(LayoutKind.Sequential)]
+internal readonly record struct TerminalTextPosition(int Start, int End, ushort Column, ushort Width);
 
 public sealed class TerminalSnapshot : IReadOnlyList<string>
 {
     internal readonly record struct Row(long Id, long LogicalId, long LogicalOffset, string Text,
         bool SoftWrapToNext, ReadOnlyMemory<TerminalCell> EagerCells,
         ResourceReservation? TextMemory, ResourceReservation? CellMemory, long DisplayRevision,
-        CompactTerminalCells? DeferredCells = null, int[]? SpanEnds = null, int SpanCount = 0)
+        CompactTerminalCells? DeferredCells = null, TerminalTextPosition[]? Positions = null)
     {
         public ReadOnlyMemory<TerminalCell> Cells => DeferredCells is null ? EagerCells : DeferredCells.GetCells();
     }
@@ -33,10 +37,77 @@ public sealed class TerminalSnapshot : IReadOnlyList<string>
     {
         var content = rows[row];
         if (offset >= content.Text.Length) return (offset, offset);
-        if (content.SpanEnds is not { } ends) return (offset, offset + 1);
-        int index = Array.BinarySearch(ends, 0, content.SpanCount, offset);
-        index = index < 0 ? ~index : index + 1;
-        return (index == 0 ? 0 : ends[index - 1], ends[index]);
+        if (content.Positions is not { } spans) return (offset, offset + 1);
+        TerminalTextPosition span = spans[SpanIndex(spans, offset)];
+        return (span.Start, span.End);
+    }
+
+    private static int SpanIndex(TerminalTextPosition[] spans, int offset)
+    {
+        int low = 0, high = spans.Length;
+        while (low < high)
+        {
+            int mid = low + (high - low) / 2;
+            if (spans[mid].End <= offset) low = mid + 1;
+            else high = mid;
+        }
+        return low;
+    }
+
+    internal (int Start, int End) ColumnRange(int row, int start, int end)
+    {
+        var content = rows[row];
+        if (content.Positions is not { } spans) return (start, end);
+        int index = SpanIndex(spans, start);
+        int left = index < spans.Length ? spans[index].Column : spans[^1].Column + spans[^1].Width;
+        if (end <= start || index == spans.Length) return (left, left);
+        TerminalTextPosition last = spans[SpanIndex(spans, end - 1)];
+        return (left, last.Column + last.Width);
+    }
+
+    internal (int Leading, int Trailing) TextBoundary(int row, double column)
+    {
+        var content = rows[row];
+        if (content.Positions is not { } spans)
+        {
+            int offset = Math.Clamp((int)Math.Floor(column + 0.5), 0, content.Text.Length);
+            return (offset, offset);
+        }
+        int trailing = 0;
+        foreach (var span in spans)
+        {
+            if (span.Width == 0) continue;
+            if (column < span.Column + span.Width / 2.0) return (span.Start, trailing);
+            trailing = span.End;
+        }
+        return (content.Text.Length, trailing);
+    }
+
+    internal (int Start, int End) VisibleText(int row, int firstColumn, int endColumn)
+    {
+        var content = rows[row];
+        if (content.Positions is not { } spans)
+            return (Math.Min(firstColumn, content.Text.Length), Math.Min(endColumn, content.Text.Length));
+        int first = content.Text.Length, end = first;
+        foreach (var span in spans)
+        {
+            if (span.Column >= endColumn) break;
+            if (span.Width == 0 ? span.Column < firstColumn : span.Column + span.Width <= firstColumn) continue;
+            if (first == content.Text.Length) first = span.Start;
+            end = span.End;
+        }
+        return (first, end);
+    }
+
+    internal int? ZeroWidthColumn(int row, int start, int end)
+    {
+        if (rows[row].Positions is not { } spans) return null;
+        int index = SpanIndex(spans, start);
+        if (index == spans.Length || spans[index].Start >= end || spans[index].Width != 0) return null;
+        int column = spans[index].Column;
+        for (; index < spans.Length && spans[index].Start < end; index++)
+            if (spans[index].Width != 0) return null;
+        return column;
     }
 
     public bool IsSoftWrapped(int row) => rows[row].SoftWrapToNext;

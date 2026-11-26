@@ -86,6 +86,8 @@ internal sealed partial class TerminalTab
         if (Macro is not { } run || macroControls is null || compactMacroStop is null) return;
         MacroRunStatus state = run.Status;
         string label = Text("MacroState" + state.State);
+        if (state.State == MacroRunState.Completed && state.Position.Line > 0)
+            label = string.Format(Text("MacroLocation"), state.Position.Line, state.Position.Column, label);
         if (state.PostConnection) label = Text("PostConnectionMacro") + " · " + label;
         if (state.Operation.Length != 0) label += " · " + MacroOperationLabel(state.Operation);
         if (state.Result is { } result)
@@ -140,11 +142,11 @@ internal sealed partial class TerminalTab
     }
 
     internal static string MacroErrorLabel(string code) =>
-        LocalizedText("MacroError" + code) ?? string.Format(Text("MacroErrorCode"), code);
+        LocalizedText("MacroError" + code) ?? MacroDiagnostics.Find(code, UiLanguage) ?? string.Format(Text("MacroErrorCode"), code);
 
     internal static string PostConnectionSourceError(MacroSourceException error) =>
         Text("PostConnectionMacro") + " · " +
-        string.Format(Text("MacroLocation"), error.Position.Line, error.Position.Column, MacroErrorLabel(error.Code));
+        string.Format(Text("MacroLocation"), error.Position.Line, error.Position.Column, MacroDiagnostics.Describe(error, UiLanguage));
 
     private static string MacroOperationLabel(string operation) => Text(operation switch
     {

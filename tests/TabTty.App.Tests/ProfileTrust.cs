@@ -110,13 +110,33 @@ internal static partial class Program
                 System.Windows.Automation.AutomationProperties.GetName(tabs) == App.Text("ProfileGroups"));
             groupTabs.SelectedItem = groupTabs.Items.OfType<TabItem>().Single(tab => Equals(tab.Tag, ""));
             list.SelectedIndex = 0;
+            const string oldDisplayPath = @"Z:\legacy-display-name.ttty";
+            LocalState.Change(state =>
+            {
+                var registration = state["registrations"]!.AsArray().Single()!;
+                CheckMacroLaunch(registration["path"]!.GetValue<string>() == path && registration["displayPath"] is null,
+                    "A new registration did not store exactly one opening path.");
+                registration["displayPath"] = oldDisplayPath;
+            });
+            await ClickProfileActionAsync(list, "ProfileFavoriteAdd");
+            var previousRegistration = app.Profiles.ReadRegistrations().Single();
+            CheckMacroLaunch(previousRegistration.Favorite && previousRegistration.LastUsed is not null &&
+                previousRegistration.Path == path && previousRegistration.Name == "profile (3)",
+                "The registration lost usage or used the legacy display path.");
             await ClickProfileActionAsync(list, "EditProfile");
             const string groupName = "Lab_東京";
             await EditProfileNameAsync("profile (3)", "Main editor version", $" {groupName} ");
+            var renamedRegistration = new ProfileCatalog(app).ReadRegistrations().Single();
+            var storedRegistration = LocalState.ReadForProfileTrust()["registrations"]!.AsArray().Single()!;
+            CheckMacroLaunch(renamedRegistration.Id == previousRegistration.Id && renamedRegistration.Favorite &&
+                renamedRegistration.LastUsed == previousRegistration.LastUsed && renamedRegistration.Path == path &&
+                renamedRegistration.Name == "Main editor version" && storedRegistration["displayPath"]!.GetValue<string>() == oldDisplayPath,
+                "Renaming the opening path lost registration data or rewrote the legacy field.");
             if (groupTabs.SelectedItem is not TabItem { Tag: string selectedGroup } || selectedGroup != groupName ||
                 list.SelectedItem is not ProfileCatalog.Registration { GroupName: groupName } ||
-                new ProfileCatalog(app).ReadRegistrations().Single().GroupName != groupName)
+                renamedRegistration.GroupName != groupName)
                 throw new InvalidOperationException("The saved group did not update the management tab and the registration.");
+            await ClickProfileActionAsync(list, "ProfileFavoriteRemove");
             var tabs = (TabControl)owner.FindName("tabs");
             var newTab = (Button)tabs.Template.FindName("newTabButton", tabs);
             newTab.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, newTab));
@@ -295,7 +315,7 @@ internal static partial class Program
                 LocalState.Change(state =>
                 {
                     var entries = state["registrations"]!.AsArray();
-                    entries.Remove(entries.Single(entry => entry!["displayPath"]!.GetValue<string>() == extraPath));
+                    entries.Remove(entries.Single(entry => entry!["path"]!.GetValue<string>() == extraPath));
                 });
                 await app.Profiles.RememberUsageAsync(path, await ConnectionProfile.LoadAsync(path, token));
             }

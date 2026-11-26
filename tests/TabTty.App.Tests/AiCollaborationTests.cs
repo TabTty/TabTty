@@ -12,6 +12,354 @@ using TabTty.Core;
 
 internal static partial class Program
 {
+    private static async Task CheckAiHighlightCoverageAsync(App app, string directory)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+        var token = deadline.Token;
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        string path = Path.Combine(directory, "ai-highlight.ttty");
+        await ConnectionProfile.CreateTelnet("Highlight coverage", "127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port)
+            .SaveNewAsync(path, token);
+        var rules = new HighlightSet(Guid.NewGuid(), "Coverage", true,
+            [new TerminalHighlightRule(Guid.NewGuid(), "Error", "ERROR", true, false, new(0xFF0000, null, null, null))]);
+        var host = new MainWindow(app);
+        var tab = new TerminalTab(path, null, (40, 32), rules);
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        tab.Connected += _ => ready.TrySetResult();
+        var ai = app.Ai;
+        var observer = ai.Attach("highlight fixture", @"C:\Fixtures\Highlight.exe", 301)!;
+        host.Show();
+        host.AddTerminalTab(tab);
+        try
+        {
+            tab.Start();
+            using var peer = await listener.AcceptTcpClientAsync(token);
+            await ready.Task.WaitAsync(token);
+            var wire = peer.GetStream();
+            await wire.ReadExactlyAsync(new byte[15], token);
+            Check(ai.Share(tab, observer) is null, "The highlight fixture could not share its terminal.");
+            string session = tab.AiSharing!.Id;
+            await Exchange("ERROR");
+            await WaitForRow(1, 1);
+            var blank = await Read(2, 1);
+            var mixed = await Read(1, 2);
+            Check(blank.GetProperty("highlight_status").GetString() == "pending" &&
+                blank.GetProperty("lines")[0].GetProperty("cells")[0].GetProperty("blank").GetBoolean(),
+                "An unevaluated blank row was not returned as pending with its cells.");
+            Check(mixed.GetProperty("highlight_status").GetString() == "pending" &&
+                mixed.GetProperty("lines")[0].GetProperty("highlights").GetArrayLength() == 1,
+                "The mixed region lost a completed highlight or did not report an unevaluated row.");
+
+            await Exchange("\u001b[2;1H ");
+            await WaitForRow(2, 0);
+            var evaluated = await Read(1, 2);
+            Check(evaluated.GetProperty("highlight_status").GetString() == "current" &&
+                evaluated.GetProperty("lines")[1].GetProperty("highlights").GetArrayLength() == 0,
+                "An evaluated zero-match row was treated as pending.");
+
+            await Exchange("\u001b[?1049h\u001b[HERROR");
+            var alternate = await Read(1, 1);
+            Check(alternate.GetProperty("source").GetString() == "alternate" &&
+                alternate.GetProperty("lines")[0].GetProperty("highlights").ValueKind == JsonValueKind.Null,
+                "The alternate screen returned regular-screen highlights.");
+
+            async Task Exchange(string text)
+            {
+                await wire.WriteAsync(Encoding.UTF8.GetBytes(text + "\u001b[5n"), token);
+                await wire.ReadExactlyAsync(new byte[4], token);
+            }
+
+            async Task WaitForRow(int row, int matches)
+            {
+                while (tab.CaptureAiHighlightRow(row)?.Spans.Length != matches) await Task.Delay(15, token);
+            }
+
+            Task<JsonElement> Read(int row, int rows) => CommitAiToolAsync(ai, observer, "tabtty_read_state",
+                new { session, include_highlights = true, region = new { row, column = 1, rows, columns = 5 } }, token);
+        }
+        finally
+        {
+            ai.EndSharing(tab);
+            ai.Detach(observer);
+            tab.Disconnect();
+            await tab.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+            host.Close();
+        }
+    }
+
+    private static async Task CheckAiPasteFailureDispositionAsync(App app, string directory)
+    {
+        foreach (var (serial, refuseRemainder, kind, expected) in new[]
+        {
+            (true, false, "paste", "not_sent"),
+            (false, false, "paste", "unknown"),
+            (false, true, "paste", "possibly_partial"),
+            (false, true, "text", "possibly_partial"),
+        })
+        {
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            var token = deadline.Token;
+            var host = new MainWindow(app, () => true);
+            var tab = new TerminalTab(Path.Combine(directory, "ai-paste-disposition.ttty"));
+            using var wire = new IncompleteBroadcastWire(serial, refuseRemainder);
+            var profile = serial ? ConnectionProfile.CreateSerial("Serial paste", new("COM254")) :
+                ConnectionProfile.CreateTelnet("Telnet paste", "127.0.0.1", transmitEncoding: "iso-8859-1");
+            await using var terminal = new TerminalSession(wire, profile, null, 100);
+            typeof(TerminalTab).GetField("session", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+                .SetValue(tab, terminal);
+            host.AddTerminalTab(tab);
+            host.Show();
+            host.SelectNotificationTab(tab);
+            var ai = app.Ai;
+            var peer = ai.Attach("paste fixture", @"C:\Fixtures\Paste.exe", 302)!;
+            try
+            {
+                Check(ai.Share(tab, peer) is null && ai.Grant(tab) is null, "The paste fixture could not obtain input control.");
+                string session = tab.AiSharing!.Id, control = tab.AiSharing.Control!.Id;
+                object action;
+                JsonElement reply;
+                while (true)
+                {
+                    string observation = (await CommitAiToolAsync(ai, peer, "tabtty_read_state", new { session }, token))
+                        .GetProperty("observation").GetString()!;
+                    action = new { session, control, action_seq = 1, observation, input = new { kind, text = serial ? "A" : "ÿ" } };
+                    reply = await CommitAiToolAsync(ai, peer, "tabtty_send_input", action, token);
+                    if (!reply.TryGetProperty("error", out var error) || error.GetProperty("code").GetString() != "stale_observation") break;
+                    // The first layout can resize the fixture after observation, before any bytes are attempted.
+                    await Task.Delay(15, token);
+                }
+                Check(reply.GetProperty("delivery").GetString() == expected &&
+                    (tab.AiSharing.Control is not null) == serial && wire.Calls == (serial ? 1 : 2) &&
+                    wire.Accepted == (serial ? null : (byte)0xFF),
+                    "AI paste confused definite non-submission with an uncertain write.");
+                if (serial)
+                {
+                    var replay = await CommitAiToolAsync(ai, peer, "tabtty_send_input", action, token);
+                    Check(replay.GetProperty("delivery").GetString() == "not_sent" && wire.Calls == 1 && !tab.Reports.HasUnread,
+                        "A duplicate rejected paste replayed input or raised an uncertainty incident.");
+                }
+            }
+            finally
+            {
+                ai.EndSharing(tab);
+                ai.Detach(peer);
+                typeof(TerminalTab).GetProperty(nameof(TerminalTab.IsRunning))!.SetValue(tab, false);
+                var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                host.Closed += (_, _) => closed.TrySetResult();
+                host.Close();
+                await closed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+        }
+    }
+
+    private static async Task CheckAiQueuedPasteTakeoverAsync(App app, string directory)
+    {
+        foreach (bool bracketed in new[] { true, false })
+        {
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            var token = deadline.Token;
+            var host = new MainWindow(app, () => true);
+            var tab = new TerminalTab(Path.Combine(directory, "ai-queued-paste.ttty"));
+            using var wire = new HeldPasteReplyWire();
+            await using var terminal = new TerminalSession(wire, ConnectionProfile.CreateTelnet("Queued paste", "127.0.0.1"), null, 100);
+            typeof(TerminalTab).GetField("session", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+                .SetValue(tab, terminal);
+            host.AddTerminalTab(tab);
+            host.Show();
+            host.SelectNotificationTab(tab);
+            var ai = app.Ai;
+            var peer = ai.Attach("queued paste fixture", @"C:\Fixtures\QueuedPaste.exe", 303)!;
+            var queued = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void InputQueued() => queued.TrySetResult();
+            terminal.InputSendQueued += InputQueued;
+            try
+            {
+                if (bracketed)
+                    await terminal.ProcessPayloadAsync(TerminalReceiveSource.Data, "\u001b[?2004h"u8.ToArray(), token);
+                Check(ai.Share(tab, peer) is null && ai.Grant(tab) is null, "The queued paste fixture could not obtain control.");
+                string session = tab.AiSharing!.Id, control = tab.AiSharing.Control!.Id;
+                Check(await terminal.ProcessOutputAsync(token), "The fixture did not receive the status query.");
+                await wire.ReplyStarted.Task.WaitAsync(token);
+                Task<JsonElement> sending;
+                while (true)
+                {
+                    string observation = (await CommitAiToolAsync(ai, peer, "tabtty_read_state", new { session }, token))
+                        .GetProperty("observation").GetString()!;
+                    sending = CommitAiToolAsync(ai, peer, "tabtty_send_input",
+                        new { session, control, action_seq = 1, observation, input = new { kind = "paste", text = "A" } }, token);
+                    if (await Task.WhenAny(sending, queued.Task).WaitAsync(token) == queued.Task) break;
+                    var previous = await sending;
+                    Check(previous.GetProperty("error").GetProperty("code").GetString() == "stale_observation",
+                        "The paste finished before it could wait for the writer.");
+                }
+                Check(wire.PasteWrites == 0 && tab.AiSharing.Control?.Attempt is { Admitted: false },
+                    "A paste waiting for the writer was admitted prematurely.");
+                ai.EndControl(tab);
+                var reply = await sending.WaitAsync(token);
+                wire.ReleaseReply.TrySetResult();
+                await wire.ReplyCompleted.Task.WaitAsync(token);
+                while (tab.IsAiTakingControl) await Task.Delay(10, token);
+                Check(reply.GetProperty("delivery").GetString() == "not_sent" && !reply.GetProperty("sequence_consumed").GetBoolean() &&
+                    wire.PasteWrites == 0 && terminal.AcceptsInput && !tab.Reports.HasUnread &&
+                    !FindControls<TextBlock>(tab.Notices).Any(text => text.Text.Contains(App.Text("AiUncertainDelivery"), StringComparison.Ordinal)),
+                    "Returning control wrote an unstarted paste or reported it as uncertain.");
+            }
+            finally
+            {
+                terminal.InputSendQueued -= InputQueued;
+                wire.ReleaseReply.TrySetResult();
+                ai.EndSharing(tab);
+                ai.Detach(peer);
+                typeof(TerminalTab).GetProperty(nameof(TerminalTab.IsRunning))!.SetValue(tab, false);
+                var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                host.Closed += (_, _) => closed.TrySetResult();
+                host.Close();
+                await closed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+        }
+    }
+
+    private static async Task CheckAiPasteTakeoverDeliveryAsync(App app, string directory)
+    {
+        const string input = "ABC";
+        foreach (int accepted in new[] { 1, input.Length })
+        {
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            var token = deadline.Token;
+            var host = new MainWindow(app, () => true);
+            var tab = new TerminalTab(Path.Combine(directory, "ai-paste-takeover-delivery.ttty"));
+            using var wire = new TakeoverPasteWire(accepted);
+            await using var terminal = new TerminalSession(wire, ConnectionProfile.CreateTelnet("Paste takeover", "127.0.0.1"), null, 100);
+            typeof(TerminalTab).GetField("session", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+                .SetValue(tab, terminal);
+            host.AddTerminalTab(tab);
+            host.Show();
+            host.SelectNotificationTab(tab);
+            var ai = app.Ai;
+            var peer = ai.Attach("paste takeover fixture", @"C:\Fixtures\PasteTakeover.exe", 304)!;
+            try
+            {
+                Check(ai.Share(tab, peer) is null && ai.Grant(tab) is null, "The paste takeover fixture could not obtain input control.");
+                string session = tab.AiSharing!.Id, control = tab.AiSharing.Control!.Id;
+                Task<JsonElement> sending;
+                while (true)
+                {
+                    string observation = (await CommitAiToolAsync(ai, peer, "tabtty_read_state", new { session }, token))
+                        .GetProperty("observation").GetString()!;
+                    sending = CommitAiToolAsync(ai, peer, "tabtty_send_input",
+                        new { session, control, action_seq = 1, observation, input = new { kind = "paste", text = input } }, token);
+                    if (await Task.WhenAny(sending, wire.Accepted.Task).WaitAsync(token) == wire.Accepted.Task) break;
+                    var previous = await sending;
+                    Check(previous.GetProperty("error").GetProperty("code").GetString() == "stale_observation",
+                        "The paste finished before the first write.");
+                }
+
+                using var releaseCancellation = new ManualResetEventSlim();
+                var cancellationStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                // Register after the writer starts so this callback runs before the linked paste token is cancelled.
+                using var registration = tab.AiSharing.Control!.Lease.Token.Register(() =>
+                {
+                    cancellationStarted.TrySetResult();
+                    releaseCancellation.Wait(token);
+                });
+                try
+                {
+                    ai.EndControl(tab);
+                    await cancellationStarted.Task.WaitAsync(token);
+                    wire.ReleaseWrite.TrySetResult();
+                    var reply = await sending.WaitAsync(token);
+                    bool complete = accepted == input.Length;
+                    Check(reply.GetProperty("delivery").GetString() == (complete ? "submitted" : "possibly_partial") &&
+                        reply.GetProperty("sequence_consumed").GetBoolean() && wire.Calls == 1 && wire.Content == input[..accepted],
+                        "Paste delivery did not reflect the confirmed wire progress during takeover.");
+                    var notice = FindControls<TextBlock>(tab.Notices).SingleOrDefault(label =>
+                        label.Text.Contains(App.Text("AiUncertainDelivery"), StringComparison.Ordinal));
+                    if (complete)
+                        Check(notice is null, "A completed paste raised a delivery warning.");
+                    else
+                    {
+                        Check(reply.GetProperty("error").GetProperty("code").GetString() == "send_uncertain" &&
+                            notice is not null &&
+                            notice.Text.Contains(TerminalTab.BroadcastTargetLabel(terminal), StringComparison.Ordinal) &&
+                            notice.Text.Contains(string.Format(App.Text("ConfirmedInputPrefix"), accepted), StringComparison.Ordinal),
+                            "A partial paste did not report the target and confirmed byte count.");
+                        FindControls<Button>(notice!.Parent as DependencyObject ?? tab.Notices)
+                            .Single(button => Equals(button.Content, App.Text("OK"))).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                        Check(wire.Calls == 1, "Acknowledging the delivery warning replayed input.");
+                    }
+                }
+                finally { releaseCancellation.Set(); }
+                while (tab.IsAiTakingControl) await Task.Delay(10, token);
+            }
+            finally
+            {
+                wire.ReleaseWrite.TrySetResult();
+                ai.EndSharing(tab);
+                ai.Detach(peer);
+                typeof(TerminalTab).GetProperty(nameof(TerminalTab.IsRunning))!.SetValue(tab, false);
+                var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                host.Closed += (_, _) => closed.TrySetResult();
+                host.Close();
+                await closed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+        }
+    }
+
+    private sealed class TakeoverPasteWire(int accepted) : ISessionWire
+    {
+        internal TaskCompletionSource Accepted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource ReleaseWrite { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal int Calls { get; private set; }
+        internal string Content { get; private set; } = "";
+
+        public ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken token) => ValueTask.FromResult(0);
+        public ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken token) => throw new NotSupportedException();
+        public async ValueTask<int> WriteSomeAsync(ReadOnlyMemory<byte> buffer, CancellationToken token)
+        {
+            if (++Calls != 1) throw new InvalidOperationException("Unexpected paste write after takeover.");
+            Content = System.Text.Encoding.ASCII.GetString(buffer.Span[..accepted]);
+            Accepted.TrySetResult();
+            await ReleaseWrite.Task.WaitAsync(token);
+            return accepted;
+        }
+        public void Dispose() { }
+    }
+
+    private sealed class HeldPasteReplyWire : ISessionWire
+    {
+        internal TaskCompletionSource ReplyStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource ReleaseReply { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource ReplyCompleted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal int PasteWrites { get; private set; }
+        public ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken token)
+        {
+            "\u001b[5n"u8.CopyTo(buffer.Span);
+            return ValueTask.FromResult(4);
+        }
+        public ValueTask<int> WriteSomeAsync(ReadOnlyMemory<byte> buffer, CancellationToken token)
+        {
+            PasteWrites++;
+            return ValueTask.FromResult(buffer.Length);
+        }
+        public async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken token)
+        {
+            Check(buffer.Span.SequenceEqual("\u001b[0n"u8), "An unexpected reply reached the held writer.");
+            ReplyStarted.TrySetResult();
+            await ReleaseReply.Task.WaitAsync(token);
+            ReplyCompleted.TrySetResult();
+        }
+        public void Dispose() { }
+    }
+
+    private static async Task<JsonElement> CommitAiToolAsync(AiCollaboration ai, AiCollaboration.Counterpart peer,
+        string tool, object arguments, CancellationToken token)
+    {
+        var reply = await ai.CallAsync(peer, tool, JsonSerializer.SerializeToElement(arguments), token);
+        JsonElement result = default;
+        await ai.CommitReplyAsync(peer, reply, (body, _) => result = JsonSerializer.SerializeToElement(body), token);
+        return result;
+    }
     private sealed class HistoryClock : TimeProvider
     {
         private long timestamp;
@@ -229,15 +577,31 @@ internal static partial class Program
             Check(Code(stale) == "stale_observation" && connection.Available == 0, "Old observations can send a second action.");
 
             observation = await Observe();
-            Task<JsonElement> paste = Call(owner, "send_input", new { session, control, action_seq = 2, observation,
+            var textSent = await Call(owner, "send_input", new { session, control, action_seq = 2, observation,
+                input = new { kind = "text", text = "A" } });
+            Check(textSent.GetProperty("delivery").GetString() == "submitted", "Ordinary AI text was not submitted.");
+            await Bytes("A");
+            observation = await Observe();
+            Task<JsonElement> paste = Call(owner, "send_input", new { session, control, action_seq = 3, observation,
                 input = new { kind = "paste", text = "AB\nC", character_delay_ms = 10000 } });
             await Bytes("\u001b[200~A");
+            var backgroundItem = group.Items.OfType<TabItem>().Single(item => item.Content == form);
+            group.SelectedItem = backgroundItem;
             takeover.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Check(tab.IsAiShared && !tab.IsAiControlling, "Takeover ended reading or retained the grant.");
             await Bytes("\u001b[201~");
             var interrupted = await paste;
             Check(interrupted.GetProperty("delivery").GetString() == "possibly_partial",
                 "A cancelled transmitted prefix was described as definitely unsent.");
+            string prefix = string.Format(App.Text("ConfirmedInputPrefix"), 1);
+            Window? incident = window.OwnedWindows.OfType<Window>().SingleOrDefault(dialog =>
+                FindControls<TextBlock>(dialog).Any(label => label.Text.Contains(prefix, StringComparison.Ordinal)));
+            Check(incident is not null && tab.Reports.HasUnread && group.SelectedItem == backgroundItem,
+                "The confirmed input prefix was absent from the background incident or changed selection.");
+            FindControls<Button>(incident!).Single(button => Equals(button.Content, App.Text("OK")))
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(!tab.Reports.HasUnread && !incident!.IsVisible, "Acknowledgement did not clear the same delivery incident.");
+            group.SelectedItem = terminalItem;
             while (tab.IsAiTakingControl) await Task.Delay(10, token);
             Check(tab.InputSession is not null && connection.Available == 0, "Takeover sent the cancelled tail or blocked manual input.");
 
@@ -368,6 +732,27 @@ internal static partial class Program
                 JsonElement result = default;
                 await ai.CommitReplyAsync(owner, captured, (body, _) => result = JsonSerializer.SerializeToElement(body), token);
                 Check(Code(result) == "range_changed", "A changed search page was committed to the bridge.");
+                await wire.WriteAsync(Encoding.UTF8.GetBytes("\r\nあb"), token);
+                await WaitForNormal("あb");
+                var tail = await Call(owner, "read_history", new { session = sharedSession, max_rows = 1, max_text_bytes = 1 });
+                Check(tail.GetProperty("fragments")[0].GetProperty("text").GetString() == "b", "A short AI tail did not return its last character.");
+                string earlier = tail.GetProperty("earlier_range").GetString()!;
+                Check(Code(await Call(owner, "read_history", new { session = sharedSession, range = earlier, max_text_bytes = 1 })) ==
+                    "resource_limit", "An undersized backward read consumed the earlier range.");
+                var retried = await Call(owner, "read_history", new { session = sharedSession, range = earlier, max_text_bytes = 3 });
+                Check(retried.GetProperty("fragments")[0].GetProperty("text").GetString() == "あ", "The earlier range could not be retried.");
+                await wire.WriteAsync("\r\n@QQ"u8.ToArray(), token);
+                await WaitForNormal("@QQ");
+                var found = await Call(owner, "search_history", new { session = sharedSession, query = "Q", limit = 1, context_lines = 0 });
+                string searchCursor = found.GetProperty("next_cursor").GetString()!;
+                await wire.WriteAsync("\r\nNEW"u8.ToArray(), token);
+                await WaitForNormal("NEW");
+                var resumed = await Call(owner, "search_history", new { session = sharedSession, cursor = searchCursor });
+                string scannedRange = resumed.GetProperty("scanned_range").GetString()!;
+                var scanned = await Call(owner, "read_history", new { session = sharedSession, range = scannedRange });
+                var last = scanned.GetProperty("fragments").EnumerateArray().Last();
+                Check(last.GetProperty("text").GetString() == "Q" && !last.GetProperty("line_end").GetBoolean(),
+                    "A resumed search disclosed a hard ending written after capture.");
                 ai.EndSharing(tab);
 
                 async Task<JsonElement> Search(string query)
@@ -385,8 +770,9 @@ internal static partial class Program
                     {
                         var state = await tab.AiSession!.ObserveAiAsync((model, info) =>
                         {
-                            using var history = model.GetHistoryRows();
-                            return (info.IsAlternate, history.Text(history.Length - 1));
+                            var page = TerminalHistory.Read(model, info, null, null, 1, 64 * 1024,
+                                TerminalHistory.PageOutputBudget, token);
+                            return (info.IsAlternate, page.Fragments.LastOrDefault()?.text);
                         }, token);
                         if (!state.IsAlternate && state.Item2 == expected) return;
                         await Task.Delay(10, token);
@@ -560,19 +946,15 @@ internal static partial class Program
             if (!window.IsClosing) window.Close();
         }
 
-        async Task<JsonElement> Call(AiCollaboration.Counterpart peer, string tool, object arguments)
-        {
-            var reply = await ai.CallAsync(peer, "tabtty_" + tool, JsonSerializer.SerializeToElement(arguments), token);
-            JsonElement result = default;
-            await ai.CommitReplyAsync(peer, reply, (body, _) => result = JsonSerializer.SerializeToElement(body), token);
-            return result;
-        }
+        Task<JsonElement> Call(AiCollaboration.Counterpart peer, string tool, object arguments) =>
+            CommitAiToolAsync(ai, peer, "tabtty_" + tool, arguments, token);
         static string? Code(JsonElement result) => result.TryGetProperty("error", out var error)
             ? error.GetProperty("code").GetString() : null;
-        static void Check(bool condition, string message)
-        {
-            if (!condition) throw new InvalidOperationException(message);
-        }
+    }
+
+    private static void Check(bool condition, string message)
+    {
+        if (!condition) throw new InvalidOperationException(message);
     }
 
     private static void CheckInputFormOrder()

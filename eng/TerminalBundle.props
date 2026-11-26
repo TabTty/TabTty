@@ -1,4 +1,7 @@
 <Project>
+  <PropertyGroup>
+    <TerminalBundleAbiVersion>15</TerminalBundleAbiVersion>
+  </PropertyGroup>
   <ItemGroup>
     <TerminalBundleFile Include="tabtty_terminal.dll" />
     <TerminalBundleFile Include="terminal-build.json" />

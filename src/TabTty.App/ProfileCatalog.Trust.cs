@@ -39,7 +39,7 @@ internal sealed partial class ProfileCatalog
         trust[location] = version;
     }
 
-    private void CommitRegistration(string location, string path, ConnectionProfile profile, bool used, string version)
+    private void CommitRegistration(string location, ConnectionProfile profile, bool used, string version)
     {
         LocalState.Change(state =>
         {
@@ -50,7 +50,7 @@ internal sealed partial class ProfileCatalog
                 if (registrations.Count >= 10_000) throw new IOException(Text("LocalStateInvalid"));
                 registration = new JsonObject
                 {
-                    ["registrationId"] = Guid.NewGuid(), ["path"] = location, ["displayPath"] = path,
+                    ["registrationId"] = Guid.NewGuid(), ["path"] = location,
                     ["favorite"] = false, ["lastUsed"] = null,
                 };
                 registrations.Add(registration);
@@ -68,7 +68,7 @@ internal sealed partial class ProfileCatalog
         string location = await NormalizeLocationAsync(path, timeout.Token);
         configuredFolder = null;
         if (reset != trustReset || Path.GetDirectoryName(location) != ActiveFolder) throw new IOException(Text("ProfileTrustWriteFailed"));
-        CommitRegistration(location, path, profile, used: false, profile.TrustVersion);
+        CommitRegistration(location, profile, used: false, profile.TrustVersion);
         if (selectNewProfile) lastCreatedProfile = (lastCreatedProfile.Sequence + 1, location);
         ProfileSaved?.Invoke(null);
         return location;

@@ -75,6 +75,10 @@ internal static partial class Program
                 await WaitFor(() => ActiveArgument("WaitPrompt", "timeoutMs"), "the second argument after a nested call");
                 CheckMacroLaunch(signature.Text.Contains("long timeoutMs") && !signature.Text.Contains("[long timeoutMs]"),
                     "The profile prompt wait did not require an explicit timeout.");
+                Edit("WaitPrompt(\"Ready>\", 1000);");
+                await WaitFor(() => diagnostic.IsVisible && diagnostic.Text.Contains(
+                    MacroDiagnostics.Find("WaitPatternRequired", System.Globalization.CultureInfo.GetCultureInfo(language))!),
+                    "the shared WaitPrompt type diagnostic");
                 Edit("WaitAnyPrompt(");
                 await WaitFor(() => ActiveArgument("WaitAnyPrompt", "[name: pattern, ...]"), "named wait alternatives");
                 Edit("WritePasswordLine(");
@@ -90,7 +94,7 @@ internal static partial class Program
                 Edit(invalid);
                 string expectedLocation = language == "ja" ? "2 行 5 列" : "Line 2, column 5";
                 await WaitFor(() => diagnostic.IsVisible && diagnostic.Text.Contains(expectedLocation) &&
-                    diagnostic.Text.Contains(App.Text("MacroErrorPostConnectionSubset")), "a localized dead-branch diagnostic with line and column");
+                    diagnostic.Text.Contains(TerminalTab.MacroErrorLabel("PostConnectionSubset")), "a localized dead-branch diagnostic with line and column");
                 CheckMacroLaunch(underline.IsVisible && underline.Start == invalid.IndexOf("Connect", StringComparison.Ordinal) &&
                     underline.Length == "Connect".Length, "The editor did not underline the offending token.");
                 await WaitFor(() => VisualTreeHelper.GetDrawing(underline) is { Bounds.IsEmpty: false }, "a painted inline underline");
@@ -122,6 +126,12 @@ internal static partial class Program
                 }
 
                 // Queue a different erroneous draft, then repair it before editing assistance settles.
+                Edit("var WriteLine = 1;");
+                await WaitFor(() => diagnostic.IsVisible && diagnostic.Text.Contains("WriteLine") &&
+                    diagnostic.Text.Contains(language == "ja" ? "予約名" : "reserved"), "a named reserved-symbol diagnostic");
+                CheckMacroLaunch(underline.Start == 4 && underline.Length == "WriteLine".Length,
+                    "The reserved-name diagnostic did not mark the name token.");
+                long compilations = MacroProgram.PostConnectionCompilations;
                 Edit("WriteLine(42);");
                 Edit(corrected, corrected.IndexOf('(') + 1);
                 await WaitFor(() => ActiveArgument("WritePasswordLine", "") && !diagnostic.IsVisible && !underline.IsVisible,
@@ -132,6 +142,8 @@ internal static partial class Program
                     await WaitFor(() => !window.HasPendingEdits, "saving the corrected source");
                     CheckMacroLaunch((await ConnectionProfile.LoadAsync(path, CancellationToken.None)).PostConnectionSource == corrected,
                         "Corrected source did not survive saving.");
+                    CheckMacroLaunch(MacroProgram.PostConnectionCompilations == compilations + 1,
+                        "Save repeated strict validation of an unchanged macro source.");
                 }
                 Console.WriteLine($"PASS PostConnectionEditor {language}/{theme}");
 

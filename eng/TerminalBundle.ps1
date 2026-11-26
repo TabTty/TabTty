@@ -1,3 +1,8 @@
+function Get-TerminalBundleAbiVersion {
+    $inventory = [xml](Get-Content -LiteralPath (Join-Path $PSScriptRoot 'TerminalBundle.props') -Raw)
+    [int]$inventory.Project.PropertyGroup.TerminalBundleAbiVersion
+}
+
 function Get-TerminalBundleFiles {
     $inventory = [xml](Get-Content -LiteralPath (Join-Path $PSScriptRoot 'TerminalBundle.props') -Raw)
     $inventory.Project.ItemGroup.TerminalBundleFile | ForEach-Object { $_.Include }
@@ -13,6 +18,9 @@ function Confirm-TerminalBundle([string]$Directory, [string]$Configuration) {
     if ($record.schemaVersion -ne 1 -or $record.target -cne 'x86_64-pc-windows-msvc' -or
         $record.configuration -cne $Configuration -or $record.librarySha256 -notmatch '^[0-9a-fA-F]{64}$') {
         throw "Invalid terminal-build.json for Windows x64 $Configuration."
+    }
+    if ($record.abiVersion -ne (Get-TerminalBundleAbiVersion)) {
+        throw 'The terminal runtime build metadata uses an incompatible terminal ABI.'
     }
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $Directory 'tabtty_terminal.dll')).Hash
     if ($hash -ne $record.librarySha256) {

@@ -33,7 +33,6 @@ internal sealed class BroadcastInput(App app)
         public int Waiting;
         public Operation? Paste;
         public Gesture? Mouse;
-        public string? Progress;
         public bool Locked => Paste is not null || Mouse is not null;
     }
 
@@ -178,7 +177,6 @@ internal sealed class BroadcastInput(App app)
             status += "   " + string.Format(Text("BroadcastNextScope"),
                 Text(app.BroadcastAcrossWindows ? "BroadcastGlobal" : "BroadcastLocal"));
         if (ready == 0) status += "   " + Text(checkedTabs.Length == 0 ? "BroadcastNone" : "BroadcastUnready");
-        detail = mode.Progress ?? detail;
         return detail is null ? status : $"{status}\n{detail}";
     }
 
@@ -230,7 +228,7 @@ internal sealed class BroadcastInput(App app)
         using var sharedSource = supplied?.HoldSource();
         var operation = new Operation(source, source.InputLifetime, targets);
         mode.Paste = operation;
-        mode.Progress = Text("Pasting");
+        source.SetBroadcastPasteProgress(Text("Pasting"));
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(operation.Stop.Token, operation.SourceLifetime,
             mode.Stop.Token, origin);
         try
@@ -273,9 +271,8 @@ internal sealed class BroadcastInput(App app)
             timer.Tick += (_, _) =>
             {
                 if (mode.Paste != operation) return;
-                mode.Progress = (stop.IsCancellationRequested ? Text("BroadcastCleanupPending") + "\n" : "") +
-                    string.Join("\n", targets.Select(target => $"{target.Tab.TabCaption} — {amounts.GetValueOrDefault(target)}/{characters}"));
-                Refresh();
+                source.SetBroadcastPasteProgress((stop.IsCancellationRequested ? Text("BroadcastCleanupPending") + "\n" : "") +
+                    string.Join("\n", targets.Select(target => $"{target.Tab.TabCaption} — {amounts.GetValueOrDefault(target)}/{characters}")));
             };
             timer.Start();
             try
@@ -295,7 +292,7 @@ internal sealed class BroadcastInput(App app)
             if (mode.Paste == operation)
             {
                 mode.Paste = null;
-                mode.Progress = null;
+                source.SetBroadcastPasteProgress(null);
             }
             operation.Stop.Dispose();
             operation.Finished.TrySetResult();
@@ -326,9 +323,6 @@ internal sealed class BroadcastInput(App app)
 
     public void StartMouse(MainWindow? host, TerminalTab source, TerminalSurface pane, long capture)
         => mouseRoutes[pane] = new(host is null ? null : Active(host), source, source.InputLifetime, capture);
-
-    public bool UsesBroadcastMouse(MainWindow? host, TerminalSurface pane)
-        => mouseRoutes.TryGetValue(pane, out var route) ? route.Mode is not null : host is not null && IsActive(host);
 
     public async Task<bool> RouteMouseAsync(MainWindow? host, TerminalSurface pane, long capture, TerminalMouseInput input)
     {
@@ -399,15 +393,15 @@ internal sealed class BroadcastInput(App app)
             if (!input.Motion && !input.Release)
                 return target.Session.PrepareInputAsync(new(TerminalInputKind.Mouse, Mouse: input), null, token);
             if (gesture.Presses.TryGetValue(input.Button, out var recipients) && recipients.TryGetValue(target, out var prior))
-                return target.Session.PrepareInputAsync(new(TerminalInputKind.Mouse, Mouse: input), prior.Generation, token);
+                return target.Session.PrepareInputAsync(new(TerminalInputKind.Mouse, Mouse: input), prior.Generation, token, prior.Last);
             return Task.FromResult<TerminalSession.PreparedInput?>(null);
-        }, (target, generation) =>
+        }, (target, report) =>
         {
-            if (generation is not { } actual) return;
+            if (report is not { } actual) return;
             if (!gesture.Presses.TryGetValue(input.Button, out var recipients))
                 gesture.Presses.Add(input.Button, recipients = []);
             if (input.Release) recipients.Remove(target);
-            else recipients[target] = (actual, input);
+            else recipients[target] = (actual.Generation, actual);
         }, skip: () => gesture.Cancelled, include: input.Motion || input.Release ? target => target.Ready &&
             gesture.Presses.TryGetValue(input.Button, out var recipients) && recipients.ContainsKey(target) : null, after: () =>
         {
@@ -475,7 +469,7 @@ internal sealed class BroadcastInput(App app)
 
     private async Task<bool> DispatchAsync(Mode mode, Target[] targets,
         Func<Target, CancellationToken, Task<TerminalSession.PreparedInput?>> prepare,
-        Action<Target, int?>? delivered = null, CancellationToken softStop = default, CancellationToken origin = default,
+        Action<Target, TerminalMouseInput?>? delivered = null, CancellationToken softStop = default, CancellationToken origin = default,
         Func<bool>? skip = null, Func<Target, bool>? include = null,
         Action? after = null, TaskCompletionSource<bool>? commitPaste = null)
     {
@@ -488,6 +482,7 @@ internal sealed class BroadcastInput(App app)
         var prepared = new Dictionary<Target, TerminalSession.PreparedInput>();
         var submitted = new HashSet<Target>();
         var attempted = new HashSet<Target>();
+        var stopped = new HashSet<Target>();
         Target? failed = null;
         Target? failedPasteSend = null;
         bool entered = false;
@@ -525,7 +520,11 @@ internal sealed class BroadcastInput(App app)
                         Task<bool> send = pair.Value.SendAsync(admission.Token);
                         if (await pair.Value.PasteReady! && await commitPaste.Task) attempted.Add(pair.Key);
                         if (await send) submitted.Add(pair.Key);
-                        else attempted.Remove(pair.Key);
+                        else
+                        {
+                            stopped.Add(pair.Key);
+                            attempted.Remove(pair.Key);
+                        }
                         pair.Key.Tab.RefreshInputOutput();
                     }
                     catch (Exception exception) when (IsInputError(exception))
@@ -576,7 +575,7 @@ internal sealed class BroadcastInput(App app)
                     if (await request.SendAsync(lifetime.Token))
                     {
                         submitted.Add(target);
-                        delivered?.Invoke(target, request.MouseGeneration);
+                        delivered?.Invoke(target, request.MouseReport);
                         target.Tab.RefreshInputOutput();
                     }
                     else attempted.Remove(target);
@@ -591,10 +590,21 @@ internal sealed class BroadcastInput(App app)
             failed = failedPasteSend ?? failed;
             if (commitPaste is null && failed is not null && exception is TransportAdmissionRejectedException)
                 attempted.Remove(failed);
-            string details = string.Join("\n", targets.Select(target => $"{TerminalTab.BroadcastTargetLabel(target.Session)} — " +
-                (target == failed ? Text("BroadcastFailedTarget") + " · " : "") +
-                Text(submitted.Contains(target) ? "BroadcastSubmitted" : attempted.Contains(target) ?
-                    "NoticeBroadcastUncertain" : "BroadcastNotSent")));
+            string details = string.Join("\n", targets.Select(target =>
+            {
+                var request = prepared.GetValueOrDefault(target);
+                long confirmed = request?.DefinitePayloadBytes ?? 0;
+                bool framingOnly = stopped.Contains(target) && confirmed == 0 && request is { PasteFrameSubmitted: true };
+                string disposition = submitted.Contains(target) ? Text("BroadcastSubmitted") :
+                    framingOnly ? Text("BroadcastPasteFramingOnly") :
+                    request?.Submission == TransportSubmission.NotIssued ? Text("BroadcastNotSent") :
+                    attempted.Contains(target) || confirmed != 0 ?
+                        Text(stopped.Contains(target) ? "PasteStopped" : "NoticeBroadcastUncertain") + "  " +
+                        string.Format(Text("ConfirmedInputPrefix"), confirmed) :
+                    Text("BroadcastNotSent");
+                string failure = target == failed ? Text("BroadcastFailedTarget") + " · " : "";
+                return $"{TerminalTab.BroadcastTargetLabel(target.Session)} — {failure}{disposition}";
+            }));
             ReportFailure(mode, $"{exception.Message}\n{details}");
             return false;
         }

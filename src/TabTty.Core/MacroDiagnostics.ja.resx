@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="ConstantsDeclaration" xml:space="preserve"><value>定数ファイルの宣言が正しくありません。</value></data>
+  <data name="ConstantsAlias" xml:space="preserve"><value>定数ファイルの別名が別の名前と重複しています。</value></data>
+  <data name="ConstantsLimit" xml:space="preserve"><value>宣言した定数が上限を超えています。</value></data>
+  <data name="NumericLiteral" xml:space="preserve"><value>数値リテラルの形式または範囲が正しくありません。</value></data>
+  <data name="StringEscape" xml:space="preserve"><value>エスケープが不正です。\x の後には16進数字を2桁指定してください。</value></data>
+  <data name="ConstantsDefinition" xml:space="preserve"><value>var または単一値の型で定数を宣言し、初期値とセミコロンを指定してください。</value></data>
+  <data name="ConstantsLiteral" xml:space="preserve"><value>定数の初期値には、文字列、真偽値、または数値のリテラルを指定してください。</value></data>
+  <data name="ConstantsName" xml:space="preserve"><value>定数名が重複しているか、使用できない名前です。</value></data>
+  <data name="ConstantsType" xml:space="preserve"><value>リテラルが宣言された定数の型に一致しません。</value></data>
+  <data name="ConstantsRead" xml:space="preserve"><value>定数ファイルを読み込めませんでした。</value></data>
+  <data name="ConstantsInvalid" xml:space="preserve"><value>共有定数ファイルに無効な定義があります。</value></data>
+  <data name="ConstantsMissing" xml:space="preserve"><value>共有定数ファイルが見つかりません。</value></data>
+  <data name="ConstantsTooLarge" xml:space="preserve"><value>共有定数ファイルのサイズが大きすぎます。</value></data>
+  <data name="ConstantsUnreadable" xml:space="preserve"><value>共有定数ファイルを読み取れませんでした。</value></data>
+  <data name="ConstantsOpenRequired" xml:space="preserve"><value>共有定数ファイルを開いてください。</value></data>
+  <data name="MemoryLimit" xml:space="preserve"><value>マクロのメモリ上限に達しました。</value></data>
+  <data name="RethrowOutsideCatch" xml:space="preserve"><value>再送出は同じ関数の catch 内でのみ使用できます。</value></data>
+  <data name="ExpectedToken" xml:space="preserve"><value>必要な語や記号が不足しているか、位置が正しくありません。</value></data>
+  <data name="TypeMismatch" xml:space="preserve"><value>値の型が操作に適合しません。</value></data>
+  <data name="NamedOptionExpected" xml:space="preserve"><value>名前付きオプションを指定してください。</value></data>
+  <data name="UnknownOption" xml:space="preserve"><value>この呼び出しでは使用できないオプションです。</value></data>
+  <data name="DuplicateOption" xml:space="preserve"><value>このオプションは既に指定されています。</value></data>
+  <data name="AlternativeNameExpected" xml:space="preserve"><value>各待機パターンに予約語以外の名前とコロンを指定してください。</value></data>
+  <data name="DuplicateAlternative" xml:space="preserve"><value>この名前の待機候補は既に指定されています。</value></data>
+  <data name="SourceEncoding" xml:space="preserve"><value>ファイルに文字コードとして無効なデータがあります。</value></data>
+  <data name="PostConnectionSubset" xml:space="preserve"><value>接続後マクロでは、この操作または構文を使えません。プロンプト待機にはタイムアウトが必要です。</value></data>
+  <data name="ExpressionExpected" xml:space="preserve"><value>ここに式を入力してください。</value></data>
+  <data name="StatementExpected" xml:space="preserve"><value>ここに文を入力してください。</value></data>
+  <data name="IdentifierExpected" xml:space="preserve"><value>ここに名前を入力してください。</value></data>
+  <data name="BlockExpected" xml:space="preserve"><value>ブロックの末尾に閉じ波括弧を入力してください。</value></data>
+  <data name="TypeExpected" xml:space="preserve"><value>使用できる型名を入力してください。</value></data>
+  <data name="UnknownName" xml:space="preserve"><value>この名前は現在のスコープに定義されていません。</value></data>
+  <data name="UnknownMember" xml:space="preserve"><value>この値にその名前のメンバーはありません。</value></data>
+  <data name="UnknownFunction" xml:space="preserve"><value>この関数は定義されていません。</value></data>
+  <data name="ReservedName" xml:space="preserve"><value>マクロ言語の予約名以外を指定してください。</value></data>
+  <data name="DuplicateLocal" xml:space="preserve"><value>同じ名前のローカル変数が既に定義されています。</value></data>
+  <data name="CallArguments" xml:space="preserve"><value>この呼び出しに指定した引数の数と型を確認してください。</value></data>
+  <data name="UnterminatedString" xml:space="preserve"><value>文字列の末尾に閉じ二重引用符を入力してください。</value></data>
+  <data name="UnterminatedComment" xml:space="preserve"><value>コメントの末尾に */ を入力してください。</value></data>
+  <data name="StringPrefix" xml:space="preserve"><value>文字列の接頭辞が正しくありません。</value></data>
+  <data name="StringExpected" xml:space="preserve"><value>文字列リテラルの先頭に二重引用符を入力してください。</value></data>
+  <data name="StringNewline" xml:space="preserve"><value>行末の前に文字列を閉じるか、逐語的文字列を使用してください。</value></data>
+  <data name="UnexpectedCharacter" xml:space="preserve"><value>ここではこの文字を使用できません。</value></data>
+  <data name="InterpolationBrace" xml:space="preserve"><value>補間文字列の波括弧を確認してください。</value></data>
+  <data name="UnterminatedInterpolation" xml:space="preserve"><value>文字列内の補間式の末尾に閉じ波括弧を入力してください。</value></data>
+  <data name="SourceLimit" xml:space="preserve"><value>マクロ本文のサイズが上限を超えています。</value></data>
+  <data name="SyntaxLimit" xml:space="preserve"><value>マクロの構文要素数が上限を超えています。</value></data>
+  <data name="NestingLimit" xml:space="preserve"><value>マクロの入れ子の深さが上限を超えています。</value></data>
+  <data name="ParameterLimit" xml:space="preserve"><value>引数の数が上限を超えています。</value></data>
+  <data name="TypeNestingLimit" xml:space="preserve"><value>型の入れ子の深さが上限を超えています。</value></data>
+  <data name="LocalLimit" xml:space="preserve"><value>ローカル変数の宣言数が上限を超えています。</value></data>
+  <data name="ReservedNameWithSymbol" xml:space="preserve"><value>「{0}」はマクロ言語の予約名です。別の名前を指定してください。</value></data>
+  <data name="VersionLine" xml:space="preserve"><value>対応する #tttym 1 バージョン宣言が必要です。</value></data>
+  <data name="WaitPatternRequired" xml:space="preserve"><value>WaitPrompt の引数には WaitPattern が必要です。Literal または Regex を使用してください。</value></data>
+  <data name="InvalidSource" xml:space="preserve"><value>マクロの構文または型にエラーがあります。</value></data>
+</root>

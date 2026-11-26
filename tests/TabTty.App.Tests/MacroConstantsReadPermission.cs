@@ -77,7 +77,7 @@ internal static partial class Program
                 await run.Completion.WaitAsync(TimeSpan.FromSeconds(8));
                 CheckMacroLaunch(run.Status.State == MacroRunState.Completed, "A consented remembered run failed.");
             }
-            finally { MacroTrust.Forget(key.Fingerprint, key.Version); }
+            finally { MacroTrust.Forget(key.Fingerprint); }
         }
         if (protectedPath is null)
             Console.WriteLine(liveSmb ? "PASS SharedConstantsLiveSmbReadPermission" : "PASS SharedConstantsRemoteCancellation");

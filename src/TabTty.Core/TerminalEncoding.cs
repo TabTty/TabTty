@@ -56,8 +56,13 @@ internal sealed class TerminalEncoding
 
     internal readonly record struct PasteBoundaries(int[] Bytes, int[] Source)
     {
-        internal int SourcePrefix(int encoded) =>
-            encoded == 0 ? 0 : Source[Array.BinarySearch(Bytes, encoded)];
+        private int BoundaryIndex(int encoded)
+        {
+            int nearest = Array.BinarySearch(Bytes, encoded);
+            return nearest >= 0 ? nearest : ~nearest - 1;
+        }
+        internal int SourcePrefix(int encoded) => BoundaryIndex(encoded) is >= 0 and int index ? Source[index] : 0;
+        internal int CompletePrefix(int encoded) => BoundaryIndex(encoded) is >= 0 and int index ? Bytes[index] : 0;
     }
 
     internal PasteBoundaries MapPasteBoundaries(ReadOnlySpan<char> text, ReadOnlySpan<byte> encoded, bool sevenBitKana)
@@ -90,18 +95,23 @@ internal sealed class TerminalEncoding
 
     internal int ConfirmedEchoLength(string text, ReadOnlySpan<byte> encoded, int confirmed, bool sevenBitKana)
     {
-        if (confirmed <= 0) return 0;
-        if (confirmed >= encoded.Length) return StrictUtf8.GetByteCount(text);
-        NativeTerminalCore.TransmitBoundaries(NativePage, text, encoded, sevenBitKana,
-            paste: false, confirmed, [], [], out int source);
-        return StrictUtf8.GetByteCount(text.AsSpan(0, source));
+        return StrictUtf8.GetByteCount(text.AsSpan(0, ConfirmedSourcePrefix(text, encoded, confirmed, sevenBitKana)));
     }
 
-    public byte[] Encode(ReadOnlySpan<char> text, bool sevenBitKana = false)
+    internal int ConfirmedSourcePrefix(ReadOnlySpan<char> text, ReadOnlySpan<byte> encoded, int confirmed, bool sevenBitKana)
     {
-        if (IsUtf8)
-            return NativeTerminalCore.PrepareUtf8Input(text, NativeTerminalCore.CheckUtf8Input(text));
-        int length = NativeTerminalCore.CheckLegacyInput(NativePage, text, sevenBitKana);
-        return NativeTerminalCore.PrepareLegacyInput(NativePage, text, sevenBitKana, length);
+        if (confirmed <= 0) return 0;
+        if (confirmed >= encoded.Length) return text.Length;
+        NativeTerminalCore.TransmitBoundaries(NativePage, text, encoded, sevenBitKana,
+            paste: false, confirmed, [], [], out int source);
+        return source;
     }
+
+    internal int GetByteCount(ReadOnlySpan<char> text, bool sevenBitKana) => IsUtf8
+        ? NativeTerminalCore.CheckUtf8Input(text) : NativeTerminalCore.CheckLegacyInput(NativePage, text, sevenBitKana);
+
+    public byte[] Encode(ReadOnlySpan<char> text, bool sevenBitKana = false) => Encode(text, sevenBitKana, GetByteCount(text, sevenBitKana));
+
+    internal byte[] Encode(ReadOnlySpan<char> text, bool sevenBitKana, int length) => IsUtf8
+        ? NativeTerminalCore.PrepareUtf8Input(text, length) : NativeTerminalCore.PrepareLegacyInput(NativePage, text, sevenBitKana, length);
 }

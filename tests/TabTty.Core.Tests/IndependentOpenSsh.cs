@@ -65,8 +65,8 @@ internal static class IndependentOpenSsh
 
             async Task ObserveShellAsync()
             {
-                await session.SendTextAsync("echo " + marker, token);
-                await session.SendEnterAsync(token);
+                await session.DeliverInputAsync(new(TerminalInputKind.Text, "echo " + marker), token);
+                await session.DeliverInputAsync(new(TerminalInputKind.Enter), token);
                 while (await session.ReadOutputAsync(token) is { } rows)
                     if (rows.Any(row => row.Trim() == marker)) return;
                 throw new InvalidOperationException("The real Windows shell did not produce the expected terminal output.");

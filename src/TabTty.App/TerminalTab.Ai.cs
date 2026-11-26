@@ -19,9 +19,9 @@ internal sealed partial class TerminalTab
     internal TerminalSession? AiSession => removed ? null : session ?? retainedAiSession;
     internal MainWindow? AiHost => tabHost?.Invoke();
     internal (int Columns, int Rows) AiGrid => snapshot is { } view ? (view.Columns, view.ScreenRows) : appliedGrid;
-    internal bool HasAiHighlightRules => ((App)Application.Current).Highlights.Find(highlightSetId) is { Enabled: true, Rules.Count: > 0 };
-    internal (long Id, long Revision, TerminalHighlightSpan[] Spans)? CaptureAiHighlightRow(int row) =>
-        panes[output].Highlight.CaptureAiRow(row);
+    internal bool HasAiHighlightRules => highlightState.Matcher is { IsEmpty: false };
+    internal (long Id, long Revision, ReadOnlyMemory<TerminalHighlightSpan> Spans)? CaptureAiHighlightRow(int row) =>
+        visibleHighlights.CaptureAiRow(row);
     internal bool IsAiShared => AiSharing is not null;
     internal bool IsAiTakingControl { get; set; }
     internal bool IsAiControlling => AiSharing?.Control is not null;
@@ -31,10 +31,11 @@ internal sealed partial class TerminalTab
         HasMouseCapture || panes.Keys.Any(pane => pane.HasComposition) || Broadcast.HasUnfinishedOperation(this);
 
     private AiCollaboration AiCollaboration => ((App)Application.Current).Ai;
-    internal void ReportAiUncertain(TerminalSession target)
+    internal void ReportAiUncertain(TerminalSession target, long definitePayloadBytes)
     {
         if (!removed)
-            Reports.Report(new object(), $"{BroadcastTargetLabel(target)} — {Text("AiUncertainDelivery")}");
+            Reports.Report(new object(), $"{BroadcastTargetLabel(target)} — {Text("AiUncertainDelivery")}\n" +
+                string.Format(Text("ConfirmedInputPrefix"), definitePayloadBytes));
     }
     internal string? AiStateLabel => IsAiTakingControl && IsAiShared ? Text("AiTakingControl")
         : IsAiControlling ? Text("AiControlling") : IsAiShared ? Text("AiReadOnly") : null;

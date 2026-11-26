@@ -114,6 +114,33 @@ internal static partial class Program
             throw new InvalidOperationException("Unknown recycling permitted another destructive operation.");
         owner.Refreshed();
 
+        var unknown = new ControlledFiles { LoseMutation = true };
+        var uncertainOwner = new FileOperationOwnership();
+        var uncertain = new FileOperations(unknown, uncertainOwner, CancellationToken.None);
+        var remote = new TransferPath("/remote"u8.ToArray());
+        var original = new TransferItem(new TransferPath("/remote/original"u8.ToArray()), "original", "original", ControlledFiles.File);
+        await CheckUnknown(uncertain.Create(remote, "folder"), FileMutation.CreateFolder, "/remote/folder");
+        await CheckUnknown(uncertain.Rename(remote, original, "renamed"), FileMutation.Rename, "/remote/original", "/remote/renamed");
+        var subtree = new TransferItem(new TransferPath("tree"), "tree", "tree", ControlledFiles.Directory);
+        unknown.Children = [original];
+        await CheckUnknown(uncertain.Delete(remote, [subtree], _ => ValueTask.FromResult(TransferChoice.Overwrite)),
+            FileMutation.Delete, "/remote/original");
+        if (unknown.MutationCalls != 3) throw new InvalidOperationException("Refreshing retried an uncertain mutation.");
+
+        async Task CheckUnknown(Task<string>? action, FileMutation kind, string path, string? destination = null)
+        {
+            if (action is null || await action != "SftpUnknownOutcome" ||
+                uncertain.UnresolvedForClose() is not [{ } result] || result != new FileOperationUpdate.Entry(path, "SftpUnknownOutcome", kind, destination))
+                throw new InvalidOperationException("An uncertain mutation lost its operation kind or full paths.");
+            long stale = uncertainOwner.RefreshRevision!.Value;
+            uncertainOwner.RequireRefresh();
+            uncertainOwner.Refreshed(stale);
+            if (!uncertainOwner.NeedsRefresh) throw new InvalidOperationException("A stale listing cleared a newer unknown outcome.");
+            uncertainOwner.Refreshed();
+            if (uncertain.UnresolvedForClose() is not [{ } after] || after != result)
+                throw new InvalidOperationException("Refreshing changed the retained uncertain mutation result.");
+        }
+
         string sameSizeFile = Path.Combine(root, "same-size.txt");
         File.WriteAllText(sameSizeFile, "equal");
         File.SetLastWriteTimeUtc(sameSizeFile, File.GetLastWriteTimeUtc(replacement));
@@ -203,6 +230,8 @@ internal static partial class Program
         public TransferItem[] Children = [];
         public List<string> Removed { get; } = [];
         public bool LoseCommit;
+        public bool LoseMutation;
+        public int MutationCalls;
         public bool FailRecheck;
         public bool FailManyCleanups;
         public string? FailStageFor;
@@ -220,21 +249,32 @@ internal static partial class Program
         public TransferPath Parent(TransferPath path) => path.ParentPath!;
         public Task<TransferItem[]> ListAsync(TransferPath path, CancellationToken token) => Task.FromResult(Children);
         public Task<TransferAttributes?> StatAsync(TransferPath path, CancellationToken token) =>
-            Task.FromResult<TransferAttributes?>(path.Local == "tree" ? Directory :
+            Task.FromResult<TransferAttributes?>(path.Local == "/remote/renamed" ? null : path.Local == "tree" ? Directory :
                 path.Local == "out/a" && CopyTargetVersions.Count > 0 ?
                     (CopyTargetVersions.Count == 1 ? CopyTargetVersions.Peek() : CopyTargetVersions.Dequeue()) : File);
         public Task<bool> IsCaseSensitiveAsync(TransferPath path, CancellationToken token) => Task.FromResult(true);
-        public Task CreateAsync(TransferPath path, CancellationToken token) => Task.CompletedTask;
-        public Task RenameAsync(TransferPath source, TransferPath target, bool replace, CancellationToken token) => throw new NotSupportedException();
+        public Task CreateAsync(TransferPath path, CancellationToken token)
+        {
+            if (LoseMutation) return UnknownMutation();
+            return Task.CompletedTask;
+        }
+        public Task RenameAsync(TransferPath source, TransferPath target, bool replace, CancellationToken token) =>
+            LoseMutation ? UnknownMutation() : throw new NotSupportedException();
         public Task<bool> TryCommitLocalAsync(TransferPath source, TransferPath target, TransferAttributes? approved, CancellationToken token) =>
             LoseCommit || FailManyCleanups && target.Local == "out/unknown"
                 ? throw new SftpException(SftpFailure.UnknownOutcome) : Task.FromResult(true);
         public Task DeleteAsync(TransferPath path, TransferKind kind, CancellationToken token)
         {
+            if (LoseMutation) return UnknownMutation();
             if (path.Local == "tree/fail" || FailManyCleanups && path.Local?.EndsWith(".part") == true)
                 throw new SftpException(SftpFailure.Permission);
             Removed.Add(Display(path));
             return Task.CompletedTask;
+        }
+        private Task UnknownMutation()
+        {
+            MutationCalls++;
+            throw new SftpException(SftpFailure.UnknownOutcome);
         }
         public Task RecycleAsync(TransferPath path, CancellationToken token)
         {

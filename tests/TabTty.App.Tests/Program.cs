@@ -118,6 +118,12 @@ internal static partial class Program
                 Console.WriteLine("PASS TerminalSearchMoves");
                 return 0;
             }
+            if (args is ["--tab-wheel-remainders"])
+            {
+                WheelRemaindersBelongToEachTabGroup();
+                Console.WriteLine("PASS WheelRemaindersBelongToEachTabGroup");
+                return 0;
+            }
             if (otherStoreFixture is not null)
             {
                 RunScenario(application.Dispatcher, async () =>
@@ -357,6 +363,14 @@ internal static partial class Program
         {
             RunScenario(application.Dispatcher, () => AiSharesAnExistingTerminal(application, settingsDirectory));
             Console.WriteLine("PASS AiSharesAnExistingTerminal");
+            RunScenario(application.Dispatcher, () => CheckAiHighlightCoverageAsync(application, settingsDirectory));
+            Console.WriteLine("PASS AiHighlightCoverage");
+            RunScenario(application.Dispatcher, () => CheckAiPasteFailureDispositionAsync(application, settingsDirectory));
+            Console.WriteLine("PASS AiPasteFailureDisposition");
+            RunScenario(application.Dispatcher, () => CheckAiQueuedPasteTakeoverAsync(application, settingsDirectory));
+            Console.WriteLine("PASS AiQueuedPasteTakeover");
+            RunScenario(application.Dispatcher, () => CheckAiPasteTakeoverDeliveryAsync(application, settingsDirectory));
+            Console.WriteLine("PASS AiPasteTakeoverDelivery");
         }
     }
 
@@ -2026,11 +2040,11 @@ internal static partial class Program
                 await connected.SetLocalEchoAsync("off", deadline.Token);
                 try
                 {
-                    await connected.SendTextAsync("unsent\ud800", deadline.Token);
+                    await connected.DeliverInputAsync(new(TerminalInputKind.Text, "unsent\ud800"), deadline.Token);
                     throw new InvalidOperationException("Malformed Unicode reached the terminal transport.");
                 }
                 catch (EncoderFallbackException) { }
-                await connected.SendTextAsync("入力", deadline.Token);
+                await connected.DeliverInputAsync(new(TerminalInputKind.Text, "入力"), deadline.Token);
                 byte[] sent = new byte["入力"u8.Length];
                 await wire.ReadExactlyAsync(sent, deadline.Token);
                 if (!sent.AsSpan().SequenceEqual("入力"u8))
@@ -3048,6 +3062,32 @@ internal static partial class Program
         }
     }
 
+    private static void WheelRemaindersBelongToEachTabGroup()
+    {
+        var left = new TabControl();
+        var right = new TabControl();
+        foreach (var group in new[] { left, right })
+        {
+            group.Items.Add(new TabItem());
+            group.Items.Add(new TabItem());
+            group.SelectedIndex = 0;
+        }
+        MainWindow.MoveTabSelectionByWheel(left, 60);
+        MainWindow.MoveTabSelectionByWheel(right, 60);
+        if (left.SelectedIndex != 0 || right.SelectedIndex != 0)
+            throw new InvalidOperationException("Partial wheel steps were combined across tab bars.");
+        MainWindow.MoveTabSelectionByWheel(right, 60);
+        if (left.SelectedIndex != 0 || right.SelectedIndex != 1)
+            throw new InvalidOperationException("A full right step moved the other tab bar.");
+        MainWindow.MoveTabSelectionByWheel(left, 60);
+        if (left.SelectedIndex != 1) throw new InvalidOperationException("The left tab bar lost its partial step.");
+        MainWindow.MoveTabSelectionByWheel(left, 60);
+        MainWindow.MoveTabSelectionByWheel(left, -60);
+        if (left.SelectedIndex != 1) throw new InvalidOperationException("Changing direction caused an early tab change.");
+        MainWindow.MoveTabSelectionByWheel(left, -60);
+        if (left.SelectedIndex != 0) throw new InvalidOperationException("The reverse wheel step did not wrap to the next tab.");
+    }
+
     private static async Task CheckTerminalSearchMovesAsync()
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
@@ -3066,9 +3106,10 @@ internal static partial class Program
             var rows = Enumerable.Range(0, 100).Select(index => new TerminalSnapshot.Row(
                 index, index, 0, index is 55 or 59 or 90 ? "match" : "row", false, default, null, null, 0)).ToArray();
             var snapshot = new TerminalSnapshot(rows, false, 0, 0, 80, 24, 0, false, TerminalCursorShape.Block, false, default);
-            typeof(TerminalTab).GetMethod("Render",
+            var render = typeof(TerminalTab).GetMethod("Render",
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
-                [typeof(IReadOnlyList<string>)])!.Invoke(tab, [snapshot]);
+                [typeof(IReadOnlyList<string>)])!;
+            render.Invoke(tab, [snapshot]);
             panes[0].Scroller.ScrollToTop();
             panes[1].Scroller.ScrollToTop();
             host.UpdateLayout();
@@ -3105,6 +3146,109 @@ internal static partial class Program
             await host.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
             if (CurrentRow(panes[0]) is not null || CurrentRow(panes[1]) is not null)
                 throw new InvalidOperationException("A pending move survived closing the search bar.");
+
+            var terminal = new TerminalOutput(columns: 80, retainedRowLimit: 100, screenRows: 24);
+            try
+            {
+                host.Width = 560;
+                string text = "aaaQ" + new string('a', 35) + "界" + new string('a', 9) + "Q" + new string('a', 24) + "Qaaaa";
+                terminal.Receive(TerminalReceiveSource.Data, Encoding.UTF8.GetBytes(text));
+                var real = terminal.GetRows();
+                render.Invoke(tab, [real]);
+                panes[0].Scroller.ScrollToTop();
+                panes[1].Scroller.ScrollToTop();
+                host.UpdateLayout();
+                double columnWidth = (panes[0].ActualWidth - 8) / 80;
+                panes[0].Scroller.ScrollToHorizontalOffset(40 * columnWidth);
+                host.UpdateLayout();
+                await Until(() => panes[0].VisibleColumns().First == 40);
+                var (left, right) = panes[0].VisibleColumns();
+                double otherOffset = panes[1].Scroller.HorizontalOffset;
+                if (right <= 50 || right > 75) throw new InvalidOperationException("The horizontal search fixture did not clip the correct cells.");
+                ITextProvider provider = (ITextProvider)UIElementAutomationPeer.CreatePeerForElement(panes[0]);
+                ITextRangeProvider visible = provider.GetVisibleRanges()[0];
+                if (!visible.GetText(-1).StartsWith("界", StringComparison.Ordinal))
+                    throw new InvalidOperationException("UI Automation omitted a wide character clipped by the pane edge.");
+                double[] rectangles = visible.FindText("界", backward: false, ignoreCase: false)!.GetBoundingRectangles();
+                double clippedWidth = columnWidth * VisualTreeHelper.GetDpi(panes[0]).DpiScaleX;
+                if (rectangles.Length != 4 || Math.Abs(rectangles[2] - clippedWidth) > 1)
+                    throw new InvalidOperationException("The accessibility rectangle was not clipped to the visible half of a wide cell.");
+
+                panes[0].Focus();
+                tab.ShowSearch();
+                query.Text = "Q";
+                Click(next);
+                await Until(() => CurrentColumn() == 50);
+                if (panes[0].VisibleColumns().First != left)
+                    throw new InvalidOperationException("Search scrolled away from the first match already visible in its pane.");
+                Click(next);
+                await Until(() => CurrentColumn() == 75 && panes[0].VisibleColumns().First == 76 - (right - left));
+                if (panes[1].Scroller.HorizontalOffset != otherOffset || CurrentRow(panes[1]) is not null)
+                    throw new InvalidOperationException("Horizontal search moved the other pane.");
+                Click(close);
+
+                terminal.Receive(TerminalReceiveSource.Data, Encoding.ASCII.GetBytes("\r\n" + new string('z', 79) + "Vw"));
+                render.Invoke(tab, [terminal.GetRows()]);
+                var acrossWrap = provider.DocumentRange.FindText("V", backward: false, ignoreCase: false)!;
+                foreach (bool alignToTop in new[] { true, false })
+                {
+                    panes[0].Scroller.ScrollToHorizontalOffset(0);
+                    await Until(() => panes[0].VisibleColumns().First == 0);
+                    acrossWrap.ScrollIntoView(alignToTop);
+                    await Until(() => panes[0].VisibleColumns().End == 80);
+                    if (acrossWrap.GetBoundingRectangles().Length != 4)
+                        throw new InvalidOperationException("UI Automation failed to reveal the last character before a soft wrap.");
+                }
+                terminal.Receive(TerminalReceiveSource.Data, Encoding.ASCII.GetBytes("\r\n" + new string('z', 79) + "H\r\nnext"));
+                render.Invoke(tab, [terminal.GetRows()]);
+                var acrossHardEnd = provider.DocumentRange.FindText("H\n", backward: false, ignoreCase: false)!;
+                panes[0].Scroller.ScrollToHorizontalOffset(0);
+                await Until(() => panes[0].VisibleColumns().First == 0);
+                acrossHardEnd.ScrollIntoView(alignToTop: false);
+                await Until(() => panes[0].VisibleColumns().End == 80);
+                if (acrossHardEnd.GetBoundingRectangles().Length != 4)
+                    throw new InvalidOperationException("A selected hard ending hid the right-edge character.");
+
+                terminal.Receive(TerminalReceiveSource.Data, Encoding.ASCII.GetBytes("\r\n" + new string('z', 79) +
+                    "K\r\n\r\n\r\n\r\n" + string.Concat(Enumerable.Repeat("after\r\n", 30))));
+                var withEmptyRows = terminal.GetRows();
+                render.Invoke(tab, [withEmptyRows]);
+                int firstCovered = Enumerable.Range(0, withEmptyRows.Count).Single(row => withEmptyRows[row].EndsWith('K'));
+                var consecutiveBreaks = provider.DocumentRange.FindText("K\n\n\n\n", backward: false, ignoreCase: false)!;
+                foreach (bool alignToTop in new[] { true, false })
+                {
+                    panes[0].Scroller.ScrollToTop();
+                    panes[0].Scroller.ScrollToHorizontalOffset(0);
+                    await Until(() => panes[0].VisibleRows().First == 0 && panes[0].VisibleColumns().First == 0);
+                    consecutiveBreaks.ScrollIntoView(alignToTop);
+                    await Until(() => panes[0].VisibleColumns().End == 80);
+                    var covered = panes[0].VisibleRows();
+                    if (covered.First > firstCovered || covered.End < firstCovered + 4 ||
+                        consecutiveBreaks.GetBoundingRectangles().Length != 4)
+                        throw new InvalidOperationException("UI Automation hid part of a range with consecutive hard endings.");
+                }
+
+                terminal.Receive(TerminalReceiveSource.Data, "\r\n1234567890J\r\nMIDDLE\r\nE\r\nend"u8);
+                var compact = terminal.GetRows();
+                render.Invoke(tab, [compact]);
+                int compactRow = Enumerable.Range(0, compact.Count).Single(row => compact[row] == "1234567890J");
+                var fitting = provider.DocumentRange.FindText("J\nMIDDLE\nE", backward: false, ignoreCase: false)!;
+                foreach (bool alignToTop in new[] { false, true })
+                {
+                    panes[0].Scroller.ScrollToTop();
+                    panes[0].Scroller.ScrollToHorizontalOffset(0);
+                    await Until(() => panes[0].VisibleRows().First == 0 && panes[0].VisibleColumns().First == 0);
+                    fitting.ScrollIntoView(alignToTop);
+                    await Until(() => panes[0].VisibleRows().First > 0 && panes[0].VisibleRows().End >= compactRow + 3);
+                    await panes[0].Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ContextIdle);
+                    if (panes[0].VisibleColumns().First != 0 || fitting.GetBoundingRectangles().Length != 12)
+                        throw new InvalidOperationException("UI Automation scrolled horizontally despite all three selected lines fitting.");
+                }
+
+                int? CurrentColumn() => searchField.GetValue(panes[0]) is TerminalMatch current
+                    ? real.ColumnRange(current.StartRow, current.StartOffset, current.EndOffset).Start : null;
+            }
+            finally { terminal.ReleaseNativeState(); }
 
             static void Click(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, button));
             async Task Until(Func<bool> condition)
@@ -3228,11 +3372,21 @@ internal static partial class Program
 
     private static async Task HighlightWaitsForIdleOrViewportChange()
     {
+        await CheckHighlightTimeoutOwnershipAsync();
+        await CheckHighlightPreservationUnderPressureAsync();
         var surface = new TerminalSurface();
+        var secondPane = new TerminalSurface();
         var rules = new TerminalHighlightState();
-        var highlight = new TerminalHighlightView(surface, rules);
+        var highlight = new TerminalHighlightView(surface.Dispatcher, rules);
+        highlight.Attach(surface);
         var tab = new TabControl();
-        var terminalTab = new TabItem { Content = surface.Scroller };
+        var panes = new Grid();
+        panes.ColumnDefinitions.Add(new ColumnDefinition());
+        panes.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0) });
+        panes.Children.Add(surface.Scroller);
+        Grid.SetColumn(secondPane.Scroller, 1);
+        panes.Children.Add(secondPane.Scroller);
+        var terminalTab = new TabItem { Content = panes };
         var otherTab = new TabItem { Content = new TextBlock { Text = "Other" } };
         surface.Scroller.Loaded += (_, _) => surface.SetPresentationEnabled(true);
         surface.Scroller.Unloaded += (_, _) => surface.SetPresentationEnabled(false);
@@ -3240,14 +3394,27 @@ internal static partial class Program
         tab.Items.Add(otherTab);
         var window = new Window { Content = tab, Width = 500, Height = 330, ShowActivated = false };
         var terminal = new TerminalOutput(columns: 40, retainedRowLimit: 100, screenRows: 8);
+        long cacheBefore = ApplicationResources.SearchCache.Used;
+        var errorRule = Guid.NewGuid();
         try
         {
             window.Show();
             terminal.Receive(TerminalReceiveSource.Data, "ERROR\r\n"u8);
             SetSnapshot();
-            rules.SetRules(new HighlightSet(Guid.NewGuid(), "Test", true,
-                [new TerminalHighlightRule(Guid.NewGuid(), "Error", "ERROR", true, false, new(0xFF0000, null, null, null))]));
+            var initial = new HighlightSet(Guid.NewGuid(), "Test", true,
+                [new TerminalHighlightRule(errorRule, "Error", "ERROR", true, false, new(0xFF0000, null, null, null)),
+                 new TerminalHighlightRule(Guid.NewGuid(), "Switch", "switch", true, false, new(0x00FF00, null, null, null))]);
+            rules.SetRules(initial);
             await WaitForHighlight();
+            var quota = ApplicationResources.SearchCache;
+            using (quota.Reserve(64L * 1024 * 1024 - quota.Used - 64))
+            {
+                long reserved = quota.Used;
+                rules.SetRules(initial with { Rules = [initial.Rules[0], initial.Rules[1] with { Style = new(0x0000FF, null, null, null) }] });
+                if (!CurrentErrorHasHighlight() || quota.Used != reserved)
+                    throw new InvalidOperationException("Changing an unrelated style displaced a visible highlight under cache pressure.");
+                rules.SetRules(initial);
+            }
             for (int i = 0; i < 27; i++)
             {
                 terminal.Receive(TerminalReceiveSource.Data, "next ERROR\r\n"u8);
@@ -3275,8 +3442,75 @@ internal static partial class Program
             tab.SelectedItem = terminalTab;
             window.UpdateLayout();
             await WaitForHighlight(timeoutMilliseconds: 350);
+
+            panes.ColumnDefinitions[1].Width = new GridLength(1, GridUnitType.Star);
+            secondPane.UpdateSnapshotPosition(surface.Snapshot!);
+            secondPane.SetPresentationEnabled(true);
+            highlight.Attach(secondPane);
+            window.UpdateLayout();
+            secondPane.ScrollToEnd();
+            await surface.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ContextIdle);
+            var snapshot = surface.Snapshot!;
+            if (!secondPane.IsPresentationActive || secondPane.VisibleRows().End < snapshot.CursorRow + 1)
+                throw new InvalidOperationException("The second pane did not display the live end.");
+            surface.Scroller.ScrollToTop();
+            await surface.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ContextIdle);
+            if (!CurrentErrorHasHighlight())
+                throw new InvalidOperationException("Browsing in one pane discarded the other pane's live highlight.");
+
+            int emptyRow = snapshot.CursorRow - snapshot.ScreenStartRow + 1;
+            long deadline = Environment.TickCount64 + 2000;
+            while (highlight.CaptureAiRow(emptyRow) is not { Spans.Length: 0 } && Environment.TickCount64 < deadline)
+                await Task.Delay(15);
+            if (highlight.CaptureAiRow(emptyRow) is not { Spans.Length: 0 })
+                throw new InvalidOperationException("A visible row with zero matches was not reported as current.");
+
+            secondPane.SetPresentationEnabled(false);
+            await Task.Delay(200);
+            if (CurrentErrorHasHighlight() || highlight.CaptureAiRow(emptyRow) is not null)
+                throw new InvalidOperationException("A row outside both panes kept or scheduled an AI highlight result.");
+
+            secondPane.SetPresentationEnabled(true);
+            window.UpdateLayout();
+            await WaitForHighlight();
+            rules.Suspend([errorRule]);
+            int liveRow = snapshot.CursorRow - snapshot.ScreenStartRow;
+            if (highlight.CaptureAiRow(liveRow) is not { } unaffected ||
+                unaffected.Spans.Span is not [{ Style.Foreground: 0x00FF00 }])
+                throw new InvalidOperationException("Suspending one rule removed the other rule's completed highlight.");
+            highlight.Detach(surface);
+            highlight.Detach(secondPane);
+            if (ApplicationResources.SearchCache.Used > cacheBefore)
+                throw new InvalidOperationException("The final pane left the highlight cache's reservation charged.");
+
+            var large = new TerminalOutput(columns: 80, retainedRowLimit: 1200, screenRows: 8);
+            try
+            {
+                byte[] block = Enumerable.Repeat((byte)'x', 1024).ToArray();
+                for (int i = 0; i < 63; i++) large.Receive(TerminalReceiveSource.Data, block);
+                large.Receive(TerminalReceiveSource.Data, block.AsSpan(0, 1020));
+                large.Receive(TerminalReceiveSource.Data, "ERROR\r\n"u8);
+                var view = large.GetRows();
+                secondPane.UpdateSnapshotPosition(view);
+                highlight.Attach(secondPane);
+                highlight.SetSnapshot(view);
+                secondPane.ScrollToEnd();
+                var zeroMatchRow = view.CursorRow - view.ScreenStartRow + 1;
+                var waitUntil = Environment.TickCount64 + 2000;
+                while (highlight.CaptureAiRow(zeroMatchRow) is null && Environment.TickCount64 < waitUntil)
+                    await Task.Delay(15);
+                if (highlight.CaptureAiRow(zeroMatchRow) is not { Spans.Length: 0 } ||
+                    highlight.CaptureAiRow(zeroMatchRow - 1) is not null)
+                    throw new InvalidOperationException("An unevaluated oversized line looked current, or an evaluated empty line looked pending.");
+            }
+            finally { large.ReleaseNativeState(); }
+            await CheckDenseAndWrappedOverlaysAsync();
         }
-        finally { window.Close(); }
+        finally
+        {
+            highlight.Detach();
+            window.Close();
+        }
 
         void SetSnapshot()
         {
@@ -3286,12 +3520,56 @@ internal static partial class Program
             window.UpdateLayout();
         }
 
+        async Task CheckDenseAndWrappedOverlaysAsync()
+        {
+            highlight.ResetForSession();
+            var wrapped = new TerminalOutput(columns: 40, retainedRowLimit: 150, screenRows: 8);
+            try
+            {
+                var dense = new TerminalHighlightRule(Guid.NewGuid(), "Dense", "A", true, false, new(0xFF0000, null, null, null));
+                var ending = new TerminalHighlightRule(Guid.NewGuid(), "Last token", "END", true, false, new(0x00FF00, null, null, null));
+                var set = new HighlightSet(Guid.NewGuid(), "Wrapped", true, [dense, ending]);
+                rules.SetRules(set);
+                byte[] block = Enumerable.Repeat((byte)'A', 1024).ToArray();
+                for (int part = 0; part < 4; part++) wrapped.Receive(TerminalReceiveSource.Data, block);
+                wrapped.Receive(TerminalReceiveSource.Data, "AEND\r\n"u8);
+                var view = wrapped.GetRows();
+                secondPane.UpdateSnapshotPosition(view);
+                highlight.SetSnapshot(view);
+                secondPane.ScrollToEnd();
+                int blank = view.CursorRow - view.ScreenStartRow + 1;
+                await WaitUntil(() => highlight.CaptureAiRow(blank) is { Spans.Length: 0 });
+                if (highlight.CaptureAiRow(blank - 1) is not null)
+                    throw new InvalidOperationException("A line exceeding the match limit was presented as evaluated.");
+                rules.Suspend([dense.Id]);
+                await WaitUntil(() => highlight.CaptureAiRow(blank - 1) is { } overlay &&
+                    overlay.Spans.Span is [{ Style.Foreground: 0x00FF00 }]);
+                long baseline = ApplicationResources.SearchCache.Used;
+                rules.SetRules(set with { Rules = [ending with { Pattern = "A+END" }] });
+                await WaitUntil(() => highlight.CaptureAiRow(blank - 1) is { Spans.Length: 1 });
+                if (ApplicationResources.SearchCache.Used < baseline + 100L * System.Runtime.CompilerServices.Unsafe.SizeOf<TerminalHighlightSpan>())
+                    throw new InvalidOperationException("The cache budget did not account for retained wrapped row overlays.");
+                highlight.Detach(secondPane);
+                if (ApplicationResources.SearchCache.Used > cacheBefore)
+                    throw new InvalidOperationException("Releasing wrapped overlays left a cache reservation.");
+            }
+            finally { wrapped.ReleaseNativeState(); }
+
+            static async Task WaitUntil(Func<bool> ready)
+            {
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                while (!ready()) await Task.Delay(15, deadline.Token);
+            }
+        }
+
         bool CurrentErrorHasHighlight()
         {
             var snapshot = surface.Snapshot!;
             int lastError = snapshot.CursorRow - 1;
-            return highlight.CaptureAiRow(lastError - snapshot.ScreenStartRow + 1) is { } overlay &&
-                overlay.Spans.Any(span => span.Style.Foreground == 0xFF0000);
+            if (highlight.CaptureAiRow(lastError - snapshot.ScreenStartRow + 1) is not { } overlay) return false;
+            foreach (var span in overlay.Spans.Span)
+                if (span.Style.Foreground == 0xFF0000) return true;
+            return false;
         }
 
         async Task WaitForHighlight(int timeoutMilliseconds = 2000)
@@ -3306,6 +3584,143 @@ internal static partial class Program
             throw new InvalidOperationException($"Highlight timed out (visible: {surface.IsPresentationActive}, " +
                 $"rows: {surface.VisibleRows()}, cursor: {surface.Snapshot?.CursorRow}, " +
                 $"offset: {surface.VerticalOffset}, selected: {tab.SelectedItem == terminalTab}).");
+        }
+    }
+
+    private static async Task CheckHighlightPreservationUnderPressureAsync()
+    {
+        var terminal = new TerminalOutput(columns: 40, retainedRowLimit: 256, screenRows: 32);
+        var surface = new TerminalSurface();
+        var window = new Window { ShowActivated = false, Width = 650, Height = 460, Content = surface.Scroller };
+        var rules = new TerminalHighlightState();
+        var highlight = new TerminalHighlightView(surface.Dispatcher, rules);
+        var matching = new TerminalHighlightRule(Guid.NewGuid(), "Error", "ERROR", true, false, new(0xFF0000, null, null, null));
+        var unrelated = matching with { Id = Guid.NewGuid(), Name = "Other", Pattern = "NONE" };
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        window.Show();
+        try
+        {
+            terminal.Receive(TerminalReceiveSource.Data, Encoding.UTF8.GetBytes(string.Join("\r\n", Enumerable.Repeat("ERROR", 32))));
+            surface.SetPresentationEnabled(true);
+            highlight.Attach(surface);
+            ShowSnapshot();
+            surface.ScrollToEnd();
+            window.UpdateLayout();
+            var visible = surface.VisibleRows();
+            if (visible.First == 0 || visible.End != 32)
+                throw new InvalidOperationException("The pressure fixture requires both visible and offscreen lines.");
+            int count = visible.End - visible.First;
+            rules.SetRules(new HighlightSet(Guid.NewGuid(), "Pressure", true, [matching, unrelated]));
+            await WaitUntil(() => CurrentRows() == count);
+            var quota = ApplicationResources.SearchCache;
+            using (quota.Reserve(64L * 1024 * 1024 - quota.Used - 64))
+            {
+                await TerminalHighlightView.Workers.WaitAsync(deadline.Token);
+                try
+                {
+                    await TerminalHighlightView.Workers.WaitAsync(deadline.Token);
+                    try
+                    {
+                        rules.Suspend([unrelated.Id]);
+                        if (CurrentRows() != count)
+                            throw new InvalidOperationException("An unrelated suspension discarded completed highlights.");
+                        terminal.Receive(TerminalReceiveSource.Data, "\u001b[1;1HX"u8);
+                        ShowSnapshot();
+                        if (surface.VisibleRows() != visible || CurrentRows() != count)
+                            throw new InvalidOperationException("An offscreen edit discarded completed highlights.");
+                    }
+                    finally { TerminalHighlightView.Workers.Release(); }
+                }
+                finally { TerminalHighlightView.Workers.Release(); }
+
+                terminal.Receive(TerminalReceiveSource.Data, "\u001b[32;6H!"u8);
+                ShowSnapshot();
+                if (CurrentRows() != count - 1)
+                    throw new InvalidOperationException("A visible edit retained a stale highlight or discarded other rows.");
+                await Task.Delay(650, deadline.Token);
+                if (CurrentRows() != count - 1)
+                    throw new InvalidOperationException("The low cache budget did not leave just the edited row pending.");
+            }
+            await WaitUntil(() => CurrentRows() == count);
+
+            long displaced = highlight.CaptureAiRow(visible.First + 1)!.Value.Id;
+            terminal.Receive(TerminalReceiveSource.Data, "\u001b[2;1H\u001b[M"u8);
+            ShowSnapshot();
+            if (surface.VisibleRows() != visible || surface.Snapshot!.DisplayIdentity(visible.First - 1).Id != displaced)
+                throw new InvalidOperationException("The deleted row did not move an existing highlight above the viewport.");
+            if (highlight.CaptureAiRow(visible.First) is not null)
+                throw new InvalidOperationException("A row moved outside the only viewport retained its AI highlight.");
+            await Task.Delay(650, deadline.Token);
+            if (highlight.CaptureAiRow(visible.First) is not null)
+                throw new InvalidOperationException("Reading an offscreen row scheduled evaluation outside the viewport.");
+            surface.Scroller.ScrollToTop();
+            await WaitUntil(() => highlight.CaptureAiRow(visible.First) is { } row && row.Id == displaced && row.Spans.Length == 1);
+
+            int CurrentRows() => Enumerable.Range(visible.First + 1, count).Count(row =>
+                highlight.CaptureAiRow(row) is { } item && item.Spans.Span is [{ Style.Foreground: 0xFF0000 }]);
+        }
+        finally { highlight.Detach(); window.Close(); terminal.ReleaseNativeState(); }
+
+        void ShowSnapshot()
+        {
+            var snapshot = terminal.GetRows();
+            surface.UpdateSnapshotPosition(snapshot);
+            highlight.SetSnapshot(snapshot);
+            window.UpdateLayout();
+        }
+
+        async Task WaitUntil(Func<bool> ready)
+        {
+            while (!ready()) await Task.Delay(15, deadline.Token);
+        }
+    }
+
+    private static async Task CheckHighlightTimeoutOwnershipAsync()
+    {
+        string text = new string('a', 12_000) + "!";
+        var line = new TerminalSnapshot.Row(1, 1, 0, text, false, default, null, null, 0);
+        var snapshot = new TerminalSnapshot([line], false, 0, 0, 80, 1, 0, false, TerminalCursorShape.Block, false, default);
+        foreach (string transition in new[] { "viewport", "session", "rules" })
+        {
+            var dispatcher = Dispatcher.CurrentDispatcher;
+            var state = new TerminalHighlightState();
+            var view = new TerminalHighlightView(dispatcher, state);
+            var pane = new TerminalSurface();
+            var rule = new TerminalHighlightRule(Guid.NewGuid(), "Timeout fixture", "^(a+)+$", true, false, new(0xFF0000, null, null, null));
+            var set = new HighlightSet(Guid.NewGuid(), "Timeout fixture", true, [rule]);
+            int warnings = 0;
+            state.Changed += change => { if (change == HighlightChange.Suspension) warnings++; };
+            state.SetRules(set);
+            view.Attach(pane);
+            view.SetSnapshot(snapshot);
+            const System.Reflection.BindingFlags flags =
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+            typeof(TerminalHighlightView).GetField("visible", flags)!.SetValue(view, new[] { (0, 1) });
+            typeof(TerminalHighlightView).GetMethod("Queue", flags)!.Invoke(view, [true]);
+            using var continuation = new ManualResetEventSlim();
+            void Posted(object? _, DispatcherHookEventArgs args)
+            {
+                if (args.Operation.Priority == DispatcherPriority.Normal && !dispatcher.CheckAccess()) continuation.Set();
+            }
+            dispatcher.Hooks.OperationPosted += Posted;
+            try
+            {
+                var evaluation = (Task)typeof(TerminalHighlightView).GetMethod("UpdateAsync", flags)!.Invoke(view, [])!;
+                if (!continuation.Wait(TimeSpan.FromSeconds(4)))
+                    throw new InvalidOperationException("The regex worker did not queue its result.");
+                if (transition == "viewport") view.Detach(pane);
+                else if (transition == "session") { view.ResetForSession(); state.Resume(); state.SetRules(set); }
+                else state.SetRules(set with { Rules = [rule with { Pattern = "safe" }] });
+                await evaluation.WaitAsync(TimeSpan.FromSeconds(4));
+                bool sameSessionAndRules = transition == "viewport";
+                if (state.Suspended.Contains(rule.Id) != sameSessionAndRules || warnings != (sameSessionAndRules ? 1 : 0))
+                    throw new InvalidOperationException("A timeout did not follow the session and rule revision that owned it.");
+            }
+            finally
+            {
+                dispatcher.Hooks.OperationPosted -= Posted;
+                view.Detach();
+            }
         }
     }
 

@@ -159,10 +159,13 @@ internal static partial class Program
                 "A remembered block started a run or was not persisted.");
             await window.OpenExternalMacroAsync(empty with { Path = copy }).WaitAsync(TimeSpan.FromSeconds(5));
             CheckMacroLaunch(window.TerminalTabs.Count() == tabs, "Opening a blocked pair created a tab.");
-            CheckMacroLaunch(MacroTrust.List().Any(entry => entry == new MacroTrust.Entry(block.Fingerprint, digest, MacroTrustDecision.Block)),
+            CheckMacroLaunch(MacroTrust.List().Contains(new(block.Fingerprint, digest, MacroTrustDecision.Block, block.ConstantsDigest)),
                 "A stored block was missing from the settings view.");
 
-            await ForgetFromSettings(app, window, block);
+            await ForgetFromSettings(app, window, block, (_, pairs) =>
+                CheckMacroLaunch(pairs.Items.OfType<string>().Where(label => label.StartsWith(block.Fingerprint, StringComparison.Ordinal))
+                    .All(label => !label.Contains(App.Text("MacroConstantsVersion"), StringComparison.Ordinal)),
+                    "The settings showed a constants version for a macro with no constants declarations."));
             request = window.OpenExternalMacroAsync(empty);
             await DecideMacroRequest(app, window, original, "[0] \"\"");
             await request;

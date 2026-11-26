@@ -479,6 +479,7 @@
   <data name="SftpUnsupported" xml:space="preserve"><value>The server does not support this operation.</value></data>
   <data name="SftpServerError" xml:space="preserve"><value>The file operation failed.</value></data>
   <data name="SftpUnknownOutcome" xml:space="preserve"><value>The outcome could not be confirmed. Refresh before trying again.</value></data>
+  <data name="SftpCloseReportFailed" xml:space="preserve"><value>Closing stopped because the required file transfer report could not be displayed.</value></data>
   <data name="SftpInvalidName" xml:space="preserve"><value>The name or item type cannot be used for this operation.</value></data>
   <data name="SftpCannotReplace" xml:space="preserve"><value>The destination does not support safe file replacement.</value></data>
   <data name="SftpSourceChanged" xml:space="preserve"><value>The source changed during the operation.</value></data>
@@ -503,6 +504,7 @@
   <data name="BroadcastFailedTarget" xml:space="preserve"><value>Failed</value></data>
   <data name="BroadcastSubmitted" xml:space="preserve"><value>Sent or delivery unconfirmed</value></data>
   <data name="BroadcastNotSent" xml:space="preserve"><value>Not sent</value></data>
+  <data name="BroadcastPasteFramingOnly" xml:space="preserve"><value>Paste stopped after sending the bracketed-paste markers. 0 content bytes sent.</value></data>
   <data name="PasteTargetChanged" xml:space="preserve"><value>The target terminal's state changed while preparing the paste.</value></data>
   <data name="BroadcastMoveBusy" xml:space="preserve"><value>Wait for the current broadcast operation to finish or stop it before moving this tab to another window.</value></data>
   <data name="TabGroups" xml:space="preserve"><value>Tab Groups</value></data>
@@ -538,18 +540,7 @@
   <data name="MacroReadFilePath" xml:space="preserve"><value>File path</value></data>
   <data name="MacroInspectConstants" xml:space="preserve"><value>View constants file contents</value></data>
   <data name="MacroShowAllDecisions" xml:space="preserve"><value>Show all decisions for this macro</value></data>
-  <data name="MacroErrorConstantsDeclaration" xml:space="preserve"><value>Invalid constants declaration.</value></data>
-  <data name="MacroErrorConstantsAlias" xml:space="preserve"><value>The constants file alias conflicts with another name.</value></data>
-  <data name="MacroErrorConstantsLimit" xml:space="preserve"><value>The declared constants exceed the permitted limit.</value></data>
-  <data name="MacroErrorNumericLiteral" xml:space="preserve"><value>The numeric literal is malformed or out of range.</value></data>
-  <data name="MacroErrorStringEscape" xml:space="preserve"><value>Invalid string escape. Use two hexadecimal digits after \x.</value></data>
-  <data name="MacroErrorConstantsDefinition" xml:space="preserve"><value>Use a var or scalar type declaration with an initializer and a semicolon.</value></data>
-  <data name="MacroErrorConstantsLiteral" xml:space="preserve"><value>A constant initializer must be a string, Boolean, or numeric literal.</value></data>
-  <data name="MacroErrorConstantsName" xml:space="preserve"><value>A constant has a duplicate, reserved or invalid name.</value></data>
-  <data name="MacroErrorConstantsType" xml:space="preserve"><value>The literal does not match the declared constant type.</value></data>
-  <data name="MacroErrorConstantsRead" xml:space="preserve"><value>The constants file could not be read.</value></data>
   <data name="MacroErrorConstantFile" xml:space="preserve"><value>The declared constants file is unavailable.</value></data>
-  <data name="MacroErrorMemoryLimit" xml:space="preserve"><value>The macro memory limit was reached.</value></data>
   <data name="MacroRunOnce" xml:space="preserve"><value>Run once</value></data>
   <data name="MacroAlwaysAllow" xml:space="preserve"><value>Always allow with these arguments</value></data>
   <data name="MacroAlwaysBlock" xml:space="preserve"><value>Always block with these arguments</value></data>
@@ -592,7 +583,6 @@
   <data name="MacroReadFailed" xml:space="preserve"><value>The macro file could not be read.</value></data>
   <data name="MacroLocation" xml:space="preserve"><value>Line {0}, column {1}: {2}</value></data>
   <data name="MacroErrorCode" xml:space="preserve"><value>Macro error ({0})</value></data>
-  <data name="MacroErrorRethrowOutsideCatch" xml:space="preserve"><value>Rethrow is only valid inside a catch in this function.</value></data>
   <data name="MacroStateRunning" xml:space="preserve"><value>Macro running</value></data>
   <data name="MacroStateWaiting" xml:space="preserve"><value>Macro waiting</value></data>
   <data name="MacroStatePauseRequested" xml:space="preserve"><value>Macro pause requested</value></data>
@@ -616,14 +606,6 @@
   <data name="MacroErrorUncertainDelivery" xml:space="preserve"><value>Some input may have reached the remote side. Check its state before resending.</value></data>
   <data name="MacroErrorConnectionFailed" xml:space="preserve"><value>The connection attempt failed.</value></data>
   <data name="MacroErrorVaultStale" xml:space="preserve"><value>The vault changed. Restart TabTty before using it again.</value></data>
-  <data name="MacroErrorExpectedToken" xml:space="preserve"><value>A required word or symbol is missing or out of place.</value></data>
-  <data name="MacroErrorTypeMismatch" xml:space="preserve"><value>The value type does not match the operation.</value></data>
-  <data name="MacroErrorNamedOptionExpected" xml:space="preserve"><value>A named option is required here.</value></data>
-  <data name="MacroErrorUnknownOption" xml:space="preserve"><value>This option is not defined for this call.</value></data>
-  <data name="MacroErrorDuplicateOption" xml:space="preserve"><value>This option has already been supplied.</value></data>
-  <data name="MacroErrorAlternativeNameExpected" xml:space="preserve"><value>Give each wait pattern a non-reserved name followed by a colon.</value></data>
-  <data name="MacroErrorDuplicateAlternative" xml:space="preserve"><value>This wait already has an alternative with this name.</value></data>
-  <data name="MacroErrorSourceEncoding" xml:space="preserve"><value>The file contains invalid text for its encoding.</value></data>
   <data name="MacroErrorMissingProfilePassword" xml:space="preserve"><value>The profile has no configured password reference.</value></data>
   <data name="MacroErrorWaitTimeout" xml:space="preserve"><value>The terminal response wait timed out.</value></data>
   <data name="MacroErrorEndOfInput" xml:space="preserve"><value>Terminal output ended before a match.</value></data>
@@ -670,6 +652,7 @@ The host can send keys and multiple lines of commands without asking again, with
   <data name="AiMacroOwnsInput" xml:space="preserve"><value>The macro owns terminal input, including while paused.</value></data>
   <data name="AiInputBusy" xml:space="preserve"><value>Finish or cancel the current input, then grant control again.</value></data>
   <data name="AiUncertainDelivery" xml:space="preserve"><value>How much AI input was delivered could not be confirmed. Inspect the terminal before sending again.</value></data>
+  <data name="ConfirmedInputPrefix" xml:space="preserve"><value>The first {0:N0} input bytes are confirmed sent.</value></data>
   <data name="AiEndpointUnavailable" xml:space="preserve"><value>The local AI integration endpoint is unavailable.</value></data>
   <data name="AiSetupInstructions" xml:space="preserve"><value>Register the bridge in your AI application</value></data>
   <data name="AiSetupConfiguration" xml:space="preserve"><value>MCP configuration</value></data>
@@ -748,35 +731,9 @@ The host can send keys and multiple lines of commands without asking again, with
   <data name="PostConnectionRoutineCommandRequired" xml:space="preserve"><value>Enter at least one command.</value></data>
   <data name="PostConnectionRoutineVaultEntryRequired" xml:space="preserve"><value>Enter a valid vault password entry name.</value></data>
   <data name="PostConnectionRoutineInsert" xml:space="preserve"><value>Insert</value></data>
-  <data name="MacroErrorPostConnectionSubset" xml:space="preserve"><value>This operation or syntax is unavailable in a post-connection macro. Prompt waits require a timeout.</value></data>
   <data name="PostConnectionCompletionKeys" xml:space="preserve"><value>Ctrl+Space shows completions. Use Up or Down to select, Tab or Enter to insert, and Esc to dismiss.</value></data>
   <data name="PostConnectionCompletions" xml:space="preserve"><value>Completion suggestions</value></data>
   <data name="PostConnectionCurrentArgument" xml:space="preserve"><value>{0}. Current argument is {1}.</value></data>
-  <data name="MacroErrorExpressionExpected" xml:space="preserve"><value>Enter an expression here.</value></data>
-  <data name="MacroErrorStatementExpected" xml:space="preserve"><value>Enter a statement here.</value></data>
-  <data name="MacroErrorIdentifierExpected" xml:space="preserve"><value>Enter a name here.</value></data>
-  <data name="MacroErrorBlockExpected" xml:space="preserve"><value>Close the block with a right brace.</value></data>
-  <data name="MacroErrorTypeExpected" xml:space="preserve"><value>Enter a supported type name.</value></data>
-  <data name="MacroErrorUnknownName" xml:space="preserve"><value>This name is not defined in the current scope.</value></data>
-  <data name="MacroErrorUnknownMember" xml:space="preserve"><value>This value has no member with that name.</value></data>
-  <data name="MacroErrorUnknownFunction" xml:space="preserve"><value>This function is not defined.</value></data>
-  <data name="MacroErrorReservedName" xml:space="preserve"><value>Choose a name that is not reserved by the macro language.</value></data>
-  <data name="MacroErrorDuplicateLocal" xml:space="preserve"><value>A local with this name is already in scope.</value></data>
-  <data name="MacroErrorCallArguments" xml:space="preserve"><value>Check the number and types of arguments for this call.</value></data>
-  <data name="MacroErrorUnterminatedString" xml:space="preserve"><value>Close the string with a double quote.</value></data>
-  <data name="MacroErrorUnterminatedComment" xml:space="preserve"><value>Close the comment with */.</value></data>
-  <data name="MacroErrorStringPrefix" xml:space="preserve"><value>The string prefix is invalid.</value></data>
-  <data name="MacroErrorStringExpected" xml:space="preserve"><value>A string literal must begin with a double quote.</value></data>
-  <data name="MacroErrorStringNewline" xml:space="preserve"><value>Close the string before the end of the line or use a verbatim string.</value></data>
-  <data name="MacroErrorUnexpectedCharacter" xml:space="preserve"><value>This character is unexpected here.</value></data>
-  <data name="MacroErrorInterpolationBrace" xml:space="preserve"><value>Check the braces in the interpolated string.</value></data>
-  <data name="MacroErrorUnterminatedInterpolation" xml:space="preserve"><value>Close the interpolation with a right brace.</value></data>
-  <data name="MacroErrorSourceLimit" xml:space="preserve"><value>The macro source exceeds the size limit.</value></data>
-  <data name="MacroErrorSyntaxLimit" xml:space="preserve"><value>The macro exceeds the syntax size limit.</value></data>
-  <data name="MacroErrorNestingLimit" xml:space="preserve"><value>The macro exceeds the nesting limit.</value></data>
-  <data name="MacroErrorParameterLimit" xml:space="preserve"><value>This call or declaration has too many parameters.</value></data>
-  <data name="MacroErrorTypeNestingLimit" xml:space="preserve"><value>This type exceeds the nesting limit.</value></data>
-  <data name="MacroErrorLocalLimit" xml:space="preserve"><value>The macro declares too many local variables.</value></data>
   <data name="DecisionTargetTab" xml:space="preserve"><value>Tab: {0}</value></data>
   <data name="PasteTargets" xml:space="preserve"><value>Paste destinations</value></data>
   <data name="NoticeStackShow" xml:space="preserve"><value>Show notices ({0})</value></data>

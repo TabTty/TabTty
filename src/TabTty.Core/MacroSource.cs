@@ -406,14 +406,14 @@ internal sealed class MacroParser
             {
                 MacroType argType = ParseType();
                 var argName = Current;
-                var parameter = new MacroParameter(Identifier(), argType);
+                var parameter = new MacroParameter(Identifier(), argType, argName.Position);
                 parameters.Add(parameter);
                 editor?.Name(parameter, argName);
                 if (parameters.Count > 32) Fail("ParameterLimit");
             } while (Eat(","));
             Expect(")");
         }
-        var function = new MacroFunction(identifier, type, parameters.ToArray(), Block(), tokens[start].Position);
+        var function = new MacroFunction(identifier, type, parameters.ToArray(), Block(), tokens[start].Position, name.Position);
         if (!functions.TryAdd(identifier, function)) Fail("DuplicateFunction");
         if (functions.Count > 256) Fail("FunctionLimit");
         editor?.Name(function, name);
@@ -498,7 +498,7 @@ internal sealed class MacroParser
                 Expect("("); MacroType? type = Eat("var") ? null : ParseType();
                 var nameToken = Current;
                 string name = Identifier(); Expect("in"); var values = Expression(); Expect(")");
-                var loop = Add(new MacroForeach(name, type, values, Block(), at));
+                var loop = Add(new MacroForeach(name, type, values, Block(), at, nameToken.Position));
                 editor?.Name(loop, nameToken);
                 return loop;
             }
@@ -507,7 +507,7 @@ internal sealed class MacroParser
                 var body = Block(); Expect("catch"); Expect("("); Expect("MacroError");
                 var nameToken = Current;
                 string name = Identifier(); Expect(")");
-                var attempt = Add(new MacroTry(body, name, Block(), at));
+                var attempt = Add(new MacroTry(body, name, Block(), at, nameToken.Position));
                 editor?.Name(attempt, nameToken);
                 return attempt;
             }

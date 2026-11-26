@@ -27,6 +27,7 @@ internal sealed class PostConnectionEditor : Grid
     private readonly TextBlock signature = Hint("PostConnectionSignature");
     private readonly TextBlock diagnostic = Hint("PostConnectionDiagnostic");
     private readonly PostConnectionUnderline underline;
+    private readonly PostConnectionValidation validation;
     private readonly DispatcherTimer timer;
     private PostConnectionEditorAnalysis? analysis;
     private int revision;
@@ -34,9 +35,11 @@ internal sealed class PostConnectionEditor : Grid
     private bool automaticCompletion;
     private bool explicitCompletion;
 
-    internal PostConnectionEditor(FormView form, string source)
+    internal PostConnectionEditor(FormView form, string source, PostConnectionValidation? validation = null)
     {
+        this.validation = validation ?? new();
         Source.Text = source;
+        this.validation.SelectSource(Source.Text);
         AutomationProperties.SetAutomationId(Source, "PostConnectionSource");
         AutomationProperties.SetAutomationId(completions, "PostConnectionCompletions");
         completions.SetResourceReference(Control.BackgroundProperty, "WindowBackground");
@@ -73,6 +76,7 @@ internal sealed class PostConnectionEditor : Grid
         IsVisibleChanged += (_, _) => Schedule();
         Source.TextChanged += (_, _) =>
         {
+            this.validation.SelectSource(Source.Text);
             automaticCompletion = true;
             explicitCompletion = false;
             SetDiagnostic("");
@@ -133,7 +137,7 @@ internal sealed class PostConnectionEditor : Grid
         string source = Source.Text;
         analyzing = true;
         PostConnectionEditorAnalysis result;
-        try { result = await Task.Run(() => PostConnectionEditorAnalysis.Analyze(source, caret)); }
+        try { result = await Task.Run(() => PostConnectionEditorAnalysis.Analyze(source, caret, validation)); }
         finally { analyzing = false; }
         if (snapshot != revision)
         {
@@ -158,7 +162,7 @@ internal sealed class PostConnectionEditor : Grid
     }
 
     private void ShowDiagnostic() => SetDiagnostic(analysis?.Diagnostic is { } error
-        ? string.Format(Text("MacroLocation"), error.Position.Line, error.Position.Column, TerminalTab.MacroErrorLabel(error.Code))
+        ? string.Format(Text("MacroLocation"), error.Position.Line, error.Position.Column, MacroDiagnostics.Describe(error, UiLanguage))
         : "");
 
     private void SetDiagnostic(string message)

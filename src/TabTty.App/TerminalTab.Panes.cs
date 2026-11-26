@@ -36,9 +36,8 @@ internal sealed partial class TerminalTab
         return anchor.IsEmpty ? area : anchor;
     }
 
-    private sealed class PaneState(TerminalHighlightView highlight)
+    private sealed class PaneState
     {
-        public TerminalHighlightView Highlight { get; } = highlight;
         public TerminalMatch? CurrentMatch;
     }
 
@@ -80,7 +79,7 @@ internal sealed partial class TerminalTab
 
     private void AttachPane(TerminalSurface pane)
     {
-        var state = new PaneState(new TerminalHighlightView(pane, highlightState));
+        var state = new PaneState();
         panes.Add(pane, state);
         pane.SetPresentationEnabled(presentationEnabled);
         pane.ConfigureFont(baseFontFamily, zoomFontSize);
@@ -89,7 +88,6 @@ internal sealed partial class TerminalTab
         pane.InputAvailabilityChanged += UpdateMouseRouting;
         pane.RemoteGestureStarted += capture => Broadcast.StartMouse(Window.GetWindow(this) as MainWindow, this, pane, capture);
         pane.RemoteGestureEnded += capture => Broadcast.StopMouse(pane, capture);
-        pane.UnclampedMouse = () => Broadcast.UsesBroadcastMouse(Window.GetWindow(this) as MainWindow, pane);
         pane.RemoteCaptureLost += capture => Broadcast.CaptureLost(pane, capture);
         pane.RemoteCaptureFailed += () => Broadcast.CaptureFailed(Window.GetWindow(this) as MainWindow);
         pane.MouseInput += input =>
@@ -134,9 +132,9 @@ internal sealed partial class TerminalTab
         if (snapshot is { } view)
         {
             pane.SetSnapshot(view);
-            state.Highlight.SetSnapshot(view);
             pane.SetSearch(null, searchMatches, scroll: false);
         }
+        visibleHighlights.Attach(pane);
         UpdatePaneMenu(pane);
     }
 
@@ -260,7 +258,7 @@ internal sealed partial class TerminalTab
         pane.CancelComposition();
         pane.SetPresentationEnabled(false);
         paneLayout.Remove(pane.Scroller);
-        panes[pane].Highlight.Detach();
+        visibleHighlights.Detach(pane);
         panes.Remove(pane);
         if (output == pane) output = OrderedPanes.First();
         UpdateMouseRouting();

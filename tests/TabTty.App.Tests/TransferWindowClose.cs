@@ -93,15 +93,30 @@ internal static partial class Program
         var unresolvedOwner = new FileOperationOwnership();
         unresolvedOwner.RequireRefresh();
         var unresolvedWindow = OpenDisconnected(unresolvedOwner);
+        var lateWork = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        typeof(FileTransferWindow).GetMethod("Observe", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(unresolvedWindow, [lateWork.Task]);
         interruptTransferReportFor = unresolvedWindow;
         try
         {
+            unresolvedWindow.Close();
             TransferWindowCloseResult result = await unresolvedWindow.CloseWithTerminalAsync().WaitAsync(deadline.Token);
             if (result.Status != TransferWindowCloseStatus.ReportFailed || !unresolvedWindow.IsVisible)
                 throw new InvalidOperationException("A report closed before rendering must leave the transfer results visible.");
+            if (!FindControls<TextBlock>(unresolvedWindow).Any(label => label.Text == App.Text("SftpCloseReportFailed")))
+                throw new InvalidOperationException("A report presentation failure did not explain why closing stopped.");
+            lateWork.TrySetResult("SftpDisconnected");
+            await unresolvedWindow.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ContextIdle);
+            if (!FindControls<TextBlock>(unresolvedWindow).Any(label => label.Text == App.Text("SftpCloseReportFailed")))
+                throw new InvalidOperationException("Late operation cleanup hid the reason the transfer window stayed open.");
+            interruptTransferReportFor = null;
+            unresolvedOwner.Refreshed();
+            if (!(await unresolvedWindow.CloseWithTerminalAsync().WaitAsync(deadline.Token)).Dismissed)
+                throw new InvalidOperationException("The transfer window could not be closed after late cleanup.");
         }
         finally
         {
+            lateWork.TrySetResult("SftpDisconnected");
             interruptTransferReportFor = null;
             unresolvedOwner.Refreshed();
             if (unresolvedWindow.IsVisible) unresolvedWindow.Close();

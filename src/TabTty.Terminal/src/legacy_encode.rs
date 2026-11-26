@@ -3,6 +3,17 @@ use crate::windows_icu;
 
 const LIMIT: usize = 1024 * 1024;
 
+struct WipeOnDrop<'a, T: Copy + Default>(&'a mut [T]);
+
+impl<T: Copy + Default> Drop for WipeOnDrop<'_, T> {
+    fn drop(&mut self) {
+        for unit in self.0.iter_mut() {
+            // Clear password scratch storage even when conversion returns early.
+            unsafe { std::ptr::write_volatile(unit, T::default()) };
+        }
+    }
+}
+
 pub(crate) fn encode(
     page: u32,
     input: &[u16],
@@ -14,16 +25,19 @@ pub(crate) fn encode(
         return windows_icu::with_converter(name, |converter| {
             // ICU can ignore some Unicode format characters. Validate every
             // scalar exactly before accepting any byte from the full conversion.
+            let mut source = [0; 2];
+            let source = WipeOnDrop(&mut source);
+            let mut bytes = [0; 16];
+            let bytes = WipeOnDrop(&mut bytes);
+            let mut decoded = [0; 2];
+            let decoded = WipeOnDrop(&mut decoded);
             for scalar in char::decode_utf16(input.iter().copied()) {
-                let mut original = [0; 2];
-                let original = scalar.map_err(|_| 1)?.encode_utf16(&mut original);
-                let mut bytes = [0; 16];
-                let count = converter.encode(original, &mut bytes)?;
-                let mut decoded = [0; 2];
+                let original = scalar.map_err(|_| 1)?.encode_utf16(source.0);
+                let count = converter.encode(original, bytes.0)?;
                 if count == 0
-                    || (page == 51932 && !euc_unit(&bytes[..count]))
-                    || converter.decode(&bytes[..count], &mut decoded)? != original.len()
-                    || &decoded[..original.len()] != original
+                    || (page == 51932 && !euc_unit(&bytes.0[..count]))
+                    || converter.decode(&bytes.0[..count], decoded.0)? != original.len()
+                    || &decoded.0[..original.len()] != original
                 {
                     return Err(1);
                 }
@@ -49,9 +63,10 @@ pub(crate) fn encode(
         return Err(1);
     }
     let mut length = 0;
+    let mut encoded = [0; 2];
+    let encoded = WipeOnDrop(&mut encoded);
     for scalar in char::decode_utf16(input.iter().copied()) {
-        let mut encoded = [0; 2];
-        let count = windows::encode(page, scalar.map_err(|_| 1)?, &mut encoded)?;
+        let count = windows::encode(page, scalar.map_err(|_| 1)?, encoded.0)?;
         let end = length + count;
         if end > LIMIT {
             return Err(2);
@@ -60,7 +75,7 @@ pub(crate) fn encode(
             bytes
                 .get_mut(length..end)
                 .ok_or(2)?
-                .copy_from_slice(&encoded[..count]);
+                .copy_from_slice(&encoded.0[..count]);
         }
         length = end;
     }
@@ -99,37 +114,26 @@ pub(crate) fn visit_transmit_units(
         }
         Ok(())
     };
-    let scalars = char::decode_utf16(input.iter().copied());
     #[cfg(windows)]
     if let Some(name) = icu_name(page, flags) {
-        return windows_icu::with_converter(name, |converter| {
-            let mut output = [0; 16];
-            for scalar in scalars {
-                let scalar = scalar.map_err(|_| 1)?;
-                let count = converter.send(scalar.encode_utf16(&mut [0; 2]), &mut output, false)?;
-                if count == 0 {
-                    return Err(3);
-                }
-                unit(scalar, &output[..count], &mut position)?;
-            }
-            let count = converter.send(&[], &mut output, true)?;
-            if encoded.get(position..) != Some(&output[..count]) {
-                return Err(3);
-            }
-            Ok(())
+        return visit_icu_output(name, input, |scalar, bytes| match scalar {
+            Some(scalar) => unit(scalar, bytes, &mut position),
+            None if encoded.get(position..) == Some(bytes) => Ok(()),
+            None => Err(3),
         });
     }
     if page != 0 && !windows_page(page) {
         return Err(1);
     }
-    for scalar in scalars {
+    let mut bytes = [0; 4];
+    let bytes = WipeOnDrop(&mut bytes);
+    for scalar in char::decode_utf16(input.iter().copied()) {
         let scalar = scalar.map_err(|_| 1)?;
         if page == 0 {
-            unit(scalar, scalar.encode_utf8(&mut [0; 4]).as_bytes(), &mut position)?;
+            unit(scalar, scalar.encode_utf8(bytes.0).as_bytes(), &mut position)?;
         } else {
-            let mut bytes = [0; 2];
-            let count = windows::encode(page, scalar, &mut bytes)?;
-            unit(scalar, &bytes[..count], &mut position)?;
+            let count = windows::encode(page, scalar, bytes.0)?;
+            unit(scalar, &bytes.0[..count], &mut position)?;
         }
     }
     if position != encoded.len() {
@@ -148,15 +152,50 @@ pub(crate) fn closure(
     if page != 50220 {
         return Ok(0);
     }
-    let length = encode(page, input, flags, None)?;
-    let mut finished = vec![0; length];
-    encode(page, input, flags, Some(&mut finished))?;
-    if !finished.starts_with(prefix) {
-        return Err(3);
+    #[cfg(windows)]
+    if let Some(name) = icu_name(page, flags) {
+        let mut remaining = prefix;
+        let mut written = 0;
+        // Verify the submitted prefix one scalar at a time. Only the final codec reset can be returned.
+        visit_icu_output(name, input, |scalar, bytes| {
+            if scalar.is_some() {
+                remaining = remaining.strip_prefix(bytes).ok_or(3)?;
+            } else {
+                let tail = bytes.strip_prefix(remaining).ok_or(3)?;
+                output.get_mut(..tail.len()).ok_or(2)?.copy_from_slice(tail);
+                written = tail.len();
+            }
+            Ok(())
+        })?;
+        return Ok(written);
     }
-    let tail = &finished[prefix.len()..];
-    output.get_mut(..tail.len()).ok_or(2)?.copy_from_slice(tail);
-    Ok(tail.len())
+    #[cfg(not(windows))]
+    let _ = (input, flags, prefix, output);
+    Err(1)
+}
+
+#[cfg(windows)]
+fn visit_icu_output(
+    name: &'static [u8],
+    input: &[u16],
+    mut visit: impl FnMut(Option<char>, &[u8]) -> Result<(), i32>,
+) -> Result<(), i32> {
+    windows_icu::with_converter(name, |converter| {
+        let mut output = [0; 16];
+        let output = WipeOnDrop(&mut output);
+        let mut source = [0; 2];
+        let source = WipeOnDrop(&mut source);
+        for scalar in char::decode_utf16(input.iter().copied()) {
+            let scalar = scalar.map_err(|_| 1)?;
+            let count = converter.send(scalar.encode_utf16(source.0), output.0, false)?;
+            if count == 0 {
+                return Err(3);
+            }
+            visit(Some(scalar), &output.0[..count])?;
+        }
+        let count = converter.send(&[], output.0, true)?;
+        visit(None, &output.0[..count])
+    })
 }
 
 fn windows_page(page: u32) -> bool {
@@ -217,6 +256,8 @@ pub(crate) fn decode_unit(page: u32, input: &[u8]) -> Option<u16> {
 
 #[cfg(windows)]
 mod windows {
+    use super::WipeOnDrop;
+
     #[link(name = "kernel32")]
     extern "system" {
         fn MultiByteToWideChar(
@@ -241,23 +282,25 @@ mod windows {
 
     pub(super) fn decode(page: u32, input: &[u8]) -> Option<u16> {
         let mut output = [0; 2];
+        let output = WipeOnDrop(&mut output);
         let length = unsafe {
             MultiByteToWideChar(
                 page,
                 8,
                 input.as_ptr(),
                 input.len() as i32,
-                output.as_mut_ptr(),
+                output.0.as_mut_ptr(),
                 2,
             )
         };
-        (length == 1).then(|| output[0])
+        (length == 1).then(|| output.0[0])
     }
 
-    pub(super) fn encode(page: u32, scalar: char, output: &mut [u8; 2]) -> Result<usize, i32> {
+    pub(super) fn encode(page: u32, scalar: char, output: &mut [u8]) -> Result<usize, i32> {
         let mut input = [0; 2];
+        let input = WipeOnDrop(&mut input);
         let mut substituted = 0;
-        let input = scalar.encode_utf16(&mut input);
+        let input = scalar.encode_utf16(input.0);
         if input.len() != 1 {
             return Err(1);
         }
@@ -268,7 +311,7 @@ mod windows {
                 input.as_ptr(),
                 1,
                 output.as_mut_ptr(),
-                2,
+                output.len() as i32,
                 std::ptr::null(),
                 &mut substituted,
             )
@@ -289,7 +332,7 @@ mod windows {
     pub(super) fn decode(_: u32, _: &[u8]) -> Option<u16> {
         None
     }
-    pub(super) fn encode(_: u32, _: char, _: &mut [u8; 2]) -> Result<usize, i32> {
+    pub(super) fn encode(_: u32, _: char, _: &mut [u8]) -> Result<usize, i32> {
         Err(1)
     }
 }

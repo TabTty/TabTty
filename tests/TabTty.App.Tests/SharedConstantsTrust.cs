@@ -29,7 +29,7 @@ internal static partial class Program
         }
         WriteInputs(a, b);
         string digest = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(source)));
-        var legacy = MacroTrustKey.Create(digest, []);
+        var withoutConstants = MacroTrustKey.Create(digest, []);
         var allow = MacroTrustKey.Create(digest, [], original);
         var block = MacroTrustKey.Create(digest, [], swapped);
         var otherArgs = MacroTrustKey.Create(digest, ["other"], original);
@@ -45,7 +45,7 @@ internal static partial class Program
         try
         {
             await SetLanguage("en");
-            MacroTrust.Save(legacy, MacroTrustDecision.Allow);
+            MacroTrust.Save(withoutConstants, MacroTrustDecision.Allow);
             MacroTrust.Save(otherArgs, MacroTrustDecision.Block);
             int before = window.TerminalTabs.Count();
             var request = window.OpenExternalMacroAsync(launch);
@@ -70,7 +70,7 @@ internal static partial class Program
                 }, DispatcherPriority.ContextIdle);
                 Click(dialog, "MacroInspectConstants");
                 inspect.Task.GetAwaiter().GetResult();
-                MacroTrust.Forget(otherArgs.Fingerprint, otherArgs.Version);
+                MacroTrust.Forget(otherArgs.Fingerprint);
             });
             await request.WaitAsync(TimeSpan.FromSeconds(6));
             var admitted = window.TerminalTabs.Last().Macro!;
@@ -107,7 +107,7 @@ internal static partial class Program
             CheckMacroLaunch(window.TerminalTabs.Count() == before, "A formatting, BOM or unused-value change bypassed review.");
 
             File.Delete(source); File.Delete(first); File.Delete(second);
-            MacroTrust.Forget(legacy.Fingerprint);
+            MacroTrust.Forget(withoutConstants.Fingerprint);
             MacroTrust.Save(otherArgs, MacroTrustDecision.Block);
             await ForgetFromSettings(app, window, block, (dialog, choices) =>
             {
@@ -134,7 +134,7 @@ internal static partial class Program
             failWrite = false;
             CheckMacroLaunch(MacroTrust.Read(block) is null && window.TerminalTabs.Count() == before, "Failed save admitted a run.");
 
-            MacroTrust.Save(legacy, MacroTrustDecision.Allow);
+            MacroTrust.Save(withoutConstants, MacroTrustDecision.Allow);
             MacroTrust.Save(MacroTrustKey.Create(digest, ["left", "right"], swapped), MacroTrustDecision.Allow);
             MacroTrust.Save(MacroTrustKey.Create(digest, ["right", "left"], swapped), MacroTrustDecision.Block);
             foreach (string language in new[] { "en", "ja" })
@@ -170,7 +170,7 @@ internal static partial class Program
                         foreach (var answer in answers) answer.Task.GetAwaiter().GetResult();
                     }
                     ResetFromOtherWindow("Cancel");
-                    CheckMacroLaunch(MacroTrust.Read(legacy) == MacroTrustDecision.Allow && MacroTrust.Read(allow) == MacroTrustDecision.Allow &&
+                    CheckMacroLaunch(MacroTrust.Read(withoutConstants) == MacroTrustDecision.Allow && MacroTrust.Read(allow) == MacroTrustDecision.Allow &&
                         MacroTrust.Read(otherArgs) == MacroTrustDecision.Block, "Cancelling reset changed remembered decisions.");
                     if (language == "ja")
                     {

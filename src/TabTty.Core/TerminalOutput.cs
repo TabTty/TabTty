@@ -2,8 +2,13 @@ using System.Text;
 
 namespace TabTty.Core;
 
+internal enum TerminalReceiveEventKind { Character, AlternateScreen, Batch, Eof }
+internal readonly record struct TerminalReceiveEvent(TerminalReceiveEventKind Kind,
+    TerminalReceiveSource Source = default, Rune Character = default, bool Literal = false);
+
 public sealed class TerminalOutput
 {
+    internal const int ReceiveBatchBytes = 1024;
     private readonly NativeTerminalCore native;
     private readonly int retainedRowLimit;
     private int columns, rows;
@@ -23,14 +28,10 @@ public sealed class TerminalOutput
     internal int AiRows => rows;
     public event Action? Bell;
 
-    internal Action<TerminalReceiveSource, Rune, bool>? MacroCharacter
+    internal Action<TerminalReceiveEvent>? ReceiveObserver
     {
+        get => native.ReceiveObserver;
         set => native.ReceiveObserver = value;
-    }
-
-    internal Action? EnteringAlternateScreen
-    {
-        set => native.AlternateObserver = value;
     }
 
     public TerminalOutput(int columns = 80, int retainedRowLimit = 5000, int screenRows = 24,
@@ -66,18 +67,24 @@ public sealed class TerminalOutput
 
     public void Receive(TerminalReceiveSource source, ReadOnlySpan<byte> payload) => Receive(source, payload, default);
 
-    internal void Receive(TerminalReceiveSource source, ReadOnlySpan<byte> payload, CancellationToken token)
+    internal void ConfigureReceiveOnly() => native.ConfigureReceiveOnly();
+
+    private NativeTerminalCore.ReceiveProjection RecordingProjection => new(native, recordingFlags, textRecord);
+
+    internal void Receive(TerminalReceiveSource source, ReadOnlySpan<byte> payload, CancellationToken token,
+        TerminalOutput? receiveOnly = null)
     {
-        if (!TryReceive(source, payload, token)) throw new ResourceLimitException();
+        if (!TryReceive(source, payload, token, receiveOnly)) throw new ResourceLimitException();
     }
 
-    internal bool TryReceive(TerminalReceiveSource source, ReadOnlySpan<byte> payload, CancellationToken token = default)
+    internal bool TryReceive(TerminalReceiveSource source, ReadOnlySpan<byte> payload, CancellationToken token = default,
+        TerminalOutput? receiveOnly = null)
     {
         if (source is not (TerminalReceiveSource.Data or TerminalReceiveSource.StandardError))
             throw new ArgumentOutOfRangeException(nameof(source));
         token.ThrowIfCancellationRequested();
         return native.TryFeed((uint)source, payload, recordingFlags, textRecord, terminalRecord,
-            token, replies.Enqueue, replies.Count, Bell);
+            token, replies.Enqueue, replies.Count, Bell, projection: receiveOnly?.RecordingProjection ?? default);
     }
 
     internal void EchoUtf8(ReadOnlySpan<byte> payload, ResourceReservation? prepaid = null)
@@ -96,7 +103,8 @@ public sealed class TerminalOutput
         if (!TryCompleteReceive()) throw new ResourceLimitException();
     }
 
-    internal bool TryCompleteReceive() => native.TryComplete(recordingFlags, textRecord, terminalRecord);
+    internal bool TryCompleteReceive(TerminalOutput? receiveOnly = null, bool flushText = false) =>
+        native.TryComplete(recordingFlags, textRecord, terminalRecord, receiveOnly?.RecordingProjection ?? default, flushText);
 
     public TerminalSnapshot GetRows() =>
         native.TrySnapshot(out var snapshot) ? snapshot! : throw new ResourceLimitException();
@@ -104,7 +112,21 @@ public sealed class TerminalOutput
     internal AiTerminalState ReadAiScreenState() => native.ReadScreenState();
     internal (long Id, long Revision) ReadAiScreenRow(int row, int first, int last, Action<TerminalCell> visit) =>
         native.ReadScreenRow(row, first, last, visit);
-    internal IHistoryRows GetHistoryRows(bool allowBuild = true) => native.ReadHistory(allowBuild);
+    internal int PrepareHistory() => native.PrepareHistory();
+
+    internal TerminalHistory.HistoryPage ReadHistoryPage(AiTerminalState state, TerminalHistory.Span? requested,
+        TerminalHistory.Point? position, int rows, int bytes, int outputBudget, CancellationToken token) =>
+        native.ReadHistoryPage(state, requested, position, rows, bytes, outputBudget, token);
+
+    internal void VerifyHistoryRanges(TerminalHistory.Span[] ranges, CancellationToken token) => native.VerifyHistoryRanges(ranges, token);
+
+    internal NativeTerminalCore.HistorySearch CaptureHistorySearch(TerminalHistory.SearchCursor? cursor,
+        string query, int context, long started, CancellationToken token) =>
+        native.CaptureHistorySearch(cursor, query, context, started, token);
+
+    internal TerminalHistory.SearchPage CompleteHistorySearch(AiTerminalState state, NativeTerminalCore.HistorySearch window,
+        string query, bool caseSensitive, int limit, int context, long started, CancellationToken token) =>
+        native.CompleteHistorySearch(state, window, query, caseSensitive, limit, context, started, token);
 
     public void Resize(int width, int height)
     {
@@ -112,13 +134,13 @@ public sealed class TerminalOutput
         Resize(width, height, plan);
     }
 
-    internal NativeTerminalCore.PreparedResize? PrepareNativeResize(int width, int height)
+    internal NativeTerminalCore.PreparedResize? PrepareNativeResize(int width, int height, TerminalOutput? receiveOnly = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(width, 2);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(width, 1024);
         ArgumentOutOfRangeException.ThrowIfLessThan(height, 1);
         int bounded = Math.Min(height, Math.Min(512, retainedRowLimit));
-        return columns == width && rows == bounded ? null : native.PrepareResize(width, bounded);
+        return columns == width && rows == bounded ? null : native.PrepareResize(width, bounded, receiveOnly?.RecordingProjection ?? default);
     }
 
     internal void Resize(int width, int height, NativeTerminalCore.PreparedResize? plan)
@@ -129,17 +151,8 @@ public sealed class TerminalOutput
         rows = Math.Min(height, Math.Min(512, retainedRowLimit));
     }
 
-    internal byte[] EncodeMouse(TerminalMouseInput input) => TerminalMouse.Encode(input, MouseMode, columns, rows);
-
-    internal byte[] EncodeBroadcastMouse(TerminalMouseInput input)
-    {
-        TerminalMouseMode mouse = MouseMode;
-        int width = mouse.SgrCoordinates ? columns : Math.Min(columns, 223);
-        int height = mouse.SgrCoordinates ? rows : Math.Min(rows, 223);
-        if (!input.Release && (input.Column < 0 || input.Column >= width || input.Row < 0 || input.Row >= height))
-            return [];
-        return TerminalMouse.Encode(input, mouse, width, height);
-    }
+    internal TerminalMouseReport PlanMouse(TerminalMouseInput input, TerminalMouseInput? previous = null) =>
+        NativeTerminalCore.EncodeMouse(input, MouseMode, columns, rows, previous);
 
     internal byte[][] TakeReplies()
     {
@@ -179,7 +192,6 @@ public sealed class TerminalOutput
         native.Dispose();
         replies.Clear();
         native.ReceiveObserver = null;
-        native.AlternateObserver = null;
         native.RecordingRefused = null;
         textRecord = terminalRecord = null;
     }

@@ -46,7 +46,7 @@ internal static class MacroConstantsBinder
                 {
                     var captured = await capture(path, budget.RemainingBytes).ConfigureAwait(false);
                     if (captured is null) return null;
-                    if (budget.CrossedByteLimit(path, captured.ByteCount))
+                    if (budget.CrossedByteLimit(captured.ByteCount))
                     {
                         var excess = new MacroSourceException("ConstantsLimit", declaration.Position, macroPath);
                         if (report is null) throw excess;
@@ -74,14 +74,13 @@ internal static class MacroConstantsBinder
 
 internal sealed class MacroConstantsBudget
 {
-    private readonly HashSet<string> measuredPaths = new(StringComparer.Ordinal);
     private long knownBytes;
     internal int RemainingBytes => (int)Math.Max(0, MacroLimits.SourceBytes - knownBytes);
     internal int RemainingMembers { get; private set; } = MacroConstantsFile.MaxMembers;
 
-    internal bool CrossedByteLimit(string path, int? byteCount)
+    internal bool CrossedByteLimit(int? byteCount)
     {
-        if (byteCount is not >= 0 || !measuredPaths.Add(path)) return false;
+        if (byteCount is not >= 0) return false;
         bool wasWithinLimit = knownBytes <= MacroLimits.SourceBytes;
         knownBytes += byteCount.Value;
         return wasWithinLimit && knownBytes > MacroLimits.SourceBytes;

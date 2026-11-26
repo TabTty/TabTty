@@ -112,32 +112,45 @@ public sealed class TelnetProtocol
         return [13];
     }
 
-    public byte[] EncodeInput(ReadOnlySpan<byte> input) => EncodeInput(input, default);
+    public byte[] EncodeInput(ReadOnlySpan<byte> input) => CaptureInputFraming().Encode(input);
 
-    internal byte[] EncodeInput(ReadOnlySpan<byte> input, Span<int> boundaries)
+    internal InputFraming CaptureInputFraming() => new(local[Binary] == OptionState.Enabled);
+
+    internal readonly record struct InputFraming(bool Binary)
     {
-        bool binary = local[Binary] == OptionState.Enabled;
-        int length = input.Length;
-        for (int index = 0; index < input.Length; index++)
+        private int Width(ReadOnlySpan<byte> input, int index) => input[index] == Iac ||
+            (!Binary && input[index] == 13 && (index + 1 == input.Length || input[index + 1] != 10)) ? 2 : 1;
+
+        internal int PayloadPrefix(ReadOnlySpan<byte> input, int confirmedWireBytes)
         {
-            byte value = input[index];
-            if (value == Iac) length++;
-            if (!binary && value == 13 && (index + 1 == input.Length || input[index + 1] != 10))
-                length++;
+            int index = 0;
+            while (index < input.Length && (confirmedWireBytes -= Width(input, index)) >= 0) index++;
+            return index;
         }
-        byte[] output = new byte[length];
-        int position = 0, boundary = 0;
-        for (int index = 0; index < input.Length; index++)
+
+        internal int WirePrefix(ReadOnlySpan<byte> input, int payloadBytes)
         {
-            byte value = input[index];
-            output[position++] = value;
-            if (value == Iac) output[position++] = Iac;
-            if (!binary && value == 13 && (index + 1 == input.Length || input[index + 1] != 10))
-                output[position++] = 0;
-            if (boundary < boundaries.Length && boundaries[boundary] == index + 1)
-                boundaries[boundary++] = position;
+            int length = 0;
+            for (int index = 0; index < payloadBytes; index++) length += Width(input, index);
+            return length;
         }
-        return output;
+
+        internal byte[] Encode(ReadOnlySpan<byte> input, Span<int> boundaries = default, byte[]? reusable = null)
+        {
+            int length = WirePrefix(input, input.Length);
+            if (reusable is not null && length == input.Length && boundaries.IsEmpty) return reusable;
+            byte[] output = new byte[length];
+            int position = 0, boundary = 0;
+            for (int index = 0; index < input.Length; index++)
+            {
+                byte value = input[index];
+                output[position++] = value;
+                if (Width(input, index) == 2) output[position++] = value == Iac ? Iac : (byte)0;
+                if (boundary < boundaries.Length && boundaries[boundary] == index + 1)
+                    boundaries[boundary++] = position;
+            }
+            return output;
+        }
     }
 
     public byte[] SetWindowSize(ushort width, ushort height)

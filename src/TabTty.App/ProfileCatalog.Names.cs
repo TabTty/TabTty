@@ -11,7 +11,7 @@ internal sealed partial class ProfileCatalog
     private string? configuredFolder;
     private string activeFolder = "";
 
-    private string ActiveFolder
+    internal string ActiveFolder
     {
         get
         {
@@ -27,7 +27,6 @@ internal sealed partial class ProfileCatalog
 
     internal void ProfileFolderChanged()
     {
-        configuredFolder = null;
         CatalogFolderChanged?.Invoke();
     }
 
@@ -100,7 +99,6 @@ internal sealed partial class ProfileCatalog
                         if (registration is not null)
                         {
                             registration["path"] = destination;
-                            registration["displayPath"] = destination;
                         }
                         if (state[TrustKey] is JsonObject trust)
                         {

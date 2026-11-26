@@ -136,7 +136,6 @@ internal static partial class MacroContracts
         var host = new Host { Password = "fixture-secret" };
         using var program = MacroProgram.ParsePostConnection("serial.ttty", body);
         using var run = new MacroRun(program, [], host);
-        run.ProfileLoaded(profile);
         await using var session = new TerminalSession(host.Wire, profile, null, 100, macro: run);
         int sends = 0;
         host.Wire.OnWrite = async () =>
@@ -173,7 +172,6 @@ internal static partial class MacroContracts
             var host = new Host { Password = "fixture-secret" };
             using var program = MacroProgram.ParsePostConnection("ssh.ttty", source);
             using var run = new MacroRun(program, [], host);
-            run.ProfileLoaded(profile);
             await using var session = new TerminalSession(host.Wire, profile, null, 100, macro: run);
             int sends = 0;
             host.Wire.OnWrite = () => new(session.ProcessPayloadAsync(TerminalReceiveSource.Data,

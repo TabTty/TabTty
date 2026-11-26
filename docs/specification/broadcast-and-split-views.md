@@ -421,6 +421,12 @@ visible range, backed by the shared content. Expose active-pane focus and
 readable group/pane names. Retain existing UIA snapshot limits, retained-range
 semantics, and no-default-live-announcement behavior. Output never steals focus.
 
+The WPF pane uses the same visible rows and columns for search and UI
+Automation. Derive visible text ranges and their clipped rectangles from the
+cells in that viewport. Scrolling a text range into view can move the invoking
+pane on both axes. Preserve the requested top or bottom alignment. Verify
+horizontal clipping with a wide character at the edge of a split pane.
+
 ## Minimum sizes and resource pressure
 
 Q196 delegates numeric usability guards to the engineering specification.

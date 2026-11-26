@@ -48,7 +48,7 @@ const vscode = {
     Location: class { constructor(uri, position) { this.uri = uri; this.position = position; } },
     Uri: { file: fsPath => ({ fsPath }) },
     CompletionItemKind: { Function: 1, Variable: 2, Constant: 3, Snippet: 4 },
-    env: { language: 'en' },
+    env: { language: process.env.TABTTY_TEST_LANGUAGE || 'en' },
     workspace: { isTrusted: false, textDocuments: [doc], onDidOpenTextDocument: noop,
         onDidChangeTextDocument: callback => { onDocumentChange = callback; return noop(); },
         onDidCloseTextDocument: noop, onDidGrantWorkspaceTrust: noop },
@@ -137,6 +137,19 @@ extension.activate(context);
     doc.text = '#tttym 1\nvar x = Macro\n    .Args\n    .Wrong;';
     const memberError = (await getDiagnostics()).find(item => item.code === 'UnknownMember');
     assert.deepStrictEqual(memberError.range, new Range(new Position(3, 5), new Position(3, 10)));
+    doc.text = '#tttym 1\nvar WriteLine = 1;';
+    const reserved = (await getDiagnostics()).find(item => item.code === 'ReservedName');
+    assert.deepStrictEqual(reserved.range, new Range(new Position(1, 4), new Position(1, 13)));
+    assert(reserved.message.includes('WriteLine') && reserved.message.includes(vscode.env.language === 'ja' ? '予約名' : 'reserved'));
+    for (const declaration of ['void Example(long WriteLine) { }', 'try {} catch (MacroError WriteLine) { }']) {
+        doc.text = '#tttym 1\n' + declaration;
+        const diagnostic = (await getDiagnostics()).find(item => item.code === 'ReservedName');
+        const start = declaration.indexOf('WriteLine');
+        assert.deepStrictEqual(diagnostic.range, new Range(new Position(1, start), new Position(1, start + 9)));
+    }
+    doc.text = '#tttym 1\nWaitPrompt("Ready>", 1000);';
+    const waitType = (await getDiagnostics()).find(item => item.code === 'TypeMismatch');
+    assert(waitType.message.includes('Literal') && waitType.message.includes('Regex'));
     doc.text = '#tttym 1\nWaitPrompt("Ready>");';
     const [patternDiagnostic] = await getDiagnostics();
     const actions = await providers.action.provideCodeActions(doc,
@@ -146,6 +159,13 @@ extension.activate(context);
     assert.deepStrictEqual(actions[0].diagnostics, [patternDiagnostic]);
     assert.strictEqual(actions[0].edit.replacement.text, 'Literal("Ready>")');
     assert.strictEqual(actions[1].edit.replacement.text, 'Regex("Ready>")');
+    for (const action of actions) {
+        const replacement = action.edit.replacement;
+        doc.text = '#tttym 1\nWaitPrompt("Ready>");';
+        const start = doc.offsetAt(replacement.range.start), end = doc.offsetAt(replacement.range.end);
+        doc.text = doc.text.slice(0, start) + replacement.text + doc.text.slice(end);
+        assert.deepStrictEqual(await getDiagnostics(), []);
+    }
     doc.text = '#tttym 1\nWaitPrompt(\n  "Ready>");';
     doc.version++;
     assert.deepStrictEqual(await providers.action.provideCodeActions(doc, patternDiagnostic.range,

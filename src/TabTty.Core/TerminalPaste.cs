@@ -21,8 +21,7 @@ public sealed class TerminalPaste : IDisposable
     {
         Text = text;
         this.sourceMemory = sourceMemory;
-        (CharacterCount, LineCount) = token.CanBeCanceled ? AnalyzeCancellable(text, token) :
-            NativeTerminalCore.AnalyzePaste(text);
+        (CharacterCount, LineCount) = Analyze(text, token);
     }
 
     public static TerminalPaste Create(string text)
@@ -72,17 +71,15 @@ public sealed class TerminalPaste : IDisposable
         public void Dispose() => Interlocked.Exchange(ref source, null)?.ReleaseSource();
     }
 
-    private static (int Characters, int Lines) AnalyzeCancellable(string text, CancellationToken token)
+    private static (int Characters, int Lines) Analyze(string text, CancellationToken token)
     {
         int offset = 0, characters = 0, lines = 1;
         uint context = 0;
         while (offset < text.Length)
         {
             token.ThrowIfCancellationRequested();
-            var remainder = text.AsSpan(offset);
-            var (length, completed, _) = NativeTerminalCore.NextPasteChunk(remainder, 0, 0, ref context);
-            var (_, pageLines) = NativeTerminalCore.AnalyzePaste(remainder[..length]);
-            lines += pageLines - 1;
+            var (length, completed, lineBreaks) = NativeTerminalCore.AnalyzePastePage(text.AsSpan(offset), ref context);
+            lines += lineBreaks;
             characters += completed;
             offset += length;
         }

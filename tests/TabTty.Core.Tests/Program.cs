@@ -294,18 +294,27 @@ static void BroadcastMouseRespectsGridAndGeneration()
     var terminal = new TerminalOutput(columns: 60, screenRows: 24);
     terminal.Receive(TerminalReceiveSource.Data, "\u001b[?1002h\u001b[?1006h"u8);
     var press = new TerminalMouseInput(0, 49, 4, false, false, TerminalModifiers.None, terminal.MouseMode.Generation);
-    ExpectBytes(terminal.EncodeBroadcastMouse(press), "\u001b[<0;50;5M"u8.ToArray());
-    ExpectBytes(terminal.EncodeBroadcastMouse(press with { Column = 69, Motion = true }), []);
-    ExpectBytes(terminal.EncodeBroadcastMouse(press with { Column = 58, Motion = true }), "\u001b[<32;59;5M"u8.ToArray());
-    ExpectBytes(terminal.EncodeBroadcastMouse(press with { Column = 69, Release = true }), "\u001b[<0;60;5m"u8.ToArray());
+    ExpectBytes(terminal.PlanMouse(press).Payload, "\u001b[<0;50;5M"u8.ToArray());
+    ExpectBytes(terminal.PlanMouse(press with { Column = 69, Motion = true }).Payload, []);
+    ExpectBytes(terminal.PlanMouse(press with { Column = 58, Motion = true }).Payload, "\u001b[<32;59;5M"u8.ToArray());
+    ExpectBytes(terminal.PlanMouse(press with { Column = 69, Release = true }, press).Payload, "\u001b[<0;60;5m"u8.ToArray());
     terminal.Receive(TerminalReceiveSource.Data, "\u001b[?1002l\u001b[?9h"u8);
-    ExpectBytes(terminal.EncodeBroadcastMouse(press with { Release = true }), []);
-    ExpectBytes(terminal.EncodeBroadcastMouse(press with { Release = true, Generation = terminal.MouseMode.Generation }), []);
-    terminal.Resize(400, 24);
+    ExpectBytes(terminal.PlanMouse(press with { Release = true }).Payload, []);
+    ExpectBytes(terminal.PlanMouse(press with { Release = true, Generation = terminal.MouseMode.Generation }).Payload, []);
+    terminal.Resize(400, 300);
     terminal.Receive(TerminalReceiveSource.Data, "\u001b[?1006l\u001b[?1000h"u8);
     var classic = press with { Generation = terminal.MouseMode.Generation, Column = 223 };
-    ExpectBytes(terminal.EncodeBroadcastMouse(classic), []);
-    ExpectBytes(terminal.EncodeBroadcastMouse(classic with { Release = true }), [27, 91, 77, 35, 255, 37]);
+    ExpectBytes(terminal.PlanMouse(classic).Payload, []);
+    var classicPress = terminal.PlanMouse(classic with { Column = 222 });
+    ExpectBytes(classicPress.Payload, [27, 91, 77, 32, 255, 37]);
+    ExpectBytes(terminal.PlanMouse(classic with { Release = true }, classicPress.Effective).Payload, [27, 91, 77, 35, 255, 37]);
+    ExpectBytes(terminal.PlanMouse(classic with { Row = 11, Release = true }, classicPress.Effective).Payload,
+        [27, 91, 77, 35, 255, 44]);
+    var lowerPress = terminal.PlanMouse(classic with { Column = 49, Row = 4 });
+    ExpectBytes(terminal.PlanMouse(classic with { Row = 11, Release = true }, lowerPress.Effective).Payload,
+        [27, 91, 77, 35, 255, 44]);
+    ExpectBytes(terminal.PlanMouse(classic with { Column = 11, Row = 223, Release = true }, lowerPress.Effective).Payload,
+        [27, 91, 77, 35, 44, 255]);
 }
 
 static void SplitUtf8AppearsOnlyAfterItsFinalByte()
@@ -344,7 +353,7 @@ static async Task SftpUsesTheSameSshConnectionWithoutRecordingFileData(int port)
         byte[] final = SftpClient.Child(directory, transfer.EncodeName("試験.bin"));
         byte[] contents = Enumerable.Range(0, 70_000).Select(i => (byte)i).ToArray();
         byte[] output = await transfer.OpenAsync(staged, true, token);
-        Task terminal = session.SendTextAsync("shell", token);
+        Task terminal = session.DeliverInputAsync(new(TerminalInputKind.Text, "shell"), token);
         for (int offset = 0; offset < contents.Length; offset += SftpClient.BlockSize)
             await transfer.WriteAsync(output, offset, contents.AsMemory(offset, Math.Min(SftpClient.BlockSize, contents.Length - offset)), token);
         await transfer.CloseAsync(output, token);
@@ -385,7 +394,7 @@ static async Task SftpUsesTheSameSshConnectionWithoutRecordingFileData(int port)
         throw new InvalidOperationException("The fixture was expected to refuse SFTP.");
     }
     catch (SftpException error) when (error.Failure == SftpFailure.SubsystemRefused) { }
-    await deniedSession.SendTextAsync("shell", token);
+    await deniedSession.DeliverInputAsync(new(TerminalInputKind.Text, "shell"), token);
     IReadOnlyList<string>? available = await deniedSession.ReadOutputAsync(token);
     if (available is null || !available.Contains("shell")) throw new InvalidOperationException("SFTP refusal affected the terminal.");
 }
@@ -428,7 +437,7 @@ static async Task SshPasswordSessionPreservesChannelBytes(int port)
     await using var session = await connecting;
     if (expectEarlyData && !startupRecorded)
         throw new InvalidOperationException("Early SSH data did not reach the log while terminal startup was pending.");
-    await session.SendTextAsync("go", deadline.Token);
+    await session.DeliverInputAsync(new(TerminalInputKind.Text, "go"), deadline.Token);
     IReadOnlyList<string>? last = null;
     while (await session.ReadOutputAsync(deadline.Token) is { } rows) last = rows;
     if (last is null || !last.SequenceEqual(new[] { expectEarlyData ? "early あ!" : "あ!" }))
@@ -1594,7 +1603,7 @@ static async Task SavedProfileConnectsAndExchangesTerminalData()
     await wire.ReadExactlyAsync(size, deadline.Token);
     ExpectBytes(size, [255, 250, 31, 0, 120, 0, 40, 255, 240]);
 
-    await session.SendEnterAsync(deadline.Token);
+    await session.DeliverInputAsync(new(TerminalInputKind.Enter), deadline.Token);
     byte[] enter = new byte[2];
     await wire.ReadExactlyAsync(enter, deadline.Token);
     ExpectBytes(enter, [13, 10]);
@@ -1662,7 +1671,7 @@ static async Task RecordingFormatsProjectTheSameSessionIndependently()
     var incoming = listener.AcceptTcpClientAsync(deadline.Token);
     await using var session = await TerminalSession.ConnectAsync(path, deadline.Token);
     using var server = await incoming;
-    await session.SendTextAsync("echo", deadline.Token);
+    await session.DeliverInputAsync(new(TerminalInputKind.Text, "echo"), deadline.Token);
     await server.GetStream().WriteAsync("old\r\0new\a\u001b[6n\r\ntail"u8.ToArray(), deadline.Token);
     server.Client.Shutdown(SocketShutdown.Send);
     while (await session.ReadOutputAsync(deadline.Token) is not null) { }
@@ -1758,7 +1767,7 @@ static async Task EveryTerminalEncodingUsesTheSavedProfile()
             await stream.ReadExactlyAsync(reply, token);
             if (!reply.AsSpan().SequenceEqual("\u001b[1;6R"u8))
                 throw new InvalidOperationException("Wrong cursor reply for " + encoding + ".");
-            await session.SendTextAsync("AZ", token);
+            await session.DeliverInputAsync(new(TerminalInputKind.Text, "AZ"), token);
             byte[] sent = new byte[2];
             await stream.ReadExactlyAsync(sent, token);
             if (!sent.AsSpan().SequenceEqual("AZ"u8))
@@ -1861,7 +1870,7 @@ static async Task PasteUsesNegotiatedBracketsWithoutAppendingEnter()
     ExpectBytes(started, "\u001B[200~X"u8.ToArray());
     try
     {
-        await session.SendTextAsync("blocked", deadline.Token);
+        await session.DeliverInputAsync(new(TerminalInputKind.Text, "blocked"), deadline.Token);
         throw new InvalidOperationException("Interactive input entered an active paste.");
     }
     catch (InvalidOperationException exception) when (exception.Message == "A paste is in progress.") { }
@@ -1951,9 +1960,9 @@ static async Task DirectKeypadEnterUsesSessionMappingAsync()
     var wire = new PartialSerialWire(0);
     await using var session = new TerminalSession(wire, profile, null, 100);
     await session.ProcessPayloadAsync(TerminalReceiveSource.Data, "A"u8.ToArray(), default);
-    await session.SendKeyAsync(TerminalKey.KeypadEnter);
+    await session.DeliverInputAsync(new(TerminalInputKind.Key, Key: TerminalKey.KeypadEnter));
     await session.ProcessPayloadAsync(TerminalReceiveSource.Data, "B\u001b="u8.ToArray(), default);
-    await session.SendKeyAsync(TerminalKey.KeypadEnter);
+    await session.DeliverInputAsync(new(TerminalInputKind.Key, Key: TerminalKey.KeypadEnter));
     await session.ProcessPayloadAsync(TerminalReceiveSource.Data, "C"u8.ToArray(), default);
     ExpectBytes(wire.Submitted[0], [10]);
     ExpectBytes(wire.Submitted[1], "\u001bOM"u8.ToArray());
@@ -2145,15 +2154,15 @@ static async Task TemporaryLocalEchoDoesNotRewriteTheProfile()
     transport.Resume();
     var profile = ConnectionProfile.CreateSerial("Echo", new SerialSettings("COM1"));
     await using var session = new TerminalSession(transport, profile, null, 5000);
-    await session.SendTextAsync("hidden");
+    await session.DeliverInputAsync(new(TerminalInputKind.Text, "hidden"));
     await session.SetLocalEchoAsync("on");
-    await session.SendTextAsync("shown");
+    await session.DeliverInputAsync(new(TerminalInputKind.Text, "shown"));
     if (!session.LocalEchoEnabled || profile.LocalEcho != "off")
         throw new InvalidOperationException("A temporary echo change altered the saved policy.");
     if (!(await session.GetOutputAsync()).SequenceEqual(["shown"]))
         throw new InvalidOperationException("The changed local echo policy did not affect submitted input.");
     await session.SetLocalEchoAsync("off");
-    await session.SendTextAsync("hidden again");
+    await session.DeliverInputAsync(new(TerminalInputKind.Text, "hidden again"));
     if (!(await session.GetOutputAsync()).SequenceEqual(["shown"]))
         throw new InvalidOperationException("Disabling local echo changed retained output.");
 }
@@ -2164,17 +2173,17 @@ static async Task QueuedInputRejectsExcessWithoutDisconnecting()
     var transport = new PausedSendWire();
     await using var session = new TerminalSession(transport,
         ConnectionProfile.CreateSerial("Input", new SerialSettings("COM1")), null, 5000);
-    var sends = new List<Task<IReadOnlyList<string>>>();
-    for (int index = 0; index < 256; index++) sends.Add(session.SendKeyAsync(TerminalKey.Up, cancellationToken: deadline.Token));
+    var sends = new List<Task>();
+    for (int index = 0; index < 256; index++) sends.Add(session.DeliverInputAsync(new(TerminalInputKind.Key, Key: TerminalKey.Up), deadline.Token));
     try
     {
-        await session.SendKeyAsync(TerminalKey.Up, cancellationToken: deadline.Token);
+        await session.DeliverInputAsync(new(TerminalInputKind.Key, Key: TerminalKey.Up), deadline.Token);
         throw new InvalidOperationException("The input item limit was exceeded.");
     }
     catch (ResourceLimitException) { }
     transport.Resume();
     await Task.WhenAll(sends);
-    await session.SendTextAsync("still connected", deadline.Token);
+    await session.DeliverInputAsync(new(TerminalInputKind.Text, "still connected"), deadline.Token);
     if (transport.Writes != 257) throw new InvalidOperationException("Input refusal lost or duplicated an accepted send.");
 }
 
@@ -2349,8 +2358,8 @@ static async Task JisTransmissionUsesIcuDesignations()
     ExpectBytes(actual, expected);
     await wire.WriteAsync("\u001B[?1h>"u8.ToArray(), deadline.Token);
     while (await session.ReadOutputAsync(deadline.Token) is { } rows && !rows.Any(row => row.EndsWith('>'))) { }
-    await session.SendKeyAsync(TerminalKey.Up, cancellationToken: deadline.Token);
-    await session.SendKeyAsync(TerminalKey.Left, TerminalModifiers.Control, deadline.Token);
+    await session.DeliverInputAsync(new(TerminalInputKind.Key, Key: TerminalKey.Up), deadline.Token);
+    await session.DeliverInputAsync(new(TerminalInputKind.Key, Key: TerminalKey.Left, Modifiers: TerminalModifiers.Control), deadline.Token);
     byte[] keys = new byte[9];
     await wire.ReadExactlyAsync(keys, deadline.Token);
     ExpectBytes(keys, "\u001BOA\u001B[1;5D"u8.ToArray());

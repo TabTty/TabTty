@@ -61,8 +61,11 @@ module.exports = async function checkConstants(providers, workspace, doc, shared
     shared.getText = () => 'long Broken = "wrong";';
     doc.text = declarations.replace('#constants Common "shared.tttyc"', '#constants Common "unavailable.tttyc"') +
         '#constants Third "shared.tttyc"\nSleep(Second.Broken);';
-    const dependencyErrors = (await diagnostics()).map(item => [item.range.start.line, item.code]).sort();
+    const invalidDependencies = await diagnostics();
+    const dependencyErrors = invalidDependencies.map(item => [item.range.start.line, item.code]).sort();
     assert.deepStrictEqual(dependencyErrors, [[1, 'ConstantsOpenRequired'], [2, 'ConstantsInvalid'], [3, 'ConstantsInvalid']]);
+    assert(invalidDependencies.filter(item => item.code === 'ConstantsInvalid').every(item =>
+        item.message.includes('shared constants file') || item.message.includes('共有定数ファイル')));
     doc.text = header.replace('shared.tttyc', 'unavailable.tttyc');
     doc.text += '\nSleep(Common /* comment */\n.';
     assert.deepStrictEqual(await complete(), []);

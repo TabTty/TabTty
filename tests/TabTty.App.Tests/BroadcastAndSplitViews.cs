@@ -135,6 +135,9 @@ internal static partial class Program
 
     private static async Task BroadcastAndSplitViews(App app, string directory)
     {
+        await CheckBroadcastPasteFailurePrefixAsync(app, directory);
+        await CheckBroadcastPasteFailurePrefixAsync(app, directory, bracketed: true);
+        await CheckBroadcastDeliveryFailureAsync(app, directory);
         await CheckMouseRoutingAsync(app, directory);
         await CheckBroadcastReconnectAsync(app, directory);
         await CheckRecordingNoticesAsync(app, directory);
@@ -363,9 +366,18 @@ internal static partial class Program
             Click(move.Items.OfType<MenuItem>().Last());
             if (!other.IsClosing || !host.TerminalTabs.Contains(outside) || !outside.BroadcastChecked || third.Available != 0)
                 throw new InvalidOperationException("The global move did not preserve the paste targets and reset the moved check.");
+            var destinationTabs = (TabControl)host.FindName("tabs");
+            destinationTabs.SelectedItem = destinationTabs.Items.OfType<TabItem>().Single(item => item.Content == outside);
+            while (!ShowsPasteProgress(source)) await Task.Delay(20, deadline.Token);
+            if (ShowsPasteProgress(outside))
+                throw new InvalidOperationException("Paste progress followed the selection to a tab outside the captured recipients.");
             Click(Child(FindMenu(host, "ConnectionMenu", "BroadcastInput"), "StopPaste"));
             if (await sending.WaitAsync(deadline.Token) != BroadcastInput.PasteOutcome.Stopped || new[] { first, second, third }.Any(peer => peer.Available != 0))
                 throw new InvalidOperationException("Stop Paste did not cancel the unsent tail in every window.");
+            if (ShowsPasteProgress(source)) throw new InvalidOperationException("The initiating tab retained stopped paste progress.");
+
+            static bool ShowsPasteProgress(TerminalTab terminal) => FindControls<TextBlock>(terminal)
+                .Any(label => label.Text.Contains("1/2", StringComparison.Ordinal));
 
             foreach (var peer in new[] { first, second, third })
                 await peer.GetStream().WriteAsync("\u001b[?1002h\u001b[?1006h"u8.ToArray(), deadline.Token);
@@ -580,6 +592,171 @@ internal static partial class Program
                 throw new InvalidOperationException("A tab-group button omitted its icon or localized label.");
             return button;
         }
+    }
+
+    private static async Task CheckBroadcastPasteFailurePrefixAsync(App app, string directory, bool bracketed = false)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        var written = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var failing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var host = new MainWindow(app, () => true);
+        host.Show();
+        var goodWire = new PacedPasteWire(written, failing, fail: false);
+        var badWire = new PacedPasteWire(written, failing, fail: true);
+        var (source, good) = Add("Healthy", goodWire);
+        var (_, bad) = Add("Failing", badWire);
+        await using var first = good;
+        await using var second = bad;
+        try
+        {
+            if (bracketed)
+                await good.ProcessPayloadAsync(TerminalReceiveSource.Data, "\u001b[?2004h"u8.ToArray(), deadline.Token);
+            host.SelectNotificationTab(source);
+            app.Broadcast.Start(host);
+            using var paste = TerminalPaste.Create("AB");
+            var result = await app.Broadcast.PasteAsync(host, source, paste, (_, _) =>
+                throw new InvalidOperationException("The fixture unexpectedly requested a paste preview."),
+                new(5000, 0, false), deadline.Token);
+            string expected = bracketed ? "\u001b[200~\u001b[201~" : "A";
+            if (result != BroadcastInput.PasteOutcome.Stopped || Encoding.ASCII.GetString(goodWire.Bytes.ToArray()) != expected)
+                throw new InvalidOperationException("The fixture did not stop the healthy recipient at the intended boundary.");
+
+            host.UpdateLayout();
+            string confirmed = bracketed ? App.Text("BroadcastPasteFramingOnly") : string.Format(App.Text("ConfirmedInputPrefix"), 1);
+            string label = TerminalTab.BroadcastTargetLabel(good);
+            var notice = FindControls<TextBlock>(source.Notices).Single(item =>
+                item.Text.Contains(label, StringComparison.Ordinal) && item.Text.Contains(confirmed, StringComparison.Ordinal));
+            if (!notice.Text.Split('\n').Any(line => line.Contains(label, StringComparison.Ordinal) &&
+                line.Contains(confirmed, StringComparison.Ordinal) && !line.Contains(App.Text("BroadcastNotSent"), StringComparison.Ordinal)))
+                throw new InvalidOperationException("The incident reported a confirmed paste write as unsent.");
+            FindControls<Button>(notice.Parent as DependencyObject ?? source.Notices).Single(button =>
+                Equals(button.Content, App.Text("OK"))).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            if (goodWire.Bytes.Count != expected.Length || badWire.Bytes.Count != 0)
+                throw new InvalidOperationException("Acknowledging a broadcast incident resent input.");
+            Console.WriteLine(bracketed ? "PASS BroadcastPasteFailureReportsFramingOnly" : "PASS BroadcastPasteFailurePreservesRecipientProgress");
+        }
+        finally
+        {
+            app.Broadcast.Stop(host);
+            foreach (var terminal in host.TerminalTabs)
+                typeof(TerminalTab).GetProperty(nameof(TerminalTab.IsRunning))!.SetValue(terminal, false);
+            var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            host.Closed += (_, _) => closed.TrySetResult();
+            host.Close();
+            await closed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+
+        (TerminalTab, TerminalSession) Add(string name, PacedPasteWire wire)
+        {
+            var tab = new TerminalTab(Path.Combine(directory, name + ".ttty"));
+            var terminal = new TerminalSession(wire, ConnectionProfile.CreateTelnet(name, "127.0.0.1"), null, 100);
+            typeof(TerminalTab).GetField("session", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+                .SetValue(tab, terminal);
+            host.AddTerminalTab(tab);
+            return (tab, terminal);
+        }
+    }
+
+    private sealed class PacedPasteWire(TaskCompletionSource written, TaskCompletionSource failing, bool fail) : ISessionWire
+    {
+        internal List<byte> Bytes { get; } = [];
+
+        public ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken token) => ValueTask.FromResult(0);
+
+        public async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken token)
+        {
+            if (fail)
+            {
+                await written.Task.WaitAsync(token);
+                await Task.Delay(100, token);
+                failing.TrySetResult();
+                throw new IOException("Synthetic paste failure.");
+            }
+            Bytes.AddRange(buffer.ToArray());
+            written.TrySetResult();
+            if (buffer.Span.SequenceEqual("\u001b[200~"u8))
+            {
+                await failing.Task.WaitAsync(token);
+                await Task.Delay(350, token);
+            }
+        }
+
+        public void Dispose() { }
+    }
+
+    private static async Task CheckBroadcastDeliveryFailureAsync(App app, string directory)
+    {
+        foreach (bool serial in new[] { true, false })
+        foreach (bool isPaste in new[] { false, true })
+        {
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var host = new MainWindow(app, () => true);
+            string name = serial ? "Zero serial" : "Half IAC";
+            var tab = new TerminalTab(Path.Combine(directory, name + ".ttty"));
+            using var wire = new IncompleteBroadcastWire(serial);
+            var profile = serial ? ConnectionProfile.CreateSerial(name, new("COM254")) :
+                ConnectionProfile.CreateTelnet(name, "127.0.0.1", transmitEncoding: "iso-8859-1");
+            await using var session = new TerminalSession(wire, profile, null, 100);
+            typeof(TerminalTab).GetField("session", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+                .SetValue(tab, session);
+            host.AddTerminalTab(tab);
+            host.Show();
+            host.SelectNotificationTab(tab);
+            app.Broadcast.Start(host);
+            try
+            {
+                string text = serial ? "A" : "ÿ";
+                bool sent;
+                if (isPaste)
+                {
+                    using var paste = TerminalPaste.Create(text);
+                    var result = await app.Broadcast.PasteAsync(host, tab, paste, (_, _) =>
+                        throw new InvalidOperationException("Unexpected paste preview."), new(0, 0, false), deadline.Token);
+                    sent = result != BroadcastInput.PasteOutcome.Stopped;
+                }
+                else sent = await app.Broadcast.Send(host, new(TerminalInputKind.Text, text), deadline.Token)!;
+                string label = TerminalTab.BroadcastTargetLabel(session);
+                var notice = FindControls<TextBlock>(tab.Notices).Single(item => item.Text.Contains(label, StringComparison.Ordinal));
+                string outcome = serial ? App.Text("BroadcastNotSent") : App.Text("NoticeBroadcastUncertain");
+                string other = serial ? App.Text("NoticeBroadcastUncertain") : App.Text("BroadcastNotSent");
+                if (sent || !notice.Text.Contains(outcome, StringComparison.Ordinal) || notice.Text.Contains(other, StringComparison.Ordinal) ||
+                    wire.Calls != (serial ? 1 : 2) || wire.Accepted != (serial ? null : (byte)0xFF))
+                    throw new InvalidOperationException("The report did not preserve the outcome of a zero-payload write.");
+                FindControls<Button>(notice.Parent as DependencyObject ?? tab.Notices).Single(button =>
+                    Equals(button.Content, App.Text("OK"))).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                if (wire.Calls != (serial ? 1 : 2)) throw new InvalidOperationException("Acknowledging an incident resent input.");
+            }
+            finally
+            {
+                app.Broadcast.Stop(host);
+                typeof(TerminalTab).GetProperty(nameof(TerminalTab.IsRunning))!.SetValue(tab, false);
+                var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                host.Closed += (_, _) => closed.TrySetResult();
+                host.Close();
+                await closed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+        }
+        Console.WriteLine("PASS BroadcastDistinguishesNoSubmissionFromAnUncertainWrite");
+    }
+
+    private sealed class IncompleteBroadcastWire(bool serial, bool refuseRemainder = false) : ISessionWire
+    {
+        internal int Calls { get; private set; }
+        internal byte? Accepted { get; private set; }
+        public ValueTask<int> WriteSomeAsync(ReadOnlyMemory<byte> buffer, CancellationToken token)
+        {
+            if (++Calls != 1)
+            {
+                if (refuseRemainder) return ValueTask.FromResult(0);
+                throw new IOException("Synthetic write failure.");
+            }
+            if (serial) return ValueTask.FromResult(0);
+            Accepted = buffer.Span[0];
+            return ValueTask.FromResult(1);
+        }
+        public ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken token) => ValueTask.FromResult(0);
+        public ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken token) => throw new InvalidOperationException("Expected counted write.");
+        public void Dispose() { }
     }
 
     private static MenuItem Child(ItemsControl menu, string key) => menu.Items.OfType<MenuItem>()

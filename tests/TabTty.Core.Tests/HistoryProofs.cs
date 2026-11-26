@@ -24,24 +24,21 @@ internal static class HistoryProofs
         Write(deep, "needle\r\n");
         for (int row = 1; row < bigLimit; row++) Write(deep, "filler\r\n");
         Warm(deep);
-        using (var rows = deep.GetHistoryRows())
-            if (rows.Length != bigLimit)
-                throw new InvalidOperationException("The fixture did not fill the retention boundary.");
-        var window = CaptureSearch(deep, null, "absent", default, Stopwatch.GetTimestamp());
-        var scan = Scan(window, "absent", false, 4, default);
-        var result = CompleteSearch(deep, default, window, scan, "absent", false, 4, 2, default);
+        if (deep.PrepareHistory() != bigLimit)
+            throw new InvalidOperationException("The fixture did not fill the retention boundary.");
+        var result = Search(deep, "absent");
         if (result.Matches.Length != 0 || result.Scanned is null || result.Next is null)
             throw new InvalidOperationException("An empty search page did not disclose validated progress.");
         Equal(Validate(deep, result.Dependencies, default), null);
         var wrapped = new TerminalOutput(columns: 4, retainedRowLimit: 100, screenRows: 4);
         Write(wrapped, "abCDabcd\r\nEF");
-        var contiguous = CaptureSearch(wrapped, null, "da", default, Stopwatch.GetTimestamp());
-        var matches = Scan(contiguous, "da", false, 4, default);
+        var matches = Search(wrapped, "da");
         if (matches.Matches is not [{ Text: "Da" }])
             throw new InvalidOperationException("A literal match spanning a soft wrap was lost.");
-        var hard = CaptureSearch(wrapped, null, "de", default, Stopwatch.GetTimestamp());
-        if (Scan(hard, "de", false, 4, default).Matches.Length != 0)
+        if (Search(wrapped, "de").Matches.Length != 0)
             throw new InvalidOperationException("Literal search crossed a hard line boundary.");
+        VerifySearchContinuation();
+        VerifyFixedSearchContext();
 
         var sized = new TerminalOutput(columns: 1024, retainedRowLimit: 1000, screenRows: 3);
         for (int row = 0; row < 200; row++) Write(sized, new string('あ', 500) + "\r\n");
@@ -73,6 +70,18 @@ internal static class HistoryProofs
             throw new InvalidOperationException("A complete cluster exceeded the explicit text limit.");
         }
         catch (HistoryException error) when (error.Message == "resource_limit") { }
+        Write(cluster, "b");
+        var tail = Read(cluster, default, null, null, 1, 1, PageOutputBudget, default);
+        if (tail.Fragments is not [{ text: "b" }] || tail.Earlier is not { } earlier)
+            throw new InvalidOperationException("The backward checkpoint lost the preceding stored character.");
+        try
+        {
+            _ = Read(cluster, default, earlier, null, 1, 1, PageOutputBudget, default);
+            throw new InvalidOperationException("A backward read silently consumed a character above the byte limit.");
+        }
+        catch (HistoryException error) when (error.Message == "resource_limit") { }
+        if (Read(cluster, default, earlier, null, 1, 3, PageOutputBudget, default).Fragments is not [{ text: "あ" }])
+            throw new InvalidOperationException("Retrying the backward read did not return the remaining character.");
         VerifyMaximumSpan();
         Write(deep, "A\rB\r\u001b[K");
         // The requested range ends at the empty last row, so suffix-only appends
@@ -121,11 +130,81 @@ internal static class HistoryProofs
     private static void Write(TerminalOutput model, string text) =>
         model.Receive(TerminalReceiveSource.Data, System.Text.Encoding.UTF8.GetBytes(text));
 
+    private static SearchPage Search(TerminalOutput model, string query, SearchCursor? cursor = null)
+    {
+        long started = Stopwatch.GetTimestamp();
+        using var window = model.CaptureHistorySearch(cursor, query, 2, started, default);
+        window.Scan(query, false, 4, started, PageOutputBudget, default);
+        return model.CompleteHistorySearch(default, window, query, false, 4, 2, started, default);
+    }
+
+    private static void VerifySearchContinuation()
+    {
+        var model = new TerminalOutput(columns: 4, retainedRowLimit: 5000, screenRows: 3);
+        try
+        {
+            Write(model, new string('a', 4095) + "ΣY" + new string('b', 12));
+            Warm(model);
+            SearchPage page = Search(model, "σy");
+            var found = page.Matches.ToList();
+            if (page.Next is null || page.Scanned is null)
+                throw new InvalidOperationException("Search did not retain a checkpoint after the first bounded window.");
+            Write(model, "ΣY");
+            for (int attempts = 0; page.Next is { } cursor && attempts < 64; attempts++)
+            {
+                page = Search(model, "σy", cursor);
+                found.AddRange(page.Matches);
+            }
+            if (page.Next is not null || found is not [{ Text: "ΣY", Position.Offset: 4095 }])
+                throw new InvalidOperationException("Search lost a cross-window match, duplicated it, or extended its fixed end.");
+        }
+        finally { model.ReleaseNativeState(); }
+    }
+
+    private static void VerifyFixedSearchContext()
+    {
+        var model = new TerminalOutput(columns: 4, retainedRowLimit: 100, screenRows: 1);
+        try
+        {
+            Write(model, "Q");
+            var started = Stopwatch.GetTimestamp();
+            using var window = model.CaptureHistorySearch(null, "Q", 0, started, default);
+            window.Scan("Q", true, 1, started, PageOutputBudget, default);
+            Write(model, "NEW");
+            var page = model.CompleteHistorySearch(default, window, "Q", true, 1, 0, started, default);
+            var context = page.Matches.Single().Context;
+            if (Read(model, default, context, null, 1, 10, PageOutputBudget, default).Fragments is not [{ text: "Q" }])
+                throw new InvalidOperationException("Search context disclosed output appended after capture.");
+            Write(model, "\rX");
+            Warm(model);
+            Equal(Validate(model, page.Dependencies, default), "range_changed");
+        }
+        finally { model.ReleaseNativeState(); }
+
+        foreach (bool breakBeforeCapture in new[] { false, true })
+        {
+            var terminal = new TerminalOutput(columns: 8, retainedRowLimit: 100, screenRows: 1);
+            try
+            {
+                Write(terminal, breakBeforeCapture ? "Q\r\n" : "Q");
+                long started = Stopwatch.GetTimestamp();
+                using var search = terminal.CaptureHistorySearch(null, "Q", 0, started, default);
+                search.Scan("Q", true, 4, started, PageOutputBudget, default);
+                if (!breakBeforeCapture) Write(terminal, "\r\nNEW");
+                Span scanned = terminal.CompleteHistorySearch(default, search, "Q", true, 4, 0, started, default).Scanned!;
+                var row = Read(terminal, default, scanned, null, 4, 16, PageOutputBudget, default).Fragments[0];
+                if (row.text != "Q" || row.line_end != breakBeforeCapture)
+                    throw new InvalidOperationException("The scanned range did not preserve the original hard ending.");
+            }
+            finally { terminal.ReleaseNativeState(); }
+        }
+    }
+
     private static void Warm(TerminalOutput model)
     {
         for (int attempt = 0; ; attempt++)
         {
-            try { using var rows = model.GetHistoryRows(); return; }
+            try { _ = model.PrepareHistory(); return; }
             catch (HistoryException error) when (error.Message == "busy" && attempt < 100) { }
         }
     }

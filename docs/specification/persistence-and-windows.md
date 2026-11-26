@@ -908,6 +908,19 @@ arrows in fixed positions while the headers scroll. Each press reveals more
 headers in that direction and keeps the current tab selected. The tab bar's
 mouse wheel still selects the previous or next tab.
 
+The tab group under the pointer becomes current even on a partial wheel turn.
+Each tab bar accumulates its own wheel delta. Every +120 selects the previous
+tab and every −120 selects the next one, wrapping at either end. Reversing
+direction discards that bar's previous remainder. A wheel event over a bar
+with fewer than two tabs clears only that bar's remainder. A newly created
+group starts at zero. Moving a tab leaves the remainder with its group, and
+removing the group discards it.
+
+Verify with two tabs in each of two groups. For left +60, right +60, right
++60, left +60, the first two events keep both selections, the third changes
+only the right selection, and the fourth changes only the left selection.
+When a wheel step selects a terminal tab, focus its terminal pane as usual.
+
 | Tab bar position | Left button | Right button | Faded edges |
 | --- | --- | --- | --- |
 | All headers fit, including an exact fit | Hidden | Hidden | None |

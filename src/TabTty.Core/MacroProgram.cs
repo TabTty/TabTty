@@ -28,6 +28,7 @@ internal sealed class MacroProgram : IDisposable
     public string FullPath { get; }
     internal string Source { get; }
     internal MacroBlock Body { get; }
+    internal MacroPosition EntryPosition => Body.Statements.FirstOrDefault()?.Position ?? new(1, 1);
     internal Dictionary<string, MacroFunction> Functions { get; }
     internal int NodeCount { get; }
     internal bool IsPostConnection { get; private init; }
@@ -89,7 +90,7 @@ internal sealed class MacroProgram : IDisposable
         }
         catch (ResourceLimitException) { throw new MacroSourceException("MemoryLimit", new(1, 1), path); }
         catch (MacroSourceException error) when (error.FilePath is null)
-        { throw new MacroSourceException(error.Code, error.Position, path, error.Length); }
+        { throw error.WithFilePath(path); }
     }
 
     public static MacroProgram Parse(string path, string source)

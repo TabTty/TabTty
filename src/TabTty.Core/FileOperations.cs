@@ -37,12 +37,17 @@ internal interface IFileOperationIo
 }
 
 internal enum TransferQuestionKind { Overwrite, Delete, PermanentDelete }
+internal enum FileMutation { CreateFolder, Rename, Delete }
 internal sealed record TransferQuestion(TransferQuestionKind Kind, TransferPath Path,
     TransferItem? Source = null, TransferAttributes? Existing = null, IReadOnlyList<TransferItem>? Selection = null, CancellationToken Lifetime = default);
 internal abstract record FileOperationUpdate
 {
     internal sealed record Started : FileOperationUpdate;
-    internal sealed record Entry(string Path, string Reason) : FileOperationUpdate;
+    internal sealed record Entry(string Path, string Reason, FileMutation? Mutation = null, string? Destination = null) : FileOperationUpdate
+    {
+        public string DisplayPath => Destination is null ? Path : $"{Path} → {Destination}";
+        internal int DetailLength => Path.Length + Reason.Length + (Destination?.Length ?? 0);
+    }
     internal sealed record Progress(string Path, long Bytes, long? Total) : FileOperationUpdate;
 }
 
@@ -54,6 +59,7 @@ internal sealed class FileOperationOwnership
     private bool needsRefresh;
     private int pending;
     private long revision;
+    private long refreshGeneration;
     public event Action? Changed;
     public bool IsBusy { get { lock (gate) return active || pending != 0; } }
     public bool NeedsRefresh { get { lock (gate) return needsRefresh; } }
@@ -69,12 +75,21 @@ internal sealed class FileOperationOwnership
         }
     }
     public void Leave() { lock (gate) active = false; Changed?.Invoke(); }
-    public void RequireRefresh() { lock (gate) needsRefresh = true; }
+    public void RequireRefresh() { lock (gate) { needsRefresh = true; refreshGeneration++; } }
+    public long? RefreshRevision
+    {
+        get { lock (gate) return needsRefresh && !active && pending == 0 ? refreshGeneration : null; }
+    }
     public void Refreshed()
+    {
+        if (RefreshRevision is { } observed) Refreshed(observed);
+    }
+    public void Refreshed(long observed)
     {
         lock (gate)
         {
-            if (!active && pending == 0) needsRefresh = false;
+            if (!needsRefresh || active || pending != 0 || observed != refreshGeneration) return;
+            needsRefresh = false;
         }
         Changed?.Invoke();
     }
@@ -158,7 +173,7 @@ internal sealed class FileOperations
             {
                 foreach (var entry in previous)
                     if (entry.Reason == Omission) MarkOmitted();
-                    else if (IsUnresolved(entry.Reason) || !updated.Contains(entry.Path)) AddResult(entry.Path, entry.Reason);
+                    else if (IsUnresolved(entry.Reason) || !updated.Contains(entry.Path)) AddResult(entry);
             }
         }, transfer: true);
     }
@@ -166,7 +181,12 @@ internal sealed class FileOperations
     public Task<string>? Create(TransferPath parent, string name) => Start(async token =>
     {
         TransferPath path = files.Child(parent, name);
-        await files.CreateAsync(path, token);
+        try { await files.CreateAsync(path, token); }
+        catch (SftpException error) when (error.Failure == SftpFailure.UnknownOutcome)
+        {
+            AddResult(new(files.Display(path), "SftpUnknownOutcome", FileMutation.CreateFolder));
+            throw;
+        }
         AddResult(files.Display(path), "TransferDone");
     });
 
@@ -179,7 +199,7 @@ internal sealed class FileOperations
         try { await files.RenameAsync(item.Path, target, replace: false, token); }
         catch (SftpException error) when (error.Failure == SftpFailure.UnknownOutcome)
         {
-            AddResult(files.Display(target), "SftpUnknownOutcome");
+            AddResult(new(files.Display(item.Path), "SftpUnknownOutcome", FileMutation.Rename, files.Display(target)));
             throw;
         }
         AddResult(files.Display(target), "TransferDone");
@@ -253,10 +273,12 @@ internal sealed class FileOperations
         }
     }
 
-    private void AddResult(string path, string key)
+    private void AddResult(string path, string key) => AddResult(new(path, key));
+
+    private void AddResult(FileOperationUpdate.Entry entry)
     {
-        bool priority = IsUnresolved(key);
-        int size = path.Length + key.Length;
+        bool priority = IsUnresolved(entry.Reason);
+        int size = entry.DetailLength;
         if (priority) MakeRoom(1, size);
         if (DetailCount + reservedEntries >= DetailEntries ||
             size > DetailCharacters - Omission.Length - characters - reservedCharacters)
@@ -265,7 +287,6 @@ internal sealed class FileOperations
             return;
         }
         characters += size;
-        var entry = new FileOperationUpdate.Entry(path, key);
         current.Insert(DetailCount, entry);
         Changed?.Invoke(entry);
     }
@@ -289,7 +310,7 @@ internal sealed class FileOperations
             while (index >= 0 && IsUnresolved(current[index].Reason)) index--;
             if (index < 0) break;
             var entry = current[index];
-            characters -= entry.Path.Length + entry.Reason.Length;
+            characters -= entry.DetailLength;
             current.RemoveAt(index--);
             MarkOmitted();
         }
@@ -366,8 +387,12 @@ internal sealed class FileOperations
                     catch (Exception error) when (TransferBatch.IsFileError(error))
                     {
                         plan.Reported = true;
+                        if (error is SftpException { Failure: SftpFailure.UnknownOutcome })
+                        {
+                            AddResult(new(files.Display(plan.Item.Path), "SftpUnknownOutcome", FileMutation.Delete));
+                            throw;
+                        }
                         AddResult(plan.Item.Label, TransferBatch.ErrorKey(error));
-                        if (error is SftpException { Failure: SftpFailure.UnknownOutcome }) throw;
                         continue;
                     }
                 }
@@ -414,16 +439,23 @@ internal sealed class FileOperations
                     return false;
                 }
                 token.ThrowIfCancellationRequested();
-                await files.DeleteAsync(entry.Item.Path, expected, token);
+                try { await files.DeleteAsync(entry.Item.Path, expected, token); }
+                catch (SftpException error) when (error.Failure == SftpFailure.UnknownOutcome)
+                {
+                    entry.Reported = true;
+                    AddResult(new(files.Display(entry.Item.Path), "SftpUnknownOutcome", FileMutation.Delete));
+                    throw;
+                }
                 entry.Reported = true;
                 AddResult(files.Display(entry.Item.Path), "TransferDeleted");
                 return true;
             }
-            catch (Exception error) when (TransferBatch.IsFileError(error))
+            catch (Exception error) when (error is not SftpException { Failure: SftpFailure.UnknownOutcome } &&
+                TransferBatch.IsFileError(error))
             {
                 entry.Reported = true;
                 AddResult(files.Display(entry.Item.Path), TransferBatch.ErrorKey(error));
-                if (error is SftpException { Failure: SftpFailure.UnknownOutcome or SftpFailure.Disconnected }) throw;
+                if (error is SftpException { Failure: SftpFailure.Disconnected }) throw;
                 return false;
             }
         }

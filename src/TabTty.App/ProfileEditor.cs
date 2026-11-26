@@ -18,6 +18,7 @@ internal sealed class ProfileEditor
     private readonly JsonObject draft;
     private List<Action> apply = [];
     private readonly FormView form;
+    private readonly PostConnectionValidation postConnectionValidation = new();
     private readonly bool fromExplorer;
     private System.Windows.FrameworkElement names;
     private readonly Dictionary<string, TransportFields> transports = new(StringComparer.Ordinal);
@@ -56,7 +57,7 @@ internal sealed class ProfileEditor
         void BuildPostConnectionMacro()
         {
             form.AddPageDescription("PostConnectionMacroDescription");
-            var editor = new PostConnectionEditor(form, profile.PostConnectionSource);
+            var editor = new PostConnectionEditor(form, profile.PostConnectionSource, postConnectionValidation);
             TextBox input = editor.Source;
             var routines = PostConnectionRoutineMenu.Create(form, input, app, () => selectedProtocol == "ssh" &&
                 transports["ssh"].Connection["authentication"]?["password"] is not null);
@@ -67,7 +68,8 @@ internal sealed class ProfileEditor
             apply.Add(() =>
             {
                 if (string.IsNullOrWhiteSpace(input.Text)) draft.Remove("postConnectionMacro");
-                else draft["postConnectionMacro"] = new JsonObject { ["version"] = 1, ["source"] = input.Text };
+                else draft["postConnectionMacro"] = new JsonObject
+                    { ["version"] = PostConnectionValidation.LanguageVersion, ["source"] = input.Text };
             });
         }
 
@@ -239,7 +241,7 @@ internal sealed class ProfileEditor
         foreach (string key in new[] { "advertisedType", "enter", "backspace", "localEcho" })
             terminal[key] = selected.Terminal[key]!.DeepClone();
         ConnectionProfile profile = original.Edit(draft.ToJsonString());
-        try { profile.ValidateEditorSettings(); }
+        try { profile.ValidateEditorSettings(postConnectionValidation); }
         catch (MacroSourceException error) { throw new InvalidDataException(TerminalTab.PostConnectionSourceError(error), error); }
         return profile;
     }

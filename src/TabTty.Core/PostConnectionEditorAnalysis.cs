@@ -6,7 +6,7 @@ internal sealed record PostConnectionEditorAnalysis(
     int ReplacementStart, int ReplacementLength, IReadOnlyList<PostConnectionCompletion> Completions,
     PostConnectionSignature? Signature, MacroSourceException? Diagnostic, int DiagnosticStart, int DiagnosticLength)
 {
-    internal static PostConnectionEditorAnalysis Analyze(string source, int caret)
+    internal static PostConnectionEditorAnalysis Analyze(string source, int caret, PostConnectionValidation? validation = null)
     {
         caret = Math.Clamp(caret, 0, source.Length);
         var cursor = new PostConnectionCursor(caret);
@@ -20,7 +20,7 @@ internal sealed record PostConnectionEditorAnalysis(
         }
         catch (MacroSourceException failure) { error = failure; }
         catch (ResourceLimitException) { error = new("MemoryLimit", new(1, 1)); }
-        return cursor.Result(source, editor, symbols, error);
+        return cursor.Result(source, editor, symbols, validation is null ? error : validation.Check(source, onlyCurrent: true));
     }
 }
 

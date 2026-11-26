@@ -22,7 +22,8 @@ internal sealed partial class MainWindow : Window
     private bool closing;
     private bool readyToClose;
     private bool closed;
-    private int tabWheelDelta;
+    private static readonly DependencyProperty TabWheelRemainderProperty = DependencyProperty.RegisterAttached(
+        "TabWheelRemainder", typeof(int), typeof(MainWindow), new PropertyMetadata(0));
     private Color? headerAccent;
 
     public MainWindow(App app, Func<bool>? hasForeground = null)
@@ -140,27 +141,11 @@ internal sealed partial class MainWindow : Window
 
     internal void AddTerminalTab(TerminalTab terminal) => SelectNewTab(CreateTerminalTab(terminal));
 
-    private WindowTab CreateTerminalTab(TerminalTab terminal)
-    {
-        var item = new WindowTab(terminal);
-        terminal.ResolveTabHost(() => item.Host);
-        item.UpdateTerminalCaption(terminal);
-        terminal.CaptionChanged += () => { item.UpdateTerminalCaption(terminal); app.Broadcast.Refresh(); };
-        terminal.Disconnected += () =>
-        {
-            object generation = terminal.ConnectionGeneration;
-            _ = Dispatcher.BeginInvoke(() =>
-            {
-                if (ReferenceEquals(terminal.ConnectionGeneration, generation))
-                    item.Host?.OnTerminalDisconnected(item);
-            });
-        };
-        return item;
-    }
+    private static WindowTab CreateTerminalTab(TerminalTab terminal) => new(terminal);
 
     private void OnTerminalDisconnected(WindowTab item)
     {
-        if (!closing && GroupOf(item) is not null && item.Content is TerminalTab { IsExternalMacro: false } terminal &&
+        if (!closing && item.Content is TerminalTab { IsExternalMacro: false } terminal &&
             (terminal.CloseAfterInitialCancellation || app.AutoCloseDisconnectedTabs && terminal.CanAutoCloseOnDisconnect))
             terminalClosure.CloseAutomatically(item);
     }
@@ -523,7 +508,7 @@ internal sealed partial class MainWindow : Window
         if (group?.Template?.FindName("tabStripRow", group) is not FrameworkElement strip) return 0;
         ActivateGroup(group);
         handled = true;
-        if (wheel) MoveTabSelectionByWheel(unchecked((short)((long)wParam >> 16)));
+        if (wheel) MoveTabSelectionByWheel(group, unchecked((short)((long)wParam >> 16)));
         else
         {
             FrameworkElement? header = group.Items.OfType<WindowTab>().Select(tab => tab.Header).OfType<FrameworkElement>()
@@ -551,20 +536,21 @@ internal sealed partial class MainWindow : Window
     private async void CloseDisconnectedTabs(object sender, RoutedEventArgs args) =>
         await terminalClosure.CloseDisconnectedTabsAsync();
 
-    private void MoveTabSelectionByWheel(int delta)
+    internal static void MoveTabSelectionByWheel(TabControl group, int delta)
     {
-        int count = activeGroup.Items.Count;
+        int count = group.Items.Count;
         if (count < 2)
         {
-            tabWheelDelta = 0;
+            group.ClearValue(TabWheelRemainderProperty);
             return;
         }
-        if (Math.Sign(tabWheelDelta) != Math.Sign(delta)) tabWheelDelta = 0;
-        tabWheelDelta += delta;
-        int steps = tabWheelDelta / Mouse.MouseWheelDeltaForOneLine;
-        tabWheelDelta %= Mouse.MouseWheelDeltaForOneLine;
+        int remainder = (int)group.GetValue(TabWheelRemainderProperty);
+        if (Math.Sign(remainder) != Math.Sign(delta)) remainder = 0;
+        remainder += delta;
+        int steps = remainder / Mouse.MouseWheelDeltaForOneLine;
+        group.SetValue(TabWheelRemainderProperty, remainder % Mouse.MouseWheelDeltaForOneLine);
         if (steps != 0)
-            activeGroup.SelectedIndex = (Math.Max(0, activeGroup.SelectedIndex) - steps % count + count) % count;
+            group.SelectedIndex = (Math.Max(0, group.SelectedIndex) - steps % count + count) % count;
     }
 
     private void OnScrollTabsLeft(object sender, RoutedEventArgs args) => ScrollTabHeaders((Button)sender, left: true);
@@ -1087,13 +1073,31 @@ internal sealed partial class MainWindow : Window
             };
             if (content is TerminalTab terminal)
             {
+                terminal.ResolveTabHost(() => Host);
+                UpdateTerminalCaption(terminal);
+                terminal.CaptionChanged += () =>
+                {
+                    UpdateTerminalCaption(terminal);
+                    Host?.app.Broadcast.Refresh();
+                };
+                terminal.Disconnected += () =>
+                {
+                    object generation = terminal.ConnectionGeneration;
+                    _ = Dispatcher.BeginInvoke(() =>
+                    {
+                        if (ReferenceEquals(terminal.ConnectionGeneration, generation))
+                            Host?.OnTerminalDisconnected(this);
+                    });
+                };
                 var menu = new ContextMenu();
                 header.ContextMenu = menu;
+                menu.Closed += (_, _) => menu.Items.Clear();
                 menu.Opened += (_, _) =>
                 {
                     menu.Items.Clear();
                     if (terminal.CanTransfer) menu.Items.Add(MenuAction("FileTransfer", terminal.OpenFileTransfer));
-                    if (Host is not { } host || host.GroupOf(this) is not { } group) return;
+                    if (Placement is not { } placement) return;
+                    var (host, group) = placement;
                     if (host.CanReconnectTab(this, terminal))
                         menu.Items.Add(MenuAction("Reconnect", () => Host?.ReconnectTab(this)));
                     terminal.AddMouseRoutingCommand(menu);
@@ -1158,6 +1162,11 @@ internal sealed partial class MainWindow : Window
             get => placement;
             set
             {
+                if (placement != value && Header is FrameworkElement { ContextMenu: { } menu })
+                {
+                    menu.IsOpen = false;
+                    menu.Items.Clear();
+                }
                 placement = value;
                 if (value is null) return;
                 if (Content is TerminalTab terminal) terminal.RefreshNoticeOwner();
@@ -1165,7 +1174,7 @@ internal sealed partial class MainWindow : Window
             }
         }
         public MainWindow? Host => Placement?.Window;
-        public bool IsClosing { get; set; }
+        public bool IsClosing => Content is TerminalTab { ClosePending: true };
         public bool CanCloseAsDisconnected => Content is TerminalTab { IsDisconnected: true, HasActiveMacro: false };
 
         public void UpdateBroadcast(bool visible, bool editable)

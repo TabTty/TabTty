@@ -46,6 +46,7 @@ internal sealed partial class TerminalTab : UserControl
     private TerminalSurface output = new();
     private Guid? highlightSetId;
     private readonly TerminalHighlightState highlightState = new();
+    private readonly TerminalHighlightView visibleHighlights;
     private readonly DispatcherTimer resizeTimer;
     private readonly DispatcherTimer frameTimer;
     private IReadOnlyList<string>? pendingFrame;
@@ -102,6 +103,7 @@ internal sealed partial class TerminalTab : UserControl
         this.sshInteraction = sshInteraction;
         this.fixedViewport = fixedViewport;
         this.fixtureHighlights = fixtureHighlights;
+        visibleHighlights = new(Dispatcher, highlightState);
         this.captureClipboard = captureClipboard ?? ClipboardPaste.CaptureAsync;
         bellTimer = new DispatcherTimer(DispatcherPriority.Render, Dispatcher)
         {
@@ -243,7 +245,8 @@ internal sealed partial class TerminalTab : UserControl
     public bool HasActiveTransfer => transferWindow?.HasActiveOperation == true;
     internal object ConnectionGeneration => stop;
     internal FileTransferWindow? TransferWindow => transferWindow;
-    internal bool ClosePending { get; set; }
+    internal Task<bool>? ClosureDecision { private get; set; }
+    internal bool ClosePending => ClosureDecision is { IsCompletedSuccessfully: true, Result: true };
     private bool removed;
     private bool CanStartConnection => !removed && !ClosePending && !IsExternalMacro && connectionCompletion.IsCompleted;
 
@@ -411,10 +414,11 @@ internal sealed partial class TerminalTab : UserControl
             var recordingOwner = session;
             recordingOwner.RecordingPartFailed += ShowRecordingFailure;
             ShowRecordingFailure();
-            Connected?.Invoke(connectedName);
+            visibleHighlights.ResetForSession();
             highlightState.Resume();
             highlightSetId = session.HighlightSetId;
             ApplyHighlightSet();
+            Connected?.Invoke(connectedName);
             foreach (var pane in panes.Keys) pane.SetConnected(!HasActiveMacro);
             mousePump = SendMouseAsync(session);
             Interlocked.Exchange(ref receivedRevision, 1);
@@ -526,7 +530,7 @@ internal sealed partial class TerminalTab : UserControl
         searchMatches = [];
         searchMemory.Dispose();
         paneLayout?.ReleaseReservations();
-        foreach (var pane in panes.Values) pane.Highlight.Detach();
+        visibleHighlights.Detach();
         pendingFrame = null;
         var owner = session ?? retainedAiSession;
         retainedAiSession = null;
@@ -965,6 +969,8 @@ internal sealed partial class TerminalTab : UserControl
             Reports.Report(ConnectionGeneration, $"{PermissionDisplay.Literal(TabCaption)} — {credentialError}");
     }
 
+    internal void ReportTransferCloseFailure() => SetStatus(statusKey, Text("SftpCloseReportFailed"));
+
     private void SetStatus(string key, string? detail = null)
     {
         bool changed = statusKey != key;
@@ -1037,8 +1043,24 @@ internal sealed partial class TerminalTab : UserControl
         AutomationProperties.SetName(status, text);
     }
 
+    private string broadcastWindowStatus = "", broadcastPasteProgress = "";
+
     internal void SetBroadcastStatus(string text)
     {
+        broadcastWindowStatus = text;
+        UpdateBroadcastStatus();
+    }
+
+    internal void SetBroadcastPasteProgress(string? text)
+    {
+        broadcastPasteProgress = text ?? "";
+        UpdateBroadcastStatus();
+    }
+
+    private void UpdateBroadcastStatus()
+    {
+        string text = broadcastWindowStatus.Length == 0 ? broadcastPasteProgress :
+            broadcastPasteProgress.Length == 0 ? broadcastWindowStatus : $"{broadcastWindowStatus}\n{broadcastPasteProgress}";
         broadcastTabStatus.Visibility = text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         if (broadcastTabStatus.Text == text) return;
         broadcastTabStatus.Text = text;
@@ -1180,13 +1202,10 @@ internal sealed partial class TerminalTab : UserControl
         snapshot = updated;
         foreach (var (surface, pane) in panes)
         {
-            if (updated is not null)
-            {
-                surface.UpdateSnapshotPosition(updated);
-                pane.Highlight.SetSnapshot(updated);
-            }
+            if (updated is not null) surface.UpdateSnapshotPosition(updated);
             surface.SetSearch(pane.CurrentMatch, searchMatches, scroll: false);
         }
+        if (updated is not null) visibleHighlights.SetSnapshot(updated);
         UpdateMouseRouting();
         if (searchBar.Visibility == Visibility.Visible)
         {
@@ -1307,7 +1326,9 @@ internal sealed partial class TerminalTab : UserControl
                 {
                     var (first, end) = surface.VisibleRows();
                     int row = Math.Min(backwards ? Math.Max(first, end - 1) : first, captured.Count - 1);
-                    int offset = backwards ? int.MaxValue : -1;
+                    var (left, right) = surface.VisibleColumns();
+                    var (start, finish) = captured.VisibleText(row, left, right);
+                    int offset = backwards ? finish : start - 1;
                     anchor = new TerminalMatch(row, offset, row, offset);
                 }
                 await TerminalHighlightView.Workers.WaitAsync(token);
@@ -1324,7 +1345,7 @@ internal sealed partial class TerminalTab : UserControl
                 if (!current.HasSameHighlightText(captured)) continue;
                 pending.Dequeue();
                 pane.CurrentMatch = found;
-                surface.SetSearch(found, searchMatches, scroll: found.HasValue);
+                surface.SetSearch(found, searchMatches, scroll: found.HasValue, backwards: backwards);
                 ScheduleSearchRefresh();
             }
         }

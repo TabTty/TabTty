@@ -73,12 +73,11 @@ internal sealed partial class AiCollaboration
                     }
                 }, token);
                 string? highlightStatus = highlights ? "current" : null;
-                if (highlights && share.Tab.HasAiHighlightRules)
+                if (highlights && !data.State.IsAlternate && share.Tab.HasAiHighlightRules)
                 {
                     int overlayBytes = 0;
                     foreach (var (row, index) in data.Lines.Select((row, index) => (row, index)))
                     {
-                        if (row.Id == 0) continue;
                         var overlay = share.Tab.CaptureAiHighlightRow(row.row);
                         if (overlay is { } cached && cached.Id == row.Id && cached.Revision == row.Revision &&
                             cached.Spans.Length <= 128 && overlayBytes + cached.Spans.Length * 128 <= 64 * KiB &&
@@ -87,7 +86,7 @@ internal sealed partial class AiCollaboration
                             int charged = cached.Spans.Length * 128;
                             memory.Add(charged);
                             overlayBytes += charged;
-                            data.Lines[index] = row with { highlights = cached.Spans };
+                            data.Lines[index] = row with { highlights = cached.Spans.ToArray() };
                         }
                         else highlightStatus = "pending";
                     }

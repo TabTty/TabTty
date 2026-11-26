@@ -182,19 +182,34 @@ internal sealed partial class MacroRun
         { throw new MacroError(MacroErrorCode.Path); }
     }
 
-    internal bool TryCommitSend()
+    private PasswordPreparation? passwordPreparation;
+
+    private sealed class PasswordPreparation(CancellationToken stop) : IDisposable
     {
-        lock (gate)
+        private readonly CancellationTokenSource cancellation = CancellationTokenSource.CreateLinkedTokenSource(stop);
+        private Task? invalidation;
+        internal CancellationToken Token => cancellation.Token;
+        internal void Invalidate() => invalidation ??= cancellation.CancelAsync();
+
+        public void Dispose()
         {
-            stop.Token.ThrowIfCancellationRequested();
-            if (holds != MacroHold.None) return false;
-            inFlight = true; return true;
+            if (invalidation is { IsCompleted: false } pending)
+                _ = pending.ContinueWith(_ => cancellation.Dispose(), TaskScheduler.Default);
+            else cancellation.Dispose();
         }
     }
 
-    internal MacroReceiveCutoff CaptureReceiveBoundary()
+    internal MacroReceiveCutoff? CommitSend(CancellationToken preparation, bool markReceiveBoundary, bool first)
     {
-        lock (gate) return history.Cutoff();
+        lock (gate)
+        {
+            if (stop.IsCancellationRequested) throw new MacroSendDeferredException();
+            if (!first) return null;
+            if (holds != MacroHold.None || preparation.IsCancellationRequested)
+                throw new MacroSendDeferredException();
+            inFlight = true;
+            return markReceiveBoundary ? history.Cutoff() : null;
+        }
     }
 
     internal void CommitReceiveBoundary(MacroReceiveCutoff? cutoff = null)
@@ -213,23 +228,39 @@ internal sealed partial class MacroRun
         if (explicitName is not null && !VaultPayload.IsValidName(explicitName))
             throw new MacroError(MacroErrorCode.InvalidArgument);
         CredentialReference reference = explicitName is not null ? new(explicitName, "password") :
-            profilePassword ?? throw new MacroError(MacroErrorCode.MissingProfilePassword);
-        if (transport is "telnet" or "serial")
-        { lock (gate) plaintextNotice = true; Notify(); }
+            active.ConfiguredSshPassword ?? throw new MacroError(MacroErrorCode.MissingProfilePassword);
+        if (active.IsTelnet || active.IsSerial)
+        {
+            bool showNotice;
+            lock (gate) { showNotice = !plaintextNotice; plaintextNotice = true; }
+            if (showNotice) Notify();
+        }
         await HostOperationAsync(line ? "WritePasswordLine" : "WritePassword", async () =>
         {
             while (true)
             {
                 await WaitForContinuationAsync(stop.Token).ConfigureAwait(false);
-                bool sent;
-                using (VaultSecret? secret = await host.ReadPasswordAsync(reference, stop.Token).ConfigureAwait(false))
+                using var preparation = new PasswordPreparation(stop.Token);
+                lock (gate)
                 {
-                    if (secret is null) throw new MacroError(MacroErrorCode.VaultUnlockCancelled);
                     stop.Token.ThrowIfCancellationRequested();
-                    sent = await active.SendMacroPasswordAsync(secret, line, this, stop.Token).ConfigureAwait(false);
+                    if (holds != MacroHold.None) continue;
+                    passwordPreparation = preparation;
                 }
-                if (sent) return true;
-                // Dispose before suspending; the current entry is retrieved again after Resume.
+                try
+                {
+                    using VaultSecret? secret = await host.ReadPasswordAsync(reference, stop.Token).ConfigureAwait(false);
+                    stop.Token.ThrowIfCancellationRequested();
+                    if (preparation.Token.IsCancellationRequested) continue;
+                    if (secret is null) throw new MacroError(MacroErrorCode.VaultUnlockCancelled);
+                    if (await active.SendMacroPasswordAsync(secret, line, preparation.Token, this, stop.Token).ConfigureAwait(false))
+                        return true;
+                }
+                catch (MacroError) when (preparation.Token.IsCancellationRequested && !stop.IsCancellationRequested) { }
+                finally
+                {
+                    lock (gate) passwordPreparation = null;
+                }
             }
         }).ConfigureAwait(false);
     }

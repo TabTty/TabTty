@@ -67,7 +67,7 @@ internal static partial class Program
             Task input = stream.CopyToAsync(vim.StandardInput.BaseStream, relay.Token);
 
             await WaitForViewportAsync("alternate screen", snapshot => snapshot.IsAlternateScreen && !ContainsText(snapshot, normal));
-            await session.SendTextAsync("i" + marker, token);
+            await session.DeliverInputAsync(new(TerminalInputKind.Text, "i" + marker), token);
             await WaitForViewportAsync("Vim insertion", snapshot =>
                 snapshot.IsAlternateScreen && ContainsText(snapshot, marker) && !ContainsText(snapshot, normal));
             int previousColumns = surface.Snapshot!.Columns;
@@ -75,9 +75,9 @@ internal static partial class Program
             await WaitForViewportAsync("alternate screen after resize", snapshot =>
                 snapshot.Columns < previousColumns && snapshot.IsAlternateScreen && ContainsText(snapshot, marker));
             phase = "Vim exit";
-            await session.SendKeyAsync(TerminalKey.Escape, cancellationToken: token);
-            await session.SendTextAsync(":qa!", token);
-            await session.SendEnterAsync(token);
+            await session.DeliverInputAsync(new(TerminalInputKind.Key, Key: TerminalKey.Escape), token);
+            await session.DeliverInputAsync(new(TerminalInputKind.Text, ":qa!"), token);
+            await session.DeliverInputAsync(new(TerminalInputKind.Enter), token);
             await vim.WaitForExitAsync(token);
             await output;
             if (vim.ExitCode != 0) throw new InvalidOperationException(await diagnostics);

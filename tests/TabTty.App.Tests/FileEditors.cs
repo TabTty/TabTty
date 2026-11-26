@@ -171,9 +171,60 @@ internal static partial class Program
 
         await CheckPartialSelectedVaultRecoveryAsync();
         Console.WriteLine("PASS PartialSettingsReinspectionAdoptsTheMatchingVaultOwner");
+        await CheckReservedVaultSpellingAsync();
+        Console.WriteLine("PASS SettingsRetainTheReservedVaultWhenItsSpellingChanges");
         await CheckUnlockHostTransferAsync();
         Console.WriteLine("PASS VaultUnlockTransfersTheLivePrompt");
         Console.WriteLine("PASS CheckFileEditors");
+
+        async Task CheckReservedVaultSpellingAsync()
+        {
+            string requested = Path.Combine(directory, "reserved-owner.tttykey");
+            string appeared = Path.Combine(directory, "Reserved-Owner.tttykey");
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            using var paused = settingsFixture.PauseNextWrite();
+            Task saving = SelectVault(requested);
+            await paused.Issued.Task.WaitAsync(deadline.Token);
+            var reservation = (ValueTuple<VaultFileController, VaultFileController>)typeof(VaultController)
+                .GetField("selectionTransition", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+                .GetValue(app.Vault)!;
+            File.Copy(selectedPath, appeared);
+            paused.Dispose();
+            await saving.WaitAsync(deadline.Token);
+            if (!app.Vault.IsSelected(reservation.Item2))
+                throw new InvalidOperationException("A new path spelling replaced the vault reserved before publication.");
+            object? reopened = typeof(VaultController).GetMethod("GetFile",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+                .Invoke(app.Vault, [ProfileLocation.Normalize(appeared)]);
+            if (!ReferenceEquals(reservation.Item2, reopened))
+                throw new InvalidOperationException("Reopening the vault with its on-disk spelling created a second owner.");
+            string replacement = Path.Combine(directory, "reserved-owner-replacement.tttykey");
+            using (await CredentialVault.CreateAsync(replacement, master.AsMemory(), deadline.Token)) { }
+            using var opened = await CredentialVault.UnlockAsync(reservation.Item2.FilePath, master.AsMemory(), deadline.Token);
+            typeof(VaultFileController).GetField("vault", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+                .SetValue(reservation.Item2, opened);
+            File.Copy(replacement, appeared, overwrite: true);
+            try
+            {
+                await opened.ListEntriesAsync(deadline.Token);
+                throw new InvalidOperationException("The externally replaced vault did not become stale.");
+            }
+            catch (CredentialVaultStaleException) { }
+            await SelectVault(selectedPath);
+            await SelectVault(appeared);
+            var returned = (VaultFileController)typeof(VaultController).GetProperty("Selected",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(app.Vault)!;
+            if (!app.Vault.MustRestart(returned))
+                throw new InvalidOperationException("Switching back bypassed the restart restriction through another spelling.");
+            await SelectVault(selectedPath);
+            File.Move(appeared, Path.Combine(directory, "reserved-owner-displaced.tttykey"));
+            await SelectVault(requested);
+            returned = (VaultFileController)typeof(VaultController).GetProperty("Selected",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(app.Vault)!;
+            if (!app.Vault.MustRestart(returned))
+                throw new InvalidOperationException("An absent vault location lost its restart restriction through another spelling.");
+            await SelectVault(selectedPath);
+        }
 
         async Task CheckPartialSelectedVaultRecoveryAsync()
         {

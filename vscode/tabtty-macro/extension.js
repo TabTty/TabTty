@@ -65,39 +65,6 @@ function activate(context) {
         if (index > 0 && signature.NamedParameters) return '[' + label + ': ' + type + ']';
         return label ? type + ' ' + label : type;
     }
-    const messages = {
-        ConstantsMissing: ['Shared constants file was not found.', '共有定数ファイルが見つかりません。'],
-        ConstantsInvalid: ['The shared constants file contains an error.', '共有定数ファイルにエラーがあります。'],
-        ConstantsTooLarge: ['The shared constants file is too large.', '共有定数ファイルのサイズが大きすぎます。'],
-        ConstantsLimit: ['The declared constants exceed the permitted limit.', '宣言した定数が上限を超えています。'],
-        NumericLiteral: ['The numeric literal is malformed or out of range.', '数値リテラルの形式または範囲が正しくありません。'],
-        StringEscape: ['Invalid string escape. Use two hexadecimal digits after \\x.', 'エスケープが不正です。\\x の後には16進数字を2桁指定してください。'],
-        ConstantsUnreadable: ['The shared constants file could not be read.', '共有定数ファイルを読み取れませんでした。'],
-        ConstantsOpenRequired: ['Open the shared constants file to analyze it.', '共有定数ファイルを開いてください。'],
-        VersionLine: ['A supported #tttym 1 version declaration is required.', '対応する #tttym 1 バージョン宣言が必要です。'],
-        TypeMismatch: ['The value has an incompatible type.', '値の型が一致しません。'],
-        NamedOptionExpected: ['A named option is required here.', '名前付きオプションを指定してください。'],
-        UnknownOption: ['This option is not defined for this call.', 'この呼び出しでは使用できないオプションです。'],
-        DuplicateOption: ['This option has already been supplied.', 'このオプションは既に指定されています。'],
-        AlternativeNameExpected: ['Give each wait pattern a non-reserved name followed by a colon.', '各待機パターンに予約語以外の名前とコロンを指定してください。'],
-        DuplicateAlternative: ['This wait already has an alternative with this name.', 'この名前の待機候補は既に指定されています。'],
-        UnknownName: ['This name is not defined.', 'この名前は定義されていません。'],
-        UnknownMember: ['This member is not defined.', 'このメンバーは定義されていません。'],
-        RethrowOutsideCatch: ['Rethrow is only valid inside a catch in this function.', '再送出は同じ関数の catch 内でのみ使用できます。'],
-        WaitPatternRequired: ['WaitPrompt requires a WaitPattern. Use Literal or Regex.',
-            'WaitPrompt の引数には WaitPattern が必要です。Literal または Regex を使用してください。'],
-        ConstantsType: ['The value does not match the declared type.', '値が宣言された型と一致しません。'],
-        ConstantsLiteral: ['A literal value is required.', 'リテラル値を指定してください。'],
-        ConstantsDefinition: ['The constant declaration is incomplete or invalid.', '定数の宣言が不完全か、不正です。'],
-        ConstantsName: ['The constant name is invalid or duplicated.', '定数名が不正か、重複しています。'],
-        UnknownFunction: ['This function is not defined.', 'この関数は定義されていません。'],
-        ExpectedToken: ['A required token is missing.', '必要な記号または語がありません。'],
-        ExpressionExpected: ['An expression is required.', '式を指定してください。'],
-        IdentifierExpected: ['A name is required.', '名前を指定してください。'],
-        StatementExpected: ['A statement is required.', '文を指定してください。'],
-        UnterminatedString: ['The string is not closed.', '文字列が閉じられていません。'],
-        UnterminatedComment: ['The comment is not closed.', 'コメントが閉じられていません。']
-    };
     context.subscriptions.push(diagnostics);
     let server;
     let pending = [];
@@ -155,6 +122,7 @@ function activate(context) {
         const payload = {
             path: document.uri.fsPath,
             source: document.getText(),
+            language: japanese ? 'ja' : 'en',
             offset: position && document.offsetAt(position),
             constantsFile: document.languageId === 'tabtty-constants',
             constants: Object.create(null)
@@ -192,19 +160,18 @@ function activate(context) {
             for (const target of targets) {
                 const candidates = openCandidates(target);
                 const open = await chooseOpen(target, candidates);
-                const snapshot = { candidates, open, version: open?.version, status: 'openRequired' };
+                const snapshot = { candidates, open, version: open?.version };
                 snapshots.set(target, snapshot);
                 if (open) {
                     constants[target] = open.getText();
-                    snapshot.status = 'ok';
                 } else if (document.uri.scheme === 'file' && trusted) {
-                    const read = await request({ path: target, source: '', operation: 'readLocal' });
-                    snapshot.status = read.status;
-                    if (read.status === 'ok') {
+                    const read = await request({ path: target, language: payload.language, operation: 'readLocal' });
+                    if (read.diagnostic) snapshot.diagnostic = read.diagnostic;
+                    else {
                         constants[target] = read.text;
                         knownConstantBytes[target] = read.byteCount;
                     }
-                }
+                } else snapshot.diagnostic = initial.openRequiredDiagnostic;
             }
             const result = Object.keys(constants).length ? await request({ ...payload, constants, knownConstantBytes }) : initial;
             if (document.isClosed || document.version !== version) return {};
@@ -215,14 +182,14 @@ function activate(context) {
                     current.some((item, index) => item !== snapshot.candidates[index]) ||
                     snapshot.open?.version !== snapshot.version;
             })) continue;
-            const codes = { missing: 'ConstantsMissing', tooLarge: 'ConstantsTooLarge',
-                unreadable: 'ConstantsUnreadable', openRequired: 'ConstantsOpenRequired' };
             const unavailable = dependencies.filter(dependency =>
-                dependency.FullPath && snapshots.get(dependency.FullPath).status !== 'ok');
+                dependency.FullPath && snapshots.get(dependency.FullPath).diagnostic);
             if (unavailable.length) result.diagnostics = [
                 ...(result.diagnostics || []).filter(item => item.Code !== 'ConstantsRead'),
-                ...unavailable.map(dependency => ({ ...dependency.Position,
-                    Code: codes[snapshots.get(dependency.FullPath).status] || 'ConstantsUnreadable' }))
+                ...unavailable.map(dependency => ({
+                    ...dependency.Position,
+                    ...snapshots.get(dependency.FullPath).diagnostic
+                }))
             ];
             return result;
         }
@@ -245,10 +212,8 @@ function activate(context) {
             if (document.isClosed || document.version !== version || generations.get(key) !== generation) return;
             diagnostics.set(document.uri, (result.diagnostics || []).map(item => {
                 const position = new vscode.Position(Math.max(0, item.Line - 1), Math.max(0, item.Column - 1));
-                const text = messages[item.WaitPatternFix ? 'WaitPatternRequired' : item.Code];
-                const fallback = japanese ? 'マクロの構文または型にエラーがあります。' : 'The macro has a syntax or type error.';
                 const diagnostic = new vscode.Diagnostic(new vscode.Range(position, position.translate(0, item.Length ?? 1)),
-                    text ? text[japanese ? 1 : 0] : fallback);
+                    item.Message ?? result.invalidSourceMessage);
                 diagnostic.code = item.Code;
                 if (item.WaitPatternFix) {
                     const argument = new vscode.Range(document.positionAt(item.WaitPatternFix.Start),

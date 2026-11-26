@@ -44,9 +44,7 @@ impl<'a> Builder<'a> {
     fn start_line(&mut self, first: &Row, starts_retained_buffer: bool) {
         self.current = Row::new(first.id, self.columns);
         if starts_retained_buffer {
-            self.current.logical_id = first.logical_id;
-            self.current.logical_offset = first.logical_offset;
-            self.current.logical_cluster_offset = first.logical_cluster_offset;
+            self.current.logical = first.logical;
         }
         self.current.revision = first.revision + 1;
         self.current.excluded = first.excluded;
@@ -55,9 +53,7 @@ impl<'a> Builder<'a> {
     fn finish(&mut self, soft: bool, empty_boundary: bool) -> Result<(), i32> {
         self.current.soft = soft;
         self.current.refresh_plain();
-        let next_offset = self.current.logical_offset + self.current.plain.len() as i64;
-        let next_cluster_offset = self.current.logical_cluster_offset
-            + self.current.span_count() as i64;
+        let continuation = self.current.continuation();
         if (!self.reported.is_empty() && !self.unreported)
             || (empty_boundary && self.current.plain.is_empty())
         {
@@ -72,9 +68,7 @@ impl<'a> Builder<'a> {
         } else {
             Row::new(0, 0)
         };
-        next.logical_id = self.current.logical_id;
-        next.logical_offset = next_offset;
-        next.logical_cluster_offset = next_cluster_offset;
+        next.start_after(continuation);
         next.excluded = self.current.excluded;
         self.result
             .rows

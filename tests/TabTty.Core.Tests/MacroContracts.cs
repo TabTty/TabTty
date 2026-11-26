@@ -48,6 +48,12 @@ internal static partial class MacroContracts
         Console.WriteLine("PASS MacroDeadlineCutoffAndRetainedOutputAtEof");
         await PasswordAndTransmissionAsync();
         Console.WriteLine("PASS MacroPasswordReloadAndPartialTransmission");
+        await MacroWriteAdmissionAsync();
+        Console.WriteLine("PASS MacroStopAndPauseBeforeSendCommitment");
+        await MacroStopsAtConfirmedUnitAsync();
+        Console.WriteLine("PASS MacroStopsAtConfirmedUnit");
+        await MacroSurfacesPositionWithoutExecutingAStatementAsync();
+        Console.WriteLine("PASS MacroSurfacesPositionWithoutExecutingAStatement");
         await RecordingStartAsync();
         Console.WriteLine("PASS MacroRecordingStartsBeforeTransport");
         await PausedConnectionAndAlternateScreenAsync();
@@ -309,6 +315,118 @@ internal static partial class MacroContracts
         await partial.CloseAsync();
     }
 
+    private enum QueuedWriteAction { Stop, ReplacePassword, DeletePassword }
+
+    private static async Task MacroWriteAdmissionAsync()
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        foreach (var action in Enum.GetValues<QueuedWriteAction>())
+        {
+            int passwordReads = 0;
+            var host = new Host
+            {
+                WaitAtConnect = true,
+                ReadPassword = () => action == QueuedWriteAction.DeletePassword && passwordReads > 0
+                    ? throw new MacroError(MacroErrorCode.CredentialUnavailable)
+                    : Encoding.UTF8.GetBytes(passwordReads++ == 0 ? "initial" : "updated"),
+            };
+            using var program = Parse(action == QueuedWriteAction.Stop
+                ? "Connect(\"profile.ttty\");\nWrite(\"MARK\");"
+                : "Connect(\"profile.ttty\");\nWritePassword(\"Fixture\");");
+            using var run = new MacroRun(program, [], host);
+            run.Start();
+            await host.ConnectionEntered.Task.WaitAsync(deadline.Token);
+            var session = host.Session!;
+            var transport = (SessionTransport)ReadField(session, "transport");
+            var gate = (SemaphoreSlim)(action == QueuedWriteAction.Stop ? ReadField(transport, "writer") : ReadField(session, "state"));
+            var queued = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void OnQueued() => queued.TrySetResult();
+            session.InputSendQueued += OnQueued;
+            await gate.WaitAsync(deadline.Token);
+            try
+            {
+                host.FinishConnect.TrySetResult();
+                await queued.Task.WaitAsync(deadline.Token);
+                Check(host.Wire.Bytes.Count == 0, "The fixture already issued a terminal write.");
+                if (action == QueuedWriteAction.Stop) run.Stop();
+                else
+                {
+                    Check(passwordReads == 1, "The macro had not read the test credential.");
+                    run.Pause();
+                    Check(run.Status.State == MacroRunState.Paused, "The macro considered queued preparation committed.");
+                    run.Resume();
+                }
+            }
+            finally
+            {
+                session.InputSendQueued -= OnQueued;
+                gate.Release();
+            }
+            await run.Completion.WaitAsync(deadline.Token);
+            Check(session.AcceptsInput, "The terminal did not release input after the macro ended.");
+            Check(Encoding.UTF8.GetString(host.Wire.Bytes.ToArray()) == (action == QueuedWriteAction.ReplacePassword ? "updated" : ""),
+                "The macro submitted a stopped write or a credential obtained before pause.");
+            Check(run.Status.State == (action == QueuedWriteAction.Stop ? MacroRunState.Stopped :
+                action == QueuedWriteAction.DeletePassword ? MacroRunState.Failed : MacroRunState.Completed), "Unexpected macro end state.");
+            await host.CloseAsync();
+
+            static object ReadField(object owner, string name) =>
+                owner.GetType().GetField(name, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                    .GetValue(owner)!;
+        }
+    }
+
+    private static async Task MacroStopsAtConfirmedUnitAsync()
+    {
+        foreach (var (statement, password, encoding, firstBytes, expected) in new[]
+        {
+            ("Write(\"ABCD\");", (string?)null, (string?)null, 1, "A"),
+            ("WritePassword(\"Fixture\");", "WXYZ", null, 1, "W"),
+            ("Write(\"A😀Z\");", null, null, 2, "A😀"),
+            ("WritePassword(\"Fixture\");", "日本Z", "jis", 5, "\u001b$BF|\u001b(B"),
+        })
+        {
+            var host = new Host { Password = password, TransmitEncoding = encoding };
+            using var program = Parse("Connect(\"profile.ttty\");\n" + statement);
+            using var run = new MacroRun(program, [], host);
+            host.Wire.ShortFirstWrite = firstBytes;
+            host.Wire.AfterShortWrite = () => run.Stop();
+            try
+            {
+                run.Start();
+                await run.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+                Check(host.Wire.Bytes.SequenceEqual(Encoding.UTF8.GetBytes(expected)),
+                    "Stop sent the unissued suffix or truncated an already started character.");
+                Check(run.Status.State == MacroRunState.Stopped && host.Session!.AcceptsInput,
+                    "The stopped macro did not return input to the healthy terminal.");
+                if (password is not null)
+                    Check(!(await host.Session!.GetOutputAsync()).Any(row => row.Contains(password[0])), "A stopped password was echoed.");
+            }
+            finally { await host.CloseAsync(); }
+        }
+    }
+
+    private static async Task MacroSurfacesPositionWithoutExecutingAStatementAsync()
+    {
+        var host = new Host();
+        using var empty = Parse("// comment only");
+        using var emptyRun = new MacroRun(empty, [], host);
+        emptyRun.Start();
+        await emptyRun.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+        Check(emptyRun.Status is { State: MacroRunState.Completed, Position: { Line: 1, Column: 1 } },
+            "A comment-only macro completed without a source position.");
+
+        using var startup = MacroProgram.ParsePostConnection("test.ttty", "// comment before startup\n  WriteLine(\"unreached\");");
+        using var startupRun = new MacroRun(startup, [], host);
+        await using var session = new TerminalSession(host.Wire, ConnectionProfile.CreateTelnet("startup", "localhost"),
+            null, 100, macro: startupRun);
+        await session.ProcessPayloadAsync(TerminalReceiveSource.Data, "\u001b[?1049h\u001b[?1049l"u8.ToArray(), default);
+        startupRun.Start(session);
+        await startupRun.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+        Check(startupRun.Status is { Result: "AlternateScreen", Position: { Line: 2, Column: 3 } } &&
+            session.AcceptsInput && host.Wire.Bytes.Count == 0, "Early alternate entry lost the first statement's position.");
+    }
+
     internal static async Task RecordingStartAsync()
     {
         using var directory = new TemporaryDirectory();
@@ -381,7 +499,7 @@ internal static partial class MacroContracts
         Check(host.Wire.Bytes.SequenceEqual("after"u8.ToArray()), "Resume did not continue the completed connection.");
         await host.CloseAsync();
 
-        var alternate = new Host { WaitAtConnect = true };
+        var alternate = new Host { WaitAtConnect = true, PostConnection = "// profile\n WriteLine(\"unreached\");" };
         using var stopped = new MacroRun(Parse(source), [], alternate);
         stopped.Start();
         await alternate.ConnectionEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
@@ -390,7 +508,33 @@ internal static partial class MacroContracts
         await stopped.Completion.WaitAsync(TimeSpan.FromSeconds(5));
         Check(stopped.Status.Result == "AlternateScreen" && alternate.Wire.Bytes.Count == 0 &&
             alternate.ConnectionFinished && alternate.Session.AcceptsInput, "Startup alternate screen did not stop only the macro.");
+        Check(stopped.Status is { Position: { Line: 2, Column: 1 }, PostConnection: false },
+            "Connecting after Stop overwrote the caller's position with an unentered post-connection macro.");
         await alternate.CloseAsync();
+
+        var handoff = new Host { PostConnection = "// profile\n   WriteLine(\"embedded\");" };
+        using var outer = Parse("// caller\n\n\n  Connect(\"profile.ttty\");\n    WriteLine(\"tail\");");
+        using var returning = new MacroRun(outer, [], handoff);
+        bool sawEmbedded = false, interrupted = false;
+        returning.Changed += () =>
+        {
+            if (returning.Status.PostConnection) sawEmbedded = true;
+            else if (sawEmbedded && !interrupted)
+            {
+                interrupted = true;
+                handoff.Session!.ProcessPayloadAsync(TerminalReceiveSource.Data, "\u001b[?1049h\u001b[?1049l"u8.ToArray(), default)
+                    .GetAwaiter().GetResult();
+            }
+        };
+        try
+        {
+            returning.Start();
+            await returning.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+            Check(interrupted && returning.Status is { Result: "AlternateScreen", Position: { Line: 5, Column: 3 }, PostConnection: false } &&
+                handoff.Session!.AcceptsInput && !Encoding.UTF8.GetString(handoff.Wire.Bytes.ToArray()).Contains("tail", StringComparison.Ordinal),
+                "Stopping on return paired the caller with an embedded position or ran the caller's next statement.");
+        }
+        finally { await handoff.CloseAsync(); }
     }
 
     private static async Task FilePathPartsAsync()
@@ -492,11 +636,13 @@ internal static partial class MacroContracts
         public bool OpenRealProfile { get; init; }
         public SshInteraction? Ssh { get; init; }
         public bool WaitAtConnect { get; init; }
+        public string? PostConnection { get; init; }
         public string? TransmitEncoding { get; init; }
         public string? ConnectedPath { get; private set; }
         public RecordingOverrides Recording { get; private set; }
         public bool ConnectionFinished { get; private set; }
         public string? Password { get; init; }
+        public Func<byte[]>? ReadPassword { get; init; }
         public CredentialReference? LastCredential { get; private set; }
         public TaskCompletionSource ConnectionEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource FinishConnect { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -521,18 +667,18 @@ internal static partial class MacroContracts
             ConnectedPath = profilePath;
             Recording = recording;
             var profile = ConnectionProfile.CreateTelnet("Macro", "localhost", transmitEncoding: TransmitEncoding);
-            run.ProfileLoaded(profile);
             Session = new TerminalSession(Wire, profile, null, 100, macro: run);
             if (Initial.Length != 0) await Session.ProcessPayloadAsync(TerminalReceiveSource.Data, Encoding.UTF8.GetBytes(Initial), token);
             ConnectionEntered.TrySetResult();
             if (WaitAtConnect) await FinishConnect.Task.WaitAsync(token);
             ConnectionFinished = true;
-            return new(Session, null);
+            return new(Session, PostConnection is { } source ? MacroProgram.ParsePostConnection(profilePath, source) : null);
         }
         public Task<VaultSecret?> ReadPasswordAsync(CredentialReference reference, CancellationToken token)
         {
             LastCredential = reference;
-            return Task.FromResult<VaultSecret?>(new VaultSecret(Encoding.UTF8.GetBytes(Password ?? $"secret{++passwordReads}")));
+            return Task.FromResult<VaultSecret?>(new VaultSecret(ReadPassword?.Invoke() ??
+                Encoding.UTF8.GetBytes(Password ?? $"secret{++passwordReads}")));
         }
         public Task<MacroDialogResult> DialogAsync(MacroDialogRequest request, CancellationToken token)
         { Dialogs.Add(request); return Task.FromResult(new MacroDialogResult(MacroDialogButton.OK, request.InputEnabled, request.InitialText)); }
@@ -547,10 +693,18 @@ internal static partial class MacroContracts
         public Func<ValueTask>? OnWrite { get; set; }
         public byte[]? Incoming { get; set; }
         public int ReturnZeroOnSubmission { get; set; }
+        public int ShortFirstWrite { get; set; }
+        public Action? AfterShortWrite { get; set; }
         private int submissions;
         public async ValueTask<int> WriteSomeAsync(ReadOnlyMemory<byte> buffer, CancellationToken token)
         {
             if (++submissions == ReturnZeroOnSubmission) return 0;
+            if (submissions == 1 && ShortFirstWrite > 0 && buffer.Length > ShortFirstWrite)
+            {
+                await WriteAsync(buffer[..ShortFirstWrite], token);
+                AfterShortWrite?.Invoke();
+                return ShortFirstWrite;
+            }
             await WriteAsync(buffer, token);
             return buffer.Length;
         }

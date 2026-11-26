@@ -327,6 +327,15 @@ for highlighting or compute it on the receiver/UI owner. Omit pane-local selecti
 search decoration, IME composition, focus outlines, and application chrome. This
 keeps a shared live screen independent of which human pane happens to be focused.
 
+Read the completed matches for the requested rows from the tab's shared
+highlight cache. An AI read alone never schedules an evaluation. If one pane
+still shows a completed live `ERROR` line, a request for that line can return
+`current` while another pane has focus in history. After the last pane leaves
+the line and releases its result, the same request returns the text immediately
+with `pending`. A completed evaluation with zero matches is current. If a
+requested region includes an unevaluated row, mark the response pending and
+allow valid highlights from its other rows within the response budget.
+
 Use separate identifiers for content changes and action suitability. Increment
 `layout_epoch` on every normal/alternate selection change, dimension change, or
 terminal reset that reinitializes that state, including changes back to an earlier

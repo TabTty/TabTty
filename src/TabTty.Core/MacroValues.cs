@@ -22,6 +22,13 @@ internal sealed class MacroSourceException(string code, MacroPosition position, 
     public string? FilePath { get; } = filePath;
     public int Length { get; } = length;
     internal MacroSourceRange? WaitPatternFix { get; init; }
+    internal string? Symbol { get; init; }
+    internal string? DiagnosticMessageCode { get; init; }
+
+    internal MacroSourceException WithFilePath(string? path) => new(Code, Position, path, Length)
+    {
+        Symbol = Symbol, WaitPatternFix = WaitPatternFix, DiagnosticMessageCode = DiagnosticMessageCode,
+    };
 }
 
 internal sealed class MacroError(MacroErrorCode code, string? displayDetail = null) : Exception(code.ToString())
@@ -191,9 +198,11 @@ internal sealed record MacroPositionalCall(string Name, MacroExpression[] Argume
 internal sealed record MacroNamedCall(string Name, MacroSignature Signature, MacroBoundArgument[] Arguments, MacroPosition At)
     : MacroCall(Name, At);
 internal sealed record MacroAlternatives(string[] Names, MacroExpression[] Patterns, MacroPosition At) : MacroExpression(At);
+internal sealed record MacroBuiltinMember(MacroType Result, Func<object, object> Read);
 internal sealed record MacroMember(MacroExpression Target, string Name, MacroPosition At) : MacroExpression(At)
 {
     public object? ConstantValue { get; set; }
+    public MacroBuiltinMember? Builtin { get; set; }
 }
 internal sealed record MacroIndex(MacroExpression Target, MacroExpression Index, MacroPosition At) : MacroExpression(At);
 internal sealed record MacroListLiteral(MacroExpression[] Values, MacroPosition At) : MacroExpression(At);
@@ -210,11 +219,14 @@ internal sealed record MacroInvocation(MacroCall Call, MacroPosition At) : Macro
 internal sealed record MacroIf(MacroExpression Condition, MacroBlock Yes, MacroStatement? No, MacroPosition At) : MacroStatement(At);
 internal sealed record MacroWhile(MacroExpression Condition, MacroBlock Body, MacroPosition At) : MacroStatement(At);
 internal sealed record MacroFor(MacroStatement? Initial, MacroExpression? Condition, MacroStatement? Step, MacroBlock Body, MacroPosition At) : MacroStatement(At);
-internal sealed record MacroForeach(string Name, MacroType? Declared, MacroExpression Collection, MacroBlock Body, MacroPosition At) : MacroStatement(At)
+internal sealed record MacroForeach(string Name, MacroType? Declared, MacroExpression Collection, MacroBlock Body,
+    MacroPosition At, MacroPosition NamePosition) : MacroStatement(At)
 {
     public MacroType Type { get; set; } = MacroType.Unknown;
 }
-internal sealed record MacroTry(MacroBlock Body, string ErrorName, MacroBlock Catch, MacroPosition At) : MacroStatement(At);
+internal sealed record MacroTry(MacroBlock Body, string ErrorName, MacroBlock Catch, MacroPosition At,
+    MacroPosition NamePosition) : MacroStatement(At);
 internal sealed record MacroFlow(string Kind, MacroExpression? Value, MacroPosition At) : MacroStatement(At);
-internal sealed record MacroParameter(string Name, MacroType Type);
-internal sealed record MacroFunction(string Name, MacroType Return, MacroParameter[] Parameters, MacroBlock Body, MacroPosition Position);
+internal sealed record MacroParameter(string Name, MacroType Type, MacroPosition NamePosition);
+internal sealed record MacroFunction(string Name, MacroType Return, MacroParameter[] Parameters, MacroBlock Body,
+    MacroPosition Position, MacroPosition NamePosition);

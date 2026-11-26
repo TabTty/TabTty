@@ -69,8 +69,10 @@ try {
     $sources = @($sourceFiles | Sort-Object FullName | ForEach-Object {
         [ordered]@{ path = $_.FullName.Substring($crate.Length + 1).Replace('\', '/'); sha256 = Get-TerminalSourceHash $_.FullName }
     })
+    . (Join-Path $PSScriptRoot 'TerminalBundle.ps1')
     [ordered]@{
         schemaVersion = 1
+        abiVersion = Get-TerminalBundleAbiVersion
         target = $target
         configuration = $Configuration
         rustc = (& rustc --version --verbose) -join [Environment]::NewLine
@@ -82,7 +84,6 @@ try {
     # Cargo and license copies preserve old source timestamps. Mark the completed
     # bundle as this target's output so MSBuild can skip an unchanged native build.
     $completedUtc = [DateTime]::UtcNow
-    . (Join-Path $PSScriptRoot 'TerminalBundle.ps1')
     Confirm-TerminalBundle $OutputDirectory $Configuration
     foreach ($file in (Get-TerminalBundleFiles)) {
         (Get-Item -LiteralPath (Join-Path $OutputDirectory $file)).LastWriteTimeUtc = $completedUtc

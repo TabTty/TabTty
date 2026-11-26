@@ -164,6 +164,7 @@ public sealed class App : Application
     }
 
     internal static string? LocalizedText(string key) => Strings.GetString(key, language);
+    internal static CultureInfo UiLanguage => language;
 
     internal static string Text(string key) => LocalizedText(key)
         ?? throw new InvalidOperationException($"Missing localized string: {key}.");
@@ -397,10 +398,8 @@ public sealed class App : Application
             throw new InvalidDataException(Text("InvalidTerminalDefaults"));
         string priorVaultPath = VaultPath;
         string vaultPath = edits.VaultPath is { } selectedVault ? NormalizeVaultPath(selectedVault) : priorVaultPath;
-        bool vaultChanged = !string.Equals(priorVaultPath, vaultPath, StringComparison.Ordinal);
         using var publication = ReserveSettingsPublication(priorVaultPath, vaultPath);
         var candidate = (JsonObject)settings.DeepClone();
-        bool scopeChanged = edits.Broadcast is { } scope && scope != BroadcastAcrossWindows;
         if (edits.Broadcast is { } savedScope) candidate["broadcastAcrossWindows"] = savedScope;
         if (edits.Shortcuts is { Count: > 0 } shortcuts)
         {
@@ -448,14 +447,7 @@ public sealed class App : Application
         var operation = JsonStoreRecovery.BeginSave(settingsPath, bytes, settingsOriginal,
             path => _ = ReadSettings(path, out _), issueSettings);
         JsonStoreRecovery.RequireVerified(await operation.ObserveAsync());
-        settingsOriginal = bytes;
-        settings = candidate;
-        if (edits.ProfileDirectory is not null) Profiles.ProfileFolderChanged();
-        if (vaultChanged) Vault.SelectionChanged(priorVaultPath);
-        if (scopeChanged) Broadcast.ScopeChanged();
-        SettingsRevision++;
-        ApplySettings();
-        UpdateWindowLabels();
+        AdoptSettings(candidate, bytes);
     }
 
     internal void ShowStoreRecovery(MainWindow owner) => JsonStoreRecovery.Show(this, owner,
@@ -464,25 +456,28 @@ public sealed class App : Application
             () => { }, () => JsonSerializer.SerializeToUtf8Bytes(Defaults()), candidate =>
         {
             string priorVaultPath = VaultPath;
-            bool priorScope = BroadcastAcrossWindows;
             JsonObject prepared = ReadSettings(candidate, out byte[] preparedBytes);
             var reservation = ReserveSettingsPublication(priorVaultPath, VaultPathFor(prepared));
-            return new JsonStoreRecovery.Adoption(reservation, () =>
-            {
-                settings = prepared;
-                Profiles.ProfileFolderChanged();
-                settingsOriginal = preparedBytes;
-                settingsReadOnly = false;
-                SettingsRevision++;
-                if (!string.Equals(priorVaultPath, VaultPath, StringComparison.Ordinal))
-                    Vault.SelectionChanged(priorVaultPath);
-                if (priorScope != BroadcastAcrossWindows) Broadcast.ScopeChanged();
-                ApplySettings();
-                UpdateWindowLabels();
-            });
+            return new JsonStoreRecovery.Adoption(reservation, () => AdoptSettings(prepared, preparedBytes));
         }),
         Highlights.RecoveryStore(), LocalState.RecoveryStore(), HostTrust.RecoveryStore(),
     ]);
+
+    private void AdoptSettings(JsonObject verified, byte[] bytes)
+    {
+        string priorVaultPath = VaultPath;
+        string priorFolder = Profiles.ActiveFolder;
+        bool priorScope = BroadcastAcrossWindows;
+        settings = verified;
+        settingsOriginal = bytes;
+        settingsReadOnly = false;
+        SettingsRevision++;
+        if (!string.Equals(priorVaultPath, VaultPath, StringComparison.Ordinal)) Vault.SelectionChanged();
+        if (priorScope != BroadcastAcrossWindows) Broadcast.ScopeChanged();
+        ApplySettings();
+        if (priorFolder != Profiles.ActiveFolder) Profiles.ProfileFolderChanged();
+        UpdateWindowLabels();
+    }
 
     private void UpdateWindowLabels()
     {

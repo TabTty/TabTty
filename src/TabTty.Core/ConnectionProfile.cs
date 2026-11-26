@@ -22,6 +22,7 @@ public sealed class ConnectionProfile
     private byte[]? sourceBytes;
     private string? sourcePath;
     private string? unsavedName;
+    private bool postConnectionValidated;
     private JsonElement Connection => document.GetProperty("connection");
     private JsonElement Terminal => document.GetProperty("terminal");
     private JsonElement Logging => document.GetProperty("logging");
@@ -85,9 +86,16 @@ public sealed class ConnectionProfile
     public double? FontSizePoints => Terminal.GetProperty("font").GetProperty("sizePoints").Deserialize<double?>();
     public string ToEditorJson() => JsonSerializer.Serialize(document, SaveOptions);
 
-    public void ValidateEditorSettings()
+    public void ValidateEditorSettings() => ValidateEditorSettings(null);
+
+    internal void ValidateEditorSettings(PostConnectionValidation? validation)
     {
-        using var macro = CompilePostConnectionMacro();
+        if (HasPostConnectionMacro && !postConnectionValidated)
+        {
+            var error = (validation ?? new PostConnectionValidation()).Check(PostConnectionSource);
+            if (error is not null) throw error.WithFilePath(sourcePath);
+            postConnectionValidated = true;
+        }
         if (!string.IsNullOrWhiteSpace(LogDirectory))
             _ = OrdinaryWindowsPath.Resolve(LogDirectory, sourcePath is null ? Environment.CurrentDirectory : Path.GetDirectoryName(sourcePath)!);
         if (!string.IsNullOrWhiteSpace(LogFilenameTemplate)) RecordingNameTemplate.Parse(LogFilenameTemplate, macro: true);
@@ -379,7 +387,7 @@ public sealed class ConnectionProfile
         if (root.TryGetProperty("postConnectionMacro", out _))
         {
             var macro = Field(root, "postConnectionMacro", JsonValueKind.Object);
-            _ = Integer(macro, "version", 1, 1);
+            _ = Integer(macro, "version", PostConnectionValidation.LanguageVersion, PostConnectionValidation.LanguageVersion);
             postConnectionSource = Field(macro, "source", JsonValueKind.String).GetString()!;
         }
         if (root.TryGetProperty("displayName", out _))

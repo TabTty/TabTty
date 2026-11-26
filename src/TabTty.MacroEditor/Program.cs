@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using TabTty.Core;
 
@@ -10,7 +11,7 @@ while (Console.ReadLine() is { } line)
             ?? throw new InvalidDataException("Missing request");
         object result = request.Operation switch
         {
-            "readLocal" => ReadLocal(request.Path),
+            "readLocal" => ReadLocal(request),
             "matchOpenLocal" => MatchOpenLocal(request),
             _ => Analyze(request)
         };
@@ -22,14 +23,15 @@ while (Console.ReadLine() is { } line)
     }
 }
 
-static object ReadLocal(string path)
+static object ReadLocal(EditorRequest request)
 {
+    object Failure(string code) => new { diagnostic = DependencyDiagnostic(code, EditorLanguage(request)) };
     try
     {
-        using var handle = LocalMacroFile.TryOpen(path);
-        if (handle is null) return new { status = "openRequired" };
+        using var handle = LocalMacroFile.TryOpen(request.Path);
+        if (handle is null) return Failure("ConstantsOpenRequired");
         long length = RandomAccess.GetLength(handle);
-        if (length > MacroLimits.SourceBytes) return new { status = "tooLarge" };
+        if (length > MacroLimits.SourceBytes) return Failure("ConstantsTooLarge");
         var bytes = new byte[(int)length];
         int offset = 0;
         while (offset < bytes.Length)
@@ -39,12 +41,16 @@ static object ReadLocal(string path)
             offset += count;
         }
         var (encoding, skip) = MacroProgram.DetectEncoding(bytes);
-        return new { status = "ok", text = encoding.GetString(bytes, skip, bytes.Length - skip), byteCount = bytes.Length };
+        return new { text = encoding.GetString(bytes, skip, bytes.Length - skip), byteCount = bytes.Length };
     }
-    catch (FileNotFoundException) { return new { status = "missing" }; }
-    catch (DirectoryNotFoundException) { return new { status = "missing" }; }
-    catch (Exception) { return new { status = "unreadable" }; }
+    catch (FileNotFoundException) { return Failure("ConstantsMissing"); }
+    catch (DirectoryNotFoundException) { return Failure("ConstantsMissing"); }
+    catch (Exception) { return Failure("ConstantsUnreadable"); }
 }
+
+static CultureInfo EditorLanguage(EditorRequest request) => CultureInfo.GetCultureInfo(request.Language == "ja" ? "ja" : "en");
+
+static object DependencyDiagnostic(string code, CultureInfo language) => new { Code = code, Message = MacroDiagnostics.Find(code, language)! };
 
 static object MatchOpenLocal(EditorRequest request)
 {
@@ -90,8 +96,9 @@ static object Analyze(EditorRequest request)
     catch (ResourceLimitException) { diagnostic = new("MemoryLimit", new(1, 1)); }
     var errors = editor.DependencyErrors;
     if (diagnostic is not null && !errors.Contains(diagnostic)) errors.Add(diagnostic);
+    var language = EditorLanguage(request);
     var diagnostics = errors.Select(error => new { error.Code, error.Position.Line, error.Position.Column,
-        error.Length, error.WaitPatternFix });
+        error.Length, error.WaitPatternFix, Message = MacroDiagnostics.Describe(error, language) });
     var functions = MacroApi.Signatures.ToDictionary(
         pair => pair.Key,
         pair => {
@@ -108,11 +115,13 @@ static object Analyze(EditorRequest request)
         name = call.Name, parameter = call.Parameter, usedSlots = call.UsedSlots, namedSlot = call.NamedSlot,
         completeOption = call.CompleteOption, hasOptionColon = call.HasOptionColon
     } : null;
-    return new { unsupportedVersion = editor.UnsupportedVersion, diagnostics, functions, members, symbols, activeCall,
+    return new { unsupportedVersion = editor.UnsupportedVersion, diagnostics,
+        openRequiredDiagnostic = DependencyDiagnostic("ConstantsOpenRequired", language),
+        invalidSourceMessage = MacroDiagnostics.Find("InvalidSource", language), functions, members, symbols, activeCall,
         versionInsertion = editor.VersionInsertion, dependencies = editor.Dependencies,
         constantCompletions = editor.ConstantCompletions, reference = editor.Reference };
 }
 
 internal sealed record EditorRequest(string Path, string Source, bool ConstantsFile,
     Dictionary<string, string>? Constants, string? Operation, int? Offset, string[]? Candidates,
-    Dictionary<string, int>? KnownConstantBytes);
+    Dictionary<string, int>? KnownConstantBytes, string? Language);

@@ -111,7 +111,6 @@ internal static class LocalState
                 !Guid.TryParseExact(item["registrationId"]?.GetValue<string>(), "D", out Guid id) || id == Guid.Empty ||
                 id.ToString("D") != item["registrationId"]!.GetValue<string>() || !ids.Add(id) ||
                 item["path"]?.GetValue<string>() is not { } location || !OrdinaryWindowsPath.IsValid(location) || !Path.IsPathFullyQualified(location) || !locations.Add(location) ||
-                item["displayPath"]?.GetValue<string>() is not { Length: > 0 and <= 32760 } ||
                 item["favorite"]?.GetValue<bool>() is not { } || !item.ContainsKey("lastUsed") ||
                 (item["lastUsed"] is not null && item["lastUsed"]?.GetValue<DateTimeOffset>() is not { Offset.Ticks: 0 }))
                 throw new InvalidDataException(App.Text("LocalStateInvalid"));

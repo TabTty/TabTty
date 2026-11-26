@@ -575,6 +575,23 @@ with the same inputs before and after these changes.
 See [#186](https://github.com/TabTty/TabTty/issues/186) and
 [#187](https://github.com/TabTty/TabTty/issues/187).
 
+For ordinary input and paste, the C# transport reports how many terminal
+payload bytes it definitely submitted, using the framing applied to that
+write. Keep this count separate from the delivery outcome. On a successful
+ordinary write the count is the full payload length. Allocate no progress
+map for that path. If an ordinary write fails partway, use the same framing
+rules to translate its confirmed wire prefix. Paste retains the current
+chunk's boundaries so a stop on a healthy connection can finish a started
+unit. The session uses Rust's encoding boundaries to echo complete units.
+
+For example, ISO-8859-1 input `AÿZ` is `41 FF 5A` before Telnet framing
+and `41 FF FF 5A` on the wire. If the write fails after `41 FF`, one
+payload byte is definite and local echo shows `A`. After `41 FF FF`, two
+are definite and local echo shows `Aÿ`. A lone first half of an escaped
+`FF` can reach the wire even when zero complete payload bytes are confirmed.
+Preserve that uncertainty and never replay the suffix. Verify both failure
+positions, and check allocations for successful short writes.
+
 Expose these lifecycle/send/receive operations independently of WPF views.
 Future observers must not consume data away from the terminal/logger or depend
 on rendered frames. Preserve credential references and a replaceable naming

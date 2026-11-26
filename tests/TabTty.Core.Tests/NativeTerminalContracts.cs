@@ -16,8 +16,61 @@ internal static class NativeTerminalContracts
         NormalScreenEditingPreservesSourceAndCursorState();
         HeldSnapshotsAndSearchAnchorsSurviveNativeMutation();
         PlainAsciiSnapshotsPreserveOwnedCellFacts();
+        SnapshotPositionsPreserveZeroWidthText();
+        PastePreviewCarriesStateAcrossBoundedPages();
         ObserversSeeOnlyNewInput();
         LegacyEncodingsUseNativeModels();
+    }
+
+    private static void SnapshotPositionsPreserveZeroWidthText()
+    {
+        var terminal = new TerminalOutput(8, screenRows: 3);
+        try
+        {
+            const string text = "A\uFEFF\uFEFFBC";
+            Feed(terminal, text);
+            var snapshot = terminal.GetRows();
+            var cells = snapshot.GetCells(0).Span;
+            if (snapshot[0] != text || cells[1] is not { Text: "B", Column: 1, TextOffset: 3 } ||
+                snapshot.Find("B", true) != new TerminalMatch(0, 3, 0, 4) ||
+                snapshot.ColumnRange(0, 3, 4) != (1, 2) || snapshot.StoredSpanAt(0, 3) != (3, 4) ||
+                snapshot.FindMatches("\uFEFF", true).Count() != 2 || snapshot.ZeroWidthColumn(0, 1, 3) != 1)
+                throw new InvalidOperationException("The native snapshot misaligned the glyphs and embedded format characters.");
+            var left = snapshot.TextBoundary(0, 0);
+            var between = snapshot.TextBoundary(0, 1);
+            var after = snapshot.TextBoundary(0, 2);
+            if (text[left.Leading..between.Trailing] != "A" || text[between.Leading..after.Trailing] != "B" ||
+                text[left.Leading..after.Trailing] != "A\uFEFF\uFEFFB")
+                throw new InvalidOperationException("Cell edges lost or included the wrong format characters during selection.");
+        }
+        finally { terminal.ReleaseNativeState(); }
+    }
+
+    private static void PastePreviewCarriesStateAcrossBoundedPages()
+    {
+        string text = new string('x', 1023) + "\r\n" + "e" + new string('\u0301', 3000) + "😀";
+        using var ordinary = TerminalPaste.Create(text);
+        using var cancellation = new CancellationTokenSource();
+        using var cancellable = TerminalPaste.CreateOwned(text, TerminalPaste.ReserveSource(text.Length), cancellation.Token);
+        if (ordinary.CharacterCount != 1026 || ordinary.LineCount != 2 ||
+            ordinary.CharacterCount != cancellable.CharacterCount || ordinary.LineCount != cancellable.LineCount)
+            throw new InvalidOperationException("Paste preview did not retain CRLF and grapheme state across page boundaries.");
+        foreach (string invalid in new[] { text + "\u007f", text + "\ud800" })
+        {
+            try
+            {
+                using var refused = TerminalPaste.CreateOwned(invalid, TerminalPaste.ReserveSource(invalid.Length), cancellation.Token);
+                throw new InvalidOperationException("Paste preview published invalid text from the final page.");
+            }
+            catch (ArgumentException) { }
+        }
+        cancellation.Cancel();
+        try
+        {
+            using var cancelled = TerminalPaste.CreateOwned(text, TerminalPaste.ReserveSource(text.Length), cancellation.Token);
+            throw new InvalidOperationException("A cancelled paste published a preview.");
+        }
+        catch (OperationCanceledException) { }
     }
 
     private static void PlainAsciiSnapshotsPreserveOwnedCellFacts()
@@ -225,7 +278,7 @@ internal static class NativeTerminalContracts
             // Leave cells lazy until after both native mutation and destruction.
             Feed(terminal, "\r\nnext");
             var observed = terminal.ReadAiScreenState();
-            using (terminal.GetHistoryRows()) { }
+            _ = terminal.PrepareHistory();
             if (!terminal.UsesNativeCore) throw new InvalidOperationException("AI history transferred ownership.");
             if (terminal.ReadAiScreenState() != observed)
                 throw new InvalidOperationException("An unchanged screen published a new revision during history observation.");
@@ -254,7 +307,10 @@ internal static class NativeTerminalContracts
         {
             Feed(terminal, "prior");
             var observed = new StringBuilder();
-            terminal.MacroCharacter = (_, rune, _) => observed.Append(rune.ToString());
+            terminal.ReceiveObserver = update =>
+            {
+                if (update.Kind == TerminalReceiveEventKind.Character) observed.Append(update.Character.ToString());
+            };
             Feed(terminal, "new");
             if (!terminal.UsesNativeCore || observed.ToString() != "new")
                 throw new InvalidOperationException("Receive observation replayed old characters or omitted new input.");

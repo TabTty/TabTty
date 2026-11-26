@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="ConstantsDeclaration" xml:space="preserve"><value>Invalid constants declaration.</value></data>
+  <data name="ConstantsAlias" xml:space="preserve"><value>The constants file alias conflicts with another name.</value></data>
+  <data name="ConstantsLimit" xml:space="preserve"><value>The declared constants exceed the permitted limit.</value></data>
+  <data name="NumericLiteral" xml:space="preserve"><value>The numeric literal is malformed or out of range.</value></data>
+  <data name="StringEscape" xml:space="preserve"><value>Invalid string escape. Use two hexadecimal digits after \x.</value></data>
+  <data name="ConstantsDefinition" xml:space="preserve"><value>Use a var or scalar type declaration with an initializer and a semicolon.</value></data>
+  <data name="ConstantsLiteral" xml:space="preserve"><value>A constant initializer must be a string, Boolean, or numeric literal.</value></data>
+  <data name="ConstantsName" xml:space="preserve"><value>A constant has a duplicate, reserved or invalid name.</value></data>
+  <data name="ConstantsType" xml:space="preserve"><value>The literal does not match the declared constant type.</value></data>
+  <data name="ConstantsRead" xml:space="preserve"><value>The constants file could not be read.</value></data>
+  <data name="ConstantsInvalid" xml:space="preserve"><value>The shared constants file contains an invalid definition.</value></data>
+  <data name="ConstantsMissing" xml:space="preserve"><value>Shared constants file was not found.</value></data>
+  <data name="ConstantsTooLarge" xml:space="preserve"><value>The shared constants file is too large.</value></data>
+  <data name="ConstantsUnreadable" xml:space="preserve"><value>The shared constants file could not be read.</value></data>
+  <data name="ConstantsOpenRequired" xml:space="preserve"><value>Open the shared constants file to analyze it.</value></data>
+  <data name="MemoryLimit" xml:space="preserve"><value>The macro memory limit was reached.</value></data>
+  <data name="RethrowOutsideCatch" xml:space="preserve"><value>Rethrow is only valid inside a catch in this function.</value></data>
+  <data name="ExpectedToken" xml:space="preserve"><value>A required word or symbol is missing or out of place.</value></data>
+  <data name="TypeMismatch" xml:space="preserve"><value>The value type does not match the operation.</value></data>
+  <data name="NamedOptionExpected" xml:space="preserve"><value>A named option is required here.</value></data>
+  <data name="UnknownOption" xml:space="preserve"><value>This option is not defined for this call.</value></data>
+  <data name="DuplicateOption" xml:space="preserve"><value>This option has already been supplied.</value></data>
+  <data name="AlternativeNameExpected" xml:space="preserve"><value>Give each wait pattern a non-reserved name followed by a colon.</value></data>
+  <data name="DuplicateAlternative" xml:space="preserve"><value>This wait already has an alternative with this name.</value></data>
+  <data name="SourceEncoding" xml:space="preserve"><value>The file contains invalid text for its encoding.</value></data>
+  <data name="PostConnectionSubset" xml:space="preserve"><value>This operation or syntax is unavailable in a post-connection macro. Prompt waits require a timeout.</value></data>
+  <data name="ExpressionExpected" xml:space="preserve"><value>Enter an expression here.</value></data>
+  <data name="StatementExpected" xml:space="preserve"><value>Enter a statement here.</value></data>
+  <data name="IdentifierExpected" xml:space="preserve"><value>Enter a name here.</value></data>
+  <data name="BlockExpected" xml:space="preserve"><value>Close the block with a right brace.</value></data>
+  <data name="TypeExpected" xml:space="preserve"><value>Enter a supported type name.</value></data>
+  <data name="UnknownName" xml:space="preserve"><value>This name is not defined in the current scope.</value></data>
+  <data name="UnknownMember" xml:space="preserve"><value>This value has no member with that name.</value></data>
+  <data name="UnknownFunction" xml:space="preserve"><value>This function is not defined.</value></data>
+  <data name="ReservedName" xml:space="preserve"><value>Choose a name that is not reserved by the macro language.</value></data>
+  <data name="DuplicateLocal" xml:space="preserve"><value>A local with this name is already in scope.</value></data>
+  <data name="CallArguments" xml:space="preserve"><value>Check the number and types of arguments for this call.</value></data>
+  <data name="UnterminatedString" xml:space="preserve"><value>Close the string with a double quote.</value></data>
+  <data name="UnterminatedComment" xml:space="preserve"><value>Close the comment with */.</value></data>
+  <data name="StringPrefix" xml:space="preserve"><value>The string prefix is invalid.</value></data>
+  <data name="StringExpected" xml:space="preserve"><value>A string literal must begin with a double quote.</value></data>
+  <data name="StringNewline" xml:space="preserve"><value>Close the string before the end of the line or use a verbatim string.</value></data>
+  <data name="UnexpectedCharacter" xml:space="preserve"><value>This character is unexpected here.</value></data>
+  <data name="InterpolationBrace" xml:space="preserve"><value>Check the braces in the interpolated string.</value></data>
+  <data name="UnterminatedInterpolation" xml:space="preserve"><value>Close the interpolation with a right brace.</value></data>
+  <data name="SourceLimit" xml:space="preserve"><value>The macro source exceeds the size limit.</value></data>
+  <data name="SyntaxLimit" xml:space="preserve"><value>The macro exceeds the syntax size limit.</value></data>
+  <data name="NestingLimit" xml:space="preserve"><value>The macro exceeds the nesting limit.</value></data>
+  <data name="ParameterLimit" xml:space="preserve"><value>This call or declaration has too many parameters.</value></data>
+  <data name="TypeNestingLimit" xml:space="preserve"><value>This type exceeds the nesting limit.</value></data>
+  <data name="LocalLimit" xml:space="preserve"><value>The macro declares too many local variables.</value></data>
+  <data name="ReservedNameWithSymbol" xml:space="preserve"><value>“{0}” is reserved by the macro language. Choose another name.</value></data>
+  <data name="VersionLine" xml:space="preserve"><value>A supported #tttym 1 version declaration is required.</value></data>
+  <data name="WaitPatternRequired" xml:space="preserve"><value>WaitPrompt requires a WaitPattern. Use Literal or Regex.</value></data>
+  <data name="InvalidSource" xml:space="preserve"><value>The macro has a syntax or type error.</value></data>
+</root>

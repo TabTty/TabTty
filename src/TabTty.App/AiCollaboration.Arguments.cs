@@ -132,10 +132,13 @@ internal sealed partial class AiCollaboration
                     string text = args.String("text");
                     if (TerminalPaste.Encoding.GetByteCount(text) > 256 * 1024)
                         throw new ToolException("resource_limit");
-                    if (kind == "text" && text.Any(char.IsControl)) throw new ToolException("unsupported_action");
+                    if (kind == "text")
+                    {
+                        if (text.Any(char.IsControl)) throw new ToolException("unsupported_action");
+                        return new InputAction(kind, new TerminalInput(TerminalInputKind.Text, text));
+                    }
                     return new InputAction(kind, PasteText: text,
-                        CharacterDelay: kind == "paste" ? args.Integer("character_delay_ms") : 0,
-                        LineDelay: kind == "paste" ? args.Integer("line_delay_ms") : 0);
+                        CharacterDelay: args.Integer("character_delay_ms"), LineDelay: args.Integer("line_delay_ms"));
                 case "key":
                     return new InputAction(kind, ParseKey(args.String("key"), args.Modifiers()));
                 case "mouse":

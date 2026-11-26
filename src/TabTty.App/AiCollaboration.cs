@@ -92,11 +92,11 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
         internal byte[]? PendingDigest { get; set; }
         internal Dictionary<int, SendOutcome> Ledger { get; } = [];
 
-        internal void ReportUncertain(Sharing share)
+        internal void ReportUncertain(Sharing share, long definitePayloadBytes)
         {
             if (deliveryReported) return;
             deliveryReported = true;
-            share.Tab.ReportAiUncertain(share.Session);
+            share.Tab.ReportAiUncertain(share.Session, definitePayloadBytes);
         }
     }
 
@@ -238,7 +238,7 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
                 catch (Exception exception) when (exception is IOException or SocketException or
                     OperationCanceledException or InvalidOperationException or CryptographicException)
                 {
-                    control.ReportUncertain(share);
+                    control.ReportUncertain(share, definitePayloadBytes: 0);
                 }
             }
         }
@@ -480,7 +480,8 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
             return DeliveryError("busy", "not_sent", sequence, false, control, retry);
 
         ResourceReservation inputMemory;
-        try { inputMemory = observationWork.Reserve(action.PasteText is { } payload ? payload.Length * 2L + 512 : 512); }
+        string? inputText = action.PasteText ?? (action.Input.Kind == TerminalInputKind.Text ? action.Input.Text : null);
+        try { inputMemory = observationWork.Reserve((inputText?.Length ?? 0) * 2L + 512); }
         catch (ResourceLimitException) { return DeliveryError("resource_limit", "not_sent", sequence, false, control); }
         using var reservedInput = inputMemory;
         long expires = share.Peer.Handles[observationId].Expires;
@@ -506,7 +507,7 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
         }
         if (DeliveryUncertain(result) || token.IsCancellationRequested && attempt.Admitted)
         {
-            if (DeliveryUncertain(result)) control.ReportUncertain(share);
+            if (DeliveryUncertain(result)) control.ReportUncertain(share, attempt.DefinitePayloadBytes);
             if (share.Control == control) EndControl(share.Tab);
         }
         if (attempt.Admitted) share.Tab.RefreshInputOutput();
@@ -539,8 +540,9 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
             { code = "busy"; }
             if (code is not null)
             {
-                delivery = attempt.Admitted ? attempt.CompletedWrites > 0 ? "possibly_partial" : "unknown" : "not_sent";
-                return DeliveryError(attempt.Admitted ? "send_uncertain" : code, delivery, sequence, attempt.Admitted, control);
+                delivery = !attempt.Admitted || attempt.Submission == TransportSubmission.NotIssued ? "not_sent" :
+                    attempt.CompletedWrites > 0 || attempt.Submission == TransportSubmission.Partial ? "possibly_partial" : "unknown";
+                return DeliveryError(delivery == "not_sent" ? code : "send_uncertain", delivery, sequence, attempt.Admitted, control);
             }
             return Ok(share, new
             {

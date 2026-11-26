@@ -7,16 +7,21 @@ internal sealed partial class MacroRun
     private sealed record Flow(string Kind, object? Value = null);
     private sealed record EnumRoot(string Name);
     private static readonly object VoidValue = new();
+    internal MacroList Arguments => arguments;
+    internal string ExecutingPath => Program.FullPath;
 
     private async Task ExecuteProgramAsync()
     { await ExecuteBlockAsync(Program.Body).ConfigureAwait(false); }
 
     private async Task ExecutePostConnectionAsync(MacroProgram embedded)
     {
+        MacroPosition callerPosition;
         lock (gate)
         {
+            stop.Token.ThrowIfCancellationRequested();
+            callerPosition = position;
             executingPostConnection = true;
-            position = new(1, 1);
+            position = embedded.EntryPosition;
         }
         Notify();
         var caller = Program;
@@ -36,6 +41,7 @@ internal sealed partial class MacroRun
         lock (gate)
         {
             stop.Token.ThrowIfCancellationRequested();
+            position = callerPosition;
             executingPostConnection = false;
         }
         Notify();
@@ -210,7 +216,7 @@ internal sealed partial class MacroRun
                     var offset = await ValueAsync(index.Index).ConfigureAwait(false);
                     result = target is string text ? text[Index(offset, text.Length)].ToString() : ((MacroList)target).Items[Index(offset, ((MacroList)target).Items.Count)]; break;
                 case MacroMember member:
-                    result = member.ConstantValue ?? Member(await ValueAsync(member.Target).ConfigureAwait(false), member.Name); break;
+                    result = member.ConstantValue ?? member.Builtin!.Read(await ValueAsync(member.Target).ConfigureAwait(false)); break;
                 case MacroInterpolation interpolation:
                     var builder = new System.Text.StringBuilder();
                     foreach (var part in interpolation.Parts)
@@ -259,26 +265,6 @@ internal sealed partial class MacroRun
         catch (MacroError error) { if (error.Position.Line == 0) error.Position = expression.Position; throw; }
         catch (OverflowException) { throw new MacroError(MacroErrorCode.NumericOverflow) { Position = expression.Position }; }
     }
-
-    private object Member(object target, string name) => target switch
-    {
-        EnumRoot root => MacroApi.EnumValue(root.Name, name)!,
-        MacroRun => name switch
-        {
-            "FullPath" => Program.FullPath, "FileName" => Path.GetFileName(Program.FullPath),
-            "BaseName" => BaseName, "RunId" => RunId, "Args" => arguments,
-            _ => throw new InvalidOperationException(),
-        },
-        MacroMatch m => name switch { "AlternativeName" => m.AlternativeName, "Text" => m.Text, "Index" => m.Index,
-            "Length" => m.Length, "Groups" => new MacroList(new("CaptureGroup"), m.Groups), _ => throw new InvalidOperationException() },
-        MacroCapture g => name switch { "Number" => g.Number, "Name" => g.Name, "Success" => g.Success, "Value" => g.Value,
-            "Index" => g.Index, "Length" => g.Length, "Captures" => new MacroList(MacroType.String, g.Captures), _ => throw new InvalidOperationException() },
-        MacroDialogResult d => name switch { "Button" => d.Button, "HasText" => d.HasText,
-            "Text" => d.HasText ? d.Text : throw new MacroError(MacroErrorCode.NoTextValue), _ => throw new InvalidOperationException() },
-        MacroError e => name switch { "Code" => e.Code, "Message" => e.CaughtMessage!,
-            "Line" => (long)e.Position.Line, "Column" => (long)e.Position.Column, _ => throw new InvalidOperationException() },
-        _ => throw new InvalidOperationException(),
-    };
 
     private void PushScope() { var scope = new Dictionary<string, object>(StringComparer.Ordinal); scopes.Add(scope); Own(scope); }
     private void PopScope() => scopes.RemoveAt(scopes.Count - 1);

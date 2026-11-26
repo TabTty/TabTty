@@ -84,25 +84,38 @@ internal static class MacroApi
         return result;
     }
 
-    internal static MacroType? Member(MacroType target, string name) => (target.Name, name) switch
+    private static readonly Dictionary<(string Owner, string Name), MacroBuiltinMember> Members = new()
     {
-        ("Macro", "Args") => MacroType.List(MacroType.String),
-        ("Macro", "FullPath" or "FileName" or "BaseName" or "RunId") => MacroType.String,
-        ("WaitMatch", "Index" or "Length") => MacroType.Long,
-        ("WaitMatch", "Text" or "AlternativeName") => MacroType.String,
-        ("WaitMatch", "Groups") => MacroType.List(new("CaptureGroup")),
-        ("CaptureGroup", "Number" or "Index" or "Length") => MacroType.Long,
-        ("CaptureGroup", "Name" or "Value") => MacroType.String,
-        ("CaptureGroup", "Success") => MacroType.Bool,
-        ("CaptureGroup", "Captures") => MacroType.List(MacroType.String),
-        ("DialogResult", "Button") => new("DialogButton"),
-        ("DialogResult", "HasText") => MacroType.Bool,
-        ("DialogResult", "Text") => MacroType.String,
-        ("MacroError", "Code") => new("ErrorCode"),
-        ("MacroError", "Message") => MacroType.String,
-        ("MacroError", "Line" or "Column") => MacroType.Long,
-        _ => null,
+        [("Macro", "Args")] = new(MacroType.List(MacroType.String), static value => ((MacroRun)value).Arguments),
+        [("Macro", "FullPath")] = new(MacroType.String, static value => ((MacroRun)value).ExecutingPath),
+        [("Macro", "FileName")] = new(MacroType.String, static value => Path.GetFileName(((MacroRun)value).ExecutingPath)),
+        [("Macro", "BaseName")] = new(MacroType.String, static value => ((MacroRun)value).BaseName),
+        [("Macro", "RunId")] = new(MacroType.String, static value => ((MacroRun)value).RunId),
+        [("WaitMatch", "Index")] = new(MacroType.Long, static value => ((MacroMatch)value).Index),
+        [("WaitMatch", "Length")] = new(MacroType.Long, static value => ((MacroMatch)value).Length),
+        [("WaitMatch", "Text")] = new(MacroType.String, static value => ((MacroMatch)value).Text),
+        [("WaitMatch", "AlternativeName")] = new(MacroType.String, static value => ((MacroMatch)value).AlternativeName),
+        [("WaitMatch", "Groups")] = new(MacroType.List(new("CaptureGroup")),
+            static value => new MacroList(new("CaptureGroup"), ((MacroMatch)value).Groups)),
+        [("CaptureGroup", "Number")] = new(MacroType.Long, static value => ((MacroCapture)value).Number),
+        [("CaptureGroup", "Index")] = new(MacroType.Long, static value => ((MacroCapture)value).Index),
+        [("CaptureGroup", "Length")] = new(MacroType.Long, static value => ((MacroCapture)value).Length),
+        [("CaptureGroup", "Name")] = new(MacroType.String, static value => ((MacroCapture)value).Name),
+        [("CaptureGroup", "Value")] = new(MacroType.String, static value => ((MacroCapture)value).Value),
+        [("CaptureGroup", "Success")] = new(MacroType.Bool, static value => ((MacroCapture)value).Success),
+        [("CaptureGroup", "Captures")] = new(MacroType.List(MacroType.String),
+            static value => new MacroList(MacroType.String, ((MacroCapture)value).Captures)),
+        [("DialogResult", "Button")] = new(new("DialogButton"), static value => ((MacroDialogResult)value).Button),
+        [("DialogResult", "HasText")] = new(MacroType.Bool, static value => ((MacroDialogResult)value).HasText),
+        [("DialogResult", "Text")] = new(MacroType.String, static value => value is MacroDialogResult { HasText: true } dialog
+            ? dialog.Text : throw new MacroError(MacroErrorCode.NoTextValue)),
+        [("MacroError", "Code")] = new(new("ErrorCode"), static value => ((MacroError)value).Code),
+        [("MacroError", "Message")] = new(MacroType.String, static value => ((MacroError)value).CaughtMessage!),
+        [("MacroError", "Line")] = new(MacroType.Long, static value => (long)((MacroError)value).Position.Line),
+        [("MacroError", "Column")] = new(MacroType.Long, static value => (long)((MacroError)value).Position.Column),
     };
+
+    internal static MacroBuiltinMember? Member(MacroType owner, string name) => Members.GetValueOrDefault((owner.Name, name));
 
     internal static object? EnumValue(string type, string name) => type switch
     {
@@ -129,7 +142,7 @@ internal sealed class MacroChecker(MacroProgram program, MacroEditorSymbols? edi
 
     public void Check()
     {
-        foreach (var function in program.Functions.Values) CheckName(function.Name, function.Position);
+        foreach (var function in program.Functions.Values) CheckName(function.Name, function.NamePosition);
         CheckFrame("", MacroType.Void, [], program.Body);
         foreach (var function in program.Functions.Values)
         {
@@ -158,7 +171,7 @@ internal sealed class MacroChecker(MacroProgram program, MacroEditorSymbols? edi
     {
         caller = name; returns = result; locals = loops = 0; insideCatch = false; calls[name] = [];
         scopes.Clear(); Push(body);
-        foreach (var parameter in parameters) Declare(parameter.Name, parameter.Type, body.Position, parameter);
+        foreach (var parameter in parameters) Declare(parameter.Name, parameter.Type, parameter.NamePosition, parameter);
         CheckBlock(body); Pop();
     }
 
@@ -221,11 +234,11 @@ internal sealed class MacroChecker(MacroProgram program, MacroEditorSymbols? edi
                 Require(collection.Name == "List", loop);
                 loop.Type = loop.Declared ?? collection.Element!;
                 Require(loop.Type.Accepts(collection.Element!), loop);
-                Push(loop.Body); Declare(loop.Name, loop.Type, loop.Position, loop, readOnly: true);
+                Push(loop.Body); Declare(loop.Name, loop.Type, loop.NamePosition, loop, readOnly: true);
                 loops++; CheckBlock(loop.Body); loops--; Pop(); break;
             case MacroTry attempt:
                 CheckBlock(attempt.Body);
-                Push(attempt.Catch); Declare(attempt.ErrorName, new("MacroError"), attempt.Position, attempt);
+                Push(attempt.Catch); Declare(attempt.ErrorName, new("MacroError"), attempt.NamePosition, attempt);
                 bool enclosingCatch = insideCatch;
                 insideCatch = true;
                 try { CheckBlock(attempt.Catch); }
@@ -284,10 +297,14 @@ internal sealed class MacroChecker(MacroProgram program, MacroEditorSymbols? edi
                 MacroType owner = Expression(member.Target);
                 if (owner.Name.StartsWith('$'))
                 {
-                    if (MacroApi.EnumValue(owner.Name[1..], member.Name) is null) throw UnknownMember(member);
+                    member.ConstantValue = MacroApi.EnumValue(owner.Name[1..], member.Name) ?? throw UnknownMember(member);
                     result = new(owner.Name[1..]);
                 }
-                else result = MacroApi.Member(owner, member.Name) ?? throw UnknownMember(member);
+                else
+                {
+                    member.Builtin = MacroApi.Member(owner, member.Name) ?? throw UnknownMember(member);
+                    result = member.Builtin.Result;
+                }
                 break;
             case MacroAlternatives alternatives:
                 foreach (var pattern in alternatives.Patterns)
@@ -361,9 +378,12 @@ internal sealed class MacroChecker(MacroProgram program, MacroEditorSymbols? edi
                     if (parameter.Name == "List" && parameter.Element?.Name == "T")
                     { Require(argument.Name == "List", call); generic = argument.Element; parameter = argument; }
                     else if (parameter.Name == "T") { generic ??= argument; parameter = generic; }
-                    if (editor is not null && !program.IsPostConnection && call.Name == "WaitPrompt" && i == 0 && argument == MacroType.String)
-                        throw new MacroSourceException("TypeMismatch", call.Position)
-                            { WaitPatternFix = editor.FirstArgumentRange(call.Arguments[i]) };
+                    if (call.Name == "WaitPrompt" && i == 0 && argument == MacroType.String)
+                        throw new MacroSourceException("TypeMismatch", program.IsPostConnection ? call.Arguments[i].Position : call.Position)
+                        {
+                            DiagnosticMessageCode = "WaitPatternRequired",
+                            WaitPatternFix = program.IsPostConnection ? null : editor?.FirstArgumentRange(call.Arguments[i]),
+                        };
                     Require(parameter.Accepts(argument), program.IsPostConnection ? call.Arguments[i] : call);
                 }
                 return Replace(signature.Result, generic);
@@ -412,7 +432,7 @@ internal sealed class MacroChecker(MacroProgram program, MacroEditorSymbols? edi
 
     private void Declare(string name, MacroType type, MacroPosition at, object declaration, bool readOnly = false)
     {
-        CheckName(name, at);
+        CheckName(name, declaration is MacroDeclaration local ? local.NamePosition : at);
         if (program.Functions.ContainsKey(name) || scopes.Any(scope => scope.Names.ContainsKey(name))) Fail("DuplicateLocal", at);
         if (++locals > 1024) Fail("LocalLimit", at);
         var scope = scopes[^1];
@@ -433,7 +453,7 @@ internal sealed class MacroChecker(MacroProgram program, MacroEditorSymbols? edi
 
     private void CheckName(string name, MacroPosition at)
     {
-        if (IsReserved(name)) Fail("ReservedName", at);
+        if (IsReserved(name)) throw new MacroSourceException("ReservedName", at, length: name.Length) { Symbol = name };
         if (constants.ContainsKey(name)) Fail("ConstantsAlias", at);
     }
     private Variable Lookup(string name, MacroPosition at)
