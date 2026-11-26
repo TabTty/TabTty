@@ -74,7 +74,6 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         if (vault is not null || await UnlockFileAsync(owner, allowInitialization: true) is not { } opened || !owner.IsLoaded)
             return;
         if (opened.InitializationResult is not null) owner.OpenForm("ManageVault", app.Vault.BuildManagement);
-        else owner.ShowUnlockedVault(this);
     });
 
     internal Task LockFromMenuAsync(MainWindow owner) => RunAsync(owner, () =>
@@ -135,12 +134,13 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         ShowRetainedFilePaths(report, VerifiedFilePublication.GetRetainedStagePaths(FilePath));
     }
 
-    public Task RestoreAsync(Window owner, FormView? form = null) => RunAsync(owner, () => RestoreFileAsync(owner, form), form);
+    public Task RestoreAsync(Window owner, FormView? form = null) =>
+        RunAsync(owner, () => RestoreFileAsync(owner, form), form, reportTitle: "RestoreVault");
 
     public async Task<bool> ArchiveAsync(Window owner, FormView? form = null)
     {
         bool archived = false;
-        await RunAsync(owner, async () => archived = await ArchiveFileAsync(owner, form), form);
+        await RunAsync(owner, async () => archived = await ArchiveFileAsync(owner, form), form, reportTitle: "ArchiveVault");
         return archived;
     }
 
@@ -148,7 +148,7 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
     {
         if (unlockInteraction.IsPending) throw new InvalidOperationException(Text("VaultBusy"));
         string path = FilePath;
-        var report = CaptureReport(owner, form);
+        var report = CaptureReport(owner, form, "ArchiveVault");
         archiving = true;
         try
         {
@@ -215,23 +215,25 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         return opened;
     }
 
-    private Action<object, string> CaptureReport(Window owner, FormView? form = null)
+    private Action<object, string> CaptureReport(Window owner, FormView? form = null, string title = "Vault")
     {
-        Action<object, string>? fallback = (owner as MainWindow)?.CaptureReport();
         FormView? view = form ?? owner.Content as FormView;
+        var selectedVaultReport = app.StatusReports.Capture(null, Text(title));
         return (key, message) =>
         {
             if (view is not null && (view.TabOwner is { IsVisible: true } || view.Tab is null && owner.IsVisible))
                 view.Reports.Report(key, message);
-            else if (fallback is not null && owner.IsVisible) fallback(key, message);
+            else if (owner is MainWindow && (owner.IsVisible || app.LastTabWindow is not null))
+                selectedVaultReport(key, message);
             else app.Modal(() => ThemedMessageBox.ShowVault(owner.IsVisible ? owner : null, message, Text("Vault"),
                 MessageBoxButton.OK, MessageBoxImage.Warning));
         };
     }
 
-    public async Task RunAsync(Window owner, Func<Task> action, FormView? form = null, bool closesOnError = false)
+    public async Task RunAsync(Window owner, Func<Task> action, FormView? form = null, bool closesOnError = false,
+        string reportTitle = "Vault")
     {
-        var report = CaptureReport(owner, form);
+        var report = CaptureReport(owner, form, reportTitle);
         bool admitted = await operation.WaitAsync(0);
         ResourceReservation? delivery = null;
         try
@@ -248,7 +250,9 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
             or ArgumentException or CryptographicException or DllNotFoundException or EntryPointNotFoundException
             or JsonException or InvalidOperationException)
         {
-            if (disposed || !owner.IsVisible && !CanDismissMasterChange(owner)) return;
+            bool hasReportHost = (form?.TabOwner ?? owner).IsVisible ||
+                (form is null && owner is MainWindow && app.LastTabWindow is not null);
+            if (disposed || !hasReportHost && !CanDismissMasterChange(owner)) return;
             string message = exception switch
             {
                 CredentialVaultStaleException => Text(app.Vault.MustRestart(this) ? "SelectedVaultStale" : "EditorVaultStale"),
@@ -957,7 +961,7 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
 
     private async Task RestoreFileAsync(Window owner, FormView? form)
     {
-        var report = CaptureReport(owner, form);
+        var report = CaptureReport(owner, form, "RestoreVault");
         CheckAvailable();
         if (unlockInteraction.IsPending) throw new InvalidOperationException(Text("VaultBusy"));
         if (!owner.IsLoaded) return;
@@ -988,7 +992,15 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         }
         finally { Array.Clear(password); }
         RefreshManagement();
-        ShowRetainedFilePaths(report, VerifiedFilePublication.GetRetainedStagePaths(FilePath));
+        var retained = VerifiedFilePublication.GetRetainedStagePaths(FilePath);
+        if (form is null && owner is MainWindow)
+        {
+            string result = string.Format(Text("VaultRestoreCompleted"), basis.Backup, target);
+            if (retained.Length > 0)
+                result += "\n\n" + Text("PublicationRetainedStages") + "\n\n" + string.Join("\n", retained);
+            report(new object(), result);
+        }
+        else ShowRetainedFilePaths(report, retained);
     }
 
     private static bool ShowRetainedFilePaths(Action<object, string> report, string[] paths)

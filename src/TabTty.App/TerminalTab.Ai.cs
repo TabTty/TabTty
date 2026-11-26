@@ -40,15 +40,6 @@ internal sealed partial class TerminalTab
     internal string? AiStateLabel => IsAiTakingControl && IsAiShared ? Text("AiTakingControl")
         : IsAiControlling ? Text("AiControlling") : IsAiShared ? Text("AiReadOnly") : null;
 
-    private void InitializeAiControls()
-    {
-        ConfigureStatusIndicator(aiStatus);
-        DockPanel.SetDock(aiStatus, Dock.Right);
-        statusBar.Children.Add(aiStatus);
-        AutomationProperties.SetLiveSetting(aiStatus, AutomationLiveSetting.Polite);
-        UpdateAiControls();
-    }
-
     private void UpdateAiActions()
     {
         var share = AiSharing;

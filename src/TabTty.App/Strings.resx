@@ -178,11 +178,15 @@
   <data name="BrowsePath" xml:space="preserve"><value>Browse</value></data>
   <data name="InvalidVaultPath" xml:space="preserve"><value>Enter an absolute path to a .tttykey file.</value></data>
   <data name="VaultBusy" xml:space="preserve"><value>Wait for the current vault operation to finish.</value></data>
-  <data name="VaultUnlocked" xml:space="preserve"><value>The credential vault is unlocked.</value></data>
+  <data name="VaultStatusUnlocked" xml:space="preserve"><value>Vault: Unlocked</value></data>
+  <data name="VaultStatusLocked" xml:space="preserve"><value>Vault: Not unlocked</value></data>
+  <data name="WindowReportsTitle" xml:space="preserve"><value>Operation reports</value></data>
+  <data name="WindowReportSummary" xml:space="preserve"><value>{0} reports · {1}</value></data>
   <data name="ArchiveVault" xml:space="preserve"><value>Archive vault and start over…</value></data>
   <data name="ArchiveVaultConfirm" xml:space="preserve"><value>Move the current vault to a new file in the same folder? After creating a new vault, select the credentials again in the connection profiles.</value></data>
   <data name="VaultArchiveDestination" xml:space="preserve"><value>Last archive location: {0}</value></data>
   <data name="VaultArchived" xml:space="preserve"><value>The vault was moved to the path below. Choose Unlock vault or Vault management to set a new master password.</value></data>
+  <data name="VaultRestoreCompleted" xml:space="preserve"><value>Restored the vault from {0} to {1}.</value></data>
   <data name="AddVaultPassword" xml:space="preserve"><value>Add password</value></data>
   <data name="VaultEntries" xml:space="preserve"><value>Vault entries</value></data>
   <data name="VaultEntryList" xml:space="preserve"><value>Saved credentials</value></data>
@@ -740,7 +744,6 @@ The AI app can send keys and multiple lines of commands without asking again, us
   <data name="NoticeStackShow" xml:space="preserve"><value>Show notices ({0})</value></data>
   <data name="NoticeStackHide" xml:space="preserve"><value>Collapse notices ({0})</value></data>
   <data name="NoticeShowTab" xml:space="preserve"><value>Show tab</value></data>
-  <data name="NoticeShowWindow" xml:space="preserve"><value>Show window</value></data>
   <data name="NoticeForView" xml:space="preserve"><value>Notifications — {0}</value></data>
   <data name="NoticeUnread" xml:space="preserve"><value>Unacknowledged notification</value></data>
   <data name="NoticeAwaitingAnswer" xml:space="preserve"><value>Awaiting your response</value></data>
@@ -752,5 +755,4 @@ The AI app can send keys and multiple lines of commands without asking again, us
   <data name="NoticeRecordingPaused" xml:space="preserve"><value>Recording paused (part {0} saved)</value></data>
   <data name="NoticeRecordingSaved" xml:space="preserve"><value>Recording saved (part {0})</value></data>
   <data name="NoticeBroadcastUncertain" xml:space="preserve"><value>Delivery extent unknown</value></data>
-  <data name="NoticeBroadcastWindow" xml:space="preserve"><value>Window broadcast — {0}</value></data>
 </root>

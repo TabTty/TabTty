@@ -3018,6 +3018,8 @@ internal static partial class Program
         var tab = new TerminalTab("layout-fixture.ttty");
         var surface = FindControls<TerminalSurface>(tab).Single();
         var footer = TerminalStatusBar(tab);
+        if (footer.LastChildFill || footer.Children.OfType<TextBlock>().Any(label => DockPanel.GetDock(label) != Dock.Left))
+            throw new InvalidOperationException("A tab-owned status was not grouped on the left.");
         var output = new TerminalOutput(columns: 80, screenRows: 32);
         for (int row = 0; row < 48; row++)
             output.Receive(TerminalReceiveSource.Data, "terminal output\r\n"u8);
@@ -3034,6 +3036,21 @@ internal static partial class Program
         }
         tab.Zoom(4);
         CheckLayout(new Size(640, statusBarHeight + rowHeight * 24.4), RowHeight(15));
+        const string pasteDetails = "Destination A — 1/20\nDestination B — 6/20";
+        tab.SetBroadcastPasteProgress(pasteDetails);
+        CheckLayout(new Size(260, statusBarHeight + rowHeight * 24.4), RowHeight(15));
+        var progress = footer.Children.OfType<TextBlock>().Single(label => Equals(label.ToolTip, pasteDetails));
+        var connection = footer.Children.OfType<TextBlock>().Single(label => label.Text == tab.ConnectionStatus);
+        var progressStart = progress.TranslatePoint(new Point(), footer);
+        if (Math.Abs(connection.TranslatePoint(new Point(), footer).X) > 1 ||
+            Math.Abs(progressStart.X - connection.ActualWidth) > 1 || progress.ActualWidth <= 0 ||
+            progressStart.X + progress.ActualWidth > footer.ActualWidth + 1 || progress.Text.Contains('\n') ||
+            !progress.Focusable || ToolTipService.GetShowsToolTipOnKeyboardFocus(progress) != true ||
+            AutomationProperties.GetName(progress) != pasteDetails)
+            throw new InvalidOperationException("The source tab's paste progress did not share its left row with full accessible details.");
+        tab.SetBroadcastPasteProgress(null);
+        if (progress.Visibility != Visibility.Collapsed)
+            throw new InvalidOperationException("Completing the source paste left its progress visible.");
         output.ReleaseNativeState();
 
         static double RowHeight(double fontSizePoints) => Math.Ceiling(new FormattedText("M",
@@ -3067,10 +3084,12 @@ internal static partial class Program
                 if (!pixel.SequenceEqual(new byte[] { 0, 0, 0, 255 }))
                     throw new InvalidOperationException("The bottom remainder did not use the terminal background.");
             }
-            var label = footer.Children.OfType<TextBlock>().Single(item => item.Visibility == Visibility.Visible);
-            double top = label.TranslatePoint(new Point(), footer).Y;
-            if (Math.Abs(top * 2 + label.ActualHeight - footer.ActualHeight) > 0.01)
-                throw new InvalidOperationException("The status text was not centered vertically.");
+            foreach (var label in footer.Children.OfType<TextBlock>().Where(item => item.Visibility == Visibility.Visible))
+            {
+                double top = label.TranslatePoint(new Point(), footer).Y;
+                if (Math.Abs(top * 2 + label.ActualHeight - footer.ActualHeight) > 0.01)
+                    throw new InvalidOperationException("The status text was not centered vertically.");
+            }
         }
     }
 
@@ -3344,21 +3363,21 @@ internal static partial class Program
         var host = new Window { Content = tab, Width = 500, Height = 330, ShowActivated = false, ShowInTaskbar = false };
         var footer = TerminalStatusBar(tab);
         var connection = footer.Children.OfType<TextBlock>().Single(label => label.Visibility == Visibility.Visible);
-        tab.SetBroadcastStatus("Broadcast 1/1");
-        var broadcast = footer.Children.OfType<TextBlock>().Single(label => label.Text == "Broadcast 1/1");
+        tab.SetBroadcastPasteProgress("Destination — 1/2");
+        var progress = footer.Children.OfType<TextBlock>().Single(label => label.Text == "Destination — 1/2");
         var connected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         tab.Connected += _ => connected.TrySetResult();
-        var flash = new TaskCompletionSource<(Brush Background, Brush BroadcastText)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var flash = new TaskCompletionSource<(Brush Background, Brush ConnectionText)>(TaskCreationOptions.RunContinuationsAsynchronously);
         var restored = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var foreground = DependencyPropertyDescriptor.FromProperty(TextBlock.ForegroundProperty, typeof(TextBlock));
         void ForegroundChanged(object? sender, EventArgs args)
         {
-            if (connection.Foreground == Brushes.Black)
-                flash.TrySetResult((footer.Background, broadcast.Foreground));
+            if (progress.Foreground == Brushes.Black)
+                flash.TrySetResult((footer.Background, connection.Foreground));
             else if (flash.Task.IsCompleted)
                 restored.TrySetResult();
         }
-        foreground.AddValueChanged(connection, ForegroundChanged);
+        foreground.AddValueChanged(progress, ForegroundChanged);
         try
         {
             host.Show();
@@ -3367,15 +3386,15 @@ internal static partial class Program
             await connected.Task.WaitAsync(deadline.Token);
             await peer.GetStream().WriteAsync("\a"u8.ToArray(), deadline.Token);
             var colors = await flash.Task.WaitAsync(deadline.Token);
-            if (colors.Background != Brushes.White || colors.BroadcastText != Brushes.Black)
+            if (colors.Background != Brushes.White || colors.ConnectionText != Brushes.Black)
                 throw new InvalidOperationException("The bell did not flash the whole status bar with readable text.");
             await restored.Task.WaitAsync(deadline.Token);
-            if (footer.Background != Brushes.Navy || connection.Foreground != Brushes.White || broadcast.Foreground != Brushes.White)
+            if (footer.Background != Brushes.Navy || connection.Foreground != Brushes.White || progress.Foreground != Brushes.White)
                 throw new InvalidOperationException("The bell did not restore the status bar's theme colors.");
         }
         finally
         {
-            foreground.RemoveValueChanged(connection, ForegroundChanged);
+            foreground.RemoveValueChanged(progress, ForegroundChanged);
             tab.Disconnect();
             await tab.Completion.WaitAsync(TimeSpan.FromSeconds(5));
             host.Close();

@@ -58,7 +58,7 @@ internal static partial class Program
     {
         string first = Path.Combine(directory, "First profile.ttty");
         string second = Path.Combine(directory, "Second profile.ttty");
-        string selectedPath = Path.Combine(directory, "Selected vault.tttykey");
+        string selectedPath = App.DefaultVaultPath;
         string copyPath = Path.Combine(directory, "Vault copy.tttykey");
 
         var opens = InstanceLaunch.Parse([first, second]);
@@ -99,9 +99,18 @@ internal static partial class Program
         const string master = "editor-fixture-master";
         using (await CredentialVault.CreateAsync(selectedPath, master.AsMemory())) { }
         File.Copy(selectedPath, copyPath);
-        await SelectVault(selectedPath);
         Console.WriteLine("PASS VaultEditorFixture");
-        VaultEditorWindow a = await OpenVaultAsync(selectedPath);
+        CheckVaultStatus(terminal, false);
+        var publishedUnlocks = new List<bool>();
+        void ObserveUnlock() => publishedUnlocks.Add(app.Vault.IsSelectedUnlocked);
+        app.Vault.ManagementChanged += ObserveUnlock;
+        VaultEditorWindow a;
+        try { a = await OpenVaultAsync(selectedPath); }
+        finally { app.Vault.ManagementChanged -= ObserveUnlock; }
+        if (publishedUnlocks.Count == 0 || publishedUnlocks.Contains(false))
+            throw new InvalidOperationException("The selected vault's first editor unlock published a stale lock state.");
+        CheckVaultStatus(terminal, true);
+        await SelectVault(selectedPath);
         Console.WriteLine("PASS SelectedVaultEditorUnlock");
         VaultEditorWindow b = await OpenVaultAsync(copyPath);
         Console.WriteLine("PASS IndependentVaultEditorUnlock");

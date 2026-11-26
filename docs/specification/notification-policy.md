@@ -30,6 +30,8 @@ A paste belongs to its source tab. Show its progress on the left there, includin
 
 For a menu command, identify the affected tab, file, view, window or application state when the command starts. Use that scope for progress and results even when the user changes tabs before completion. A file save belongs to its editor. A main-menu archive or restore of the selected vault belongs to the wider operation. Make the outcome and any archive path available from the right. An operation on the file opened in a particular vault editor reports there. Preserve dialogs for genuine decisions and input, such as approving an overwrite or entering a master password.
 
+If a tab move fails, its source tab owns the report. If splitting or removing a tab group fails, the report belongs to the window whose layout the command would change.
+
 ## Stacking and ownership
 
 - Use one compact floating presentation at the upper right of the owning content area. A terminal tab owns one stack across its split panes, including for a macro run before connection. Its notices move with the tab. An editor or transfer window owns its own notices.
@@ -54,7 +56,7 @@ Arrival must not activate a tab or window, redirect text typed for another termi
 
 A request from a minimized window leaves that window minimized. Its decision dialog can be reached from the taskbar. Choosing **Show tab** in a background report restores the source window and selects the tab.
 
-Choose the owner before choosing the control. A terminal feature uses its `TerminalTab`, including across pane splits and moves between windows. A management operation uses its issuing `FormView`. For a deferred command from a main-window menu, capture its actual target and scope when the command starts. Use `MainWindow.CaptureReport()` when the current view owns the report.
+Choose the owner before choosing the control. A terminal feature uses its `TerminalTab`, including across pane splits and moves between windows. A management operation uses its issuing `FormView`. For a deferred menu command with a wider scope, use `WindowStatusReports.Capture` with the affected main window or application scope. Capture that destination when the command starts.
 
 | At the call site | How to use the shared framework |
 | --- | --- |
@@ -62,7 +64,7 @@ Choose the owner before choosing the control. A terminal feature uses its `Termi
 | An interaction mode needs an explanation | Call `Notices.ShowHint(key, localizedText, visibleDuration)`. Remove the key if the explanation stops applying. The stack counts visible time. |
 | An ongoing activity offers actions | Call `Notices.ShowContent(key, content, keepVisible: true, compactActions: buttons)`. Update under the same key and call `Remove(key)` when the activity ends. Bind every button to the live run or session. Provide compact controls when the full card contains detail that can overflow. |
 | An important event has already occurred in a view | Call `Reports.Report(incidentKey, localizedText)`. Use a key that identifies the occurrence, such as the connection generation and recording part. To update its outcome only while it awaits acknowledgement, call `Reports.UpdateIfPending`. The framework coordinates its floating card, background window and unread indication. |
-| A window-wide or application-wide operation has a result | Make the result and its retained details accessible from the right side in the applicable windows. Preserve one acknowledgement for each report. |
+| A window-wide or application-wide operation has a result | Publish the summary and full details through `WindowStatusReports`. The user can open the right-hand summary or **View → Operation reports** to read and copy details. Acknowledging one report clears it in every affected window. [Shared reports](../../src/TabTty.App/WindowStatusReports.cs) |
 | An operation needs an answer | Create an operation-specific dialog and await `TerminalTab.PresentDecisionAsync(dialog, token)`. Bind the request to the operation's lifetime, keep the safe default, and validate the target before applying the answer. A shared vault unlock tracks all waiting tabs through `TabDecision`. |
 
 For example, a recording write failure changes the current recording state and publishes one incident. Explicit recovery updates the pending incident with the new part number. Pressing **OK** resolves that incident across its surfaces. Future features can follow the same pattern without managing window focus, duplicate reports or stack coordinates. [NoticeStack](../../src/TabTty.App/NoticeStack.cs) · [ViewNotifications](../../src/TabTty.App/ViewNotifications.cs) · [Tab decisions](../../src/TabTty.App/TerminalTab.Decisions.cs) · [FormView](../../src/TabTty.App/FormView.cs)

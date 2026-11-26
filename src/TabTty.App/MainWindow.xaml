@@ -175,12 +175,30 @@
                 </ControlTemplate>
     </Window.Resources>
     <Grid x:Name="windowRoot">
+        <Grid.RowDefinitions>
+            <RowDefinition />
+            <RowDefinition Height="30" />
+        </Grid.RowDefinitions>
         <Border x:Name="titleBarBackground" Height="43" VerticalAlignment="Top" Visibility="Collapsed"
                 Style="{StaticResource WindowHeaderBand}" />
         <Border x:Name="groupHost">
             <TabControl x:Name="tabs" Template="{StaticResource TabGroupTemplate}" />
         </Border>
-        <Grid x:Name="windowNoticeHost" Margin="0,45,0,0" Panel.ZIndex="1" ClipToBounds="True" />
+        <StackPanel x:Name="windowStatusBar" Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right"
+                    VerticalAlignment="Stretch" Background="{DynamicResource WindowBackground}"
+                    TextElement.Foreground="{DynamicResource WindowForeground}" ClipToBounds="True">
+            <TextBlock x:Name="broadcastStatus" VerticalAlignment="Center" Margin="5,0"
+                       TextTrimming="CharacterEllipsis" Focusable="True" Visibility="Collapsed"
+                       ToolTipService.ShowsToolTipOnKeyboardFocus="True" />
+            <Button x:Name="windowReportButton" VerticalAlignment="Center" Margin="3,0" Padding="5,1"
+                    MinWidth="0" Visibility="Collapsed" Click="OpenWindowReports"
+                    ToolTipService.ShowsToolTipOnKeyboardFocus="True">
+                <TextBlock x:Name="windowReportSummary" TextTrimming="CharacterEllipsis" />
+            </Button>
+            <TextBlock x:Name="vaultStatus" VerticalAlignment="Center" Margin="6,0,10,0"
+                       TextTrimming="CharacterEllipsis" Focusable="True"
+                       ToolTipService.ShowsToolTipOnKeyboardFocus="True" />
+        </StackPanel>
         <DockPanel x:Name="welcomePanel" Margin="18,58,18,18" VerticalAlignment="Top">
             <Image x:Name="welcomeIcon" DockPanel.Dock="Left" Width="96" Height="96"
                    Margin="0,0,20,0" VerticalAlignment="Top"
@@ -223,7 +241,7 @@
                 <TextBlock Style="{StaticResource CaptionGlyph}" Text="&#xE8BB;" />
             </Button>
         </StackPanel>
-        <Menu x:Name="mainMenu" IsMainMenu="False" Visibility="Collapsed"
+        <Menu x:Name="mainMenu" Grid.RowSpan="2" IsMainMenu="False" Visibility="Collapsed"
               Foreground="{DynamicResource WindowForeground}"
               FocusManager.IsFocusScope="True"
               AutomationProperties.Name="{Binding (AutomationProperties.Name), ElementName=menuButton}"

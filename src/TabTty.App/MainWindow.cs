@@ -36,7 +36,8 @@ internal sealed partial class MainWindow : Window
         Closed += (_, _) =>
         {
             closed = true;
-            windowReports?.Dispose();
+            app.StatusReports.Changed -= UpdateWindowReports;
+            app.StatusReports.WindowClosed(this);
             foreach (var form in AllTabs.Select(tab => tab.Content).OfType<FormView>()) form.Reports.Dispose();
             groups.ReleaseReservations();
             app.CommitWindowClose(this);
@@ -46,7 +47,6 @@ internal sealed partial class MainWindow : Window
             System.Windows.Interop.HwndSource.FromHwnd(new System.Windows.Interop.WindowInteropHelper(this).Handle)
                 ?.AddHook(HandleWindowMessage);
         InitializeComponent();
-        windowNoticeHost.Children.Add(windowNotices);
         UpdateActiveHeaderShade();
         Icon = WindowIcons.App;
         welcomeIcon.Source = WindowIcons.Welcome;
@@ -62,6 +62,8 @@ internal sealed partial class MainWindow : Window
         StateChanged += (_, _) => UpdateMaximizeButton();
         app.Vault.ManagementChanged += UpdateVaultStatus;
         Closed += (_, _) => app.Vault.ManagementChanged -= UpdateVaultStatus;
+        app.StatusReports.Changed += UpdateWindowReports;
+        windowStatusBar.SizeChanged += (_, _) => UpdateStatusInset();
         NativeKeyState.Attach(this);
         InitializeGroups();
         Activated += (_, _) => RefreshNoticeActivity();
@@ -189,16 +191,16 @@ internal sealed partial class MainWindow : Window
 
     internal bool CanAcceptTabs => IsLoaded && !closing;
     internal bool IsClosing => closing;
+    internal bool IsClosed => closed;
 
     internal void UpdateLabels()
     {
-        windowNotices.UpdateLabels();
-        windowReports?.UpdateLabels();
         groups.UpdateLabels();
         LabelGroups();
         RefreshBroadcast();
         welcomeTitle.Text = Text("WelcomeTitle");
         profileHint.Text = Text("OpenHint");
+        vaultHint.Text = Text("VaultHint");
         UpdateVaultStatus();
         Resources["NewTabLabel"] = Text("NewTab");
         Resources["TabListLabel"] = Text("TabList");
@@ -234,6 +236,9 @@ internal sealed partial class MainWindow : Window
         AddButton("ZoomIn", () => SelectedTab?.Zoom(1));
         AddButton("ZoomOut", () => SelectedTab?.Zoom(-1));
         AddButton("ResetZoom", () => SelectedTab?.Zoom(0));
+        windowReportsMenu = MenuAction("WindowReportsTitle", ShowWindowReports);
+        currentMenu!.Items.Add(windowReportsMenu);
+        UpdateWindowReports();
         BeginMenu("WindowMenu", Key.W);
         AddButton("NewWindow", () => app.CreateWindow().Show());
         var moveTab = new MenuItem { Header = Text("MoveTab") };
@@ -352,23 +357,29 @@ internal sealed partial class MainWindow : Window
         }
     }
 
-    private bool MoveTab(TabItem item, MainWindow target, int? destination = null, TabControl? destinationGroup = null)
+    private bool MoveTab(WindowTab item, MainWindow target, int? destination = null, TabControl? destinationGroup = null,
+        Action<Exception>? reportFailure = null)
     {
-        if (item is not WindowTab { IsClosing: false } movedTab || GroupOf(item) is not { } source ||
-            !target.CanAcceptTabs || closing || item.Content is FormView { IsBusy: true }) return false;
+        if (item.IsClosing || GroupOf(item) is not { } source || closing || item.Content is FormView { IsBusy: true })
+            return false;
+        reportFailure ??= item.ReportMoveFailure;
+        destinationGroup ??= target.activeGroup;
+        if (!target.CanAcceptTabs || !target.Groups.Contains(destinationGroup))
+        {
+            reportFailure(new InvalidOperationException(Text("TabMoveDestinationUnavailable")));
+            return false;
+        }
         if (!app.Broadcast.CanMove(this, target))
         {
-            ShowError(this, new InvalidOperationException(Text("BroadcastMoveBusy")));
+            reportFailure(new InvalidOperationException(Text("BroadcastMoveBusy")));
             return false;
         }
 
-        destinationGroup ??= target.activeGroup;
-        if (!target.Groups.Contains(destinationGroup)) return false;
         var terminal = item.Content as TerminalTab;
         bool moveCapturedPane = terminal?.HasMouseCapture == true;
         InvalidOperationException? placementError = null;
         var outcome = app.Broadcast.MoveTerminalTab(this, target, terminal, Place);
-        if (placementError is not null) ShowError(this, placementError);
+        if (placementError is not null) reportFailure(placementError);
         if (outcome.Placed && this != target && !closed && !closing && !AllTabs.Any()) Close();
         return outcome.Placed;
 
@@ -394,7 +405,7 @@ internal sealed partial class MainWindow : Window
                 return false;
             }
 
-            movedTab.Placement = (target, destinationGroup);
+            item.Placement = (target, destinationGroup);
             target.UpdateWelcomePanel();
             if (terminal is not null)
             {
@@ -409,12 +420,12 @@ internal sealed partial class MainWindow : Window
             return true;
         }
     }
-    private void DetachTab(TabItem item, Point? screenPoint = null)
+    private void DetachTab(WindowTab item, Point? screenPoint = null)
     {
         if (closing || GroupOf(item) is null) return;
         if (!app.Broadcast.CanMoveToNewWindow(this))
         {
-            ShowError(this, new InvalidOperationException(Text("BroadcastMoveBusy")));
+            item.ReportMoveFailure(new InvalidOperationException(Text("BroadcastMoveBusy")));
             return;
         }
         var target = app.CreateWindow(restorePlacement: false);
@@ -703,9 +714,12 @@ internal sealed partial class MainWindow : Window
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException
             or FormatException or InvalidOperationException or System.Text.Json.JsonException)
         {
-            FormView.ReportFailure(CaptureReport(), exception);
+            ReportCommandFailure("HostKeys", exception);
         }
     }
+
+    internal void ReportCommandFailure(string commandKey, Exception error) =>
+        FormView.ReportFailure(app.StatusReports.Capture(this, Text(commandKey)), error);
 
     private void EditSettings() => OpenForm("Settings", form =>
     {
@@ -779,7 +793,7 @@ internal sealed partial class MainWindow : Window
             ("SettingsMaintenance", () =>
             {
                 form.AddActionField("RegisterFileType", "Run", RegisterFileType);
-                form.AddActionField("ProfileTrustReset", "Run", () => app.Profiles.ResetTrust(form.OwnerWindow));
+                form.AddActionField("ProfileTrustReset", "Run", () => app.Profiles.ResetTrust(form.OwnerWindow, form.ReportFailure));
                 form.AddActionField("MacroManageTrust", "Run", () => form.TabOwner?.ManageMacroTrust());
                 form.AddActionField("MacroTrustReset", "Run", () => ResetMacroTrust(form.OwnerWindow));
                 form.AddActionField("RecoverStores", "Run", () =>
@@ -1183,6 +1197,12 @@ internal sealed partial class MainWindow : Window
             }
         }
         public MainWindow? Host => Placement?.Window;
+        internal void ReportMoveFailure(Exception error)
+        {
+            if (Content is TerminalTab terminal) FormView.ReportFailure(terminal.Reports.Report, error);
+            else if (Content is FormView form) form.ReportFailure(error);
+        }
+
         public bool IsClosing => Content is TerminalTab { ClosePending: true };
         public bool CanCloseAsDisconnected => Content is TerminalTab { IsDisconnected: true, HasActiveMacro: false };
 

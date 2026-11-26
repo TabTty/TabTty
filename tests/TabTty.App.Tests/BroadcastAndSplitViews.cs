@@ -135,6 +135,8 @@ internal static partial class Program
 
     private static async Task BroadcastAndSplitViews(App app, string directory)
     {
+        await CheckWindowReportScopeAsync(app);
+        await CheckBroadcastPasteCleanupAsync(app, directory);
         await CheckBroadcastPasteFailurePrefixAsync(app, directory);
         await CheckBroadcastPasteFailurePrefixAsync(app, directory, bracketed: true);
         await CheckBroadcastDeliveryFailureAsync(app, directory);
@@ -271,10 +273,10 @@ internal static partial class Program
             Size paneSize = target.TerminalArea.RenderSize;
             Click(Child(broadcast, "BroadcastStart"));
             host.UpdateLayout();
-            var broadcastStatus = FindControls<TextBlock>(target).Single(label => label.Text == app.Broadcast.Status(host));
+            var broadcastStatus = (TextBlock)host.FindName("broadcastStatus");
             if (target.TerminalArea.RenderSize != paneSize || !broadcastStatus.IsVisible ||
-                broadcastStatus.TranslatePoint(new Point(), target.TerminalArea).Y < paneSize.Height)
-                throw new InvalidOperationException("Broadcast status must fit in the fixed row below the terminal.");
+                broadcastStatus.Text != app.Broadcast.Status(host) || FindControls<TextBlock>(target).Contains(broadcastStatus))
+                throw new InvalidOperationException("Broadcast status did not stay in the window's fixed row.");
             var otherBroadcast = FindMenu(other, "ConnectionMenu", "BroadcastInput");
             if (!source.BroadcastChecked || !target.BroadcastChecked || !outside.BroadcastChecked || app.Broadcast.IsActive(other))
                 throw new InvalidOperationException("New tabs must be checked by default and respect the active window scope.");
@@ -302,6 +304,16 @@ internal static partial class Program
             Click(Child(broadcast, "BroadcastStart"));
             if (source.BroadcastChecked) throw new InvalidOperationException("Stop/Start lost the remembered selection.");
             Click(Child(otherBroadcast, "BroadcastStart"));
+            var keyboardTarget = Keyboard.FocusedElement;
+            var selected = tabBar.SelectedItem;
+            app.Broadcast.CaptureFailed(host);
+            WindowStatusReport cancellation = app.StatusReports.Pending(host).Single();
+            if (!cancellation.Summary.Contains(App.Text("BroadcastGestureCancelled"), StringComparison.Ordinal) ||
+                !cancellation.Details.Contains(App.Text("BroadcastNotSent"), StringComparison.Ordinal) ||
+                app.StatusReports.Pending(other).Count != 0 || Keyboard.FocusedElement != keyboardTarget ||
+                tabBar.SelectedItem != selected || source.Reports.HasReports)
+                throw new InvalidOperationException("Local capture failure was misrouted or moved the user's input.");
+            await AcknowledgeWindowReportAsync(host, cancellation.Details);
             await VerifyCompetingPastesAsync(source, first, target, second, outside, third);
             await SaveScope(true);
             if (source.BroadcastChecked || !app.Broadcast.IsLocal(host))
@@ -314,6 +326,25 @@ internal static partial class Program
             Click(Child(broadcast, "BroadcastStart"));
             if (!source.BroadcastChecked || !target.BroadcastChecked || !outside.BroadcastChecked)
                 throw new InvalidOperationException("The first global Start did not reset all selections.");
+
+            // The mode budget rejects this operation before any target can receive bytes.
+            var earlierReports = app.StatusReports.Pending(host);
+            keyboardTarget = Keyboard.FocusedElement;
+            selected = tabBar.SelectedItem;
+            bool queued = await app.Broadcast.Send(host, new(TerminalInputKind.Text, new string('x', 1_048_577)), deadline.Token)!;
+            WindowStatusReport full = app.StatusReports.Pending(other).Single();
+            if (queued || app.Broadcast.IsActive(host) || !app.StatusReports.Pending(host).Contains(full) ||
+                Keyboard.FocusedElement != keyboardTarget || tabBar.SelectedItem != selected ||
+                !full.Details.Contains(App.Text("InputQueueFull"), StringComparison.Ordinal) ||
+                !new[] { source, target, outside }.All(tab => full.Details.Contains(
+                    $"{TerminalTab.BroadcastTargetLabel(tab.InputSession!)} — {App.Text("BroadcastNotSent")}", StringComparison.Ordinal)) ||
+                FindControls<TextBlock>(source.Notices).Any(label => label.Text.Contains(App.Text("InputQueueFull"), StringComparison.Ordinal)))
+                throw new InvalidOperationException("Queue rejection did not leave one shared report with each unsent target.");
+            await AcknowledgeWindowReportAsync(other, full.Details);
+            if (!app.StatusReports.Pending(host).SequenceEqual(earlierReports) || app.StatusReports.Pending(other).Count != 0)
+                throw new InvalidOperationException("Acknowledging a global report left a copy or cleared a different local report.");
+            await WaitForStart(host);
+            Click(Child(broadcast, "BroadcastStart"));
 
             var waitingAnswer = new TaskCompletionSource<BroadcastInput.PasteDecision?>();
             var previewEntered = new TaskCompletionSource<BroadcastInput.PastePreview>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -387,7 +418,8 @@ internal static partial class Program
                     await Task.Delay(10, deadline.Token);
             }
             app.Broadcast.CaptureFailed(host);
-            if (!app.Broadcast.Status(host).Contains(App.Text("BroadcastGestureCancelled"), StringComparison.Ordinal))
+            if (!app.StatusReports.Pending(host).Any(report =>
+                report.Summary.Contains(App.Text("BroadcastGestureCancelled"), StringComparison.Ordinal)))
                 throw new InvalidOperationException("The failed capture did not report cancellation.");
             app.Broadcast.StartMouse(host, source, sourceView, 10);
             await Mouse(10, 0);
@@ -464,8 +496,8 @@ internal static partial class Program
             Task<bool> Mouse(long capture, int button, bool release = false) => app.Broadcast.RouteMouseAsync(
                 host, sourceView, capture, new(button, 1, 1, release, false, TerminalModifiers.None, 0));
 
-            if (!host.TerminalTabs.SelectMany(FindControls<TextBlock>).Any(label => label.IsVisible &&
-                label.Text.Contains(App.Text("BroadcastFailed"), StringComparison.Ordinal)))
+            if (!app.StatusReports.Pending(host).Any(report => report.Summary.Contains(App.Text("BroadcastFailed"), StringComparison.Ordinal)) ||
+                !((Button)host.FindName("windowReportButton")).IsVisible)
                 throw new InvalidOperationException("The broadcast failure was not visible.");
         }
         finally
@@ -594,6 +626,104 @@ internal static partial class Program
         }
     }
 
+    private static async Task CheckWindowReportScopeAsync(App app)
+    {
+        var window = new MainWindow(app) { Width = WindowPlacement.MinimumWidth, ShowActivated = false };
+        try
+        {
+            window.Show();
+            app.Broadcast.Start(window);
+            var first = app.StatusReports.Capture(window, "First file operation");
+            var second = app.StatusReports.Capture(window, "Second file operation");
+            first("result", "Awaiting verification");
+            second("result", "Later operation");
+            first("result", "First operation verified");
+            var reports = app.StatusReports.Pending(window);
+            if (reports.Count != 2 || reports[0].Details != "First operation verified" || reports[1].Details != "Later operation")
+                throw new InvalidOperationException("Two operations sharing a result key were merged or reordered.");
+
+            window.UpdateLayout();
+            var mode = (TextBlock)window.FindName("broadcastStatus");
+            var summary = (Button)window.FindName("windowReportButton");
+            var vault = (TextBlock)window.FindName("vaultStatus");
+            if (!mode.IsVisible || mode.ActualWidth <= 0 || !summary.IsVisible || summary.ActualWidth <= 0 ||
+                !vault.IsVisible || vault.ActualWidth <= 0 ||
+                mode.TranslatePoint(new Point(mode.ActualWidth, 0), window).X > summary.TranslatePoint(new Point(), window).X ||
+                summary.TranslatePoint(new Point(summary.ActualWidth, 0), window).X > vault.TranslatePoint(new Point(), window).X ||
+                vault.TranslatePoint(new Point(vault.ActualWidth, 0), window).X > window.ActualWidth)
+                throw new InvalidOperationException("Reports, broadcast or vault status were clipped or overlapped at minimum window width.");
+            await AcknowledgeWindowReportAsync(window, reports[0].Details);
+            if (app.StatusReports.Pending(window).Single() != reports[1])
+                throw new InvalidOperationException("Acknowledging the older report cleared another operation's report.");
+        }
+        finally
+        {
+            app.Broadcast.Stop(window);
+            window.Close();
+        }
+        if (app.StatusReports.Pending(window).Count != 0)
+            throw new InvalidOperationException("Closing the window retained its local results.");
+    }
+
+    private static async Task CheckBroadcastPasteCleanupAsync(App app, string directory)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        var host = new MainWindow(app);
+        var peer = new MainWindow(app) { ShowActivated = false };
+        var wire = new HeldBroadcastWrite();
+        await using var session = new TerminalSession(wire, ConnectionProfile.CreateTelnet("Cleanup", "localhost"), null, 100);
+        var source = new TerminalTab(Path.Combine(directory, "cleanup.ttty"));
+        typeof(TerminalTab).GetField("session", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .SetValue(source, session);
+        host.AddTerminalTab(source);
+        try
+        {
+            host.Show();
+            peer.Show();
+            app.Broadcast.Start(host);
+            using var paste = TerminalPaste.Create("AB");
+            Task<BroadcastInput.PasteOutcome> sending = app.Broadcast.PasteAsync(host, source, paste, (_, _) =>
+                throw new InvalidOperationException("A single-line paste requested confirmation."), new(0, 0, false), deadline.Token);
+            await wire.Started.Task.WaitAsync(deadline.Token);
+            app.Broadcast.StopPaste(host);
+            await host.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle, deadline.Token);
+            string cleanup = App.Text("BroadcastCleanupPending");
+            var state = (TextBlock)host.FindName("broadcastStatus");
+            if (sending.IsCompleted || !state.Text.Contains(cleanup, StringComparison.Ordinal) ||
+                app.Broadcast.Status(peer).Contains(cleanup, StringComparison.Ordinal) ||
+                FindControls<TextBlock>(source).Any(label => label.Text.Contains(cleanup, StringComparison.Ordinal)))
+                throw new InvalidOperationException("Cleanup for an admitted paste escaped its window or ended before the write.");
+            wire.Finish.TrySetResult();
+            await sending.WaitAsync(deadline.Token);
+            if (!app.Broadcast.IsActive(host) || state.Text.Contains(cleanup, StringComparison.Ordinal))
+                throw new InvalidOperationException("Stop Paste ended the mode or retained completed cleanup.");
+        }
+        finally
+        {
+            wire.Finish.TrySetResult();
+            app.Broadcast.Stop(host);
+            typeof(TerminalTab).GetProperty(nameof(TerminalTab.IsRunning))!.SetValue(source, false);
+            var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            host.Closed += (_, _) => closed.TrySetResult();
+            host.Close();
+            peer.Close();
+            await closed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    private sealed class HeldBroadcastWrite : ISessionWire
+    {
+        internal TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Finish { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken token) => ValueTask.FromResult(0);
+        public async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken token)
+        {
+            Started.TrySetResult();
+            await Finish.Task;
+        }
+        public void Dispose() { }
+    }
+
     private static async Task CheckBroadcastPasteFailurePrefixAsync(App app, string directory, bool bracketed = false)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
@@ -624,13 +754,12 @@ internal static partial class Program
             host.UpdateLayout();
             string confirmed = bracketed ? App.Text("BroadcastPasteFramingOnly") : string.Format(App.Text("ConfirmedInputPrefix"), 1);
             string label = TerminalTab.BroadcastTargetLabel(good);
-            var notice = FindControls<TextBlock>(source.Notices).Single(item =>
-                item.Text.Contains(label, StringComparison.Ordinal) && item.Text.Contains(confirmed, StringComparison.Ordinal));
-            if (!notice.Text.Split('\n').Any(line => line.Contains(label, StringComparison.Ordinal) &&
+            var report = app.StatusReports.Pending(host).Single(item =>
+                item.Details.Contains(label, StringComparison.Ordinal) && item.Details.Contains(confirmed, StringComparison.Ordinal));
+            if (!report.Details.Split('\n').Any(line => line.Contains(label, StringComparison.Ordinal) &&
                 line.Contains(confirmed, StringComparison.Ordinal) && !line.Contains(App.Text("BroadcastNotSent"), StringComparison.Ordinal)))
                 throw new InvalidOperationException("The incident reported a confirmed paste write as unsent.");
-            FindControls<Button>(notice.Parent as DependencyObject ?? source.Notices).Single(button =>
-                Equals(button.Content, App.Text("OK"))).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await AcknowledgeWindowReportAsync(host, report.Details);
             if (goodWire.Bytes.Count != expected.Length || badWire.Bytes.Count != 0)
                 throw new InvalidOperationException("Acknowledging a broadcast incident resent input.");
             Console.WriteLine(bracketed ? "PASS BroadcastPasteFailureReportsFramingOnly" : "PASS BroadcastPasteFailurePreservesRecipientProgress");
@@ -716,14 +845,13 @@ internal static partial class Program
                 }
                 else sent = await app.Broadcast.Send(host, new(TerminalInputKind.Text, text), deadline.Token)!;
                 string label = TerminalTab.BroadcastTargetLabel(session);
-                var notice = FindControls<TextBlock>(tab.Notices).Single(item => item.Text.Contains(label, StringComparison.Ordinal));
+                var report = app.StatusReports.Pending(host).Single(item => item.Details.Contains(label, StringComparison.Ordinal));
                 string outcome = serial ? App.Text("BroadcastNotSent") : App.Text("NoticeBroadcastUncertain");
                 string other = serial ? App.Text("NoticeBroadcastUncertain") : App.Text("BroadcastNotSent");
-                if (sent || !notice.Text.Contains(outcome, StringComparison.Ordinal) || notice.Text.Contains(other, StringComparison.Ordinal) ||
+                if (sent || !report.Details.Contains(outcome, StringComparison.Ordinal) || report.Details.Contains(other, StringComparison.Ordinal) ||
                     wire.Calls != (serial ? 1 : 2) || wire.Accepted != (serial ? null : (byte)0xFF))
                     throw new InvalidOperationException("The report did not preserve the outcome of a zero-payload write.");
-                FindControls<Button>(notice.Parent as DependencyObject ?? tab.Notices).Single(button =>
-                    Equals(button.Content, App.Text("OK"))).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                await AcknowledgeWindowReportAsync(host, report.Details);
                 if (wire.Calls != (serial ? 1 : 2)) throw new InvalidOperationException("Acknowledging an incident resent input.");
             }
             finally

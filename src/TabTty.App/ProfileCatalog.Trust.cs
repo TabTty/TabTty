@@ -74,7 +74,7 @@ internal sealed partial class ProfileCatalog
         return location;
     }
 
-    internal void ResetTrust(Window owner)
+    internal void ResetTrust(Window owner, Action<Exception> reportFailure)
     {
         if (app.Modal(() => ThemedMessageBox.Show(owner, Text("ProfileTrustResetConfirm"), Text("ProfileTrustReset"),
             MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No)) != MessageBoxResult.Yes) return;
@@ -86,9 +86,7 @@ internal sealed partial class ProfileCatalog
         }
         catch (Exception error) when (IsFileProblem(error))
         {
-            var failure = new IOException(Text("ProfileTrustWriteFailed"), error);
-            if (owner is MainWindow main) FormView.ReportFailure(main.CaptureReport(), failure);
-            else MainWindow.ShowError(owner, failure);
+            reportFailure(new IOException(Text("ProfileTrustWriteFailed"), error));
         }
     }
 

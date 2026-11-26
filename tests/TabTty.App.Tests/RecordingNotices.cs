@@ -32,6 +32,8 @@ internal static partial class Program
             await peer.GetStream().ReadExactlyAsync(new byte[15], timeout.Token);
             await connected.Task.WaitAsync(timeout.Token);
             var pane = FindControls<TerminalSurface>(tab).Single();
+            await peer.GetStream().WriteAsync("\u001b[?1000h"u8.ToArray(), timeout.Token);
+            while (!pane.MouseTrackingRequested) await Task.Delay(15, timeout.Token);
             await tab.ChangeRecordingAsync(false);
             SendText(pane, "x");
             await peer.GetStream().ReadExactlyAsync(new byte[1], timeout.Token);
@@ -74,10 +76,16 @@ internal static partial class Program
             string label = string.Format(App.Text(key), part);
             var row = TerminalStatusBar(tab);
             var current = row.Children.OfType<TextBlock>().Single(text => text.Text == tab.ConnectionStatus);
-            if (!row.Children.OfType<TextBlock>().Any(text => text != current && text.Text == label &&
-                text.IsVisible && text.ActualWidth > 0 && text.Focusable && Equals(text.ToolTip, label) &&
-                AutomationProperties.GetName(text) == label) || current.ActualWidth < row.ActualWidth * 0.34)
-                throw new InvalidOperationException($"Recording status did not reflect {key}, part {part}.");
+            var recording = row.Children.OfType<TextBlock>().Single(text => text.Text == label);
+            var mouse = row.Children.OfType<TextBlock>().Single(text => text.Text == App.Text("MouseDestinationHost"));
+            double expectedLeft = 0;
+            foreach (var field in new[] { current, recording, mouse })
+            {
+                if (!field.IsVisible || Math.Abs(field.TranslatePoint(new Point(), row).X - expectedLeft) > 1 ||
+                    field.ActualWidth <= 0 || !field.Focusable || !Equals(field.ToolTip, AutomationProperties.GetName(field)))
+                    throw new InvalidOperationException($"The tab's left status fields did not reflect {key}, part {part}.");
+                expectedLeft += field.ActualWidth;
+            }
         }
         void Acknowledge() => FindControls<Button>(tab.Notices).Single(b => Equals(b.Content, App.Text("OK")))
             .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));

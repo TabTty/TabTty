@@ -126,6 +126,9 @@ internal sealed class VaultController(App app) : IDisposable
         }
 
         VaultFileController file = GetFile(location);
+        // An Explorer-launched editor can unlock the selected vault before a connection or menu uses it.
+        if (selected is null && ProfileLocation.SameVaultOpeningPath(file.FilePath, app.VaultPath))
+            selected = file;
         if (editors.TryGetValue(file, out VaultEditorWindow? existing))
         {
             if (existing.WindowState == WindowState.Minimized) existing.WindowState = WindowState.Normal;

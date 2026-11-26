@@ -436,12 +436,14 @@ internal static partial class Program
             window.OpenForm("Settings", _ => { });
             window.UpdateLayout();
             var form = (FormView)group.SelectedContent;
-            var broadcastBand = FindControls<TextBlock>(form.Notices).Single(label =>
-                label.Text == string.Format(App.Text("NoticeBroadcastWindow"), app.Broadcast.Status(window)));
-            Check(broadcastBand.IsVisible, "Broadcast status must stay visible while a settings tab is selected.");
+            var broadcastBand = (TextBlock)window.FindName("broadcastStatus");
+            Check(broadcastBand.IsVisible && broadcastBand.Text == app.Broadcast.Status(window) &&
+                !FindControls<TextBlock>(form.Notices).Any(label => label.Text.Contains(broadcastBand.Text, StringComparison.Ordinal)),
+                "Broadcast status must stay in the window's right side while a settings tab is selected.");
             group.SelectedItem = terminalItem;
             window.UpdateLayout();
-            Check(!broadcastBand.IsVisible, "A visible terminal must provide the broadcast status in its own bottom row.");
+            Check(broadcastBand.IsVisible && !FindControls<TextBlock>(tab).Any(label => label.Text == broadcastBand.Text),
+                "Switching back to the terminal hid or duplicated the window's broadcast status.");
             app.Broadcast.Stop(window);
             group.SelectedItem = group.Items.OfType<TabItem>().Single(item => item.Content == form);
             await Decide(owner, grant: false, approve: false, background: true);

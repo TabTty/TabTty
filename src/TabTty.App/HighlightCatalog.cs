@@ -74,7 +74,7 @@ internal sealed class HighlightCatalog(App app, string pathName, Action<string, 
         }
         catch (Exception exception) when (InvalidStore(exception))
         {
-            FormView.ReportFailure(owner.CaptureReport(), new InvalidDataException(Text("HighlightStoreInvalid")));
+            owner.ReportCommandFailure("HighlightSets", new InvalidDataException(Text("HighlightStoreInvalid")));
         }
 
         void Build(FormView form)

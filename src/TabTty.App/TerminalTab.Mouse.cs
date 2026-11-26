@@ -12,13 +12,6 @@ internal sealed partial class TerminalTab
     private readonly TextBlock mouseStatus = new() { Visibility = Visibility.Collapsed };
     private readonly object mouseHintKey = new();
 
-    private void InitializeMouseRoutingControls()
-    {
-        ConfigureStatusIndicator(mouseStatus);
-        DockPanel.SetDock(mouseStatus, Dock.Right);
-        statusBar.Children.Add(mouseStatus);
-    }
-
     internal void AddMouseRoutingCommand(ContextMenu menu, TerminalSurface? pane = null)
     {
         var surface = pane ?? output;

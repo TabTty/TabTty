@@ -5,6 +5,70 @@ using TabTty.App;
 
 internal static partial class Program
 {
+    private static async Task AcknowledgeWindowReportAsync(MainWindow owner, params string[] details)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var open = (Button)owner.FindName("windowReportButton");
+        while (!deadline.IsCancellationRequested)
+        {
+            Window? review = owner.OwnedWindows.Cast<Window>().SingleOrDefault(window =>
+                window.IsVisible && window.Title == App.Text("WindowReportsTitle"));
+            if (review is null && open.IsVisible && open.IsEnabled)
+                open.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            if (review is not null)
+            {
+                var ok = FindControls<Button>(review).SingleOrDefault(button =>
+                    Equals(button.Content, App.Text("OK")) &&
+                    details.All(text => AutomationProperties.GetHelpText(button).Contains(text, StringComparison.OrdinalIgnoreCase)));
+                if (ok is { IsVisible: true, IsEnabled: true })
+                {
+                    string message = AutomationProperties.GetHelpText(ok);
+                    if (!FindControls<TextBox>(review).Any(text => text.IsVisible && text.IsReadOnly &&
+                        text.Focusable && text.Text == message))
+                        throw new InvalidOperationException("The report did not expose its full selectable details.");
+                    ok.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    return;
+                }
+            }
+            await Task.Delay(15, deadline.Token);
+        }
+        throw new InvalidOperationException("The expected details were unavailable from the window status bar.");
+    }
+
+    private static void CheckVaultStatus(MainWindow window, bool unlocked)
+    {
+        string state = App.Text(unlocked ? "VaultStatusUnlocked" : "VaultStatusLocked");
+        var indicator = (TextBlock)window.FindName("vaultStatus");
+        window.UpdateLayout();
+        if (!indicator.IsVisible || indicator.Text != state || AutomationProperties.GetName(indicator) != state ||
+            FindControls<TextBlock>(window).Count(text => text.IsVisible && text.Text == state) != 1 ||
+            indicator.TranslatePoint(new Point(indicator.ActualWidth, indicator.ActualHeight), window).X < window.ActualWidth - 20)
+            throw new InvalidOperationException($"The window did not show its selected vault's state once on the right: {state}.");
+    }
+
+    private static async Task CheckSharedStatusRowAsync(MainWindow window)
+    {
+        window.OpenForm("Settings", _ => { });
+        var form = (FormView)((TabControl)window.FindName("tabs")).SelectedContent;
+        var local = form.Body.Children.OfType<Border>().Single(child => DockPanel.GetDock(child) == Dock.Bottom &&
+            child.Child is TextBlock);
+        var status = (TextBlock)local.Child;
+        var shared = (FrameworkElement)window.FindName("windowStatusBar");
+        using (form.BeginProgress("SavingChanges"))
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            while (status.Text.Length == 0) await Task.Delay(20, timeout.Token);
+            window.UpdateLayout();
+            var left = local.TransformToAncestor(window).TransformBounds(new Rect(local.RenderSize));
+            var right = shared.TransformToAncestor(window).TransformBounds(new Rect(shared.RenderSize));
+            if (status.Text != App.Text("SavingChanges") || left.Width < 1 || right.Width < 1 ||
+                Math.Abs(left.Bottom - right.Bottom) > 1 || left.Right > right.Left + 1)
+                throw new InvalidOperationException($"The form's progress and window status did not share the bottom row: {left}, {right}.");
+            CheckVaultStatus(window, unlocked: false);
+        }
+        form.RequestClose(() => true);
+    }
+
     // Read the actual report and acknowledge its own button, including every expected detail.
     private static async Task AcknowledgeReportAsync(FrameworkElement owner, params string[] details)
     {

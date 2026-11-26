@@ -65,6 +65,7 @@ public sealed class App : Application
             state["defaultMacroLogFilenameTemplate"]?.GetValue<string>() ?? RecordingDefaults.MacroAndProfileName + suffix);
     }
     internal BroadcastInput Broadcast { get; }
+    internal WindowStatusReports StatusReports { get; } = new();
     internal AiCollaboration Ai { get; }
     internal int SettingsRevision { get; private set; }
     internal static string DefaultVaultPath => Path.Combine(LocalState.DirectoryPath, "credentials.tttykey");

@@ -28,13 +28,9 @@ internal sealed class NoticeStack : Grid
         protected override HitTestResult? HitTestCore(PointHitTestParameters parameters) => null;
     }
 
-    private static long nextOrder;
-    internal static long ReserveOrder() => Interlocked.Increment(ref nextOrder);
-
-    private sealed class Entry(object key, long order)
+    private sealed class Entry(object key)
     {
         internal readonly object Key = key;
-        internal readonly long Order = order;
         internal readonly Card Frame = new();
         internal Card? Compact;
         internal bool KeepVisible;
@@ -100,14 +96,12 @@ internal sealed class NoticeStack : Grid
         }
     }
 
-    private Entry Get(object key, long? originalOrder = null)
+    private Entry Get(object key)
     {
         var item = entries.Find(item => Equals(item.Key, key));
         if (item is not null) return item;
-        item = new Entry(key, originalOrder ?? ReserveOrder());
-        int following = entries.FindIndex(entry => entry.Order > item.Order);
-        if (following < 0) entries.Add(item);
-        else entries.Insert(following, item);
+        item = new Entry(key);
+        entries.Add(item);
         direct.Children.Add(item.Frame);
         InvalidateMeasure();
         return item;
@@ -133,9 +127,9 @@ internal sealed class NoticeStack : Grid
         InvalidateMeasure();
     }
 
-    public void ShowReport(object key, string message, Action acknowledge, long? originalOrder = null)
+    public void ShowReport(object key, string message, Action acknowledge)
     {
-        var item = Get(key, originalOrder);
+        var item = Get(key);
         if (item.Ok is null)
         {
             ResetPresentation(item);

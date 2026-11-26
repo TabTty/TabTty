@@ -28,8 +28,8 @@ internal sealed partial class TerminalTab : UserControl
     private readonly TextBlock status = new();
     private readonly TextBlock recordingStatus = new() { Visibility = Visibility.Collapsed };
     private readonly TextBlock highlightStatus = new() { Visibility = Visibility.Collapsed };
-    private readonly TextBlock broadcastTabStatus = new() { Visibility = Visibility.Collapsed };
-    private readonly DockPanel statusBar = new() { Height = 30, ClipToBounds = true };
+    private readonly TextBlock pasteProgressStatus = new() { Visibility = Visibility.Collapsed };
+    private readonly DockPanel statusBar;
     private const double SearchInset = 4;
     private readonly Canvas terminalOverlays = new();
     internal NoticeStack Notices { get; } = new();
@@ -103,6 +103,8 @@ internal sealed partial class TerminalTab : UserControl
         this.sshInteraction = sshInteraction;
         this.fixedViewport = fixedViewport;
         this.fixtureHighlights = fixtureHighlights;
+        statusBar = new LocalStatusBar(status, recordingStatus) { Height = 30, ClipToBounds = true, LastChildFill = false };
+        statusBar.SetResourceReference(MarginProperty, "WindowStatusInset");
         visibleHighlights = new(Dispatcher, highlightState);
         this.captureClipboard = captureClipboard ?? ClipboardPaste.CaptureAsync;
         bellTimer = new DispatcherTimer(DispatcherPriority.Render, Dispatcher)
@@ -171,28 +173,16 @@ internal sealed partial class TerminalTab : UserControl
         terminalOverlays.Children.Add(searchBar);
         terminalOverlays.Children.Add(Notices);
         terminalArea.LayoutUpdated += (_, _) => { if (IsVisible && (Notices.HasItems || searchBar.IsVisible)) PositionSearchBar(); };
-        ConfigureStatusIndicator(status);
         terminalArea.Children.Add(output.Scroller);
         terminalArea.Children.Add(terminalOverlays);
-        InitializeAiControls();
-        InitializeMouseRoutingControls();
-        ConfigureStatusIndicator(macroStatus);
-        DockPanel.SetDock(macroStatus, Dock.Right);
-        statusBar.Children.Add(macroStatus);
-        ConfigureStatusIndicator(highlightStatus);
-        ConfigureStatusIndicator(broadcastTabStatus);
-        DockPanel.SetDock(highlightStatus, Dock.Right);
-        DockPanel.SetDock(broadcastTabStatus, Dock.Right);
-        statusBar.Children.Add(highlightStatus);
-        statusBar.Children.Add(broadcastTabStatus);
-        ConfigureStatusIndicator(recordingStatus);
-        DockPanel.SetDock(recordingStatus, Dock.Right);
-        statusBar.Children.Add(recordingStatus);
-        statusBar.Children.Add(status);
+        foreach (var indicator in new[] { status, recordingStatus, pasteProgressStatus, highlightStatus, macroStatus, mouseStatus, aiStatus })
+        {
+            ConfigureStatusIndicator(indicator);
+            statusBar.Children.Add(indicator);
+        }
+        AutomationProperties.SetLiveSetting(aiStatus, AutomationLiveSetting.Polite);
+        UpdateAiControls();
         RestoreStatusBarColors();
-        statusBar.SizeChanged += (_, _) => AllocateStatusWidths();
-        foreach (TextBlock indicator in statusBar.Children)
-            indicator.IsVisibleChanged += (_, _) => AllocateStatusWidths();
         var body = new Grid();
         body.RowDefinitions.Add(new RowDefinition());
         body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -1045,43 +1035,40 @@ internal sealed partial class TerminalTab : UserControl
         AutomationProperties.SetName(status, text);
     }
 
-    private string broadcastWindowStatus = "", broadcastPasteProgress = "";
-
-    internal void SetBroadcastStatus(string text)
-    {
-        broadcastWindowStatus = text;
-        UpdateBroadcastStatus();
-    }
-
     internal void SetBroadcastPasteProgress(string? text)
     {
-        broadcastPasteProgress = text ?? "";
-        UpdateBroadcastStatus();
+        if (Equals(pasteProgressStatus.ToolTip, text)) return;
+        pasteProgressStatus.Text = text?.ReplaceLineEndings(" ") ?? "";
+        pasteProgressStatus.ToolTip = text;
+        AutomationProperties.SetName(pasteProgressStatus, text ?? "");
+        pasteProgressStatus.Visibility = string.IsNullOrEmpty(text) ? Visibility.Collapsed : Visibility.Visible;
     }
 
-    private void UpdateBroadcastStatus()
+    private sealed class LocalStatusBar(TextBlock connection, TextBlock recording) : DockPanel
     {
-        string text = broadcastWindowStatus.Length == 0 ? broadcastPasteProgress :
-            broadcastPasteProgress.Length == 0 ? broadcastWindowStatus : $"{broadcastWindowStatus}\n{broadcastPasteProgress}";
-        broadcastTabStatus.Visibility = text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
-        if (broadcastTabStatus.Text == text) return;
-        broadcastTabStatus.Text = text;
-        broadcastTabStatus.ToolTip = text;
-        AutomationProperties.SetName(broadcastTabStatus, text);
-    }
+        protected override Size MeasureOverride(Size available)
+        {
+            var labels = InternalChildren.Cast<TextBlock>().Where(label => label.Visibility == Visibility.Visible).ToArray();
+            foreach (var label in labels) label.Measure(new Size(double.PositiveInfinity, available.Height));
+            double width = labels.Sum(label => label.DesiredSize.Width);
+            if (width > available.Width)
+            {
+                // Short labels take only their natural width. Share the remainder among the long labels,
+                // giving connection and recording more room while keeping every active label reachable.
+                double remaining = available.Width;
+                int weight = labels.Sum(Weight);
+                foreach (var label in labels.OrderBy(label => label.DesiredSize.Width / Weight(label)))
+                {
+                    double share = remaining * Weight(label) / weight;
+                    if (label.DesiredSize.Width > share) label.Measure(new Size(share, available.Height));
+                    remaining = Math.Max(0, remaining - label.DesiredSize.Width);
+                    weight -= Weight(label);
+                }
+            }
+            return new Size(Math.Min(width, available.Width), Height);
+        }
 
-    private void AllocateStatusWidths()
-    {
-        // Keep connection and recording independently readable when several optional indicators appear.
-        var other = statusBar.Children.OfType<TextBlock>().Where(indicator =>
-            indicator != status && indicator != recordingStatus && indicator.Visibility == Visibility.Visible).ToArray();
-        double width = statusBar.ActualWidth;
-        double connectionShare = status.Visibility == Visibility.Visible ? 0.35 : 0;
-        double recordingShare = recordingStatus.Visibility == Visibility.Visible ? 0.25 : 0;
-        recordingStatus.MaxWidth = width * recordingShare;
-        if (other.Length == 0) return;
-        double share = (1 - connectionShare - recordingShare) / other.Length;
-        foreach (var indicator in other) indicator.MaxWidth = width * share;
+        private int Weight(TextBlock label) => label == connection ? 5 : label == recording ? 3 : 1;
     }
 
     private void RestoreStatusBarColors()

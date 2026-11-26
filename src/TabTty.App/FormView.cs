@@ -39,7 +39,6 @@ internal sealed class FormView : Grid
     private string? statusResource;
     private bool fileWorkAttempted;
     private string? progressKey;
-    private string windowStatus = "";
 
     public FormView(bool modal = false)
     {
@@ -98,6 +97,7 @@ internal sealed class FormView : Grid
             BorderThickness = new Thickness(0, 1, 0, 0),
         };
         bar.SetResourceReference(Border.BorderBrushProperty, "SurfaceStrokeColorDefaultBrush");
+        bar.SetResourceReference(MarginProperty, "WindowStatusInset");
         statusBarText = text;
         DockPanel.SetDock(bar, Dock.Bottom);
         Body.Children.Insert(0, bar);
@@ -117,12 +117,6 @@ internal sealed class FormView : Grid
         UpdateStatusBar();
     }
 
-    internal void SetWindowStatus(string message)
-    {
-        windowStatus = message;
-        UpdateStatusBar();
-    }
-
     internal IDisposable BeginProgress(string key)
     {
         fileWorkAttempted = true;
@@ -133,8 +127,6 @@ internal sealed class FormView : Grid
     {
         if (statusBarText is not { } text) return;
         string message = (progressKey ?? statusResource) is { } key ? Text(key) : statusMessage;
-        if (windowStatus.Length != 0)
-            message = message.Length == 0 ? windowStatus : $"{message} · {windowStatus}";
         if (Equals(text.ToolTip, message.Length == 0 ? null : message)) return;
         text.Text = message.ReplaceLineEndings(" ");
         text.ToolTip = message.Length == 0 ? null : message;

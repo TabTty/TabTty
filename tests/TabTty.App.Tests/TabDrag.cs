@@ -262,6 +262,40 @@ internal static partial class Program
                 throw new InvalidOperationException("Leaving the bar did not restore its original geometry.");
         }
         finally { window.Close(); }
+        CheckUnavailableMoveDestination(app);
+    }
+
+    private static void CheckUnavailableMoveDestination(App app)
+    {
+        var source = new MainWindow(app);
+        var destination = new MainWindow(app);
+        try
+        {
+            source.Show();
+            destination.Show();
+            var group = (TabControl)source.FindName("tabs");
+            source.OpenForm("Settings", _ => { });
+            var original = (FormView)group.SelectedContent;
+            var move = FindMenu(source, "WindowMenu", "MoveTab");
+            OpenSubmenu(move);
+            var choice = move.Items.OfType<MenuItem>().Single(option => !Equals(option.Header, App.Text("NewWindow")));
+            source.OpenForm("HostKeys", _ => { });
+            var current = (FormView)group.SelectedContent;
+            destination.Close();
+            Click(choice);
+            if (original.TabOwner != source || !original.Reports.HasUnread || group.SelectedContent != current ||
+                current.Reports.HasReports || app.StatusReports.Pending(source).Count != 0)
+                throw new InvalidOperationException("A stale move command did not report to its original tab.");
+            group.SelectedItem = original.Tab;
+            source.UpdateLayout();
+            if (!FindControls<TextBlock>(original.Notices).Any(label => label.Text == App.Text("TabMoveDestinationUnavailable")))
+                throw new InvalidOperationException("The affected tab did not retain the unavailable destination reason.");
+        }
+        finally
+        {
+            if (destination.IsVisible) destination.Close();
+            source.Close();
+        }
     }
 
     private static async Task CheckTabInteractions(App app, string directory)

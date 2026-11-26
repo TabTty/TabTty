@@ -187,7 +187,7 @@ internal static partial class Program
                 MacroTrust.Save(macroAllow, MacroTrustDecision.Allow);
                 MacroTrust.Save(macroBlock, MacroTrustDecision.Block);
                 using var pendingMacro = MacroTrust.Evaluate(MacroTrustKey.Create(sourceDigest, []), elevated: false).Review!;
-                app.Profiles.ResetTrust(owner);
+                app.Profiles.ResetTrust(owner, error => throw error);
                 CheckMacroLaunch(!pendingMacro.Expired && MacroTrust.Read(macroAllow) == MacroTrustDecision.Allow &&
                     MacroTrust.Read(macroBlock) == MacroTrustDecision.Block, "A profile reset affected macro decisions.");
             }

@@ -75,6 +75,8 @@ internal static partial class Program
         host.Show();
         try
         {
+            CheckVaultStatus(host, unlocked: false);
+            await CheckSharedStatusRowAsync(host);
             await CheckAsync(empty: false);
             await CheckAsync(empty: true);
         }
@@ -86,6 +88,7 @@ internal static partial class Program
             if (empty) File.WriteAllBytes(path, []);
             var original = CredentialVault.InspectFile(path);
             await app.SaveSettingsAsync(app.SettingsRevision, new(VaultPath: path));
+            CheckVaultStatus(host, unlocked: false);
 
             Task cancelled = host.Dispatcher.InvokeAsync(UseVault).Task.Unwrap();
             var prompt = await FindDialogAsync("InitializeVault");
@@ -130,8 +133,7 @@ internal static partial class Program
             if (!app.Vault.IsSelectedUnlocked)
                 throw new InvalidOperationException("Vault initialization did not retain the shared unlock.");
             await app.Vault.UnlockFromMenuAsync(host).WaitAsync(deadline.Token);
-            if (FindControls<TextBlock>(host).Any(label => label.IsVisible && label.Text == App.Text("VaultUnlocked")))
-                throw new InvalidOperationException("An already unlocked vault repeated the unlock message.");
+            CheckVaultStatus(host, unlocked: true);
 
             Task choose = host.Dispatcher.InvokeAsync(ChooseSavedPassword).Task.Unwrap();
             (await FindDialogAsync("SelectSavedPassword")).Close();
@@ -205,10 +207,14 @@ internal static partial class Program
             {
                 var hostCommand = VaultLockCommand(host);
                 var peerCommand = VaultLockCommand(peer);
+                CheckVaultStatus(host, unlocked: true);
+                CheckVaultStatus(peer, unlocked: true);
                 if (!Equals(hostCommand.Header, App.Text("LockVault")) || !Equals(peerCommand.Header, App.Text("LockVault")))
                     throw new InvalidOperationException("The unlocked vault did not show the lock command across windows.");
 
                 peerCommand.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                CheckVaultStatus(host, unlocked: false);
+                CheckVaultStatus(peer, unlocked: false);
                 if (app.Vault.IsSelectedUnlocked || list.Items.Count != 0 ||
                     !Equals(hostCommand.Header, App.Text("UnlockVault")) || !Equals(peerCommand.Header, App.Text("UnlockVault")) ||
                     !beforeLock.AsSpan().SequenceEqual(File.ReadAllBytes(vaultPath)))
@@ -219,9 +225,10 @@ internal static partial class Program
                 FindControls<PasswordBox>(unlock).Single().Password = master;
                 Click(unlock, "UnlockVault");
                 await WaitIdleAsync();
+                CheckVaultStatus(host, unlocked: true);
+                CheckVaultStatus(peer, unlocked: true);
                 if (!Equals(peerCommand.Header, App.Text("LockVault")) ||
-                    list.Items.OfType<VaultEntryInfo>().Single().Name != original ||
-                    !FindControls<TextBlock>(host).Any(label => label.IsVisible && label.Text.Contains(App.Text("VaultUnlocked"))))
+                    list.Items.OfType<VaultEntryInfo>().Single().Name != original)
                     throw new InvalidOperationException("Unlocking again did not restore the shared entries and lock command.");
             }
             finally { peer.Close(); }
@@ -432,7 +439,7 @@ internal static partial class Program
         }, _ => RestoreSource, Restore.Issue, (source, destination) =>
         {
             File.Move(source, destination, overwrite: false);
-            Archived.SetResult(destination);
+            if (!Archived.TrySetResult(destination)) return;
             ReleaseArchive.Task.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
             throw new IOException("Controlled error after the archive move.");
         });
@@ -465,7 +472,7 @@ internal static partial class Program
             using (VaultController.ManagementDeliveries.Reserve(VaultController.ManagementDeliveryLimit))
             {
                 StartManagement();
-                await AcknowledgeReportAsync(host, App.Text("VaultBusy"));
+                await AcknowledgeWindowReportAsync(host, App.Text("VaultBusy"));
                 await UntilIdleAsync();
                 if (fixture.Installing.Task.IsCompleted || CredentialVault.InspectFile(empty) != originalEmpty)
                     throw new InvalidOperationException("Notification pressure admitted vault initialization.");
@@ -496,7 +503,7 @@ internal static partial class Program
             byte[] collision = "separately created target"u8.ToArray();
             File.WriteAllBytes(empty, collision);
             fixture.ReleaseInstallation.SetResult();
-            await AcknowledgeReportAsync(host, parked, stage, App.Text("PublishedImageOther"));
+            await AcknowledgeWindowReportAsync(host, parked, stage, App.Text("PublishedImageOther"));
             await UntilIdleAsync();
             if (!File.ReadAllBytes(empty).AsSpan().SequenceEqual(collision) || !VerifiedFilePublication.IsUnresolved(empty))
                 throw new InvalidOperationException("Initialization overwrote the competing file or lost its restriction.");
@@ -603,6 +610,45 @@ internal static partial class Program
                 File.Exists(first) || app.VaultPath != first || !File.ReadAllBytes(backup).AsSpan().SequenceEqual(priorBackup))
                 throw new InvalidOperationException("Archive changed the selected path, created a replacement or moved its backup.");
             Console.WriteLine("PASS VaultArchiveOwnsIssuedMoveUntilTheEditorAcknowledges");
+
+            var peer = app.CreateWindow(restorePlacement: false);
+            peer.Show();
+            try
+            {
+                using (var heldRestore = fixture.Restore.PauseNextWrite())
+                {
+                    var restoring = app.Dispatcher.InvokeAsync(() => app.Vault.RestoreFromMenuAsync(host)).Task.Unwrap();
+                    Click(await FindDialogAsync("RestoreVault", form: false), "Yes");
+                    await AcceptPasswordAsync("RestoreVault", "UnlockVault");
+                    await heldRestore.Issued.Task.WaitAsync(token);
+                    host.OpenForm("Settings", _ => { });
+                    heldRestore.Dispose();
+                    await restoring.WaitAsync(token);
+                }
+                if (app.StatusReports.Pending(host).Count != 1 ||
+                    FindControls<FormView>(host).Any(view => view.Reports.HasReports))
+                    throw new InvalidOperationException("A menu restore did not keep its result at application scope after a tab switch.");
+                await AcknowledgeWindowReportAsync(peer, string.Format(App.Text("VaultRestoreCompleted"), backup, first));
+
+                var archiving = app.Dispatcher.InvokeAsync(() => app.Vault.ArchiveAsync(host)).Task.Unwrap();
+                Click(await FindDialogAsync("ArchiveVault", form: false), "Yes");
+                await archiving.WaitAsync(token);
+                var archiveReport = app.StatusReports.Pending(peer).Single();
+                var archivedPath = archiveReport.Details.Split('\n', StringSplitOptions.RemoveEmptyEntries)[^1].TrimEnd();
+                if (!File.Exists(archivedPath)) throw new InvalidOperationException("The menu archive omitted its verified destination.");
+                await AcknowledgeWindowReportAsync(peer, App.Text("VaultArchived"), archivedPath);
+                if (app.StatusReports.Pending(host).Count != 0)
+                    throw new InvalidOperationException("A reviewed menu result stayed pending in the issuing window.");
+
+                string invalidStore = Path.Combine(directory, "invalid-highlights.json");
+                File.WriteAllText(invalidStore, "{");
+                new HighlightCatalog(app, invalidStore, null).Show(host);
+                if (app.StatusReports.Pending(peer).Count != 0 || FindControls<FormView>(host).Any(view => view.Reports.HasReports))
+                    throw new InvalidOperationException("A failure opening a manager was attributed to another view or window.");
+                await AcknowledgeWindowReportAsync(host, App.Text("HighlightStoreInvalid"));
+                Console.WriteLine("PASS MenuResultsFollowTheirOperationScope");
+            }
+            finally { peer.Close(); }
         }
         finally
         {

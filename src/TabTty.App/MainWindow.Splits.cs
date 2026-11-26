@@ -20,7 +20,6 @@ internal sealed partial class MainWindow
     private SplitLayout groups = null!;
     private TabControl activeGroup = null!;
     private TabControl? navigatingTabGroup;
-    private TerminalTab? broadcastStatusTab;
     private IEnumerable<TabControl> Groups => groups.Views.Cast<TabControl>();
     private IEnumerable<WindowTab> AllTabs => Groups.SelectMany(group => group.Items.OfType<WindowTab>());
     internal IEnumerable<TerminalTab> TerminalTabs => AllTabs.Select(tab => tab.Content).OfType<TerminalTab>();
@@ -47,6 +46,9 @@ internal sealed partial class MainWindow
         // Leave room for one full tab even when both scroll arrows are visible.
         double captionWidth = menuButton.Width + minimizeButton.Width + maximizeButton.Width + closeButton.Width;
         bool hasSplitGroups = Groups.Skip(1).Any();
+        Grid.SetRowSpan(groupHost, hasSplitGroups ? 1 : 2);
+        UpdateStatusInset();
+        UpdateStatusWidths();
         bool separateCaption = hasSplitGroups ||
             windowRoot.ActualWidth > 0 && windowRoot.ActualWidth < MinimumSharedTabBarWidth + captionWidth;
         groupHost.Margin = new Thickness(0, separateCaption ? 43 : 0, 0, 0);
@@ -182,7 +184,6 @@ internal sealed partial class MainWindow
     {
         foreach (var group in Groups)
             AutomationProperties.SetName(group, GroupName(group));
-        PlaceBroadcastStatus();
         RefreshNoticeActivity();
     }
 
@@ -229,11 +230,11 @@ internal sealed partial class MainWindow
 
     private void SplitGroup(TabControl group, Orientation orientation)
     {
-        if (!SplitLayout.CanSplit(group, orientation, GroupMinimum)) return;
+        if (closing || !Groups.Contains(group) || !SplitLayout.CanSplit(group, orientation, GroupMinimum)) return;
         var added = new TabControl { Template = (ControlTemplate)Resources["TabGroupTemplate"] };
         ConfigureGroup(added);
         try { groups.Split(group, added, orientation); }
-        catch (ResourceLimitException exception) { ShowError(this, exception); return; }
+        catch (ResourceLimitException exception) { ReportCommandFailure("TabGroups", exception); return; }
         UpdateWelcomePanel();
         UpdateGroupChrome();
         ActivateGroup(added);
@@ -245,11 +246,12 @@ internal sealed partial class MainWindow
         if (source == destination || !Groups.Contains(source) || !Groups.Contains(destination)) return;
         if (source.Items.OfType<WindowTab>().Any(item => item.IsClosing || item.Content is FormView { IsBusy: true }))
         {
-            ShowError(this, new InvalidOperationException(Text("SplitGroupBusy")));
+            ReportCommandFailure("RemoveTabGroup", new InvalidOperationException(Text("SplitGroupBusy")));
             return;
         }
         foreach (var item in source.Items.OfType<WindowTab>().ToArray())
-            if (!MoveTab(item, this, destinationGroup: destination)) return;
+            if (!MoveTab(item, this, destinationGroup: destination,
+                reportFailure: error => ReportCommandFailure("RemoveTabGroup", error))) return;
         groups.Remove(source);
         UpdateWelcomePanel();
         UpdateGroupChrome();
@@ -342,54 +344,35 @@ internal sealed partial class MainWindow
         bool visible = app.Broadcast.IsActive(this);
         bool editable = app.Broadcast.CanSelect(this);
         foreach (var tab in AllTabs) tab.UpdateBroadcast(visible, editable);
-        broadcastState = app.Broadcast.Status(this);
-        PlaceBroadcastStatus();
+        string text = app.Broadcast.Status(this);
+        broadcastStatus.Text = text.ReplaceLineEndings(" ");
+        broadcastStatus.ToolTip = text;
+        AutomationProperties.SetName(broadcastStatus, text);
+        broadcastStatus.Visibility = text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+        UpdateStatusWidths();
     }
 
-    private void PlaceBroadcastStatus()
+    private void UpdateStatusInset()
     {
-        string text = broadcastState;
-        string vaultState = explicitlyUnlockedVault is null ? "" : Text("VaultUnlocked");
-        var selectedView = (activeGroup.SelectedItem as WindowTab)?.Content;
-        FormView? selectedForm = selectedView as FormView;
-        if (vaultStatusForm != selectedForm) vaultStatusForm?.SetWindowStatus("");
-        vaultStatusForm = selectedForm;
-        selectedForm?.SetWindowStatus(vaultState);
-        bool showVaultInTerminal = vaultState.Length != 0 && selectedForm is null;
-        TerminalTab? terminal = text.Length == 0 && !showVaultInTerminal ? null : SelectedTab ?? Groups
-            .Select(group => (group.SelectedItem as WindowTab)?.Content).OfType<TerminalTab>().FirstOrDefault();
-        if (broadcastStatusTab != terminal)
-        {
-            broadcastStatusTab?.SetBroadcastStatus("");
-            broadcastStatusTab = terminal;
-        }
-        string terminalStatus = showVaultInTerminal && text.Length != 0 ? $"{text} · {vaultState}" :
-            showVaultInTerminal ? vaultState : text;
-        terminal?.SetBroadcastStatus(terminalStatus);
-        NoticeStack stack = (selectedView as TerminalTab)?.Notices ?? selectedForm?.Notices ?? windowNotices;
-        windowReports?.PresentIn(stack);
-        bool fallback = terminal is null && text.Length != 0;
-        if (broadcastStack != stack || !fallback)
-        {
-            broadcastStack?.Remove(broadcastStatus);
-            broadcastStack = null;
-        }
-        if (fallback)
-        {
-            broadcastStatus.Text = string.Format(Text("NoticeBroadcastWindow"), text);
-            AutomationProperties.SetName(broadcastStatus, broadcastStatus.Text);
-            stack.ShowContent(broadcastStatus, broadcastStatus);
-            broadcastStack = stack;
-        }
+        // A single group shares its local footer row with the window. With multiple
+        // groups the window footer sits outside their independently scrollable layout.
+        double width = Grid.GetRowSpan(groupHost) == 2 ? windowStatusBar.ActualWidth : 0;
+        var inset = new Thickness(0, 0, width, 0);
+        if (!Equals(groupHost.Resources["WindowStatusInset"], inset)) groupHost.Resources["WindowStatusInset"] = inset;
     }
 
-    private VaultFileController? explicitlyUnlockedVault;
-    private FormView? vaultStatusForm;
-
-    internal void ShowUnlockedVault(VaultFileController file)
+    private void UpdateStatusWidths()
     {
-        explicitlyUnlockedVault = file;
-        UpdateVaultStatus();
+        if (windowRoot.ActualWidth <= 0) return;
+        double budget = windowRoot.ActualWidth * (Grid.GetRowSpan(groupHost) == 2 ? 0.5 : 1);
+        vaultStatus.Measure(new Size(double.PositiveInfinity, 30));
+        bool hasBroadcast = broadcastStatus.Visibility == Visibility.Visible;
+        bool hasReport = windowReportButton.Visibility == Visibility.Visible;
+        double remaining = Math.Max(0, budget - vaultStatus.DesiredSize.Width -
+            (hasBroadcast ? 10 : 0) - (hasReport ? 6 : 0));
+        double share = hasBroadcast && hasReport ? remaining / 2 : remaining;
+        broadcastStatus.MaxWidth = share;
+        windowReportButton.MaxWidth = share;
     }
 
     private void UpdateVaultStatus()
@@ -400,19 +383,12 @@ internal sealed partial class MainWindow
             vaultLockMenuItem.Tag = key;
             vaultLockMenuItem.Header = Text(key);
         }
-        if (explicitlyUnlockedVault is { } file && (file.Unlocked is null || !app.Vault.IsSelected(file)))
-            explicitlyUnlockedVault = null;
-        vaultHint.Text = explicitlyUnlockedVault is null ? Text("VaultHint") : Text("VaultUnlocked");
-        PlaceBroadcastStatus();
+        string state = Text(app.Vault.IsSelectedUnlocked ? "VaultStatusUnlocked" : "VaultStatusLocked");
+        vaultStatus.Text = state;
+        vaultStatus.ToolTip = state;
+        AutomationProperties.SetName(vaultStatus, state);
+        UpdateStatusWidths();
     }
-
-    private readonly NoticeStack windowNotices = new();
-    private string broadcastState = "";
-    private readonly TextBlock broadcastStatus = new() { TextWrapping = TextWrapping.Wrap, IsHitTestVisible = false };
-    private NoticeStack? broadcastStack;
-    private ViewNotifications? windowReports;
-    private ViewNotifications WindowReports => windowReports ??= new(windowNotices, () => this,
-        hasForeground, () => Title, ShowNotificationWindow, "NoticeShowWindow");
 
     private void ShowNotificationWindow()
     {
@@ -434,7 +410,6 @@ internal sealed partial class MainWindow
             if (tab.Content is TerminalTab terminal) terminal.RefreshNoticeOwner();
             else if (tab.Content is FormView form) form.Reports.HostChanged();
         }
-        windowReports?.HostChanged();
     }
 
     internal void SelectNotificationTab(WindowTab tab)
@@ -449,29 +424,6 @@ internal sealed partial class MainWindow
     internal void SelectNotificationTab(TerminalTab terminal)
     {
         if (AllTabs.FirstOrDefault(tab => tab.Content == terminal) is { } tab) SelectNotificationTab(tab);
-    }
-
-    internal void ReportBroadcastFailure(string message)
-    {
-        var reports = WindowReports;
-        PlaceBroadcastStatus();
-        reports.Report(new object(), message);
-    }
-
-    internal Action<object, string> CaptureReport()
-    {
-        var item = activeGroup.SelectedItem as WindowTab;
-        return (key, message) =>
-        {
-            if (item?.Host is not null && item.Content is FormView form) form.Reports.Report(key, message);
-            else if (item?.Host is not null && item.Content is TerminalTab terminal) terminal.Reports.Report(key, message);
-            else if (!closed)
-            {
-                var reports = WindowReports;
-                PlaceBroadcastStatus();
-                reports.Report(key, message);
-            }
-        };
     }
 
     private TabControl? GroupOf(TabItem item) =>

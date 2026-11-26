@@ -19,12 +19,10 @@ internal sealed class BroadcastInput(App app)
     {
         public Mode? Local;
         public long SelectionRevision = -1;
-        public string? Detail;
     }
 
-    private sealed class Mode(MainWindow origin, MainWindow? window, long selectionRevision)
+    private sealed class Mode(MainWindow? window, long selectionRevision)
     {
-        public MainWindow Origin { get; } = origin;
         public MainWindow? Window { get; } = window;
         public long SelectionRevision { get; } = selectionRevision;
         public CancellationTokenSource Stop { get; } = new();
@@ -46,6 +44,8 @@ internal sealed class BroadcastInput(App app)
     {
         public CancellationTokenSource Stop { get; } = new();
         public TaskCompletionSource Finished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public CancellationToken Cancellation { get; set; }
+        public bool Committed { get; set; }
     }
     internal sealed record PastePreview(IReadOnlyList<string> Targets, (int Character, int Line, bool Remember) Pacing);
     internal sealed record PasteDecision(int Character, int Line, bool Remember);
@@ -61,6 +61,8 @@ internal sealed class BroadcastInput(App app)
         public TerminalTab SourceTab { get; } = sourceTab;
         public Target[] Targets { get; } = targets;
         public Dictionary<int, Dictionary<Target, (int Generation, TerminalMouseInput Last)>> Presses { get; } = [];
+        public HashSet<Target> Submitted { get; } = [];
+        public Target? Sending;
         public HashSet<int> Held { get; } = [];
         public int PendingReleases;
         public bool Cancelled;
@@ -93,14 +95,13 @@ internal sealed class BroadcastInput(App app)
     public void Start(MainWindow window)
     {
         if (!CanStart(window)) return;
-        var mode = new Mode(window, app.BroadcastAcrossWindows ? null : window, revision);
+        var mode = new Mode(app.BroadcastAcrossWindows ? null : window, revision);
         foreach (var host in Scope(mode))
         {
             var state = windows[host];
             if (state.SelectionRevision != revision)
                 foreach (var tab in host.TerminalTabs) tab.BroadcastChecked = true;
             state.SelectionRevision = revision;
-            state.Detail = null;
         }
         if (mode.Window is null) global = mode;
         else windows[window].Local = mode;
@@ -118,7 +119,7 @@ internal sealed class BroadcastInput(App app)
         Refresh();
     }
 
-    private void Stop(Mode mode)
+    private void Stop(Mode mode, bool reportGesture = true)
     {
         if (mode.Stop.IsCancellationRequested) return;
         if (global == mode) global = null;
@@ -129,6 +130,8 @@ internal sealed class BroadcastInput(App app)
         mode.Stop.Cancel();
         if (mode.Mouse is { } gesture)
         {
+            if (reportGesture && !gesture.Cancelled) ReportGestureCancellation(mode, gesture);
+            gesture.Cancelled = true;
             gesture.Source.CancelRemoteGesture();
             _ = FinishStoppedModeAsync(mode, Task.WhenAll(paste, CancelGestureAsync(mode, gesture)));
         }
@@ -164,11 +167,9 @@ internal sealed class BroadcastInput(App app)
 
     public string Status(MainWindow host)
     {
-        string? detail = windows.GetValueOrDefault(host)?.Detail;
         if (Active(host) is not { } mode)
-            return draining.Any(value => value.Window is null || value.Window == host || app.BroadcastAcrossWindows)
-                ? detail is null ? Text("BroadcastCleanupPending") : $"{Text("BroadcastCleanupPending")}\n{detail}"
-                : detail ?? "";
+            return draining.Any(value => value.Window is null || value.Window == host)
+                ? Text("BroadcastCleanupPending") : "";
         var checkedTabs = Tabs(mode).Where(tab => tab.BroadcastChecked).ToArray();
         int ready = checkedTabs.Count(tab => tab.InputSession is not null);
         string status = string.Format(CultureInfo.CurrentCulture, Text("BroadcastStatus"),
@@ -177,7 +178,9 @@ internal sealed class BroadcastInput(App app)
             status += "   " + string.Format(Text("BroadcastNextScope"),
                 Text(app.BroadcastAcrossWindows ? "BroadcastGlobal" : "BroadcastLocal"));
         if (ready == 0) status += "   " + Text(checkedTabs.Length == 0 ? "BroadcastNone" : "BroadcastUnready");
-        return detail is null ? status : $"{status}\n{detail}";
+        if (mode.Mouse is { Cancelled: true } || mode.Paste is { Committed: true, Cancellation.IsCancellationRequested: true })
+            status += "   " + Text("BroadcastCleanupPending");
+        return status;
     }
 
     public void Refresh()
@@ -231,6 +234,8 @@ internal sealed class BroadcastInput(App app)
         source.SetBroadcastPasteProgress(Text("Pasting"));
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(operation.Stop.Token, operation.SourceLifetime,
             mode.Stop.Token, origin);
+        operation.Cancellation = stop.Token;
+        using var refreshOnCancellation = stop.Token.Register(() => app.Dispatcher.InvokeAsync(Refresh));
         try
         {
             // Admission is synchronous. Preview and the broadcast status can
@@ -271,8 +276,8 @@ internal sealed class BroadcastInput(App app)
             timer.Tick += (_, _) =>
             {
                 if (mode.Paste != operation) return;
-                source.SetBroadcastPasteProgress((stop.IsCancellationRequested ? Text("BroadcastCleanupPending") + "\n" : "") +
-                    string.Join("\n", targets.Select(target => $"{target.Tab.TabCaption} — {amounts.GetValueOrDefault(target)}/{characters}")));
+                source.SetBroadcastPasteProgress(string.Join("\n", targets.Select(target =>
+                    $"{target.Tab.TabCaption} — {amounts.GetValueOrDefault(target)}/{characters}")));
             };
             timer.Start();
             try
@@ -398,11 +403,12 @@ internal sealed class BroadcastInput(App app)
         }, (target, report) =>
         {
             if (report is not { } actual) return;
+            gesture.Submitted.Add(target);
             if (!gesture.Presses.TryGetValue(input.Button, out var recipients))
                 gesture.Presses.Add(input.Button, recipients = []);
             if (input.Release) recipients.Remove(target);
             else recipients[target] = (actual.Generation, actual);
-        }, skip: () => gesture.Cancelled, include: input.Motion || input.Release ? target => target.Ready &&
+        }, gesture: gesture, skip: () => gesture.Cancelled, include: input.Motion || input.Release ? target => target.Ready &&
             gesture.Presses.TryGetValue(input.Button, out var recipients) && recipients.ContainsKey(target) : null, after: () =>
         {
             if (!input.Release || mode.Stop.IsCancellationRequested || gesture.Cancelled) return;
@@ -417,8 +423,7 @@ internal sealed class BroadcastInput(App app)
     {
         if (host is not null && Active(host) is { Locked: false } mode)
         {
-            ReportGestureCancellation(mode);
-            Refresh();
+            ReportGestureCancellation(mode, null);
         }
     }
 
@@ -428,14 +433,21 @@ internal sealed class BroadcastInput(App app)
             route.Mode is not { } mode || mode.Mouse is not { Cancelled: false } gesture ||
             gesture.Source != source || gesture.Capture != capture) return;
         gesture.Cancelled = true;
-        ReportGestureCancellation(mode);
+        ReportGestureCancellation(mode, gesture);
+        Refresh();
         _ = CancelGestureAsync(mode, gesture);
     }
 
-    private void ReportGestureCancellation(Mode mode)
+    private void ReportGestureCancellation(Mode mode, Gesture? gesture)
     {
-        foreach (var window in Scope(mode))
-            if (windows.TryGetValue(window, out var state)) state.Detail = Text("BroadcastGestureCancelled");
+        var targets = gesture?.Targets ?? Recipients(mode);
+        string details = string.Join("\n", targets.Select(target =>
+        {
+            string outcome = gesture?.Submitted.Contains(target) == true ? "BroadcastSubmitted" :
+                gesture?.Sending == target ? "NoticeBroadcastUncertain" : "BroadcastNotSent";
+            return $"{TerminalTab.BroadcastTargetLabel(target.Session)} — {Text(outcome)}";
+        }));
+        ReportResult(mode, "BroadcastGestureCancelled", details);
     }
 
     private async Task CancelGestureAsync(Mode mode, Gesture gesture)
@@ -471,7 +483,7 @@ internal sealed class BroadcastInput(App app)
         Func<Target, CancellationToken, Task<TerminalSession.PreparedInput?>> prepare,
         Action<Target, TerminalMouseInput?>? delivered = null, CancellationToken softStop = default, CancellationToken origin = default,
         Func<bool>? skip = null, Func<Target, bool>? include = null,
-        Action? after = null, TaskCompletionSource<bool>? commitPaste = null)
+        Action? after = null, TaskCompletionSource<bool>? commitPaste = null, Gesture? gesture = null)
     {
         if (mode.Waiting >= 256)
         {
@@ -555,6 +567,7 @@ internal sealed class BroadcastInput(App app)
                         if (!target.Ready) throw new IOException(Text("Disconnected"));
                         if (!request.CanCommitPaste) throw new IOException(Text("PasteTargetChanged"));
                     }
+                    mode.Paste!.Committed = true;
                     commitPaste.SetResult(true);
                 }
                 finally
@@ -572,6 +585,7 @@ internal sealed class BroadcastInput(App app)
                     using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(admission.Token, target.Lifetime);
                     lifetime.CancelAfter(TimeSpan.FromSeconds(30));
                     attempted.Add(target);
+                    if (gesture is not null) gesture.Sending = target;
                     if (await request.SendAsync(lifetime.Token))
                     {
                         submitted.Add(target);
@@ -611,6 +625,7 @@ internal sealed class BroadcastInput(App app)
         finally
         {
             foreach (var request in prepared.Values) request.Dispose();
+            if (entered && gesture is not null) gesture.Sending = null;
             if (entered) mode.Queue.Release();
             mode.Waiting--;
             after?.Invoke();
@@ -623,10 +638,16 @@ internal sealed class BroadcastInput(App app)
 
     private void ReportFailure(Mode mode, string details)
     {
-        var host = windows.ContainsKey(mode.Origin) ? mode.Origin : Scope(mode).FirstOrDefault(windows.ContainsKey);
-        host?.ReportBroadcastFailure($"{Text("BroadcastFailed")} ({Text(mode.Window is null ? "BroadcastGlobal" : "BroadcastLocal")})\n{details}");
-        Stop(mode);
+        ReportResult(mode, "BroadcastFailed", details);
+        Stop(mode, reportGesture: false);
         Refresh();
+    }
+
+    private void ReportResult(Mode mode, string key, string details)
+    {
+        string summary = $"{Text(key)} ({Text(mode.Window is null ? "BroadcastGlobal" : "BroadcastLocal")})";
+        app.StatusReports.Report(new object(), mode.Window, summary,
+            details.Length == 0 ? summary : $"{summary}\n{details}");
     }
 
     private static bool IsInputError(Exception exception) => exception is IOException or SocketException or

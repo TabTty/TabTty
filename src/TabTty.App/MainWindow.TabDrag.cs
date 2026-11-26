@@ -127,7 +127,7 @@ internal sealed partial class MainWindow
         if (drag.Drop is { Available: false })
         {
             CancelTabDrag();
-            ShowError(this, new InvalidOperationException(Text("TabMoveDestinationUnavailable")));
+            drag.Item.ReportMoveFailure(new InvalidOperationException(Text("TabMoveDestinationUnavailable")));
             return;
         }
         drag.Header.Follow(screenPoint);
@@ -202,7 +202,7 @@ internal sealed partial class MainWindow
         {
             if (!drop.Available)
             {
-                ShowError(this, new InvalidOperationException(Text("TabMoveDestinationUnavailable")));
+                drag.Item.ReportMoveFailure(new InvalidOperationException(Text("TabMoveDestinationUnavailable")));
                 return;
             }
             int index = drop.Before is null ? drop.Group.Items.Count : drop.Group.Items.IndexOf(drop.Before);

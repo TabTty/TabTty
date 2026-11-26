@@ -237,7 +237,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
     public void Show(MainWindow owner)
     {
         try { owner.OpenForm("ProfileCatalog", Build); }
-        catch (Exception exception) when (IsFileProblem(exception)) { FormView.ReportFailure(owner.CaptureReport(), exception); }
+        catch (Exception exception) when (IsFileProblem(exception)) { owner.ReportCommandFailure("ProfileCatalog", exception); }
 
         void Build(FormView form)
         {

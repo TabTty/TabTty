@@ -7,21 +7,18 @@ namespace TabTty.App;
 
 /// <summary>Owns incidents for one view, including the two presentations of a background incident.</summary>
 internal sealed class ViewNotifications(NoticeStack stack, Func<Window?> host, Func<bool> active,
-    Func<string> name, Action select, string navigationLabel = "NoticeShowTab") : IDisposable
+    Func<string> name, Action select) : IDisposable
 {
     private sealed class Incident(bool background)
     {
         public bool Background { get; } = background;
-        public long Order { get; } = NoticeStack.ReserveOrder();
         public TextBlock? Label;
         public FrameworkElement? Row;
         public Button? Navigate;
         public Button? Acknowledge;
-        public string Message = "";
     }
 
     private readonly Dictionary<object, Incident> incidents = [];
-    private NoticeStack presentation = stack;
     private Window? window;
     private StackPanel? rows;
     private bool announceWhenHosted;
@@ -40,8 +37,7 @@ internal sealed class ViewNotifications(NoticeStack stack, Func<Window?> host, F
             incidents.Add(key, item);
             added = true;
         }
-        item.Message = message;
-        presentation.ShowReport(item, message, () => Acknowledge(key, item), item.Order);
+        stack.ShowReport(item, message, () => Acknowledge(key, item));
         if (item.Background)
         {
             if (item.Label is null) AddRow(key, item);
@@ -60,22 +56,11 @@ internal sealed class ViewNotifications(NoticeStack stack, Func<Window?> host, F
         if (incidents.ContainsKey(key)) Report(key, message);
     }
 
-    public void PresentIn(NoticeStack next)
-    {
-        if (next == presentation) return;
-        foreach (var (key, item) in incidents)
-        {
-            presentation.Remove(item);
-            next.ShowReport(item, item.Message, () => Acknowledge(key, item), item.Order);
-        }
-        presentation = next;
-    }
-
     private void Acknowledge(object key, Incident item)
     {
         if (incidents.GetValueOrDefault(key) != item) return;
         incidents.Remove(key);
-        presentation.Remove(item);
+        stack.Remove(item);
         if (item.Row is not null) rows?.Children.Remove(item.Row);
         if (!HasUnread) CloseWindow();
         Changed?.Invoke();
@@ -97,7 +82,7 @@ internal sealed class ViewNotifications(NoticeStack stack, Func<Window?> host, F
             actions.Children.Add(button);
             return button;
         }
-        item.Navigate = AddAction(navigationLabel, () => { if (incidents.GetValueOrDefault(key) == item) select(); });
+        item.Navigate = AddAction("NoticeShowTab", () => { if (incidents.GetValueOrDefault(key) == item) select(); });
         item.Acknowledge = AddAction("OK", () => Acknowledge(key, item));
         row.Children.Add(actions);
         rows.Children.Add(row);
@@ -108,7 +93,7 @@ internal sealed class ViewNotifications(NoticeStack stack, Func<Window?> host, F
         if (window is not null) window.Title = string.Format(Text("NoticeForView"), name());
         foreach (var item in incidents.Values)
         {
-            if (item.Navigate is { } show) SetLabel(show, navigationLabel);
+            if (item.Navigate is { } show) SetLabel(show, "NoticeShowTab");
             if (item.Acknowledge is { } ok) SetLabel(ok, "OK");
         }
     }
@@ -160,7 +145,7 @@ internal sealed class ViewNotifications(NoticeStack stack, Func<Window?> host, F
     {
         if (disposed) return;
         disposed = true;
-        foreach (var item in incidents.Values) presentation.Remove(item);
+        foreach (var item in incidents.Values) stack.Remove(item);
         incidents.Clear();
         CloseWindow();
         Changed = null;
