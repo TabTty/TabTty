@@ -115,13 +115,16 @@ Terminal-tab context menus and the main menu provide Start, Stop, Select All,
 and Clear All under Broadcast Input (`同時送信`). Checkboxes appear only on
 terminal tabs in participating windows while a mode is active. Bulk selection
 uses the effective scope, includes hidden tabs, and cannot bypass an operation's
-selection lock. Count ready-selected/total-selected targets, such as `3/4`,
-in the single bottom status row of a visible terminal tab in each participating
-window. If the window shows no terminal, display the count in that window's
-upper-right stack until a terminal can show it again or broadcast status clears.
-Status changes preserve the allocated terminal layout. Distinguish zero
-selection from selected targets that are all unready. Disconnected status and
-target checks are separate indications.
+selection lock.
+
+Show the effective scope and ready-selected/total-selected count, such as
+`3/4`, on the right of the participating main window's status bar. Local mode
+uses its own window. Global mode shows the same state in every participating
+main window. This area stays visible with a management tab selected or with
+no tabs open. If the next Start will use a different scope, show that scope
+alongside the current one. Distinguish zero selected targets from selected
+targets that are all unready. Status changes preserve the allocated terminal
+layout. Disconnected status and target checks are separate indications.
 
 All commands, checkboxes, split dividers, group/pane activation, and tab moves
 must have keyboard and UI Automation access. Extend the existing menu-based
@@ -152,6 +155,14 @@ not sent, submitted/possibly delivered, or failed; transport submission does
 not prove remote execution. Do not promise rollback, automatic replay, or
 simultaneous remote execution. A generation change never redirects old input
 to the new connection.
+
+For a broadcast failure, including a full input queue, or a cancelled
+broadcast mouse gesture, show a summary on the right in the affected scope.
+Arrival preserves keyboard focus. The user can open the details from the
+summary. Retain the reason and each known target outcome until acknowledged,
+including confirmed payload bytes, uncertain delivery or paste framing alone
+when applicable. The report remains accessible after the mode ends. One
+acknowledgement clears that report across its participating windows.
 
 Serialize input admission for a mode and preserve each session's ordering
 against its other permitted input and automatic replies. Do not create a
@@ -212,9 +223,12 @@ does not promise completion within that deadline.
 Freeze recipients from preparation/preview through completion or cancellation;
 show that target selection is temporarily unavailable. A target that becomes
 ready later cannot join. Revalidate generation/readiness before commit; do not
-quietly change the confirmed list. Cancelled preview sends nothing. Show
-per-target progress and one Stop for the whole paste. Reject additional user
-terminal input during paste under the existing paste rule. Each target's
+quietly change the confirmed list. Cancelled preview sends nothing. Show paste
+preparation and per-target progress on the left of the originating terminal
+tab's status bar. Progress stays with that tab across selection changes and
+permitted moves and clears when the paste ends. Provide one Stop for the
+whole paste. Reject additional user terminal input during paste under the
+existing paste rule. Each target's
 framing and unsent-tail cancellation remain session-owned. Stop closes valid
 started frames where possible and does not undo delivered payload. Apply the
 same Stop rule inside short or long graphemes: the next complete scalar or
@@ -234,9 +248,10 @@ snapshot for each operation and do not create a persistent selection lock.
 The BroadcastInput module owns the complete preview-to-completion sequence;
 UI callers do not pair operation Begin/End calls. Full Stop ends the mode
 immediately; Stop Paste cancels the paste while leaving the mode active.
-After effects start, show cleanup pending until admitted work, required frame
-and native cleanup, and resource ownership actually end. Cancellation and
-deadline expiry alone do not establish completion.
+After effects start, show cleanup pending on the right of the participating
+main windows until admitted work, required frame and native cleanup, and
+resource ownership actually end. Cancellation and deadline expiry alone do
+not establish completion.
 
 Preview-only cancellation invalidates answers and preference/progress updates,
 requests dialog closure, and releases broadcast admission without waiting for
@@ -470,10 +485,12 @@ side survives. A surviving subtree keeps the reservations for its own splits.
 | First use and restart | First local/global use checks existing terminal tabs in scope. Unchanged-scope restart preserves empty/partial selection regardless of invoking tab. Scope change invalidates all windows' old selections: next global Start checks all tabs, next local Start in each window checks its tabs. |
 | Reset timing and new windows | Same-value save does not reset; changing/saving back leaves reset pending. No reset affects an ongoing operation. New windows in an unchanged active global mode start with new and moved terminal tabs checked. |
 | Source versus targets | Unchecked source sends only to checked ready targets; settings inputs and zero-target input send nothing. |
+| Broadcast status | Select a management tab or leave a participating window empty. Its right-hand status still shows the effective scope, target count and any pending cleanup. A local mode appears only in its own window. |
 | Tab identity | Reconnect preserves checks without replay; new tab starts checked; cross-window move/back checks ON, same-window move preserves; cancelled move does not reset. |
 | Shared panes | Several panes of a checked tab cause one delivery, one receive update, and one recording event. |
 | Per-target semantics | Different Enter/codec/key/bracket modes produce each target's expected operation, with its normal echo/log rules. |
 | Failure boundaries | Preflight failure sends nowhere; post-start failure reports submitted/uncertain targets, stops the affected mode, and never automatically resends. |
+| Broadcast reports | While typing in another window, trigger a broadcast failure or mouse-gesture cancellation. Keyboard focus stays in place. Open the report from the right-hand summary, read the details and acknowledge once. All summaries for that report clear. |
 | Paste | One required confirmation, full preflight, bounded per-target progress, common pacing and Stop; late-ready/newly checked tabs never join. |
 | Scope-preserving moves | Global cross-window and local same-window moves succeed during paste/drag without changing recipients; local cross-boundary moves wait. |
 | Last-tab transfer | Destination exists before source closes; session, gesture/paste owner, logs, vault, and all panes survive without duplication. |

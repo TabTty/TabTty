@@ -77,12 +77,13 @@ and the list support [connecting multiple profiles](#connecting-multiple-profile
 
 The connection profile manager and every profile editor reserve a single-line
 status bar at the bottom of the view, below the controls and outside the
-scrollable content. The bar keeps its height when empty. Showing, changing or
-clearing a message keeps the list, fields and buttons in place. The manager
-starts with an empty bar and leaves it empty until it has a message of its own.
+scrollable content. The bar keeps its height when the message field is empty.
+Showing, changing or clearing a message keeps the list, fields and buttons in
+place. The manager's message field starts empty. The main window continues to
+show the [selected vault's state](#vault-selection-and-operation-hosting) on the right.
 
-In the editor, leave the bar empty during ordinary input, credential selection
-and confirmation prompts. If a save or a recheck is still running 500 ms after
+In the editor, leave the progress field empty during ordinary input, credential
+selection and confirmation prompts. If a save or a recheck is still running 500 ms after
 the work begins, show **Saving changes…** or **Checking the previous save…**
 respectively. Clear the progress message when the work ends. On a save or
 recheck failure, show the reason in the editor's upper-right floating notice
@@ -1023,14 +1024,14 @@ edits text.
 
 Reserve a single-line status bar at the bottom of the vault management tab,
 standalone vault editor and credential edit dialog, outside the scrolling
-content and below the controls. Use this bar for file-operation progress
-and keep its height reserved when empty. Showing,
+content and below the controls. Use the view's message field for file-operation
+progress and keep its height reserved when empty. Showing,
 changing or clearing status text keeps the list, fields and buttons in place.
 
-Leave the bars empty while the user edits a credential or answers a
+Leave the progress fields empty while the user edits a credential or answers a
 confirmation. After **OK** and any required confirmation, show **Saving
 changes…** in the edit dialog's status bar only if the vault save is still
-pending after 500 ms. The parent view stays quiet throughout the edit. Clear
+pending after 500 ms. Keep progress for this edit in the dialog. Clear
 the progress message when the save ends. A save failure appears in an
 upper-right **OK** notice in the credential editor. Acknowledging it leaves
 the failed save available for correction or recovery.
@@ -1045,9 +1046,8 @@ state. The next **Manage vault** command offers setup. Keep
 before creating a new vault.
 
 When **Unlock vault** creates or initializes the file, open or activate the
-management tab in the issuing main window after success. When the command
-unlocks an existing vault, show the resulting unlocked state in the issuing
-window so the user can see that the command succeeded.
+management tab in the issuing main window after success. The shared status
+shows a successful unlock or initialization without requiring acknowledgement.
 
 When Settings changes the selected vault, any open vault editor keeps its
 target; the management tab and subsequent connections use the new selection.
@@ -1060,6 +1060,21 @@ the editor after acknowledgment. Restore and password changes keep the editor
 open at the same path and refresh its state.
 
 ### Vault selection and operation hosting
+
+Every main window shows the selected vault's state once on the right of its
+status bar, starting with its first display. Keep it visible on the welcome
+screen with no tabs, on terminal, settings and management tabs, and across
+split views. A new window immediately shows the current shared state.
+
+Show **Vault: Unlocked** whenever the selected vault is unlocked in this
+application run, whether through the menu, a connection, a credential picker,
+management, initialization, or its standalone editor. Otherwise show
+**Vault: Not unlocked**, including at startup before first use and when the
+selected file is missing or uninitialized. Reading the shared state for display
+does not open, create or unlock the file. Relocking or changing the selected
+vault updates every main window immediately. A standalone vault editor shows
+the state of the file it opened. Unlocking another file there leaves the main
+windows showing the selected vault's state. [Notification policy](notification-policy.md)
 
 The vault menu shows **Unlock vault** while the selected vault is locked and
 **Relock vault** while it is unlocked. Manual lock ends the shared unlock in all
@@ -1161,11 +1176,13 @@ final-exit rules. No hidden lifetime or session-recording timeout is introduced.
 | Open or edit one `.tttykey`, or select multiple vault files | Single-file verbs open one editor. A vault invocation carrying multiple paths is rejected before opening or unlocking a file. |
 | Choose **Manage vault** with a missing or zero-byte target | Cancelling setup keeps the current view. Verified initialization opens the management tab. The backup restore command remains available in the vault menu before setup. |
 | Archive the selected vault or switch to a missing or zero-byte target while its management tab is open | Show the resulting state without prompting. The next **Manage vault** command offers setup. |
-| Choose **Unlock vault** with a missing, zero-byte, or existing valid target | Verified creation or initialization opens the management tab. The issuing window shows the unlocked state of an existing target without requiring acknowledgement. |
+| Start with a missing or locked selected vault and open a second main window | Each window shows **Vault: Not unlocked** on the right from its first display, including before any terminal opens. Displaying the state leaves the file untouched and does not prompt. |
+| Choose **Unlock vault** with a missing, zero-byte, or existing valid target | Verified creation or initialization opens the management tab in the issuing window. After success, every main window shows **Vault: Unlocked** without requiring acknowledgement. |
+| Unlock during a connection, then relock from another window | The right-hand state in every main window changes to **Vault: Unlocked**, then to **Vault: Not unlocked**, including in a window showing Settings. |
 | Choose **Manage vault** in the profile password or key picker | The action is present with an empty or populated list. Preserve the draft, close the picker, and use the standalone vault editor if no main window is open. Reopening the picker shows current committed entries. |
 | Change a selected vault entry in a standalone window | The in-app management view and the next credential lookup see the same committed revision without another unlock. |
 | Edit a copy of the selected vault at another path | Save to the copy. Connections keep using the selected file. Closing the copy's editor releases its unlock. |
-| Switch the selected vault from A to B while both are open | A and B keep their targets. The tab and subsequent connections use B's existing unlock. |
+| Switch the selected vault from A to B while both are open | Each standalone editor keeps its target. Every main window shows B's existing unlock state. The management tab and subsequent connections use B. |
 | Close the last terminal window with a profile editor open | Preserve the editor and its draft. A later normal launch opens profile selection. Exiting after the last editor closes ends the shared unlock. |
 | Open an empty or missing vault via Explorer, or archive a valid vault in its editor | The empty or missing target produces an error. Successful archive shows the new location and closes its editor after acknowledgment. |
 | With vault A selected, restore vault B in its standalone editor, then archive B from that editor | Restore refreshes the editor at B's path. Archive displays B's verified destination and closes that editor after acknowledgment. A stays selected and its file is untouched. |
