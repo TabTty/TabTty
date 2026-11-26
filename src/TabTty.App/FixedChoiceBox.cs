@@ -9,6 +9,7 @@ internal sealed class FixedChoiceBox : ComboBox
 
     internal FixedChoiceBox()
     {
+        SetResourceReference(StyleProperty, typeof(ComboBox));
         DisplayMemberPath = nameof(Option.Label);
         SelectedValuePath = nameof(Option.Id);
     }

@@ -395,6 +395,14 @@ invoked content. A terminal's remote-owned right-click remains remote input.
 Provide named menu destinations for pane/group activation and movement, with
 focus indication, without consuming ordinary terminal navigation keys.
 
+In the terminal-tab context menu, align the labels of **Broadcast Input**,
+**Tab Groups**, **Terminal Panes**, and **Focus Terminal Pane** with neighboring
+commands at their own menu level. In the terminal-pane context menu, apply the
+same alignment to **Terminal Panes** and **Focus Terminal Pane**. Share the
+icon and checkmark columns at each menu level and collapse unused columns.
+Keep the submenu arrows on the trailing edge and verify that nested checkmarks
+remain visible and that each submenu opens with the pointer and keyboard.
+
 ## Shared grid and independent views
 
 Size the session grid from the whole tab content rectangle as if there were

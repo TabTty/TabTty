@@ -27,19 +27,24 @@
 
     <ControlTemplate x:Key="ContextSubmenuTemplate" TargetType="MenuItem">
         <Grid>
-            <Border x:Name="HeaderBorder" Margin="4,1" Padding="6,3" MinHeight="26"
-                    Background="{TemplateBinding Background}" CornerRadius="4">
+            <Border x:Name="HeaderBorder" Margin="4,1" Padding="8,6"
+                    Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="4">
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="24" SharedSizeGroup="MenuItemIcon" />
+                        <!-- Match the Fluent MenuItem columns so headers and commands align at each level. -->
+                        <ColumnDefinition Width="Auto" SharedSizeGroup="MenuItemCheckBoxIconColumnGroup" />
+                        <ColumnDefinition Width="Auto" SharedSizeGroup="MenuItemIconColumnGroup" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <ContentPresenter x:Name="MenuIcon" ContentSource="Icon" VerticalAlignment="Center" />
-                    <TextBlock x:Name="Checkmark" Text="✓" VerticalAlignment="Center" Visibility="Collapsed" />
-                    <ContentPresenter Grid.Column="1" ContentSource="Header"
+                    <TextBlock x:Name="Checkmark" Text="✓" Width="20" Margin="0,0,6,0"
+                               TextAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" />
+                    <ContentPresenter x:Name="MenuIcon" Grid.Column="1" ContentSource="Icon"
+                                      Margin="0,0,6,0" VerticalAlignment="Center" />
+                    <ContentPresenter Grid.Column="2" ContentSource="Header" Margin="{TemplateBinding Padding}"
                                       RecognizesAccessKey="True" VerticalAlignment="Center" />
-                    <TextBlock Grid.Column="2" Text="&#xE76C;" Margin="12,0,0,0"
+                    <TextBlock Grid.Column="3" Text="&#xE76C;" Margin="12,0,0,0"
                                FontFamily="Segoe MDL2 Assets" FontSize="10" VerticalAlignment="Center" />
                 </Grid>
             </Border>
@@ -60,6 +65,12 @@
         <ControlTemplate.Triggers>
             <Trigger Property="IsHighlighted" Value="True">
                 <Setter TargetName="HeaderBorder" Property="Background" Value="{DynamicResource MenuBarItemBackgroundSelected}" />
+            </Trigger>
+            <Trigger Property="Icon" Value="{x:Null}">
+                <Setter TargetName="MenuIcon" Property="Visibility" Value="Collapsed" />
+            </Trigger>
+            <Trigger Property="IsCheckable" Value="True">
+                <Setter TargetName="Checkmark" Property="Visibility" Value="Hidden" />
             </Trigger>
             <Trigger Property="IsChecked" Value="True">
                 <Setter TargetName="MenuIcon" Property="Visibility" Value="Collapsed" />

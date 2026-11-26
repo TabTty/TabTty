@@ -185,12 +185,13 @@ internal static partial class Program
         {
             Task management = host.Dispatcher.InvokeAsync(() => app.Vault.ManageAsync(host)).Task.Unwrap();
             var unlock = await FindDialogAsync("UnlockVault", form: true);
-            string expectedPath = string.Format(App.Text("VaultPathDisplay"), ProfileLocation.Normalize(vaultPath));
-            if (!FindControls<TextBlock>(unlock).Any(label => label.Text == expectedPath) ||
+            string expectedPath = $"{App.Text("VaultPath")}:\n{ProfileLocation.Normalize(vaultPath)}";
+            if (!FindControls<TextBlock>(unlock).Any(label => label.Text == expectedPath &&
+                label.TextWrapping == TextWrapping.Wrap && System.Windows.Automation.AutomationProperties.GetName(label) == expectedPath) ||
                 FindControls<TextBox>(unlock).Any())
             {
                 unlock.Close();
-                throw new InvalidOperationException("Vault unlock must display the vault path as a label.");
+                throw new InvalidOperationException("Vault unlock must display the readable path on its own line.");
             }
             FindControls<PasswordBox>(unlock).Single().Password = master;
             Click(unlock, "UnlockVault");

@@ -346,6 +346,13 @@ documentation change implements no file migration.
 
 Language/theme/bell and saved rule content apply live after successful save.
 
+Drop-down controls in settings and other forms use the application's WPF
+Fluent appearance, including the closed field, expanded list, selected row,
+and keyboard focus. Apply the effective Light or Dark theme to the entire
+control. Verify fixed-choice and editable drop-downs in an already open form
+after changing the application theme or the Windows app theme in system mode.
+Preserve the selected value or editable text through the change.
+
 Open settings and profile editors share fixed-choice relabeling. Use stable
 IDs for selection, change tracking, discard and save, including language,
 theme, bell and profile inherit/override choices. Changing the display language
@@ -1082,6 +1089,12 @@ main windows and the selected file's editor. The next use of its saved
 credentials requires the master password again. Established sessions continue.
 While dependent vault work is active, report Busy and let the user retry after
 it finishes.
+
+In the vault unlock prompt, show the localized **Credential vault path:**
+label above the master password field. Start the full path of the file being
+unlocked on the next line. Wrap long paths within the available width and
+make both the label and the full path available to assistive technology.
+Verify the layout in English and Japanese, including a long path.
 
 For Restore and Archive, the main menu, management tab and standalone editor
 each call the same file-bound operation for the requested action. The menu

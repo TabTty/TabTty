@@ -77,6 +77,12 @@ internal static partial class Program
 #pragma warning restore WPF0001
         try
         {
+            if (args is ["--popup-appearance"])
+            {
+                RunScenario(application.Dispatcher, () => CheckPopupAppearanceAsync(application));
+                Console.WriteLine("PASS PopupAppearance");
+                return 0;
+            }
             if (args is ["--notice-stack"])
             {
                 RunScenario(application.Dispatcher, () => CheckNoticeStackAsync(application, settingsDirectory));

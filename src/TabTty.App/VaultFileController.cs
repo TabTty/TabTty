@@ -1057,9 +1057,10 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         var repeated = new PasswordBox { MaxLength = VaultContainer.MaximumMasterInputLength };
         if (path is not null)
         {
+            string pathLabel = title == "UnlockVault" ? "VaultUnlockPathDisplay" : "VaultPathDisplay";
             var pathDisplay = new TextBlock
             {
-                Text = string.Format(Text("VaultPathDisplay"), path),
+                Text = string.Format(Text(pathLabel), path),
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(5, 6, 5, 6),
             };
