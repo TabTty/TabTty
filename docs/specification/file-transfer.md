@@ -17,6 +17,23 @@ ready for separately authorized implementation.
 Use the same compact row height as connection profile and vault management in
 both panes.
 
+Place the upload `＞` and download `＜` buttons between the two file lists.
+Give both buttons localized accessible names and tooltips. Align **Retry failed
+items** and **Cancel** at the right edge below the results.
+
+Offer **Rename** and **Delete** in each list's row context menu and keep F2 and
+Delete available from the list. A context menu on a selected row retains the
+selection. A context menu on an unselected row selects that row. Rename requires
+one entry with a usable name. Deletion uses the confirmed selection.
+
+**Cut**, **Copy**, and **Paste** also use the row context menu and Ctrl+X,
+Ctrl+C, and Ctrl+V when a file list has focus. Cut and Copy capture the selected
+entries and their source paths in the transfer window. Paste uses the opposite
+pane's displayed directory and is also available from that list's empty space.
+Cut starts a transfer with checked source removal at Paste. Copy keeps the source
+and can be pasted again. Clear the clipboard on disconnection or window closure.
+Use the regular transfer collision prompts and report retained sources per item.
+
 The tab header command targets the clicked connected SSH terminal tab, including
 an inactive tab in another tab group. Open or focus one transfer window for
 that tab. Bind it to the tab's current connection generation and show the
@@ -60,7 +77,8 @@ refresh, suppress the copy cursor and target highlight.
 Buttons capture the selected source entries and the opposite pane's displayed
 directory at invocation. A cross-pane drop captures the highlighted directory,
 or the displayed directory for a drop on a file row or empty space. Highlight
-only folder rows during the drag. Accept a drop only if copying is still
+only folder rows during the drag, using the theme's accent outline while keeping
+the normal row background and foreground. Accept a drop only if copying is still
 available and its destination matches the last preview for that drag. Both use
 the same copy operation. Discard a drag if its
 selection or either captured listing generation is stale. After capture,

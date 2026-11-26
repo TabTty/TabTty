@@ -440,12 +440,13 @@
   <data name="TransferRefresh" xml:space="preserve"><value>Refresh</value></data>
   <data name="TransferNewFolder" xml:space="preserve"><value>New folder</value></data>
   <data name="TransferRename" xml:space="preserve"><value>Rename</value></data>
+  <data name="TransferCut" xml:space="preserve"><value>Cut</value></data>
   <data name="TransferDelete" xml:space="preserve"><value>Delete</value></data>
   <data name="TransferName" xml:space="preserve"><value>Name</value></data>
   <data name="TransferSize" xml:space="preserve"><value>Size (bytes)</value></data>
   <data name="TransferModified" xml:space="preserve"><value>Last modified</value></data>
-  <data name="TransferUpload" xml:space="preserve"><value>Upload →</value></data>
-  <data name="TransferDownload" xml:space="preserve"><value>← Download</value></data>
+  <data name="TransferUpload" xml:space="preserve"><value>Upload</value></data>
+  <data name="TransferDownload" xml:space="preserve"><value>Download</value></data>
   <data name="TransferRetry" xml:space="preserve"><value>Retry failed items</value></data>
   <data name="TransferResults" xml:space="preserve"><value>Results</value></data>
   <data name="TransferResultsLimit" xml:space="preserve"><value>Some results were omitted.</value></data>
@@ -469,6 +470,8 @@
   <data name="TransferSkippedType" xml:space="preserve"><value>Skipped · link or unsupported item type</value></data>
   <data name="TransferCollision" xml:space="preserve"><value>Destination name collision</value></data>
   <data name="TransferDone" xml:space="preserve"><value>Completed</value></data>
+  <data name="TransferMoved" xml:space="preserve"><value>Moved</value></data>
+  <data name="TransferMoveSourceRetained" xml:space="preserve"><value>Source kept</value></data>
   <data name="TransferDeleted" xml:space="preserve"><value>Deleted</value></data>
   <data name="TransferUnfinished" xml:space="preserve"><value>Unprocessed</value></data>
   <data name="TransferMetadataWarning" xml:space="preserve"><value>Completed · could not preserve last-modified time</value></data>

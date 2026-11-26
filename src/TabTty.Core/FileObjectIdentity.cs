@@ -58,10 +58,15 @@ internal readonly record struct FileObjectIdentity(uint Volume, ulong Index)
         if (contents is not null &&
             (contents.Length > maximumBytes || !SHA256.HashData(contents).AsSpan().SequenceEqual(expectedDigest)))
             return false;
+        MarkForDeletion(handle);
+        return true;
+    }
+
+    internal static void MarkForDeletion(SafeFileHandle handle)
+    {
         byte delete = 1;
         if (!SetFileInformationByHandle(handle, 4, ref delete, 1))
-            throw NativeError("The publication candidate could not be removed.");
-        return true;
+            throw NativeError("The file could not be removed.");
     }
 
     internal static bool MoveIfSame(string path, FileObjectIdentity expected, string target, bool replace,

@@ -220,6 +220,26 @@ internal sealed class TransferFiles(SftpClient client, TimeSpan wait, FileOperat
         return true;
     }, token, mutation: true);
 
+    public async Task DeleteMovedSourceAsync(TransferPath path, TransferAttributes expected, CancellationToken token)
+    {
+        if (path.Local is { } local)
+        {
+            await LocalAsync(() =>
+            {
+                using var directory = OpenDirectory(Parent(path));
+                TransferWindowsPath.DeleteMovedSource(local, expected);
+                return true;
+            }, token, mutation: true);
+            return;
+        }
+        await RequireRemoteDirectoryAsync(Parent(path), token);
+        var actual = await client.StatAsync(path.Remote!, token);
+        bool directoryEntry = expected.Kind == TransferKind.Directory;
+        if (directoryEntry ? actual?.Kind != TransferKind.Directory : !TransferAttributes.SameOverwriteTarget(expected, actual))
+            throw new SftpException(SftpFailure.SourceChanged);
+        await client.RemoveAsync(path.Remote!, directoryEntry, token);
+    }
+
     public async Task<bool> StageAsync(TransferPath source, TransferPath temporary, TransferAttributes snapshot,
         Action<long> progress, Action created, CancellationToken token)
     {
@@ -235,6 +255,9 @@ internal sealed class TransferFiles(SftpClient client, TimeSpan wait, FileOperat
             if (source.Local is not null)
             {
                 stream = await OpenLocalAsync(source, FileMode.Open, token);
+                if (snapshot.LocalIdentity is not null &&
+                    !TransferAttributes.SameOverwriteTarget(snapshot, TransferWindowsPath.ReadAttributesFrom(stream.SafeFileHandle)))
+                    throw new SftpException(SftpFailure.SourceChanged);
                 long expectedSize = stream.Length;
                 if (snapshot.Size is { } listedSize && listedSize != expectedSize)
                     throw new SftpException(SftpFailure.SourceChanged);
@@ -334,7 +357,8 @@ internal sealed class TransferFiles(SftpClient client, TimeSpan wait, FileOperat
     public static bool Changed(TransferAttributes before, TransferAttributes after) =>
         (before.Kind != TransferKind.Unknown && after.Kind != TransferKind.Unknown && before.Kind != after.Kind) ||
         (before.Size.HasValue && after.Size.HasValue && before.Size != after.Size) ||
-        (before.Modified.HasValue && after.Modified.HasValue && before.Modified != after.Modified);
+        (before.Modified.HasValue && after.Modified.HasValue && before.Modified != after.Modified) ||
+        (before.LocalIdentity.HasValue && before.LocalIdentity != after.LocalIdentity);
 
     private async Task RequireRemoteDirectoryAsync(TransferPath directory, CancellationToken token)
     {

@@ -30,6 +30,7 @@ internal interface IFileOperationIo
     Task RenameAsync(TransferPath source, TransferPath target, bool replace, CancellationToken token);
     Task<bool> TryCommitLocalAsync(TransferPath source, TransferPath target, TransferAttributes? approved, CancellationToken token);
     Task DeleteAsync(TransferPath path, TransferKind kind, CancellationToken token);
+    Task DeleteMovedSourceAsync(TransferPath path, TransferAttributes expected, CancellationToken token);
     Task RecycleAsync(TransferPath path, CancellationToken token);
     Task<bool> StageAsync(TransferPath source, TransferPath temporary, TransferAttributes snapshot,
         Action<long> progress, Action created, CancellationToken token);
@@ -148,9 +149,16 @@ internal sealed class FileOperations
     public void Cancel() => running?.Cancel();
 
     public Task<string>? Copy(TransferItem[] source, TransferPath target, Func<TransferQuestion, ValueTask<TransferChoice>> confirm)
+        => Transfer(source, target, confirm, move: false);
+
+    public Task<string>? Move(TransferItem[] source, TransferPath target, Func<TransferQuestion, ValueTask<TransferChoice>> confirm)
+        => Transfer(source, target, confirm, move: true);
+
+    private Task<string>? Transfer(TransferItem[] source, TransferPath target,
+        Func<TransferQuestion, ValueTask<TransferChoice>> confirm, bool move)
         => Start(token => batch.RunAsync(source.ToArray(), target,
             (item, path, attributes) => AskAsync(new(TransferQuestionKind.Overwrite, path, item, attributes), confirm, token),
-            AddResult, Report, token), transfer: true);
+            AddResult, Report, token, move), transfer: true);
 
     public Task<string>? Retry(Func<TransferQuestion, ValueTask<TransferChoice>> confirm)
     {

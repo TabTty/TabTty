@@ -49,7 +49,7 @@ callers; it remains behind the internal seam.
 
 ## Operation interface
 
-Use named copy, delete, rename, and folder-creation operations with opaque,
+Use named copy, move, delete, rename, and folder-creation operations with opaque,
 module-owned operation identity. Exact C# names and internal decomposition are
 implementation choices. The interface also supports observing read-only state,
 answering confirmation requests, requesting cancellation, retrying eligible
@@ -59,6 +59,18 @@ An operation request captures its selected entries and destination/name as
 bounded, stable values. Preserve remote raw-name bytes and the selected path
 information; subsequent browsing does not retarget the operation. Captured
 attributes do not replace the required live rechecks.
+
+Cross-pane move uses the same staged copy, final commit, and conflict prompts
+as an ordinary transfer. After a confirmed file commit, verify that the
+destination still matches the staged file and recheck the source before issuing
+source removal. Keep the source when a copy is skipped, fails, cannot be
+verified, or cannot preserve its metadata. For directories, remove only empty
+source folders after their admitted children have been processed. Leave any
+uncopied or newly appearing contents in place. Windows source removal uses the
+checked file handle. SFTP v3 uses a metadata check followed by REMOVE or RMDIR,
+which are separate server operations. Unknown outcomes use the existing refresh
+and close-report rules. Retry failed cut items by explicitly selecting them for
+a new cut and paste so the ordinary copy retry cannot remove a source.
 
 The module decides admission. A disabled button is a presentation of that
 decision, not its enforcement. Reject a start when the connection is unavailable,

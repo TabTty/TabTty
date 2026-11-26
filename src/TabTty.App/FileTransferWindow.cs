@@ -28,7 +28,6 @@ internal sealed class FileTransferWindow : Window
     private readonly ProgressBar progress = new() { Height = 5, Minimum = 0, Maximum = 100 };
     private readonly ListBox results = new() { MaxHeight = 130 };
     private readonly Button upload, download, cancel, retry;
-    private readonly List<(Button Button, Pane Pane, string Key)> mutations = [];
     private readonly List<(ContentControl Control, string Key)> labels = [];
     private readonly List<(GridViewColumn Column, string Key)> columns = [];
     private TextBlock? localHeading;
@@ -45,6 +44,7 @@ internal sealed class FileTransferWindow : Window
     private Row? dragRow;
     private DragSelection? activeDrag;
     private ListViewItem? highlighted;
+    private FileClipboard? clipboard;
 
     public FileTransferWindow(TerminalSession session, FileOperationOwnership ownership)
     {
@@ -72,25 +72,34 @@ internal sealed class FileTransferWindow : Window
         row.SetBinding(TextBlock.TextProperty, new Binding { Converter = new ResultTextConverter() });
         results.ItemTemplate = new DataTemplate { VisualTree = row };
         footer.Children.Add(results);
-        var commands = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
+        var commands = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 4, 0, 0) };
         footer.Children.Add(commands);
-        upload = Button("TransferUpload", () => StartCopy(Selected(local), remote.Directory));
-        download = Button("TransferDownload", () => StartCopy(Selected(remote), local.Directory));
         retry = Button("TransferRetry", () => Observe(operations?.Retry(PresentQuestion)));
         cancel = Button("Cancel", () => operations?.Cancel());
-        foreach (Button control in new[] { upload, download, retry, cancel }) commands.Children.Add(control);
+        cancel.Margin = new Thickness(0, 4, 0, 4);
+        commands.Children.Add(retry);
+        commands.Children.Add(cancel);
 
         var panes = new Grid();
         panes.ColumnDefinitions.Add(new ColumnDefinition());
-        panes.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(6) });
+        panes.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         panes.ColumnDefinitions.Add(new ColumnDefinition());
         FrameworkElement left = BuildPane(local, Text("TransferLocal"));
         FrameworkElement right = BuildPane(remote, session.FileTransferEndpoint);
-        var divider = new GridSplitter { Width = 6, HorizontalAlignment = HorizontalAlignment.Stretch };
+        var divider = new GridSplitter
+        {
+            Width = 6, HorizontalAlignment = HorizontalAlignment.Center,
+            ResizeDirection = GridResizeDirection.Columns, ResizeBehavior = GridResizeBehavior.PreviousAndNext,
+        };
+        upload = DirectionButton("TransferUpload", "＞", () => StartCopy(Selected(local), remote.Directory));
+        download = DirectionButton("TransferDownload", "＜", () => StartCopy(Selected(remote), local.Directory));
+        var direction = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Children = { upload, download } };
         Grid.SetColumn(divider, 1);
+        Grid.SetColumn(direction, 1);
         Grid.SetColumn(right, 2);
         panes.Children.Add(left);
         panes.Children.Add(divider);
+        panes.Children.Add(direction);
         panes.Children.Add(right);
         layout.Children.Add(panes);
         Content = layout;
@@ -111,6 +120,8 @@ internal sealed class FileTransferWindow : Window
         AutomationProperties.SetName(results, Text("TransferResults"));
         AutomationProperties.SetName(local.Path, Text("TransferPath"));
         AutomationProperties.SetName(remote.Path, Text("TransferPath"));
+        LabelDirectionButton(upload, "TransferUpload");
+        LabelDirectionButton(download, "TransferDownload");
         foreach (var (control, key) in labels) control.Content = Text(key);
         foreach (var (column, key) in columns) column.Header = Text(key);
         if (results.ItemsSource is not null) results.Items.Refresh();
@@ -184,13 +195,8 @@ internal sealed class FileTransferWindow : Window
             if (ownership.NeedsRefresh) _ = RefreshAfterOperationAsync();
             else _ = RefreshAsync(pane);
         }));
-        Button create = Button("TransferNewFolder", () => StartCreate(pane));
-        Button rename = Button("TransferRename", () => StartRename(pane));
-        Button delete = Button("TransferDelete", () => StartDelete(pane));
-        mutations.AddRange([(create, pane, "TransferNewFolder"), (rename, pane, "TransferRename"), (delete, pane, "TransferDelete")]);
-        actions.Children.Add(create);
-        actions.Children.Add(rename);
-        actions.Children.Add(delete);
+        pane.NewFolder = Button("TransferNewFolder", () => StartCreate(pane));
+        actions.Children.Add(pane.NewFolder);
 
         pane.List.SelectionMode = SelectionMode.Extended;
         pane.List.AllowDrop = true;
@@ -200,6 +206,13 @@ internal sealed class FileTransferWindow : Window
         AddColumn("TransferModified", 145, nameof(Row.Modified));
         pane.List.View = view;
         AutomationProperties.SetName(pane.List, title);
+        AddFileMenu(pane);
+        pane.List.CommandBindings.Add(new CommandBinding(ApplicationCommands.Cut,
+            (_, _) => CaptureClipboard(pane, Selected(pane), cut: true), (_, args) => args.CanExecute = CanCapture(pane)));
+        pane.List.CommandBindings.Add(new CommandBinding(ApplicationCommands.Copy,
+            (_, _) => CaptureClipboard(pane, Selected(pane), cut: false), (_, args) => args.CanExecute = CanCapture(pane)));
+        pane.List.CommandBindings.Add(new CommandBinding(ApplicationCommands.Paste,
+            (_, _) => PasteFiles(pane), (_, args) => args.CanExecute = CanPaste(pane)));
         pane.List.SelectionChanged += (_, _) =>
         {
             if (activeDrag?.Source == pane) activeDrag = null;
@@ -209,8 +222,8 @@ internal sealed class FileTransferWindow : Window
         pane.List.KeyDown += (_, args) =>
         {
             if (args.Key == Key.Enter) OpenFolder(pane, pane.List.SelectedItem as Row);
-            else if (args.Key == Key.F2) StartRename(pane);
-            else if (args.Key == Key.Delete) StartDelete(pane);
+            else if (args.Key == Key.F2) StartRename(pane, Selected(pane));
+            else if (args.Key == Key.Delete) StartDelete(pane, Selected(pane));
             else return;
             args.Handled = true;
         };
@@ -238,12 +251,85 @@ internal sealed class FileTransferWindow : Window
         }
     }
 
+    private void AddFileMenu(Pane pane)
+    {
+        var cut = new MenuItem { InputGestureText = "Ctrl+X" };
+        var copy = new MenuItem { InputGestureText = "Ctrl+C" };
+        var paste = new MenuItem { InputGestureText = "Ctrl+V" };
+        var separator = new Separator();
+        var rename = new MenuItem();
+        var delete = new MenuItem();
+        var menu = new ContextMenu { Items = { cut, copy, paste, separator, rename, delete } };
+        pane.List.ContextMenu = menu;
+        TransferItem[] targets = [];
+        int revision = -1;
+        bool onRow = false;
+        pane.List.ContextMenuOpening += (_, args) =>
+        {
+            bool keyboard = args.CursorLeft == -1;
+            var origin = keyboard ? Keyboard.FocusedElement : args.OriginalSource;
+            var row = origin is null ? null : RowContainerAt(pane, origin);
+            var clicked = row?.Content as Row;
+            if (keyboard) clicked ??= pane.List.SelectedItem as Row;
+            onRow = clicked is not null;
+            if (!pane.IsListed || !onRow && !CanPaste(pane))
+            {
+                args.Handled = true;
+                return;
+            }
+            if (clicked is not null && !pane.List.SelectedItems.Contains(clicked))
+            {
+                pane.List.UnselectAll();
+                pane.List.SelectedItem = clicked;
+                row?.Focus();
+            }
+        };
+        menu.Opened += (_, _) =>
+        {
+            targets = onRow ? Selected(pane) : [];
+            revision = pane.Revision;
+            cut.Header = Text("TransferCut");
+            copy.Header = Text("Copy");
+            paste.Header = Text("Paste");
+            rename.Header = Text("TransferRename");
+            delete.Header = Text("TransferDelete");
+            cut.Visibility = copy.Visibility = separator.Visibility = rename.Visibility = delete.Visibility =
+                onRow ? Visibility.Visible : Visibility.Collapsed;
+            cut.IsEnabled = copy.IsEnabled = CanMutate(pane) && targets.Length != 0;
+            paste.IsEnabled = CanPaste(pane);
+            rename.IsEnabled = CanMutate(pane) && targets is [{ Name: not null }];
+            delete.IsEnabled = CanMutate(pane) && targets.Length != 0;
+        };
+        cut.Click += (_, _) => { if (revision == pane.Revision) CaptureClipboard(pane, targets, cut: true); };
+        copy.Click += (_, _) => { if (revision == pane.Revision) CaptureClipboard(pane, targets, cut: false); };
+        paste.Click += (_, _) => { if (revision == pane.Revision) PasteFiles(pane); };
+        rename.Click += (_, _) => { if (revision == pane.Revision) StartRename(pane, targets); };
+        delete.Click += (_, _) => { if (revision == pane.Revision) StartDelete(pane, targets); };
+    }
+
     private Button Button(string key, Action action, bool track = true)
     {
         var button = new Button { Content = Text(key), Margin = new Thickness(0, 4, 6, 4), Padding = new Thickness(8, 3, 8, 3) };
         button.Click += (_, _) => action();
         if (track) labels.Add((button, key));
         return button;
+    }
+
+    private Button DirectionButton(string key, string glyph, Action action)
+    {
+        var button = Button(key, action, track: false);
+        button.Content = glyph;
+        button.MinWidth = 36;
+        button.Margin = new Thickness(2, 4, 2, 4);
+        LabelDirectionButton(button, key);
+        return button;
+    }
+
+    private static void LabelDirectionButton(Button button, string key)
+    {
+        string label = Text(key);
+        button.ToolTip = label;
+        AutomationProperties.SetName(button, label);
     }
 
     private Task NavigateAsync(Pane pane, string path) => BrowseAsync(pane, token => files!.ResolveAsync(pane.Remote, path, pane.Directory, token));
@@ -365,9 +451,9 @@ internal sealed class FileTransferWindow : Window
     private void Highlight(ListViewItem? item)
     {
         if (highlighted == item) return;
-        highlighted?.ClearValue(BackgroundProperty);
+        highlighted?.ClearValue(BorderBrushProperty);
         highlighted = item;
-        highlighted?.SetResourceReference(BackgroundProperty, SystemColors.ControlLightBrushKey);
+        highlighted?.SetResourceReference(BorderBrushProperty, "ListViewItemPillFillBrush");
     }
 
     private void StartCopy(TransferItem[] selection, TransferPath? target)
@@ -379,12 +465,28 @@ internal sealed class FileTransferWindow : Window
     private bool IsConnected => files is not null && client?.IsOpen == true && !disconnected && !closing;
     private bool CanStart => IsConnected && operations?.CanStart == true;
     private bool CanCopy(int selected) => CanStart && local.IsListed && remote.IsListed && selected > 0;
-    private bool CanMutate(Pane pane, string action) => CanStart && pane.IsListed && action switch
+    private bool CanMutate(Pane pane) => CanStart && pane.IsListed;
+    private bool CanCapture(Pane pane) => CanMutate(pane) && pane.List.SelectedItems.Count != 0;
+    private bool CanPaste(Pane pane) => CanMutate(pane) && clipboard is { } captured && captured.Source != pane;
+
+    private void CaptureClipboard(Pane pane, TransferItem[] selection, bool cut)
     {
-        "TransferRename" => pane.List.SelectedItems.Count == 1 && pane.List.SelectedItem is Row { Item.Name: not null },
-        "TransferDelete" => pane.List.SelectedItems.Count != 0,
-        _ => true,
-    };
+        if (!CanMutate(pane) || selection.Length == 0) return;
+        clipboard = new(pane, selection, cut);
+        CommandManager.InvalidateRequerySuggested();
+    }
+
+    private void PasteFiles(Pane pane)
+    {
+        if (!CanPaste(pane) || clipboard is not { } captured || pane.Directory is not { } target) return;
+        var operation = captured.Cut
+            ? operations?.Move(captured.Items, target, PresentQuestion)
+            : operations?.Copy(captured.Items, target, PresentQuestion);
+        if (operation is null) return;
+        if (captured.Cut && !(operation.IsCompletedSuccessfully && operation.Result == "SftpCapacity"))
+            clipboard = null;
+        Observe(operation);
+    }
 
     private void Observe(Task<string>? result)
     {
@@ -444,8 +546,8 @@ internal sealed class FileTransferWindow : Window
         download.IsEnabled = CanCopy(remote.List.SelectedItems.Count);
         retry.IsEnabled = CanStart && operations?.CanRetry == true;
         cancel.IsEnabled = operations?.IsRunning == true && !closing;
-        foreach (var (button, pane, key) in mutations)
-            button.IsEnabled = CanMutate(pane, key);
+        local.NewFolder.IsEnabled = CanMutate(local);
+        remote.NewFolder.IsEnabled = CanMutate(remote);
         local.Path.IsEnabled = remote.Path.IsEnabled = IsConnected;
         local.List.IsEnabled = local.IsListed;
         remote.List.IsEnabled = remote.IsListed;
@@ -501,28 +603,27 @@ internal sealed class FileTransferWindow : Window
 
     private void StartCreate(Pane pane)
     {
-        if (!CanMutate(pane, "TransferNewFolder") || pane.Directory is not { } parent) return;
+        if (!CanMutate(pane) || pane.Directory is not { } parent) return;
         int revision = pane.Revision;
         string? name = PromptName("TransferNewFolder", "");
         if (name is null || !pane.IsListed || pane.Revision != revision) return;
         Observe(operations?.Create(parent, name));
     }
 
-    private void StartRename(Pane pane)
+    private void StartRename(Pane pane, TransferItem[] selection)
     {
-        if (!CanMutate(pane, "TransferRename") || pane.Directory is not { } parent ||
-            Selected(pane) is not [{ Name: { } oldName } item]) return;
+        if (!CanMutate(pane) || pane.Directory is not { } parent ||
+            selection is not [{ Name: { } oldName } item]) return;
         int revision = pane.Revision;
         string? name = PromptName("TransferRename", oldName);
         if (name is null || name == oldName || !pane.IsListed || pane.Revision != revision) return;
         Observe(operations?.Rename(parent, item, name));
     }
 
-    private void StartDelete(Pane pane)
+    private void StartDelete(Pane pane, TransferItem[] selection)
     {
-        if (!CanMutate(pane, "TransferDelete") || pane.Directory is not { } parent) return;
-        TransferItem[] items = Selected(pane);
-        Observe(operations?.Delete(parent, items, PresentQuestion));
+        if (!CanMutate(pane) || pane.Directory is not { } parent || selection.Length == 0) return;
+        Observe(operations?.Delete(parent, selection, PresentQuestion));
     }
 
     private string? PromptName(string title, string initial)
@@ -564,6 +665,7 @@ internal sealed class FileTransferWindow : Window
     {
         if (disconnected) return;
         disconnected = true;
+        clipboard = null;
         connection.Cancel();
         SetOperationStatus(Text("SftpDisconnected"));
         UpdateActions();
@@ -682,6 +784,7 @@ internal sealed class FileTransferWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         closing = closed = true;
+        clipboard = null;
         ownership.Changed -= OwnershipChanged;
         if (operations is not null) operations.Changed -= OperationChanged;
         connection.Cancel();
@@ -698,6 +801,7 @@ internal sealed class FileTransferWindow : Window
         public bool Remote { get; } = remote;
         public TextBox Path { get; } = new() { Margin = new Thickness(0, 5, 0, 0) };
         public ListView List { get; } = new();
+        public Button NewFolder { get; set; } = null!;
         public TransferPath? Directory;
         public string? ListedPath;
         public bool IsListed => Directory is not null && Load is null && Path.Text == ListedPath;
@@ -719,4 +823,6 @@ internal sealed class FileTransferWindow : Window
         public Pane? PreviewPane { get; set; }
         public int PreviewRevision { get; set; }
     }
+
+    private sealed record FileClipboard(Pane Source, TransferItem[] Items, bool Cut);
 }

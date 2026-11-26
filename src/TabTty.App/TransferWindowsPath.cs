@@ -50,16 +50,37 @@ internal sealed class TransferWindowsPath : IDisposable
             if (error is 2 or 3) return null;
             throw new IOException("Unable to inspect the transfer path.", new Win32Exception(error));
         }
+        return ReadAttributesFrom(handle);
+    }
+
+    internal static TransferAttributes ReadAttributesFrom(SafeFileHandle handle)
+    {
         FileInformation info = GetInfo(handle);
         if ((info.Attributes & ReparseAttribute) != 0) return new(TransferKind.Link, null, null);
         DateTime modified = DateTime.FromFileTimeUtc(((long)info.WriteHigh << 32) | info.WriteLow);
-        if ((info.Attributes & DirectoryAttribute) != 0) return new(TransferKind.Directory, null, modified);
-        long size = ((long)info.SizeHigh << 32) | info.SizeLow;
-        return new(TransferKind.File, size, modified)
+        bool directory = (info.Attributes & DirectoryAttribute) != 0;
+        long? size = directory ? null : ((long)info.SizeHigh << 32) | info.SizeLow;
+        return new(directory ? TransferKind.Directory : TransferKind.File, size, modified)
         {
             LocalIdentity = GetFileId(handle, 18 /* FileIdInfo */, out var id, 24) && id.File != Guid.Empty
                 ? (id.Volume, id.File) : null,
         };
+    }
+
+    internal static void DeleteMovedSource(string path, TransferAttributes expected)
+    {
+        const uint deleteAccess = 0x10000;
+        // Hold the checked object open without allowing concurrent writes or replacement.
+        using var handle = CreateFile(path, ReadAttributes | deleteAccess, (uint)FileShare.Read, 0,
+            OpenExisting, BackupSemantics | OpenReparsePoint, 0);
+        if (handle.IsInvalid)
+            throw new IOException("Unable to open the moved source for removal.", new Win32Exception(Marshal.GetLastWin32Error()));
+        var actual = ReadAttributesFrom(handle);
+        bool matches = expected.Kind == TransferKind.Directory
+            ? actual.Kind == TransferKind.Directory && expected.LocalIdentity == actual.LocalIdentity
+            : TransferAttributes.SameOverwriteTarget(expected, actual);
+        if (expected.LocalIdentity is null || !matches) throw new SftpException(SftpFailure.SourceChanged);
+        FileObjectIdentity.MarkForDeletion(handle);
     }
 
     public TransferFileIdentity Identity

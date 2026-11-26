@@ -220,7 +220,52 @@ internal static partial class Program
             !ReferenceEquals(liveResults, reported.Results) || !observedDisplacement ||
             liveResults.Last().Reason != "TransferResultsLimit")
             throw new InvalidOperationException("The latest result budget omitted an unresolved path.");
+        await CheckMoveSafetyAsync(root);
         Console.WriteLine("PASS CheckFileOperations");
+    }
+
+    private static async Task CheckMoveSafetyAsync(string root)
+    {
+        string local = Path.Combine(root, "move-source.txt");
+        File.WriteAllText(local, "original");
+        var before = TransferWindowsPath.Stat(local)!;
+        File.WriteAllText(local, "modified");
+        File.SetLastWriteTimeUtc(local, before.Modified!.Value.UtcDateTime.AddMinutes(1));
+        try
+        {
+            TransferWindowsPath.DeleteMovedSource(local, before);
+            throw new InvalidOperationException("Move removed a changed source file.");
+        }
+        catch (SftpException error) when (error.Failure == SftpFailure.SourceChanged) { }
+        if (File.ReadAllText(local) != "modified") throw new InvalidOperationException("Move did not retain the changed source.");
+
+        var stamp = new TransferAttributes(TransferKind.File, 1, DateTimeOffset.UnixEpoch);
+        var staged = stamp with { LocalIdentity = (1, Guid.NewGuid()) };
+        var source = new TransferItem(new TransferPath("/move"u8.ToArray()), "move", "move", stamp);
+        foreach (var (loseReply, sameDestination, choice, removesSource) in new[]
+        {
+            (false, true, TransferChoice.Overwrite, true),
+            (false, true, TransferChoice.Skip, false),
+            (false, false, TransferChoice.Overwrite, false),
+            (true, true, TransferChoice.Overwrite, false),
+        })
+        {
+            int destinationReads = 0;
+            var io = new ControlledFiles
+            {
+                LoseCommit = loseReply,
+                Inspect = path => path.Local is null ? stamp :
+                    path.Local == "out/move" && ++destinationReads > 2 && !sameDestination
+                        ? staged with { LocalIdentity = (1, Guid.NewGuid()) } : staged,
+            };
+            var ownership = new FileOperationOwnership();
+            var ops = new FileOperations(io, ownership, CancellationToken.None);
+            string status = await ops.Move([source], new("out"), _ => ValueTask.FromResult(choice))!;
+            if (io.Removed.Contains("/move") != removesSource || ops.CanRetry || ownership.NeedsRefresh != loseReply ||
+                status != (loseReply ? "SftpUnknownOutcome" : "TransferFinished"))
+                throw new InvalidOperationException("Move removed a source without a verified destination or offered a copy retry.");
+        }
+        Console.WriteLine("PASS MoveRetainsSourcesOnSkipAndUnverifiedCommit");
     }
 
     private sealed class ControlledFiles : IFileOperationIo
@@ -237,6 +282,7 @@ internal static partial class Program
         public string? FailStageFor;
         public List<string> Staged { get; } = [];
         public Queue<TransferAttributes> CopyTargetVersions = new();
+        public Func<TransferPath, TransferAttributes?>? Inspect;
         public int RecycleCalls;
         public bool IsOpen => true;
         public string Display(TransferPath path)
@@ -249,7 +295,7 @@ internal static partial class Program
         public TransferPath Parent(TransferPath path) => path.ParentPath!;
         public Task<TransferItem[]> ListAsync(TransferPath path, CancellationToken token) => Task.FromResult(Children);
         public Task<TransferAttributes?> StatAsync(TransferPath path, CancellationToken token) =>
-            Task.FromResult<TransferAttributes?>(path.Local == "/remote/renamed" ? null : path.Local == "tree" ? Directory :
+            Task.FromResult<TransferAttributes?>(Inspect is not null ? Inspect(path) : path.Local == "/remote/renamed" ? null : path.Local == "tree" ? Directory :
                 path.Local == "out/a" && CopyTargetVersions.Count > 0 ?
                     (CopyTargetVersions.Count == 1 ? CopyTargetVersions.Peek() : CopyTargetVersions.Dequeue()) : File);
         public Task<bool> IsCaseSensitiveAsync(TransferPath path, CancellationToken token) => Task.FromResult(true);
@@ -271,6 +317,8 @@ internal static partial class Program
             Removed.Add(Display(path));
             return Task.CompletedTask;
         }
+        public Task DeleteMovedSourceAsync(TransferPath path, TransferAttributes expected, CancellationToken token) =>
+            DeleteAsync(path, expected.Kind, token);
         private Task UnknownMutation()
         {
             MutationCalls++;
