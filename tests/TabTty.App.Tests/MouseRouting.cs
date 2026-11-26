@@ -3,7 +3,6 @@ using System.Net;
 using System.Net.Sockets;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
 using TabTty.App;
 using TabTty.Core;
 
@@ -43,16 +42,7 @@ internal static partial class Program
             {
                 CheckMenuDidNotAnimate(tabMenu);
                 var submenu = tabMenu.Items.OfType<MenuItem>().First(item => item.HasItems);
-                if (!ReferenceEquals(submenu.Template, app.Resources["ContextSubmenuTemplate"]))
-                    throw new InvalidOperationException("The tab context submenu did not receive the menu template.");
-                submenu.ApplyTemplate();
-                var opened = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                submenu.SubmenuOpened += (_, _) => opened.TrySetResult();
-                submenu.IsSubmenuOpen = true;
-                await opened.Task.WaitAsync(token);
-                var popup = submenu.Template.FindName("PART_Popup", submenu) as Popup;
-                if (popup is not { PopupAnimation: PopupAnimation.None })
-                    throw new InvalidOperationException($"The tab context submenu did not open without animation: {popup?.PopupAnimation}.");
+                await OpenMenuWithoutAnimationAsync(submenu);
             }
             finally { tabMenu.IsOpen = false; }
             if (FindCommand(tabMenu, "UseMouseInTabTty") is not null)

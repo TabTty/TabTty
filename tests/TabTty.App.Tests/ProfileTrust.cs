@@ -148,6 +148,8 @@ internal static partial class Program
                     string.Format(App.Text("ProfileGroupCount"), groupName, 1));
                 if (!profileMenu.IsOpen || submenu.Items.OfType<MenuItem>().Single().ToolTip is not string)
                     throw new InvalidOperationException("The new-tab menu did not put the profile in its group.");
+                CheckMenuDidNotAnimate(profileMenu);
+                await OpenMenuWithoutAnimationAsync(submenu);
             }
             finally { profileMenu.IsOpen = false; }
             await RefreshSelectionsAcrossWindowsAsync(list, groupTabs, groupName);

@@ -346,6 +346,9 @@ documentation change implements no file migration.
 
 Language/theme/bell and saved rule content apply live after successful save.
 
+Context menus and their submenus open without animation. This includes menus
+opened from the tab strip or anchored to a button.
+
 Drop-down controls in settings and other forms use the application's WPF
 Fluent appearance, including the closed field, expanded list, selected row,
 and keyboard focus. Apply the effective Light or Dark theme to the entire

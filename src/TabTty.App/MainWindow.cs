@@ -669,7 +669,6 @@ internal sealed partial class MainWindow : Window
         }
         if (profiles.Count > 0) menu.Items.Add(new Separator());
         menu.Items.Add(MenuAction("ProfileCatalog", () => app.Profiles.Show(this)));
-        ApplyContextSubmenuTemplates(menu);
         menu.Closed += (_, _) => button.ClearValue(ContextMenuProperty);
         button.ContextMenu = menu;
         menu.IsOpen = true;
@@ -1129,7 +1128,6 @@ internal sealed partial class MainWindow : Window
                     var panes = new MenuItem { Header = Text("TerminalPanes") };
                     terminal.FillPaneCommands(panes);
                     menu.Items.Add(panes);
-                    ApplyContextSubmenuTemplates(menu);
                 };
                 targetCheck.Click += (_, _) =>
                 {

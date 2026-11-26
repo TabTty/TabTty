@@ -90,13 +90,13 @@ public sealed class App : Application
 
     public App() : this(DefaultSettingsPath) { }
 
-    internal static void ApplyContextSubmenuTemplates(ItemsControl menu)
+    private static void ApplyContextSubmenuTemplates(ItemsControl menu, ControlTemplate template)
     {
         foreach (MenuItem item in menu.Items.OfType<MenuItem>())
         {
             if (!item.HasItems) continue;
-            item.Template = (ControlTemplate)Current.Resources["ContextSubmenuTemplate"];
-            ApplyContextSubmenuTemplates(item);
+            item.Template = template;
+            ApplyContextSubmenuTemplates(item, template);
         }
     }
 
@@ -111,8 +111,12 @@ public sealed class App : Application
         {
             Source = new Uri("/TabTty;component/MenuStyles.xaml", UriKind.Relative),
         };
-        Resources[typeof(ContextMenu)] = menuResources[typeof(ContextMenu)];
-        Resources["ContextSubmenuTemplate"] = menuResources["ContextSubmenuTemplate"];
+        var contextMenuStyle = (Style)menuResources[typeof(ContextMenu)];
+        var submenuTemplate = (ControlTemplate)menuResources["ContextSubmenuTemplate"];
+        // Style handlers run after the menu's own Opened handlers have populated its commands.
+        contextMenuStyle.Setters.Add(new EventSetter(ContextMenu.OpenedEvent,
+            new RoutedEventHandler((sender, _) => ApplyContextSubmenuTemplates((ContextMenu)sender, submenuTemplate))));
+        Resources[typeof(ContextMenu)] = contextMenuStyle;
         Resources.MergedDictionaries.Add(new ResourceDictionary
         {
             Source = new Uri("/TabTty;component/DetailsTabs.xaml", UriKind.Relative),
