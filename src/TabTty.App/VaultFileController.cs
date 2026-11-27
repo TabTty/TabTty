@@ -4,7 +4,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Windows;
-using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using Microsoft.Win32;
@@ -162,16 +161,18 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
                 if (evidence is null || !owner.IsLoaded) return false;
                 if (app.Modal(() => ThemedMessageBox.ShowVault(owner, Text("ArchiveVaultConfirm"),
                     Text("ArchiveVault"), MessageBoxButton.YesNo, MessageBoxImage.Warning,
-                    MessageBoxResult.No, acceptKey: "ArchiveVault", context: new DialogText(path))) != MessageBoxResult.Yes) return false;
+                    MessageBoxResult.No, acceptKey: "ArchiveVault",
+                    context: new DialogField(Text("VaultPath"), new DialogText(path)))) != MessageBoxResult.Yes) return false;
                 using var progress = form?.BeginProgress("FileOperationPending");
                 archived = await Task.Run(() => CredentialVault.ArchiveFile(path, evidence, app.VaultFiles?.MoveForArchive));
             }
             LastArchivePath = archived;
             ClearUnlocked();
-            string result = $"{Text("VaultArchived")}\n\n{archived}";
             if (owner is VaultEditorWindow && owner.IsLoaded)
-                app.Modal(() => ThemedMessageBox.ShowVault(owner, result, Text("ArchiveVault")));
-            else if (form is null) report(new object(), result);
+                app.Modal(() => ThemedMessageBox.ShowVault(owner, Text("VaultArchived"), Text("ArchiveVault"),
+                    context: new DialogField(Text("VaultArchivePath"), new DialogText(archived))));
+            else if (form is null)
+                report(new object(), [new(Text("OperationReportResult"), Text("VaultArchived")), new(Text("VaultArchivePath"), archived)]);
             return true;
         }
         finally { archiving = false; }
@@ -215,19 +216,25 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         return opened;
     }
 
-    private Action<object, string> CaptureReport(Window owner, FormView? form = null, string title = "Vault")
+    private Action<object, ReportField[]> CaptureReport(Window owner, FormView? form = null, string title = "Vault")
     {
         FormView? view = form ?? owner.Content as FormView;
-        var selectedVaultReport = app.StatusReports.Capture(null, Text(title));
-        return (key, message) =>
+        var selectedVaultReport = app.StatusReports.CaptureFields(null, Text(title));
+        return (key, fields) =>
         {
             if (view is not null && (view.TabOwner is { IsVisible: true } || view.Tab is null && owner.IsVisible))
-                view.Reports.Report(key, message);
+                view.Reports.Report(key, ReportField.Describe(fields), fields);
             else if (owner is MainWindow && (owner.IsVisible || app.LastTabWindow is not null))
-                selectedVaultReport(key, message);
-            else app.Modal(() => ThemedMessageBox.ShowVault(owner.IsVisible ? owner : null, message, Text("Vault"),
-                MessageBoxButton.OK, MessageBoxImage.Warning));
+                selectedVaultReport(key, fields);
+            else ShowReport(owner.IsVisible ? owner : null, title, fields, MessageBoxImage.Warning);
         };
+    }
+
+    private void ShowReport(Window? owner, string title, ReportField[] fields, MessageBoxImage icon)
+    {
+        var context = new StackPanel();
+        foreach (var field in fields.Skip(1)) context.Children.Add(field.Create());
+        app.Modal(() => ThemedMessageBox.ShowVault(owner, fields[0].Value, Text(title), icon: icon, context: context));
     }
 
     public async Task RunAsync(Window owner, Func<Task> action, FormView? form = null, bool closesOnError = false,
@@ -253,20 +260,21 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
             bool hasReportHost = (form?.TabOwner ?? owner).IsVisible ||
                 (form is null && owner is MainWindow && app.LastTabWindow is not null);
             if (disposed || !hasReportHost && !CanDismissMasterChange(owner)) return;
-            string message = exception switch
+            string reason = exception switch
             {
                 CredentialVaultStaleException => Text(app.Vault.MustRestart(this) ? "SelectedVaultStale" : "EditorVaultStale"),
                 ResourceLimitException => Text("VaultBusy"),
                 DuplicateCredentialNameException => Text("DuplicateCredentialName"),
                 CryptographicException => Text("VaultAuthenticationFailed"),
                 DllNotFoundException or EntryPointNotFoundException => Text("VaultCryptoUnavailable"),
-                FilePublicationException publication => JsonStoreRecovery.DescribeFailure(publication.Result),
                 _ => exception.Message,
             };
-            string details = $"{FilePath}\n\n{message}";
+            ReportField[] fields = exception is FilePublicationException publication
+                ? JsonStoreRecovery.FailureFields(publication.Result)
+                : [new(Text("OperationReportResult"), reason), new(Text("VaultPath"), FilePath)];
             if (closesOnError)
-                app.Modal(() => ThemedMessageBox.ShowVault(owner, details, Text("Vault"), MessageBoxButton.OK, MessageBoxImage.Error));
-            else report(exception is FilePublicationException failed ? failed.Result.OperationId : exception, details);
+                ShowReport(owner, reportTitle, fields, MessageBoxImage.Error);
+            else report(exception is FilePublicationException failed ? failed.Result.OperationId : exception, fields);
         }
         finally
         {
@@ -660,7 +668,8 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
     private void ReportInitializationCleanup(Window owner, CredentialVault initialized)
     {
         if (initialized.InitializationResult is { CleanupError: not null, PreservationPath: { } parked })
-            CaptureReport(owner)(initialized.InitializationResult.OperationId, $"{Text("PublicationCleanupFailed")}\n\n{parked}");
+            CaptureReport(owner)(initialized.InitializationResult.OperationId,
+                [new(Text("OperationReportResult"), Text("PublicationCleanupFailed")), new(Text("PublicationPreservedPath"), parked)]);
     }
 
     private async Task<CredentialVault?> UnlockAsync(Window owner, string path, VaultFileState state,
@@ -822,11 +831,14 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
                 bool selected = app.Vault.IsSelected(this);
                 var impact = await FindImpactAsync([entry]);
                 if (!form.IsLoaded) return false;
-                string warning = string.Format(Text("RenameCredentialWarning"),
-                    PermissionDisplay.Literal(entry.Name), PermissionDisplay.Literal(newName));
+                string warning = Text("RenameCredentialWarning");
                 if (selected) warning += "\n\n" + Text("RenameCredentialProfileScope");
                 if (secretChanged) warning += "\n\n" + Text("UpdateCredentialWarning");
-                MessageBoxResult choice = ConfirmRename(form, selected ? ImpactMessage(warning, impact) : warning, selected);
+                var context = new StackPanel();
+                context.Children.Add(new DialogField(Text("CurrentCredentialName"), new DialogText(PermissionDisplay.Literal(entry.Name))));
+                context.Children.Add(new DialogField(Text("NewCredentialName"), new DialogText(PermissionDisplay.Literal(newName))));
+                if (selected) AddImpact(context, impact);
+                MessageBoxResult choice = ConfirmRename(form, warning, selected, context);
                 if (choice == MessageBoxResult.Cancel) return false;
                 RequireCurrentSelection(selection);
                 if (selected != app.Vault.IsSelected(this) || selected && !IsCurrentSelection(epoch))
@@ -870,21 +882,22 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
                 var outcome = await app.Profiles.UpdateCredentialReferencesAsync(update, entry.Kind, newName);
                 if (form.IsLoaded)
                 {
-                    string report = string.Format(Text("CredentialRenameUpdatedProfiles"), outcome.Updated);
+                    string summary = string.Format(Text("CredentialRenameUpdatedProfiles"), outcome.Updated);
+                    var fields = new List<ReportField> { new(Text("OperationReportResult"), summary) };
                     if (outcome.Problems.Count != 0)
-                        report += "\n\n" + Text("CredentialRenameProfileProblems") + "\n" + string.Join("\n\n", outcome.Problems);
+                        fields.Add(new(Text("CredentialRenameProfileProblems"), string.Join("\n\n", outcome.Problems), Framed: true));
                     if (update.Unavailable != 0)
-                        report += "\n\n" + string.Format(Text("ReferenceScanUnavailable"), update.Unavailable);
-                    showRenameResult = update.Unavailable != 0 || outcome.Problems.Count != 0
-                        ? () => management.Reports.Report(new object(), report)
-                        : () => management.SetStatusMessage(report);
+                        fields.Add(new(Text("ReferenceScanResult"), string.Format(Text("ReferenceScanUnavailable"), update.Unavailable)));
+                    showRenameResult = fields.Count > 1
+                        ? () => management.Reports.Report(new object(), ReportField.Describe(fields), fields.ToArray())
+                        : () => management.SetStatusMessage(summary);
                 }
             }
             return true;
         }
     }
 
-    private MessageBoxResult ConfirmRename(Window owner, string message, bool selected)
+    private MessageBoxResult ConfirmRename(Window owner, string message, bool selected, StackPanel context)
     {
         var choice = MessageBoxResult.Cancel;
         Window dialog = ThemedMessageBox.Create(owner, message, Text("EditCredential"),
@@ -896,7 +909,7 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
                 MessageBoxResult.Yes => "RenameAndUpdateProfiles",
                 MessageBoxResult.No or MessageBoxResult.OK => "RenameCredentialOnly",
                 _ => "Cancel",
-            }), windowIcon: WindowIcons.Vault);
+            }), windowIcon: WindowIcons.Vault, context: context);
         dialog.Width = 620;
         app.Modal(dialog.ShowDialog);
         return choice;
@@ -922,15 +935,15 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         ? app.Profiles.FindCredentialReferencesAsync(entries)
         : Task.FromResult(ProfileCatalog.CredentialImpact.Empty);
 
-    private static string ImpactMessage(string warning, ProfileCatalog.CredentialImpact impact)
+    private static void AddImpact(StackPanel context, ProfileCatalog.CredentialImpact impact)
     {
-        string message = $"{warning}\n\n{Text("KnownCredentialReferences")}\n" +
-            (impact.Profiles.Count == 0 ? Text("NoKnownCredentialReferences") :
-                string.Join("\n", impact.Paths.Select(path => PermissionDisplay.Literal(path)))) +
-            "\n\n" + Text("ReferenceScanScope");
+        string profiles = impact.Profiles.Count == 0 ? Text("NoKnownCredentialReferences") :
+            string.Join("\n", impact.Paths.Select(path => PermissionDisplay.Literal(path)));
+        context.Children.Add(new DialogField(Text("KnownCredentialReferences"), new DialogText(profiles, 220)));
+        string scope = Text("ReferenceScanScope");
         if (impact.Unavailable != 0)
-            message += "\n" + string.Format(Text("ReferenceScanUnavailable"), impact.Unavailable);
-        return message;
+            scope += "\n" + string.Format(Text("ReferenceScanUnavailable"), impact.Unavailable);
+        context.Children.Add(new TextBlock { Text = scope, TextWrapping = TextWrapping.Wrap });
     }
 
     private async Task<bool> ConfirmImpactAsync(Window owner, CredentialVault unlocked, IReadOnlyList<VaultEntryInfo> entries,
@@ -941,9 +954,11 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         var impact = await FindImpactAsync(entries);
         if (!owner.IsLoaded) return false;
         string names = string.Join("\n", entries.Select(entry => PermissionDisplay.Literal(entry.Name)));
+        var context = new StackPanel();
+        context.Children.Add(new DialogField(Text("VaultEntries"), new DialogText(names, 180)));
+        AddImpact(context, impact);
         if (app.Modal(() => ThemedMessageBox.ShowVault(owner, warning, Text(action), MessageBoxButton.YesNo,
-            MessageBoxImage.Warning, MessageBoxResult.No, acceptKey: action,
-            context: new DialogText(ImpactMessage(names, impact), 220))) != MessageBoxResult.Yes) return false;
+            MessageBoxImage.Warning, MessageBoxResult.No, acceptKey: action, context: context)) != MessageBoxResult.Yes) return false;
         var current = await FindImpactAsync(entries);
         if (selection is not null) RequireCurrentSelection(selection);
         if (!ReferenceEquals(vault, unlocked) || unlocked.Revision != revision ||
@@ -967,9 +982,12 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         var basis = await Task.Run(() => CredentialVault.PrepareRestore(target, backup, current));
         if (!owner.IsLoaded || !ReferenceEquals(current, vault)) return;
 
+        var context = new StackPanel();
+        context.Children.Add(new DialogField(Text("VaultPath"), new DialogText(target)));
+        context.Children.Add(new DialogField(Text("BackupFilePath"), new DialogText(basis.Backup)));
         if (app.Modal(() => ThemedMessageBox.ShowVault(owner, Text("RestoreVaultWarning"),
             Text("RestoreVault"), MessageBoxButton.YesNo, MessageBoxImage.Warning,
-            MessageBoxResult.No, acceptKey: "RestoreVault", context: new DialogText($"{target}\n\n{basis.Backup}"))) != MessageBoxResult.Yes) return;
+            MessageBoxResult.No, acceptKey: "RestoreVault", context: context)) != MessageBoxResult.Yes) return;
         char[]? password = await PromptMasterAsync(owner, "RestoreVault", confirm: false, path: basis.Backup);
         if (password is null) return;
         try
@@ -989,19 +1007,24 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         var retained = VerifiedFilePublication.GetRetainedStagePaths(FilePath);
         if (form is null && owner is MainWindow)
         {
-            string result = string.Format(Text("VaultRestoreCompleted"), basis.Backup, target);
+            var fields = new List<ReportField>
+            {
+                new(Text("OperationReportResult"), Text("VaultRestoreCompleted")),
+                new(Text("BackupFilePath"), basis.Backup),
+                new(Text("VaultPath"), target),
+            };
             if (retained.Length > 0)
-                result += "\n\n" + Text("PublicationRetainedStages") + "\n\n" + string.Join("\n", retained);
-            report(new object(), result);
+                fields.AddRange(JsonStoreRecovery.RetainedStageFields(string.Join("\n", retained)));
+            report(new object(), fields.ToArray());
         }
         else ShowRetainedFilePaths(report, retained);
     }
 
-    private static bool ShowRetainedFilePaths(Action<object, string> report, string[] paths)
+    private static bool ShowRetainedFilePaths(Action<object, ReportField[]> report, string[] paths)
     {
         if (paths.Length == 0) return false;
         string retained = string.Join("\n", paths);
-        report(("retained-stages", retained), Text("PublicationRetainedStages") + "\n\n" + retained);
+        report(("retained-stages", retained), JsonStoreRecovery.RetainedStageFields(retained));
         return true;
     }
 
@@ -1050,20 +1073,11 @@ internal sealed class VaultFileController(App app, string filePath, Action chang
         var password = new PasswordBox { MaxLength = VaultContainer.MaximumMasterInputLength };
         var repeated = new PasswordBox { MaxLength = VaultContainer.MaximumMasterInputLength };
         if (path is not null)
-        {
-            bool unlocking = title == "UnlockVault";
-            string pathLabel = unlocking ? "VaultUnlockPathDisplay" : "VaultPathDisplay";
-            var pathDisplay = new DialogText(string.Format(Text(pathLabel), path))
-            {
-                Margin = unlocking ? new Thickness(0, 0, 0, 16) : new Thickness(5, 6, 5, 6),
-            };
-            form.AddDisplay("VaultPath", pathDisplay);
-            AutomationProperties.SetName(pathDisplay, pathDisplay.Text);
-        }
+            form.AddField(title == "RestoreVault" ? "BackupFilePath" : "VaultPath", new DialogText(path));
         if (confirm)
         {
-            string caption = FormatLength("MasterPasswordWithLength");
-            form.AddPrompt(explanation is null ? caption : $"{Text(explanation)}\n\n{caption}", password);
+            if (explanation is not null) form.AddNotice(explanation);
+            form.AddPrompt(FormatLength("MasterPasswordWithLength"), password);
         }
         else form.AddField("MasterPassword", password);
         var passwordError = form.AddValidation(password);

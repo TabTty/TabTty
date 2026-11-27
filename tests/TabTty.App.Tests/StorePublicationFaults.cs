@@ -2,6 +2,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -188,6 +189,19 @@ internal static partial class Program
             !shown.Contains(additional.Fingerprint) || !(await VisibleButtonAsync(keyDialog!, "Cancel")).IsDefault)
             throw new InvalidOperationException("Additional host-key approval omitted trust history or default cancellation.");
         var constrained = keyDialog!;
+        var formatValue = FindControls<DialogText>(constrained).Single(value => value.Text == additionalFormat);
+        if (AutomationProperties.GetLabeledBy(formatValue) is not TextBlock formatCaption ||
+            formatCaption.Text != App.Text("HostKeyType") + ":")
+            throw new InvalidOperationException("The host-key type lost its caption.");
+        constrained.Width = 540;
+        constrained.UpdateLayout();
+        Point captionRight = formatCaption.TranslatePoint(new Point(formatCaption.ActualWidth, 0), constrained);
+        Point valueStart = formatValue.TranslatePoint(new Point(), constrained);
+        if (Math.Abs(captionRight.Y - valueStart.Y) > 1 || valueStart.X <= captionRight.X)
+            throw new InvalidOperationException("A short host-key type and its caption must share one line.");
+        constrained.Width = 150;
+        constrained.UpdateLayout();
+        CheckField(formatValue, "HostKeyType");
         constrained.Width = 280;
         constrained.MaxHeight = 220;
         constrained.UpdateLayout();
@@ -196,6 +210,23 @@ internal static partial class Program
         var cancelButton = await VisibleButtonAsync(constrained, "Cancel");
         var fingerprint = FindControls<DialogText>(constrained).Single(value => value.Text == additional.Fingerprint);
         var history = FindControls<DialogText>(constrained).Single(value => value.Text.Contains(host.Fingerprint));
+        CheckField(history, "ApprovedHostKeys");
+        CheckField(fingerprint, "PresentedFingerprint");
+        double betweenFields = fingerprint.TranslatePoint(new Point(), constrained).Y -
+            ((TextBlock)AutomationProperties.GetLabeledBy(fingerprint)).ActualHeight -
+            history.TranslatePoint(new Point(0, history.ActualHeight), constrained).Y;
+        if (betweenFields < 15)
+            throw new InvalidOperationException("The fingerprint and approved-key history were not separated as distinct fields.");
+
+        void CheckField(DialogText value, string key)
+        {
+            if (AutomationProperties.GetLabeledBy(value) is not TextBlock caption ||
+                caption.Text != App.Text(key) + ":" || caption.Parent != value.Parent ||
+                Math.Abs(caption.TranslatePoint(new Point(0, caption.ActualHeight), constrained).Y -
+                    value.TranslatePoint(new Point(), constrained).Y) > 1 ||
+                Math.Abs(caption.TranslatePoint(new Point(), constrained).X - value.TranslatePoint(new Point(), constrained).X) > 1)
+                throw new InvalidOperationException($"The {key} caption must sit directly above its value outside the frame.");
+        }
         fingerprint.SelectAll();
         var peer = UIElementAutomationPeer.CreatePeerForElement(fingerprint)!;
         if (!ApplicationCommands.Copy.CanExecute(null, fingerprint) || peer.GetAutomationControlType() != AutomationControlType.Text ||

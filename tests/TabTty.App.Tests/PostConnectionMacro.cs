@@ -46,7 +46,7 @@ internal static partial class Program
             await app.SaveSettingsAsync(app.SettingsRevision, new(AutoClose: false, ProfileDirectory: folder));
             var import = app.Profiles.ImportFileAsync(owner, path, token);
             var review = await FindWindow("PostConnectionMacroRegistration", import);
-            CheckMacroLaunch(FindControls<TextBox>(review).Single().Text.Contains("WaitAnyPrompt", StringComparison.Ordinal),
+            CheckMacroLaunch(FindControls<DialogText>(review).Any(field => field.Text.Contains("WaitAnyPrompt", StringComparison.Ordinal)),
                 "Registration review did not show the body.");
             Click(review, "PostConnectionMacroTrustProfile");
             var imported = await import.WaitAsync(token);

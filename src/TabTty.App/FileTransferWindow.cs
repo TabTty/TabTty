@@ -581,7 +581,8 @@ internal sealed class FileTransferWindow : Window
     {
         if (question.Kind == TransferQuestionKind.PermanentDelete)
             return ValueTask.FromResult(Confirm(Text("TransferDeletePermanent"), "TransferPermanentlyDelete", question.Lifetime,
-                new DialogText(files!.Display(question.Path)), "TransferSkip") ? TransferChoice.Overwrite : TransferChoice.Skip);
+                new DialogField(Text("TransferFilePath"), new DialogText(files!.Display(question.Path))), "TransferSkip")
+                ? TransferChoice.Overwrite : TransferChoice.Skip);
         if (question.Kind == TransferQuestionKind.Delete)
         {
             var items = question.Selection!;
@@ -589,7 +590,9 @@ internal sealed class FileTransferWindow : Window
             if (items.Count > 40) names += "\n" + Format("TransferMore", items.Count - 40);
             string key = question.Path.Remote is null ? "TransferDeleteLocal" : "TransferDeleteRemote";
             string action = question.Path.Remote is null ? "TransferDelete" : "TransferPermanentlyDelete";
-            var context = new DialogText($"{files!.Display(question.Path)}\n\n{names}", 200);
+            var context = new StackPanel();
+            context.Children.Add(new DialogField(Text("TransferPath"), new DialogText(files!.Display(question.Path))));
+            context.Children.Add(new DialogField(Text("TransferSelectedItems"), new DialogText(names, 200)));
             return ValueTask.FromResult(Confirm(Text(key), action, question.Lifetime, context) ? TransferChoice.Overwrite : TransferChoice.Cancel);
         }
         TransferItem source = question.Source!;
@@ -612,8 +615,8 @@ internal sealed class FileTransferWindow : Window
         {
             dialog.AddHeading(heading);
             dialog.AddField("TransferFilePath", new DialogText(files!.Display(path)));
-            dialog.AddField("TransferSize", new DialogText(Size(attributes)) { IsTabStop = false });
-            dialog.AddField("TransferModified", new DialogText(Modified(attributes)) { IsTabStop = false });
+            dialog.AddField("TransferSize", new DialogText(Size(attributes)) { IsTabStop = false }, inline: true);
+            dialog.AddField("TransferModified", new DialogText(Modified(attributes)) { IsTabStop = false }, inline: true);
         }
 
         void Finish(TransferChoice choice)
@@ -727,11 +730,16 @@ internal sealed class FileTransferWindow : Window
                 var entries = unresolved.Select(ResultDetails).ToArray();
                 try
                 {
-                    Window report = ThemedMessageBox.Create(this,
-                        Text("SftpUnknownOutcome") + (counts.Length == 0 ? "" : "\n\n" + counts),
-                        Title, MessageBoxButton.OK, MessageBoxImage.Warning, MessageBoxResult.OK, _ => { },
-                        details: entries.Length > 10 ? string.Join("\n", entries) : null,
-                        context: entries.Length == 0 ? null : new DialogText(string.Join("\n", entries.Take(10)), 180));
+                    StackPanel? context = null;
+                    if (entries.Length != 0)
+                    {
+                        context = new StackPanel();
+                        context.Children.Add(new DialogField(Text("TransferOutcomeCounts"), new DialogText(counts, 120)));
+                        context.Children.Add(new DialogField(Text("TransferResults"), new DialogText(string.Join("\n", entries.Take(10)), 180)));
+                    }
+                    Window report = ThemedMessageBox.Create(this, Text("SftpUnknownOutcome"), Title,
+                        MessageBoxButton.OK, MessageBoxImage.Warning, MessageBoxResult.OK, _ => { },
+                        details: entries.Length > 10 ? string.Join("\n", entries) : null, context: context);
                     bool presented = false;
                     report.ContentRendered += (_, _) => presented = true;
                     ((App)Application.Current).Modal(report.ShowDialog);

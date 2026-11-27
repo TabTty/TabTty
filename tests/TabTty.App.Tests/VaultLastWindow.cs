@@ -102,10 +102,12 @@ internal static partial class Program
                     Window? report = null;
                     await UntilAsync(() => (report = app.Windows.Cast<Window>()
                         .SingleOrDefault(window => window.IsVisible && window.Title == App.Text("Vault"))) is not null);
-                    if (exitObserved || !app.Vault.HasActiveOperations || !FindControls<TextBlock>(report!).Any(text =>
-                        text.Text.Contains(App.Text("StoreSaveUnverified"), StringComparison.Ordinal) &&
-                        text.Text.Contains(App.Text("PublishedImageMissing"), StringComparison.Ordinal) &&
-                        text.Text.Contains(path + ".bak", StringComparison.Ordinal)))
+                    var values = FindControls<DialogText>(report!).ToDictionary(
+                        value => ((TextBlock)System.Windows.Automation.AutomationProperties.GetLabeledBy(value)).Text, value => value.Text);
+                    if (exitObserved || !app.Vault.HasActiveOperations ||
+                        !FindControls<TextBlock>(report!).Any(text => text.Text == App.Text("StoreSaveUnverified")) ||
+                        !ProfileLocation.SameVaultOpeningPath(values[App.Text("PublicationPreservedPath") + ":"], path + ".bak") ||
+                        values[App.Text("PublicationPreservedState") + ":"] != App.Text("PublishedImageMissing"))
                         throw new InvalidOperationException("The master change lost its unverified preservation status after view closure.");
                     unverifiedReported = true;
                     FindControls<Button>(report!).Single(button => Equals(button.Content, App.Text("OK")))

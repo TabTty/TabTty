@@ -13,6 +13,8 @@ internal sealed class MacroDialogWindow : Window
     private readonly Dictionary<MacroDialogButton, Button> buttons = [];
     private readonly TextBlock validation = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextBox? input;
+    private readonly DialogField targetField;
+    private readonly DialogField messageField;
     private readonly TextBlock? inputLabel;
     private bool invalid;
 
@@ -31,14 +33,13 @@ internal sealed class MacroDialogWindow : Window
         var panel = new StackPanel();
         var layout = new DialogLayout(panel, new Thickness(16));
         Content = layout;
-        panel.Children.Add(new TextBlock
-        {
-            Text = string.Format(Text("DecisionTargetTab"), PermissionDisplay.Literal(targetTab)), TextWrapping = TextWrapping.Wrap,
-        });
-        panel.Children.Add(new DialogText(request.Message, 240));
+        targetField = new DialogField(Text("DecisionTargetTabLabel"), new DialogText(PermissionDisplay.Literal(targetTab)));
+        messageField = new DialogField(Text("MacroDialogMessage"), new DialogText(request.Message, 240));
+        panel.Children.Add(targetField);
+        panel.Children.Add(messageField);
         if (request.InputEnabled)
         {
-            inputLabel = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 4) };
+            inputLabel = new TextBlock { TextWrapping = TextWrapping.Wrap };
             input = new TextBox { Text = request.InitialText, MaxLength = 4096 };
             AutomationProperties.SetLabeledBy(input, inputLabel);
             input.TextChanged += (_, _) => { invalid = false; UpdateLabels(); };
@@ -85,6 +86,8 @@ internal sealed class MacroDialogWindow : Window
     internal void UpdateLabels()
     {
         foreach (var (choice, button) in buttons) button.Content = Text(choice.ToString());
+        targetField.SetCaption(Text("DecisionTargetTabLabel"));
+        messageField.SetCaption(Text("MacroDialogMessage"));
         if (inputLabel is not null) inputLabel.Text = Text("MacroInput");
         validation.Text = invalid ? Text("MacroInvalidInput") : "";
     }

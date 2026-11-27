@@ -396,8 +396,8 @@ internal static partial class Program
                 Window? dialog = null;
                 await UntilAsync(() => (dialog = app.Windows.Cast<Window>()
                     .SingleOrDefault(window => window.IsVisible && window.Owner == firstEditor && window.Title == title)) is not null);
-                if (!FindControls<TextBlock>(dialog!).Any(text => text.Text.Contains(first + ".bak", StringComparison.Ordinal) &&
-                      text.Text.Contains(App.Text("StoreSaveUnverified"), StringComparison.Ordinal)))
+                var values = FindControls<DialogText>(dialog!).Select(value => value.Text).ToArray();
+                if (!values.Contains(first + ".bak") || !values.Contains(App.Text("StoreSaveUnverified")))
                     throw new InvalidOperationException("The editor dialog omitted the unverified recovery artifact.");
                 FindControls<Button>(dialog!).Single(button => Equals(button.Content, App.Text(action)))
                     .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));

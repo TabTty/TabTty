@@ -23,8 +23,11 @@ internal static partial class Program
                 if (ok is { IsVisible: true, IsEnabled: true })
                 {
                     string message = AutomationProperties.GetHelpText(ok);
-                    if (!FindControls<TextBox>(review).Any(text => text.IsVisible && text.IsReadOnly &&
-                        text.Focusable && text.Text == message))
+                    var values = FindControls<DialogText>((DependencyObject)ok.Parent).Where(text =>
+                        text.IsVisible && text.IsReadOnly && text.Focusable).ToArray();
+                    if (values.Length == 0 || (values.Length == 1 ? message != values[0].Text :
+                        !values.Skip(1).All(value => AutomationProperties.GetLabeledBy(value) is TextBlock label &&
+                            message.Contains(label.Text, StringComparison.Ordinal) && message.Contains(value.Text, StringComparison.Ordinal))))
                         throw new InvalidOperationException("The report did not expose its full selectable details.");
                     ok.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     return;

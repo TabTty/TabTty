@@ -738,8 +738,9 @@ internal static partial class Program
             try
             {
                 var contents = (FormView)dialog.Content;
-                string expected = string.Format(App.Text("SshServerQuestions"), destination);
-                if (contents.Body.Children[0] is not TextBlock notice || notice.Text != expected ||
+                if (contents.Body.Children[0] is not DialogField recipient || DockPanel.GetDock(recipient) != Dock.Top ||
+                    !FindControls<DialogText>(recipient).Any(text => text.Text == destination.ToString()) ||
+                    contents.Body.Children[1] is not TextBlock notice || notice.Text != App.Text("SshServerQuestions") ||
                     DockPanel.GetDock(notice) != Dock.Top || inputs is not [TextBox { IsUndoEnabled: false }, PasswordBox] ||
                     !FindControls<Button>(contents).Any(button => Equals(button.Content, App.Text("SendSshAnswers"))))
                     throw new InvalidOperationException("The SSH form did not keep the recipient above the scrolling server questions.");

@@ -83,7 +83,7 @@ internal sealed partial class SshSessionWire : ISessionWire
     private int messages;
     private int messageBytes;
 
-    public string Details => exchange.Details;
+    public SshNegotiatedAlgorithms? Algorithms => exchange.Algorithms;
 
     private SshSessionWire(TcpClient client, Stream packetStream, SshDestination destination,
         ConnectionProfile profile, SshInteraction interaction)

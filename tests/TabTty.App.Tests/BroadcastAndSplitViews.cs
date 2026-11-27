@@ -97,7 +97,12 @@ internal static partial class Program
                     if (!shown || tab.Reports.HasUnread != background || (notice is not null) != background)
                         throw new InvalidOperationException("Changed destination was not routed to its active or background surfaces.");
                     if (notice is not null && (notice.ShowActivated || notice.IsActive || !window.IsEnabled ||
-                            !FindControls<TextBlock>(notice).Any(label => label.Text == body)))
+                            !FindControls<DialogText>(notice).Any(value => value.Text == previous.LocalEndpoint.ToString() &&
+                                System.Windows.Automation.AutomationProperties.GetLabeledBy(value) is TextBlock label &&
+                                label.Text == string.Format(App.Text("ReconnectPreviousDestination"), App.Text("AiTelnetTargetLabel")) + ":") ||
+                            !FindControls<DialogText>(notice).Any(value => value.Text == endpoint.LocalEndpoint.ToString() &&
+                                System.Windows.Automation.AutomationProperties.GetLabeledBy(value) is TextBlock label &&
+                                label.Text == string.Format(App.Text("ReconnectCurrentDestination"), App.Text("AiTelnetTargetLabel")) + ":")))
                         throw new InvalidOperationException("A background report lost its target or disturbed the active window.");
                     var pane = FindControls<TerminalSurface>(tab).Single();
                     SendText(pane, "a");
@@ -307,7 +312,7 @@ internal static partial class Program
             var keyboardTarget = Keyboard.FocusedElement;
             var selected = tabBar.SelectedItem;
             app.Broadcast.CaptureFailed(host);
-            WindowStatusReport cancellation = app.StatusReports.Pending(host).Single();
+            WindowReportContent cancellation = app.StatusReports.Pending(host).Single().Content;
             if (!cancellation.Summary.Contains(App.Text("BroadcastGestureCancelled"), StringComparison.Ordinal) ||
                 !cancellation.Details.Contains(App.Text("BroadcastNotSent"), StringComparison.Ordinal) ||
                 app.StatusReports.Pending(other).Count != 0 || Keyboard.FocusedElement != keyboardTarget ||
@@ -335,12 +340,12 @@ internal static partial class Program
             WindowStatusReport full = app.StatusReports.Pending(other).Single();
             if (queued || app.Broadcast.IsActive(host) || !app.StatusReports.Pending(host).Contains(full) ||
                 Keyboard.FocusedElement != keyboardTarget || tabBar.SelectedItem != selected ||
-                !full.Details.Contains(App.Text("InputQueueFull"), StringComparison.Ordinal) ||
-                !new[] { source, target, outside }.All(tab => full.Details.Contains(
-                    $"{TerminalTab.BroadcastTargetLabel(tab.InputSession!)} — {App.Text("BroadcastNotSent")}", StringComparison.Ordinal)) ||
+                !full.Content.Fields.Contains(new(App.Text("OperationReportReason"), App.Text("InputQueueFull"))) ||
+                !new[] { source, target, outside }.All(tab => full.Content.Details.Contains(
+                    $"{TerminalTab.DialogTargetLabel(tab.InputSession!)} — {App.Text("BroadcastNotSent")}", StringComparison.Ordinal)) ||
                 FindControls<TextBlock>(source.Notices).Any(label => label.Text.Contains(App.Text("InputQueueFull"), StringComparison.Ordinal)))
                 throw new InvalidOperationException("Queue rejection did not leave one shared report with each unsent target.");
-            await AcknowledgeWindowReportAsync(other, full.Details);
+            await AcknowledgeWindowReportAsync(other, full.Content.Details);
             if (!app.StatusReports.Pending(host).SequenceEqual(earlierReports) || app.StatusReports.Pending(other).Count != 0)
                 throw new InvalidOperationException("Acknowledging a global report left a copy or cleared a different local report.");
             await WaitForStart(host);
@@ -359,8 +364,8 @@ internal static partial class Program
                 }, origin: origin.Token);
             var shown = await previewEntered.Task.WaitAsync(deadline.Token);
             origin.Cancel();
-            string currentDestination = string.Format(App.Text("AiTelnetTarget"), $"127.0.0.1:{port}");
-            string[] expectedRecipients = [$"{currentDestination} — UTF-8", $"{currentDestination} — CP932", $"{currentDestination} — Outside"];
+            var expectedRecipients = new[] { "UTF-8", "CP932", "Outside" }
+                .Select(name => string.Format(App.Text("AiTelnetTargetValue"), $"127.0.0.1:{port}", name));
             if (!shown.Targets.Order().SequenceEqual(expectedRecipients.Order()))
                 throw new InvalidOperationException("Unexpected paste recipients: " + string.Join(", ", shown.Targets));
             if (await cancelledPreview.WaitAsync(deadline.Token) != BroadcastInput.PasteOutcome.Stopped)
@@ -419,7 +424,7 @@ internal static partial class Program
             }
             app.Broadcast.CaptureFailed(host);
             if (!app.StatusReports.Pending(host).Any(report =>
-                report.Summary.Contains(App.Text("BroadcastGestureCancelled"), StringComparison.Ordinal)))
+                report.Content.Summary.Contains(App.Text("BroadcastGestureCancelled"), StringComparison.Ordinal)))
                 throw new InvalidOperationException("The failed capture did not report cancellation.");
             app.Broadcast.StartMouse(host, source, sourceView, 10);
             await Mouse(10, 0);
@@ -496,7 +501,7 @@ internal static partial class Program
             Task<bool> Mouse(long capture, int button, bool release = false) => app.Broadcast.RouteMouseAsync(
                 host, sourceView, capture, new(button, 1, 1, release, false, TerminalModifiers.None, 0));
 
-            if (!app.StatusReports.Pending(host).Any(report => report.Summary.Contains(App.Text("BroadcastFailed"), StringComparison.Ordinal)) ||
+            if (!app.StatusReports.Pending(host).Any(report => report.Content.Summary.Contains(App.Text("BroadcastFailed"), StringComparison.Ordinal)) ||
                 !((Button)host.FindName("windowReportButton")).IsVisible)
                 throw new InvalidOperationException("The broadcast failure was not visible.");
         }
@@ -639,7 +644,8 @@ internal static partial class Program
             second("result", "Later operation");
             first("result", "First operation verified");
             var reports = app.StatusReports.Pending(window);
-            if (reports.Count != 2 || reports[0].Details != "First operation verified" || reports[1].Details != "Later operation")
+            if (reports.Count != 2 || reports[0].Content.Fields.Single().Value != "First operation verified" ||
+                reports[1].Content.Fields.Single().Value != "Later operation")
                 throw new InvalidOperationException("Two operations sharing a result key were merged or reordered.");
 
             window.UpdateLayout();
@@ -659,13 +665,18 @@ internal static partial class Program
             viewer.UpdateLayout();
             var viewerLayout = (DialogLayout)viewer.Content;
             var close = viewerLayout.Actions.Children.OfType<Button>().Single(button => Equals(button.Content, App.Text("CloseDialog")));
-            if (!FindControls<TextBlock>(viewer).Any(text => text.Text == string.Format(App.Text("PendingOperationReports"), 2)) ||
-                !FindControls<DialogText>(viewer).Any(text => text.Text == reports[0].Details))
-                throw new InvalidOperationException("The result viewer did not display the count and copyable details.");
+            var count = FindControls<TextBlock>(viewer).Single(text => text.Text == string.Format(App.Text("OperationReportCount"), 2));
+            var details = FindControls<DialogText>(viewer).Single(text => text.Text == reports[0].Content.Fields.Single().Value);
+            if (System.Windows.Automation.AutomationProperties.GetLabeledBy(count) is not TextBlock countLabel ||
+                countLabel.Text != App.Text("PendingOperationReports") + ":" ||
+                System.Windows.Automation.AutomationProperties.GetLabeledBy(details) is not TextBlock detailsLabel ||
+                detailsLabel.Text != App.Text("DialogDetails") + ":" ||
+                !FindControls<DialogText>(viewer).Any(text => text.Text == reports[0].Content.Summary))
+                throw new InvalidOperationException("The result viewer did not separate the count, outcome and copyable details from their labels.");
             close.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             if (viewer.IsVisible || app.StatusReports.Pending(window).Count != 2)
                 throw new InvalidOperationException("Closing the result viewer acknowledged a report.");
-            await AcknowledgeWindowReportAsync(window, reports[0].Details);
+            await AcknowledgeWindowReportAsync(window, reports[0].Content.Details);
             if (app.StatusReports.Pending(window).Single() != reports[1])
                 throw new InvalidOperationException("Acknowledging the older report cleared another operation's report.");
         }
@@ -766,8 +777,8 @@ internal static partial class Program
 
             host.UpdateLayout();
             string confirmed = bracketed ? App.Text("BroadcastPasteFramingOnly") : string.Format(App.Text("ConfirmedInputPrefix"), 1);
-            string label = TerminalTab.BroadcastTargetLabel(good);
-            var report = app.StatusReports.Pending(host).Single(item =>
+            string label = TerminalTab.DialogTargetLabel(good);
+            var report = app.StatusReports.Pending(host).Select(item => item.Content).Single(item =>
                 item.Details.Contains(label, StringComparison.Ordinal) && item.Details.Contains(confirmed, StringComparison.Ordinal));
             if (!report.Details.Split('\n').Any(line => line.Contains(label, StringComparison.Ordinal) &&
                 line.Contains(confirmed, StringComparison.Ordinal) && !line.Contains(App.Text("BroadcastNotSent"), StringComparison.Ordinal)))
@@ -857,8 +868,8 @@ internal static partial class Program
                     sent = result != BroadcastInput.PasteOutcome.Stopped;
                 }
                 else sent = await app.Broadcast.Send(host, new(TerminalInputKind.Text, text), deadline.Token)!;
-                string label = TerminalTab.BroadcastTargetLabel(session);
-                var report = app.StatusReports.Pending(host).Single(item => item.Details.Contains(label, StringComparison.Ordinal));
+                string label = TerminalTab.DialogTargetLabel(session);
+                var report = app.StatusReports.Pending(host).Select(item => item.Content).Single(item => item.Details.Contains(label, StringComparison.Ordinal));
                 string outcome = serial ? App.Text("BroadcastNotSent") : App.Text("NoticeBroadcastUncertain");
                 string other = serial ? App.Text("NoticeBroadcastUncertain") : App.Text("BroadcastNotSent");
                 if (sent || !report.Details.Contains(outcome, StringComparison.Ordinal) || report.Details.Contains(other, StringComparison.Ordinal) ||

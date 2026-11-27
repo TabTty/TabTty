@@ -597,7 +597,7 @@ internal static partial class Program
                 "A cancelled transmitted prefix was described as definitely unsent.");
             string prefix = string.Format(App.Text("ConfirmedInputPrefix"), 1);
             Window? incident = window.OwnedWindows.OfType<Window>().SingleOrDefault(dialog =>
-                FindControls<TextBlock>(dialog).Any(label => label.Text.Contains(prefix, StringComparison.Ordinal)));
+                FindControls<DialogText>(dialog).Any(value => value.IsVisible && value.Text.Contains(prefix, StringComparison.Ordinal)));
             Check(incident is not null && tab.Reports.HasUnread && group.SelectedItem == backgroundItem,
                 "The confirmed input prefix was absent from the background incident or changed selection.");
             FindControls<Button>(incident!).Single(button => Equals(button.Content, App.Text("OK")))
@@ -695,14 +695,15 @@ internal static partial class Program
                             !dialog.IsActive && !dialog.ShowActivated && group.SelectedContent == form),
                             "AI consent took over a different view or failed to identify its pending tab.");
                         Check(buttons.Single(button => button.IsDefault).IsCancel, "Consent should default to Cancel.");
-                        Check(FindControls<TextBlock>(dialog).Any(label =>
-                            label.Text.Contains(tab.TabCaption) && label.Text.Contains(recipient.Code) &&
-                            label.Text.Contains(string.Format(App.Text("AiTelnetTarget"), $"127.0.0.1:{port}")) &&
-                            label.Text.Contains(string.Format(App.Text("AiLauncherProcess"), recipient.LauncherPath, recipient.LauncherId)) &&
-                            label.Text.Contains(App.Text("AiUnattendedConsent"))),
+                        var values = FindControls<DialogText>(dialog).Select(field => field.Text).ToArray();
+                        Check(values.Contains(tab.TabCaption) && values.Contains(recipient.Code) &&
+                            values.Contains($"127.0.0.1:{port}") && values.Contains(recipient.LauncherPath) &&
+                            values.Contains(recipient.LauncherId.ToString(System.Globalization.CultureInfo.CurrentCulture)) &&
+                            FindControls<TextBlock>(dialog).Any(label => label.Text == App.Text("AiUnattendedConsent")),
                             "Consent did not identify the session destination, recipient and unattended access.");
                         beforeDecision?.Invoke();
-                        buttons.Single(button => button.IsCancel != approve).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                        buttons.Single(button => Equals(button.Content, approve ? title : App.Text("Cancel")))
+                            .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     }
                     finally { if (dialog.IsVisible) dialog.Close(); }
                 }, DispatcherPriority.Background);

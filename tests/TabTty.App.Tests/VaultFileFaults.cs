@@ -1,5 +1,6 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using TabTty.App;
 using TabTty.Core;
@@ -101,12 +102,12 @@ internal static partial class Program
             prompt = await FindDialogAsync("InitializeVault");
             string caption = string.Format(App.Text("MasterPasswordWithLength"),
                 VaultContainer.MinimumMasterLength, VaultContainer.MaximumMasterLength);
-            string expectedPrompt = empty ? $"{App.Text("InitializeEmptyVaultDescription")}\n\n{caption}" : caption;
             var fields = FindControls<PasswordBox>(prompt).ToArray();
-            string expectedPath = string.Format(App.Text("VaultPathDisplay"), ProfileLocation.Normalize(path));
             var labels = FindControls<TextBlock>(prompt).ToArray();
-            bool showsPathLabel = FindControls<DialogText>(prompt).Any(label => label.Text == expectedPath);
-            bool showsExpectedPrompt = labels.Any(label => label.Text == expectedPrompt);
+            bool showsPathLabel = FindControls<DialogText>(prompt).Any(value => value.Text == ProfileLocation.Normalize(path) &&
+                AutomationProperties.GetLabeledBy(value) is TextBlock label && label.Text == App.Text("VaultPath") + ":");
+            bool showsExpectedPrompt = labels.Any(label => label.Text == caption) &&
+                labels.Any(label => label.Text == App.Text("InitializeEmptyVaultDescription")) == empty;
             bool hasTextBox = FindControls<TextBox>(prompt).Any(field => !field.IsReadOnly);
             if (fields.Length != 2 || showsPathLabel != empty || !showsExpectedPrompt || hasTextBox)
             {
@@ -193,15 +194,22 @@ internal static partial class Program
                 targetedUnlock.UpdateLayout();
                 var body = (FrameworkElement)targetedUnlock.Content;
                 var labels = FindControls<TextBlock>(targetedUnlock).ToArray();
-                var tabLabel = labels.Single(label => label.Text == string.Format(App.Text("DecisionTargetTab"), target.TabCaption));
-                var pathLabel = FindControls<DialogText>(targetedUnlock).Single(label =>
-                    label.Text == $"{App.Text("VaultPath")}:\n{ProfileLocation.Normalize(vaultPath)}");
+                var values = FindControls<DialogText>(targetedUnlock).ToArray();
+                var tabValue = values.Single(value => value.Text == PermissionDisplay.Literal(target.TabCaption));
+                var pathValue = values.Single(value => value.Text == ProfileLocation.Normalize(vaultPath));
+                if (AutomationProperties.GetLabeledBy(tabValue) is not TextBlock tabLabel ||
+                    tabLabel.Text != App.Text("DecisionTargetTabLabel") + ":" ||
+                    AutomationProperties.GetLabeledBy(pathValue) is not TextBlock pathLabel ||
+                    pathLabel.Text != App.Text("VaultPath") + ":")
+                    throw new InvalidOperationException("The vault unlock fields did not identify the target and path.");
                 var masterLabel = labels.Single(label => label.Text == App.Text("MasterPassword"));
                 double offset = pathLabel.TranslatePoint(new Point(), body).X - tabLabel.TranslatePoint(new Point(), body).X;
-                double gap = masterLabel.TranslatePoint(new Point(), body).Y -
+                double innerGap = pathValue.TranslatePoint(new Point(), body).Y -
                     pathLabel.TranslatePoint(new Point(0, pathLabel.ActualHeight), body).Y;
-                if (Math.Abs(offset) > 1 || gap < 16)
-                    throw new InvalidOperationException($"Vault unlock layout: path offset {offset:F1} DIP, password label gap {gap:F1} DIP.");
+                double outerGap = masterLabel.TranslatePoint(new Point(), body).Y -
+                    pathValue.TranslatePoint(new Point(0, pathValue.ActualHeight), body).Y;
+                if (Math.Abs(offset) > 1 || Math.Abs(innerGap) > 1 || outerGap < 16)
+                    throw new InvalidOperationException($"Vault unlock layout offsets (DIP): left {offset:F1}, within field {innerGap:F1}, between fields {outerGap:F1}.");
             }
             finally
             {
@@ -211,9 +219,9 @@ internal static partial class Program
 
             Task management = host.Dispatcher.InvokeAsync(() => app.Vault.ManageAsync(host)).Task.Unwrap();
             var unlock = await FindDialogAsync("UnlockVault", form: true);
-            string expectedPath = $"{App.Text("VaultPath")}:\n{ProfileLocation.Normalize(vaultPath)}";
-            if (!FindControls<DialogText>(unlock).Any(label => label.Text == expectedPath &&
-                label.TextWrapping == TextWrapping.Wrap && System.Windows.Automation.AutomationProperties.GetName(label) == expectedPath) ||
+            if (!FindControls<DialogText>(unlock).Any(value => value.Text == ProfileLocation.Normalize(vaultPath) &&
+                value.TextWrapping == TextWrapping.Wrap && AutomationProperties.GetLabeledBy(value) is TextBlock label &&
+                label.Text == App.Text("VaultPath") + ":") ||
                 FindControls<TextBox>(unlock).Any(field => !field.IsReadOnly))
             {
                 unlock.Close();
@@ -261,10 +269,12 @@ internal static partial class Program
             finally { peer.Close(); }
 
             var (edit, confirm) = await OpenRenameAsync(renamed);
-            var warning = FindControls<TextBlock>(confirm).Single(block => block.Text.Contains(original, StringComparison.Ordinal));
-            if (!warning.Text.Contains(renamed, StringComparison.Ordinal) ||
-                !warning.Text.Contains(saved, StringComparison.OrdinalIgnoreCase) ||
-                warning.Text.Contains(unregistered, StringComparison.OrdinalIgnoreCase))
+            var renameFields = FindControls<DialogText>(confirm).ToDictionary(
+                field => ((TextBlock)AutomationProperties.GetLabeledBy(field)).Text, field => field.Text);
+            string reviewed = renameFields[App.Text("KnownCredentialReferences") + ":"];
+            if (renameFields[App.Text("CurrentCredentialName") + ":"] != PermissionDisplay.Literal(original) ||
+                renameFields[App.Text("NewCredentialName") + ":"] != PermissionDisplay.Literal(renamed) ||
+                !reviewed.Contains(saved, StringComparison.OrdinalIgnoreCase) || reviewed.Contains(unregistered, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Rename confirmation did not show the requested names and registered scope.");
             Click(confirm, "Cancel");
             while (!FindControls<Button>(edit).Any(button => button.IsEnabled && Equals(button.Content, App.Text("OK"))))
@@ -655,13 +665,19 @@ internal static partial class Program
                 if (app.StatusReports.Pending(host).Count != 1 ||
                     FindControls<FormView>(host).Any(view => view.Reports.HasReports))
                     throw new InvalidOperationException("A menu restore did not keep its result at application scope after a tab switch.");
-                await AcknowledgeWindowReportAsync(peer, string.Format(App.Text("VaultRestoreCompleted"), backup, first));
+                var restoreFields = app.StatusReports.Pending(peer).Single().Content.Fields;
+                if (!restoreFields.Any(field => field.Caption == App.Text("BackupFilePath") &&
+                        ProfileLocation.SameVaultOpeningPath(field.Value, backup)) ||
+                    !restoreFields.Any(field => field.Caption == App.Text("VaultPath") &&
+                        ProfileLocation.SameVaultOpeningPath(field.Value, first)))
+                    throw new InvalidOperationException($"The restore report did not label the source and destination separately: {ReportField.Describe(restoreFields)}");
+                await AcknowledgeWindowReportAsync(peer, App.Text("VaultRestoreCompleted"), backup, first);
 
                 var archiving = app.Dispatcher.InvokeAsync(() => app.Vault.ArchiveAsync(host)).Task.Unwrap();
                 Click(await FindDialogAsync("ArchiveVault", form: false), "ArchiveVault");
                 await archiving.WaitAsync(token);
                 var archiveReport = app.StatusReports.Pending(peer).Single();
-                var archivedPath = archiveReport.Details.Split('\n', StringSplitOptions.RemoveEmptyEntries)[^1].TrimEnd();
+                var archivedPath = archiveReport.Content.Fields.Single(field => field.Caption == App.Text("VaultArchivePath")).Value;
                 if (!File.Exists(archivedPath)) throw new InvalidOperationException("The menu archive omitted its verified destination.");
                 await AcknowledgeWindowReportAsync(peer, App.Text("VaultArchived"), archivedPath);
                 if (app.StatusReports.Pending(host).Count != 0)
@@ -724,7 +740,8 @@ internal static partial class Program
 
         static void EnsureMessage(Window dialog, string expected, StringComparison comparison = StringComparison.Ordinal)
         {
-            if (!FindControls<TextBlock>(dialog).Any(text => text.Text.Contains(expected, comparison)))
+            if (!FindControls<TextBlock>(dialog).Any(text => text.Text.Contains(expected, comparison)) &&
+                !FindControls<DialogText>(dialog).Any(value => value.Text.Contains(expected, comparison)))
                 throw new InvalidOperationException($"The vault dialog omitted the expected publication fact '{expected}'.");
         }
 

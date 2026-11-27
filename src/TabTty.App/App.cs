@@ -187,8 +187,8 @@ public sealed class App : Application
         catch (Exception exception) when (ProfileCatalog.IsFileProblem(exception)) { }
         app.ApplySettings();
         string message = Text("ActivationFailed");
-        ThemedMessageBox.Show(details is null ? message : $"{message}\n{details}", "TabTty",
-            icon: MessageBoxImage.Error);
+        ThemedMessageBox.Show(null, message, "TabTty", icon: MessageBoxImage.Error,
+            context: details is null ? null : new DialogField(Text("DialogDetails"), new DialogText(details, 220)));
     }
 
     internal static string? LocalizedText(string key) => Strings.GetString(key, language);

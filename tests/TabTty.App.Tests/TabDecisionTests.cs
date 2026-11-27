@@ -51,7 +51,9 @@ internal static partial class Program
             CheckMacroLaunch(target.IsVisible && target.HasPendingDecision && !typing.HasPendingDecision &&
                 review.Owner == host && !review.ShowActivated && !review.IsActive && host.IsEnabled &&
                 Keyboard.FocusedElement == focused && typing.IsKeyboardFocusWithin &&
-                FindControls<TextBlock>(review).Any(label => label.Text == string.Format(App.Text("DecisionTargetTab"), target.TabCaption)) &&
+                FindControls<DialogText>(review).Any(value => value.Text == target.TabCaption &&
+                    System.Windows.Automation.AutomationProperties.GetLabeledBy(value) is TextBlock caption &&
+                    caption.Text == string.Format(App.Text("DialogFieldCaption"), App.Text("DecisionTargetTabLabel"))) &&
                 FindControls<TextBox>(review).Any(field => field.Text.Contains(endpoint.Port.ToString())),
                 "A profile review in the other visible group lost its target or took focus.");
             SendText(pane, "k");

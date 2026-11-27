@@ -82,8 +82,8 @@ internal sealed class FormView : Grid
     public bool IsBusy { get; private set; }
     internal Func<bool>? CanDismissBusyView { private get; set; }
     internal bool BlocksClose => IsBusy && CanDismissBusyView?.Invoke() != true;
-    internal Func<string?>? DescribeUnresolvedPublication { private get; set; }
-    internal string? UnresolvedPublication => DescribeUnresolvedPublication?.Invoke();
+    internal Func<ReportField[]?>? DescribeUnresolvedPublication { private get; set; }
+    internal ReportField[]? UnresolvedPublication => DescribeUnresolvedPublication?.Invoke();
     public bool HasUnsavedChanges => tracksEdits && edits.Any(edit => edit.IsChanged());
     public event Action<bool>? Completed;
 
@@ -218,13 +218,20 @@ internal sealed class FormView : Grid
         Window owner = OwnerWindow;
         bool isTab = TabOwner is not null;
         string key = isTab ? "DiscardChangesAndClose" : "DiscardChangesAndCloseWindow";
-        return ((App)Application.Current).Modal(() => ThemedMessageBox.Show(owner, ClosePrompt(key), Text("DiscardAndClose"),
+        return ((App)Application.Current).Modal(() => ThemedMessageBox.Show(owner, Text(key), Text("DiscardAndClose"),
             MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel,
-            acceptKey: "DiscardAndClose", context: new DialogText(Tab?.Caption ?? owner.Title))) == MessageBoxResult.OK;
+            acceptKey: "DiscardAndClose", context: DiscardContext(UnresolvedPublication))) == MessageBoxResult.OK;
     }
 
-    internal string ClosePrompt(string key) =>
-        UnresolvedPublication is { } details ? $"{Text(key)}\n\n{details}" : Text(key);
+    internal StackPanel DiscardContext(ReportField[]? unresolved)
+    {
+        var context = new StackPanel();
+        context.Children.Add(new DialogField(Text(Tab is null ? "AffectedWindow" : "AffectedTabs"),
+            new DialogText(Tab?.Caption ?? OwnerWindow.Title)));
+        if (unresolved is not null)
+            foreach (var field in unresolved) context.Children.Add(field.Create());
+        return context;
+    }
 
     private void Cancel()
     {
@@ -388,10 +395,22 @@ internal sealed class FormView : Grid
         BuildIn(row, build);
     }
 
-    public void AddDisplay(string key, FrameworkElement element)
+    public void AddDisplay(string key, FrameworkElement element, bool inline = false)
     {
+        if (modal)
+        {
+            AddDialogField(key, element, inline: inline);
+            return;
+        }
         SetText(key, value => AutomationProperties.SetName(element, value));
         (section ?? fields).Children.Add(element);
+    }
+
+    private void AddDialogField(string key, FrameworkElement value, FrameworkElement? target = null, bool inline = false)
+    {
+        var field = new DialogField(Text(key), value, target, inline);
+        (section ?? fields).Children.Add(field);
+        AddLocalizedUpdate(() => field.SetCaption(Text(key)));
     }
 
     internal void AddPageDescription(string key)
@@ -545,8 +564,14 @@ internal sealed class FormView : Grid
     public Button AddAsyncAction(string key, Func<Task> action) => AddAction(key, async () => await RunAsync(action));
 
     public void AddField(string key, Control control, bool trackEdit = true, string? actionKey = null,
-        Func<Task>? action = null, string? descriptionKey = null, bool inlineCheckBox = false, Action? reset = null)
+        Func<Task>? action = null, string? descriptionKey = null, bool inlineCheckBox = false, Action? reset = null, bool inline = false)
     {
+        if (modal && control is DialogText)
+        {
+            FrameworkElement content = action is null ? control : FieldWithAction(control, actionKey!, action, reset);
+            AddDialogField(key, content, control, inline);
+            return;
+        }
         if (control is CheckBox { Content: null } check && descriptionKey is null &&
             (inlineCheckBox || !modal && section is not null && (!hasNavigation || section is WrapPanel)))
         {
@@ -562,29 +587,7 @@ internal sealed class FormView : Grid
             if (hasNavigation && control is CheckBox { Content: null } standalone)
                 SetCheckBoxContent(standalone, "Enabled");
             if (action is not null)
-            {
-                var row = new Grid();
-                row.ColumnDefinitions.Add(new ColumnDefinition());
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                row.Children.Add(control);
-                (section ?? fields).Children.Add(row);
-                BuildIn(row, () =>
-                {
-                    AddButton(AddAsyncAction(actionKey!, action), 1);
-                    if (reset is not null)
-                    {
-                        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                        AddButton(AddAction("Reset", reset), 2);
-                    }
-                });
-
-                static void AddButton(Button button, int column)
-                {
-                    button.Margin = new Thickness(8, 0, 0, 0);
-                    button.VerticalAlignment = VerticalAlignment.Center;
-                    Grid.SetColumn(button, column);
-                }
-            }
+                (section ?? fields).Children.Add(FieldWithAction(control, actionKey!, action, reset));
         }
         if (modal || !trackEdit) return;
         switch (control)
@@ -604,6 +607,27 @@ internal sealed class FormView : Grid
             case ToggleButton toggle:
                 TrackValue(() => toggle.IsChecked, value => toggle.IsChecked = value);
                 break;
+        }
+    }
+
+    private Grid FieldWithAction(Control control, string actionKey, Func<Task> action, Action? reset)
+    {
+        var row = new Grid();
+        row.ColumnDefinitions.Add(new ColumnDefinition());
+        row.Children.Add(control);
+        BuildIn(row, () =>
+        {
+            PlaceButton(AddAsyncAction(actionKey, action));
+            if (reset is not null) PlaceButton(AddAction("Reset", reset));
+        });
+        return row;
+
+        void PlaceButton(Button button)
+        {
+            Grid.SetColumn(button, row.ColumnDefinitions.Count);
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            button.Margin = new Thickness(8, 0, 0, 0);
+            button.VerticalAlignment = VerticalAlignment.Center;
         }
     }
 
@@ -661,11 +685,18 @@ internal sealed class FormView : Grid
         var text = new TextBlock { TextWrapping = TextWrapping.Wrap };
         if (hasNavigation) text.FontWeight = FontWeights.Bold;
         var label = new Label { Content = text, Target = control };
+        Panel parent = section ?? fields;
         double topMargin = (pageTitle is not null && section is not null ? 5 : 0) + AdditionalFieldSpacing;
+        if (modal)
+        {
+            label.Padding = new Thickness(0);
+            if (parent.Children.Count > 0 && parent.Children[^1] is not DialogField)
+                topMargin = DialogField.Spacing;
+        }
         if (topMargin > 0) label.Margin = new Thickness(0, topMargin, 0, 0);
         label.SetBinding(VisibilityProperty, new Binding(nameof(Visibility)) { Source = control });
         AutomationProperties.SetLabeledBy(control, label);
-        (section ?? fields).Children.Add(label);
+        parent.Children.Add(label);
         bool descriptionFollowsControl = addControl && control is CheckBox;
         if (descriptionFollowsControl) (section ?? fields).Children.Add(control);
         if (descriptionKey is not null)
@@ -852,11 +883,14 @@ internal sealed class FormView : Grid
 
     internal void ReportFailure(Exception exception) => ReportFailure(Reports.Report, exception);
 
-    internal static void ReportFailure(Action<object, string> report, Exception exception)
+    internal static void ReportFailure(Action<object, string, ReportField[]> report, Exception exception)
     {
         if (exception is FilePublicationException publication)
-            report(publication.Result.OperationId, JsonStoreRecovery.DescribeFailure(publication.Result));
-        else report(exception, exception.Message);
+        {
+            var fields = JsonStoreRecovery.FailureFields(publication.Result);
+            report(publication.Result.OperationId, ReportField.Describe(fields), fields);
+        }
+        else report(exception, exception.Message, [new(Text("DialogDetails"), exception.Message, Framed: true)]);
     }
 
     private void SetText(string key, Action<string> apply) => AddLocalizedUpdate(() => apply(Text(key)));

@@ -3,7 +3,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Windows;
-using System.Windows.Controls;
 using System.Windows.Input;
 using TabTty.Core;
 using static TabTty.App.App;
@@ -133,12 +132,15 @@ internal sealed partial class ProfileCatalog
                 if (!unregistered && before.Version == version)
                     return Complete(profile, null);
 
-                string details = Describe(location, profile, macroName,
-                    before.Version is not null || previousOnce is not null);
-                if (unregistered && Path.GetDirectoryName(location) != ActiveFolder)
-                    details += "\n\n" + Text("ProfileImportLogDirectory") + "\n" + PermissionDisplay.Literal(folder);
-                var choice = await AskAsync(owner, "ProfileTrustReview", details,
-                    "ProfileConnectOnce", unregistered ? "ProfileImportAndConnect" : "ProfileTrustAndConnect", token, tab);
+                var choice = await AskAsync(owner, "ProfileTrustReview", window =>
+                {
+                    AddProfileDetails(window, location, profile, macroName, before.Version is not null || previousOnce is not null);
+                    if (unregistered && Path.GetDirectoryName(location) != ActiveFolder)
+                    {
+                        window.AddNotice("ProfileImportLogDirectory");
+                        window.AddField("ProfileImportLogBase", new DialogText(PermissionDisplay.Literal(folder)));
+                    }
+                }, "ProfileConnectOnce", unregistered ? "ProfileImportAndConnect" : "ProfileTrustAndConnect", token, tab);
                 if (choice == ProfileAnswer.Cancel) throw new SshInteractionCancelledException();
                 token.ThrowIfCancellationRequested();
                 if (ReadTrust(location) != before || folder != app.ProfileSaveDirectory) continue;
@@ -179,7 +181,8 @@ internal sealed partial class ProfileCatalog
     private static async Task<bool> ReviewProfileRegistrationAsync(Window owner, string path,
         ConnectionProfile profile, CancellationToken token) =>
         !profile.HasPostConnectionMacro || await AskAsync(owner, "PostConnectionMacroRegistration",
-            Describe(path, profile, null, false), "PostConnectionMacroTrustProfile", null, token) == ProfileAnswer.Once;
+            window => AddProfileDetails(window, path, profile, null, false),
+            "PostConnectionMacroTrustProfile", null, token) == ProfileAnswer.Once;
 
     internal async Task ApproveRecordingDestinationAsync(Window? owner, RecordingDestination destination, CancellationToken token,
         TerminalTab? tab = null)
@@ -193,9 +196,12 @@ internal sealed partial class ProfileCatalog
             destination.Verify();
             string? previous = RememberedMapping();
             if (previous == version) return;
-            if (previous is not null && await AskAsync(owner, "LogDestinationReview",
-                PermissionDisplay.Literal(destination.Path) + "\n" + PermissionDisplay.Literal(destination.EffectivePath) +
-                "\n\n" + Text("LogDestinationReviewNotice"), "ApproveLogDestination", null, token, tab) == ProfileAnswer.Cancel)
+            if (previous is not null && await AskAsync(owner, "LogDestinationReview", window =>
+                {
+                    window.AddNotice("LogDestinationReviewNotice");
+                    window.AddField("LogRequestedDestination", new DialogText(PermissionDisplay.Literal(destination.Path)));
+                    window.AddField("LogEffectiveDestination", new DialogText(PermissionDisplay.Literal(destination.EffectivePath)));
+                }, "ApproveLogDestination", null, token, tab) == ProfileAnswer.Cancel)
                 throw new RecordingStartException(Text("LogDestinationRejected"));
 
             token.ThrowIfCancellationRequested();
@@ -223,45 +229,52 @@ internal sealed partial class ProfileCatalog
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
         var profile = await ConnectionProfile.TryLoadLocalAsync(path, timeout.Token);
         if (profile is not null) return profile;
-        var details = PermissionDisplay.Literal(path) + "\n\n" + Text("ProfileReadSourceNotice");
-        if (macroName is not null) details += "\n" + Text("MacroSourceFile") + "  " + PermissionDisplay.Literal(macroName);
-        if (await AskAsync(owner, "ProfileReadSource", details, "ProfileReadSource", null, token, tab) == ProfileAnswer.Cancel)
+        if (await AskAsync(owner, "ProfileReadSource", window =>
+            {
+                window.AddNotice("ProfileReadSourceNotice");
+                window.AddField("ProfileListFilePath", new DialogText(PermissionDisplay.Literal(path)));
+                if (macroName is not null) window.AddField("MacroSourceFile", new DialogText(PermissionDisplay.Literal(macroName)));
+            }, "ProfileReadSource", null, token, tab) == ProfileAnswer.Cancel)
             throw new SshInteractionCancelledException();
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
         return await ConnectionProfile.LoadAsync(path, timeout.Token);
     }
 
-    private static string Describe(string path, ConnectionProfile profile, string? macro, bool changed)
+    private static void AddProfileDetails(MainWindow.FormWindow window, string path, ConnectionProfile profile,
+        string? macro, bool changed)
     {
-        var lines = new List<string> { PermissionDisplay.Literal(path) };
         string target = profile.Type == "serial" ? profile.Serial.PortName : $"{profile.Host} [{profile.Port}]";
-        lines.Add($"{profile.Type.ToUpperInvariant()}  {PermissionDisplay.Literal(target)}");
-        if (changed) lines.Add(Text("ProfileTrustVersionChanged"));
-        if (macro is not null) lines.Add(Text("MacroSourceFile") + "  " + PermissionDisplay.Literal(macro));
+        if (changed) window.AddNotice("ProfileTrustVersionChanged");
+        window.AddField("ProfileListFilePath", new DialogText(PermissionDisplay.Literal(path)));
+        window.AddField("ProfileListProtocol", new DialogText(profile.Type.ToUpperInvariant()), inline: true);
+        window.AddField("ProfileListDestination", new DialogText(PermissionDisplay.Literal(target)));
+        if (macro is not null) window.AddField("MacroSourceFile", new DialogText(PermissionDisplay.Literal(macro)));
         if (profile.Type == "ssh")
         {
-            lines.Add(PermissionDisplay.Literal(profile.SshUsername));
+            window.AddField("SshUsername", new DialogText(PermissionDisplay.Literal(profile.SshUsername)));
             var methods = profile.SshMethods;
             var names = methods.Select(method => Text(method == "publicKey" ? "PublicKey" : "VaultPassword"));
             if (profile.SshAllowsKeyboardInteractive) names = names.Append(Text("KeyboardInteractive"));
-            lines.Add(string.Join(", ", names));
-            foreach (var reference in new[] { profile.SshPassword, profile.SshPrivateKey })
-                if (reference is not null) lines.Add(PermissionDisplay.Literal(reference.ToString()));
+            window.AddField("ProfileAuthenticationGroup", new DialogText(string.Join(", ", names)), inline: true);
+            if (profile.SshPassword is { } password)
+                window.AddField("ProfilePasswordEntry", new DialogText(PermissionDisplay.Literal(password.Name)));
+            if (profile.SshPrivateKey is { } key)
+                window.AddField("ProfilePrivateKeyEntry", new DialogText(PermissionDisplay.Literal(key.Name)));
         }
         if (profile.RecordsOutput)
         {
-            var formats = new[] { (profile.RecordRaw, "Raw"), (profile.RecordText, "Text"), (profile.RecordTerminal, "Terminal") };
-            lines.Add(string.Join(", ", formats.Where(format => format.Item1).Select(format => format.Item2)));
+            var formats = new[] { (profile.RecordRaw, "RecordRaw"), (profile.RecordText, "RecordText"), (profile.RecordTerminal, "RecordTerminal") };
+            var selected = formats.Where(format => format.Item1).Select(format => Text(format.Item2));
+            window.AddField("RecordedLogs", new DialogText(string.Join(", ", selected)), inline: true);
         }
         if (profile.HasPostConnectionMacro)
         {
-            lines.Add(Text("PostConnectionMacroDescription"));
-            lines.Add(PermissionDisplay.PastePage(profile.PostConnectionSource.AsSpan()));
+            window.AddNotice("PostConnectionMacroDescription");
+            window.AddField("PostConnectionMacro", new DialogText(PermissionDisplay.PastePage(profile.PostConnectionSource.AsSpan()), 220));
         }
-        return string.Join("\n", lines);
     }
 
-    private static async Task<ProfileAnswer> AskAsync(Window? owner, string title, string details,
+    private static async Task<ProfileAnswer> AskAsync(Window? owner, string title, Action<MainWindow.FormWindow> addDetails,
         string once, string? remember, CancellationToken token, TerminalTab? tab = null)
     {
         token.ThrowIfCancellationRequested();
@@ -273,8 +286,7 @@ internal sealed partial class ProfileCatalog
             Width = 650,
             WindowStartupLocation = owner is null ? WindowStartupLocation.CenterScreen : WindowStartupLocation.CenterOwner,
         };
-        window.AddDisplay(title, new DialogText(details,
-            title == "ProfileReadSource" ? null : Math.Max(120, SystemParameters.WorkArea.Height / 2)));
+        addDetails(window);
         window.AddDialogAction(once, () => Complete(ProfileAnswer.Once));
         if (remember is not null) window.AddDialogAction(remember, () => Complete(ProfileAnswer.Remember));
         var cancel = window.AddDialogAction("Cancel", () => Complete(ProfileAnswer.Cancel), isDefault: true);

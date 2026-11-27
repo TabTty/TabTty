@@ -33,9 +33,13 @@ internal sealed partial class TerminalTab
     private AiCollaboration AiCollaboration => ((App)Application.Current).Ai;
     internal void ReportAiUncertain(TerminalSession target, long definitePayloadBytes)
     {
-        if (!removed)
-            Reports.Report(new object(), $"{BroadcastTargetLabel(target)} — {Text("AiUncertainDelivery")}\n" +
-                string.Format(Text("ConfirmedInputPrefix"), definitePayloadBytes));
+        if (removed) return;
+        string result = Text("AiUncertainDelivery");
+        string confirmed = string.Format(Text("ConfirmedInputPrefix"), definitePayloadBytes);
+        var destination = ConnectionDestination.From(target);
+        Reports.Report(new object(), $"{BroadcastTargetLabel(target)} — {result}\n{confirmed}",
+            [new(Text("DecisionTargetTabLabel"), PermissionDisplay.Literal(target.DisplayName)),
+             new(Text(destination.CaptionKey), destination.Endpoint), new(Text("OperationReportResult"), $"{result}\n{confirmed}")]);
     }
     internal string? AiStateLabel => IsAiTakingControl && IsAiShared ? Text("AiTakingControl")
         : IsAiControlling ? Text("AiControlling") : IsAiShared ? Text("AiReadOnly") : null;
@@ -167,21 +171,25 @@ internal sealed partial class TerminalTab
         var generation = ConnectionGeneration;
         var revision = aiAuthorityRevision;
         string action = grantControl ? "AiGiveControl" : "AiShareOutput";
-        string title = Text(action);
-        string message = string.Format(Text(grantControl ? "AiConfirmControl" : "AiConfirmShare"),
-            PermissionDisplay.Literal(TabCaption), peer.Code, LauncherDescription(peer), ConnectionDestination.From(sessionAtPrompt));
-        message += "\n\n" + Text("AiUnattendedConsent");
+        var dialog = new MainWindow.FormWindow(owner, Text(action)) { Width = 540 };
+        var destination = ConnectionDestination.From(sessionAtPrompt);
+        dialog.AddField(destination.CaptionKey, new DialogText(destination.Endpoint));
+        dialog.AddField("AiPairingCode", new DialogText(peer.Code), inline: true);
+        dialog.AddField("AiBridgeParent", new DialogText(PermissionDisplay.Literal(peer.LauncherPath)));
+        dialog.AddField("AiBridgeParentId", new DialogText(peer.LauncherId.ToString(System.Globalization.CultureInfo.CurrentCulture)), inline: true);
+        dialog.AddNotice(grantControl ? "AiConfirmControl" : "AiConfirmShare");
+        dialog.AddNotice("AiUnattendedConsent");
         if (!grantControl && share is not null)
-            message += "\n\n" + string.Format(Text("AiConfirmSwitch"), share.Peer.Code);
-        var answer = MessageBoxResult.Cancel;
-        var dialog = ThemedMessageBox.Create(owner, message, title, MessageBoxButton.OKCancel, MessageBoxImage.Question,
-            MessageBoxResult.Cancel, selected => answer = selected,
-            ThemedMessageBox.DecisionLabels(action), modelessDecision: true);
+        {
+            dialog.AddNotice("AiConfirmSwitch");
+            dialog.AddField("AiPreviousPairingCode", new DialogText(share.Peer.Code), inline: true);
+        }
+        dialog.AddButtons(() => { }, acceptKey: action, cancelDefault: true);
         aiConsent = dialog;
         try { await PresentDecisionAsync(dialog, IsRunning ? InputLifetime : CancellationToken.None); }
         catch (OperationCanceledException) { return; }
         finally { aiConsent = null; }
-        if (answer != MessageBoxResult.OK) return;
+        if (!dialog.Accepted) return;
         if (ClosePending || ConnectionGeneration != generation || AiSession != sessionAtPrompt || AiSharing != share ||
             aiAuthorityRevision != revision ||
             AiHost != owner || !collaboration.Peers.Contains(peer))

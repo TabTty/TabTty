@@ -45,6 +45,8 @@ internal sealed partial class TerminalTab
 
     private readonly record struct ConnectionDestination(string LabelKey, string Endpoint)
     {
+        internal string CaptionKey => LabelKey + "Label";
+
         internal static ConnectionDestination From(TerminalSession target)
         {
             string label = target.IsSsh ? "AiSshTarget" : target.IsSerial ? "AiSerialTarget" : "AiTelnetTarget";
@@ -57,6 +59,12 @@ internal sealed partial class TerminalTab
 
     internal static string BroadcastTargetLabel(TerminalSession target) =>
         $"{ConnectionDestination.From(target)} — {PermissionDisplay.Literal(target.DisplayName)}";
+
+    internal static string DialogTargetLabel(TerminalSession target)
+    {
+        var destination = ConnectionDestination.From(target);
+        return string.Format(Text(destination.LabelKey + "Value"), destination.Endpoint, PermissionDisplay.Literal(target.DisplayName));
+    }
 
     internal bool BroadcastChecked
     {

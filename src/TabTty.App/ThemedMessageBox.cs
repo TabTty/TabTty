@@ -36,7 +36,7 @@ internal static class ThemedMessageBox
     internal static Window Create(Window? owner, string message, string title, MessageBoxButton buttons,
         MessageBoxImage icon, MessageBoxResult defaultResult, Action<MessageBoxResult> select,
         Func<MessageBoxResult, string>? label = null, ImageSource? windowIcon = null,
-        string? details = null, bool modelessDecision = false, FrameworkElement? context = null)
+        string? details = null, FrameworkElement? context = null)
     {
         owner = owner is { IsVisible: true } ? owner : null;
         var dialog = new Window
@@ -77,14 +77,13 @@ internal static class ThemedMessageBox
         content.Children.Add(new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap });
         if (context is not null)
         {
-            context.Margin = new Thickness(0, 8, 0, 0);
-            content.Children.Add(context);
+            content.Children.Add(new Border { Child = context, Margin = new Thickness(0, 8, 0, 0) });
         }
         if (!string.IsNullOrEmpty(details))
             content.Children.Add(new Expander
             {
                 Header = Text("TransferAllUnresolved"),
-                Content = new DialogText(details, 250),
+                Content = new DialogField(Text("TransferResults"), new DialogText(details, 250)),
             });
         body.Children.Add(content);
         var layout = new DialogLayout(body, new Thickness(20));
@@ -109,8 +108,7 @@ internal static class ThemedMessageBox
             {
                 if (!dialog.IsVisible) return;
                 select(choice);
-                if (modelessDecision) dialog.Close();
-                else dialog.DialogResult = true;
+                dialog.DialogResult = true;
             };
             if (button.IsDefault) dialog.Loaded += (_, _) => { if (dialog.ShowActivated) button.Focus(); };
             layout.Actions.Children.Add(button);

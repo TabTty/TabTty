@@ -16,10 +16,9 @@ internal static class ReadOnlyPreview
         int pages = Math.Max(1, (source.Length + PageUnits - 1) / PageUnits);
         var position = new TextBlock { TextWrapping = System.Windows.TextWrapping.Wrap };
         dialog.AddField(contentKey, contents);
-        AutomationProperties.SetLabeledBy(contents, null);
         if (pages > 1)
         {
-            dialog.AddDisplay("PastePreviewPageLabel", position);
+            dialog.AddDisplay("PastePreviewPageLabel", position, inline: true);
             dialog.AddAction("PastePreviousPage", () => Show(Math.Max(0, page - 1)));
             dialog.AddAction("PasteNextPage", () => Show(Math.Min(pages - 1, page + 1)));
         }
@@ -31,8 +30,10 @@ internal static class ReadOnlyPreview
             page = index;
             int start = Boundary(page);
             contents.Text = PermissionDisplay.PastePage(source.AsSpan(start, Boundary(page + 1) - start));
-            position.Text = string.Format(CultureInfo.CurrentCulture, Text("PastePreviewPage"), page + 1, pages);
-            AutomationProperties.SetName(contents, $"{Text(contentKey)} {position.Text}");
+            position.Text = string.Format(CultureInfo.CurrentCulture, Text("PreviewPageNumbers"), page + 1, pages);
+            string pageStatus = string.Format(CultureInfo.CurrentCulture, Text("PastePreviewPage"), page + 1, pages);
+            AutomationProperties.SetItemStatus(contents, pageStatus);
+            AutomationProperties.SetName(contents, $"{Text(contentKey)} {pageStatus}");
         }
 
         int Boundary(int index)

@@ -8,22 +8,25 @@
         <Setter Property="Foreground" Value="{DynamicResource WindowForeground}" />
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="BorderBrush" Value="Transparent" />
-        <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="Padding" Value="1,2" />
-        <Setter Property="Margin" Value="0,0,0,5" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="Margin" Value="0" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="local:DialogText">
-                    <Border x:Name="frame" BorderBrush="{TemplateBinding BorderBrush}"
+                    <Grid>
+                        <Border BorderBrush="{TemplateBinding BorderBrush}"
                             BorderThickness="{TemplateBinding BorderThickness}"
                             Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}"
                             SnapsToDevicePixels="True">
-                        <ScrollViewer x:Name="PART_ContentHost" Focusable="False" />
-                    </Border>
+                            <ScrollViewer x:Name="PART_ContentHost" Focusable="False" />
+                        </Border>
+                        <Border x:Name="focusRing" IsHitTestVisible="False" Visibility="Hidden"
+                                BorderThickness="1" BorderBrush="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+                    </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsKeyboardFocused" Value="True">
-                            <Setter TargetName="frame" Property="BorderBrush"
-                                    Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+                            <Setter TargetName="focusRing" Property="Visibility" Value="Visible" />
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
@@ -31,6 +34,7 @@
         </Setter>
     </Style>
     <Style x:Key="DialogLongText" TargetType="local:DialogText" BasedOn="{StaticResource DialogShortText}">
+        <Setter Property="BorderThickness" Value="1" />
         <Setter Property="BorderBrush" Value="{DynamicResource SurfaceStrokeColorDefaultBrush}" />
         <Setter Property="Padding" Value="8,6" />
     </Style>

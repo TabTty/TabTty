@@ -395,8 +395,15 @@ internal sealed partial class TerminalTab : UserControl
             stop.Token.ThrowIfCancellationRequested();
             var destination = ConnectionDestination.From(session);
             if (lastDestination is { } previousDestination && previousDestination != destination)
+            {
+                string name = PermissionDisplay.Literal(session.DisplayName);
                 Reports.Report(new object(), string.Format(Text("ReconnectDestinationDetails"),
-                    PermissionDisplay.Literal(session.DisplayName), previousDestination, destination));
+                    name, previousDestination, destination),
+                    [new(Text("OperationReportResult"), Text("ReconnectDestinationChanged")),
+                     new(Text("DecisionTargetTabLabel"), name),
+                     new(string.Format(Text("ReconnectPreviousDestination"), Text(previousDestination.CaptionKey)), previousDestination.Endpoint),
+                     new(string.Format(Text("ReconnectCurrentDestination"), Text(destination.CaptionKey)), destination.Endpoint)]);
+            }
             lastDestination = destination;
             connectedName = session.DisplayName;
             established = true;
@@ -635,10 +642,10 @@ internal sealed partial class TerminalTab : UserControl
     internal static (MainWindow.FormWindow Form, List<Control> Inputs) CreateSshChallengeForm(Window owner, SshChallenge challenge)
     {
         var form = new MainWindow.FormWindow(owner, Text("KeyboardInteractive")) { Width = 540 };
-        form.AddPinnedNotice(string.Format(CultureInfo.CurrentCulture, Text("SshServerQuestions"), challenge.Destination));
-        if (challenge.Name.Length > 0 || challenge.Instruction.Length > 0)
-            form.AddField("SshInstructions", new DialogText(string.Join(Environment.NewLine,
-                new[] { challenge.Name, challenge.Instruction }.Where(value => value.Length > 0)), 160));
+        form.AddPinnedNotice(Text("SshServerQuestions"));
+        form.AddPinnedField("SshDestination", new DialogText(challenge.Destination.ToString()));
+        if (challenge.Name.Length > 0) form.AddField("SshChallengeName", new DialogText(challenge.Name));
+        if (challenge.Instruction.Length > 0) form.AddField("SshInstructions", new DialogText(challenge.Instruction, 160));
         var inputs = new List<Control>();
         foreach (SshPrompt prompt in challenge.Prompts)
         {
@@ -787,7 +794,18 @@ internal sealed partial class TerminalTab : UserControl
         {
             if (Window.GetWindow(this) is not { } owner) return;
             var form = new MainWindow.FormWindow(owner, Text("ConnectionDetails")) { Width = 650 };
-            form.AddDisplay("ConnectionDetails", new DialogText(active.ConnectionDetails, active.IsSsh ? 350 : null));
+            var target = ConnectionDestination.From(active);
+            form.AddField(target.CaptionKey, new DialogText(target.Endpoint));
+            if (active.SshAlgorithms is { } algorithms)
+            {
+                form.AddField("SshExchangeAlgorithm", new DialogText(algorithms.KeyExchange), inline: true);
+                form.AddField("SshHostKeyAlgorithm", new DialogText(algorithms.HostKey), inline: true);
+                form.AddField("SshTransmitCipher", new DialogText(algorithms.TransmitCipher), inline: true);
+                if (algorithms.TransmitMac is { } transmitMac) form.AddField("SshTransmitMac", new DialogText(transmitMac), inline: true);
+                form.AddField("SshReceiveCipher", new DialogText(algorithms.ReceiveCipher), inline: true);
+                if (algorithms.ReceiveMac is { } receiveMac) form.AddField("SshReceiveMac", new DialogText(receiveMac), inline: true);
+                form.AddField("SshStrictExchange", new DialogText(Text(algorithms.StrictKeyExchange ? "Yes" : "No")), inline: true);
+            }
             form.AddCloseAction();
             ((App)Application.Current).Modal(form.ShowDialog);
         };
@@ -920,7 +938,7 @@ internal sealed partial class TerminalTab : UserControl
     {
         if (Window.GetWindow(this) is not { } owner) return;
         var form = new MainWindow.FormWindow(owner, Text("SshMessages")) { Width = 650 };
-        form.AddDisplay("SshMessages", new DialogText(string.Join(Environment.NewLine, sshMessages), 360) { MinHeight = 80 });
+        form.AddField("SshMessages", new DialogText(string.Join(Environment.NewLine, sshMessages), 360) { MinHeight = 80 });
         form.AddCloseAction();
         ((App)Application.Current).Modal(form.ShowDialog);
     }
@@ -1539,7 +1557,7 @@ internal sealed partial class TerminalTab : UserControl
             if (paste.RequiresConfirmation)
             {
                 var choice = await PresentPasteAsync(DecisionHost ?? owner, paste, (characterDelay, lineDelay, remember),
-                    [BroadcastTargetLabel(active)], review.Token);
+                    [DialogTargetLabel(active)], review.Token);
                 if (choice is null || !SingleTargetCurrent()) return;
                 (characterDelay, lineDelay, remember) = choice;
                 app.PasteDefaults = remember ? (characterDelay, lineDelay, true) : default;
@@ -1613,7 +1631,7 @@ internal sealed partial class TerminalTab : UserControl
         using var previewMemory = ApplicationResources.TerminalState.Reserve(1024 * 1024 + captionMemory);
         form.AddField("PasteTargets", new DialogText(string.Join(Environment.NewLine, targets),
             targets.Count > 1 ? 130 : null));
-        form.AddField("PasteCountsLabel", new DialogText(summary) { IsTabStop = false });
+        form.AddField("PasteCountsLabel", new DialogText(summary) { IsTabStop = false }, inline: true);
         var previewText = new DialogText("", 260)
         {
             MinHeight = 100,

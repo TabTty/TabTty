@@ -85,9 +85,8 @@ internal static partial class Program
             await File.WriteAllTextAsync(path, ssh.ToEditorJson(), token);
             tab = await Launch(second);
             var sshReview = await FindReview("ProfileTrustReview");
-            string details = FindControls<TextBox>(sshReview).Single(box => box.IsReadOnly).Text;
-            CheckMacroLaunch(details.Contains(second, StringComparison.Ordinal) &&
-                details.Contains("Macro default", StringComparison.Ordinal) && details.Contains("Login key", StringComparison.Ordinal),
+            var values = FindControls<DialogText>(sshReview).Select(field => field.Text).ToArray();
+            CheckMacroLaunch(values.Contains(second) && values.Contains("Macro default") && values.Contains("Login key"),
                 "The SSH review omitted the configured macro password or authentication key reference.");
             Select(sshReview, App.Text("Cancel"));
             await tab.Macro!.Completion.WaitAsync(token);
@@ -95,8 +94,8 @@ internal static partial class Program
             var remotePath = @"\\localhost\TabTty-profile-review-test\profile.ttty";
             var read = app.Profiles.AdmitAsync(owner, remotePath, first, token);
             var readReview = await FindReview("ProfileReadSource");
-            details = FindControls<TextBox>(readReview).Single(box => box.IsReadOnly).Text;
-            CheckMacroLaunch(details.Contains(first, StringComparison.Ordinal) && details.Contains(remotePath, StringComparison.Ordinal),
+            values = FindControls<DialogText>(readReview).Select(field => field.Text).ToArray();
+            CheckMacroLaunch(values.Contains(first) && values.Contains(remotePath),
                 "Read consent omitted the requesting macro or the source path.");
             Select(readReview, App.Text("Cancel"));
             try { await read; throw new InvalidOperationException("Declining remote read consent admitted a profile."); }
@@ -143,7 +142,7 @@ internal static partial class Program
             long beforeLaunch = MacroLimits.ApplicationMemory.Used;
             var tab = await Launch(caller, approveLaunch: true);
             var review = await Review(caller);
-            CheckMacroLaunch(FindControls<TextBox>(review).Single().Text.Contains("unexpected embedded continuation", StringComparison.Ordinal),
+            CheckMacroLaunch(FindControls<DialogText>(review).Any(field => field.Text.Contains("unexpected embedded continuation", StringComparison.Ordinal)),
                 "The profile trust review omitted the embedded source.");
             Select(review, App.Text("ProfileConnectOnce"));
             using (var peer = await listener.AcceptTcpClientAsync(token))
@@ -232,9 +231,9 @@ internal static partial class Program
         async Task<Window> Review(string caller)
         {
             var review = await FindReview("ProfileTrustReview");
-            string details = FindControls<TextBox>(review).Single(box => box.IsReadOnly).Text;
-            CheckMacroLaunch(details.Contains(caller, StringComparison.Ordinal) && details.Contains(path, StringComparison.Ordinal) &&
-                details.Contains($"127.0.0.1 [{port}]", StringComparison.Ordinal) && details.Contains("Raw", StringComparison.Ordinal),
+            var values = FindControls<DialogText>(review).Select(field => field.Text).ToArray();
+            CheckMacroLaunch(values.Contains(caller) && values.Contains(path, StringComparer.OrdinalIgnoreCase) &&
+                values.Contains($"127.0.0.1 [{port}]") && values.Any(value => value.Contains(App.Text("RecordRaw"))),
                 "The macro review omitted the calling source, resolved path, destination or recording format.");
             var buttons = FindControls<Button>(review).ToList();
             CheckMacroLaunch(Equals(buttons.Single(button => button.IsDefault).Content, App.Text("Cancel")) &&

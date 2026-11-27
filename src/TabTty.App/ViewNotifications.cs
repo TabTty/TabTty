@@ -13,6 +13,7 @@ internal sealed class ViewNotifications(NoticeStack stack, Func<Window?> host, F
     {
         public bool Background { get; } = background;
         public TextBlock? Label;
+        public StackPanel? Fields;
         public FrameworkElement? Row;
         public Button? Navigate;
         public Button? Acknowledge;
@@ -27,7 +28,9 @@ internal sealed class ViewNotifications(NoticeStack stack, Func<Window?> host, F
     public bool HasUnread => incidents.Values.Any(item => item.Background);
     public bool HasReports => incidents.Count != 0;
 
-    public void Report(object key, string message)
+    public void Report(object key, string message) => Report(key, message, []);
+
+    public void Report(object key, string message, ReportField[] fields)
     {
         if (disposed) return;
         bool added = false;
@@ -41,7 +44,10 @@ internal sealed class ViewNotifications(NoticeStack stack, Func<Window?> host, F
         if (item.Background)
         {
             if (item.Label is null) AddRow(key, item);
-            item.Label!.Text = message;
+            item.Label!.Text = fields.Length == 0 ? message : "";
+            item.Label.Visibility = fields.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+            item.Fields!.Children.Clear();
+            foreach (var field in fields) item.Fields.Children.Add(field.Create());
             if (added)
             {
                 announceWhenHosted = true;
@@ -73,6 +79,8 @@ internal sealed class ViewNotifications(NoticeStack stack, Func<Window?> host, F
         item.Row = row;
         item.Label = new TextBlock { TextWrapping = TextWrapping.Wrap };
         row.Children.Add(item.Label);
+        item.Fields = new StackPanel();
+        row.Children.Add(item.Fields);
         var actions = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right };
         Button AddAction(string label, Action action)
         {

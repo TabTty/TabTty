@@ -104,7 +104,8 @@ public sealed partial class TerminalSession : IDisposable, IAsyncDisposable
     public bool LocalEchoEnabled => LocalEcho;
     public bool CanSetDtr => transport.CanSetDtr;
     public bool CanSetRts => transport.CanSetRts;
-    public string ConnectionDetails => transport.SshDetails ??
+    internal SshNegotiatedAlgorithms? SshAlgorithms => transport.SshAlgorithms;
+    public string ConnectionDetails => IsSsh ? SshAlgorithms?.ToString() ?? "" :
         (profile.Type == "serial" ? profile.Serial.PortName : $"{profile.Host}:{profile.Port}");
 
     public static async Task<TerminalSession> ConnectAsync(string path, CancellationToken cancellationToken = default,

@@ -335,10 +335,20 @@ internal static partial class Program
             var overwrite = await WaitForTransferDialogAsync("TransferOverwrite");
             try
             {
+                overwrite.UpdateLayout();
+                var values = FindControls<DialogText>(overwrite).ToArray();
+                foreach (var value in values)
+                {
+                    var caption = (TextBlock)AutomationProperties.GetLabeledBy(value);
+                    double captionTop = caption.TranslatePoint(new Point(), overwrite).Y;
+                    double valueTop = value.TranslatePoint(new Point(), overwrite).Y;
+                    bool isPath = caption.Text == App.Text("TransferFilePath") + ":";
+                    if (isPath ? valueTop < captionTop + caption.ActualHeight - 1 : Math.Abs(valueTop - captionTop) > 1)
+                        throw new InvalidOperationException("The file comparison did not stack paths and show size and timestamp inline.");
+                }
                 overwrite.Width = 300;
                 overwrite.MaxHeight = 250;
                 overwrite.UpdateLayout();
-                var values = FindControls<DialogText>(overwrite).ToArray();
                 var skip = FindControls<Button>(overwrite).Single(button => Equals(button.Content, App.Text("TransferSkip")));
                 if (values.Length != 6 || !values[0].Text.EndsWith("note.txt", StringComparison.Ordinal) ||
                     values[3].Text != "/home/inbox/note.txt" || !FindControls<Button>(overwrite).Single(button => button.IsDefault).IsCancel ||
@@ -380,7 +390,20 @@ internal static partial class Program
             if (!await OpenFileMenuAsync(localList, selectedRow) || localList.SelectedItems.Count != 2 ||
                 MenuCommand(localList, "TransferRename").IsEnabled || !MenuCommand(localList, "TransferDelete").IsEnabled)
                 throw new InvalidOperationException("A row menu did not retain a multiple selection and restrict Rename.");
-            localList.ContextMenu.IsOpen = false;
+            _ = transfer.Dispatcher.BeginInvoke(() => InvokeMenu(localList, "TransferDelete"));
+            var delete = await WaitForTransferDialogAsync("TransferDelete");
+            try
+            {
+                var values = FindControls<DialogText>(delete).ToDictionary(
+                    value => ((TextBlock)AutomationProperties.GetLabeledBy(value)).Text, value => value.Text);
+                if (values[App.Text("TransferPath") + ":"] != PermissionDisplay.Literal(dropSource) ||
+                    !values[App.Text("TransferSelectedItems") + ":"].ReplaceLineEndings("\n").Split('\n')
+                        .ToHashSet().SetEquals(["note.txt", "other.txt"]))
+                    throw new InvalidOperationException("The delete confirmation did not separate the folder and selected names.");
+            }
+            finally { delete.Close(); }
+            await WaitForListsAsync(() => localList.Items.Count == 5);
+            transfer.UpdateLayout();
             var copyRow = (ListViewItem)localList.ItemContainerGenerator.ContainerFromItem(
                 localList.Items.Cast<object>().Single(row => RowName(row) == "clipboard.txt"));
             if (!await OpenFileMenuAsync(localList, copyRow) || localList.SelectedItems.Count != 1 ||

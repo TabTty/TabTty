@@ -717,8 +717,11 @@ internal sealed partial class MainWindow : Window
         }
     }
 
-    internal void ReportCommandFailure(string commandKey, Exception error) =>
-        FormView.ReportFailure(app.StatusReports.Capture(this, Text(commandKey)), error);
+    internal void ReportCommandFailure(string commandKey, Exception error)
+    {
+        var report = app.StatusReports.CaptureFields(this, Text(commandKey));
+        FormView.ReportFailure((key, _, fields) => report(key, fields), error);
+    }
 
     private void EditSettings() => OpenForm("Settings", form =>
     {
@@ -941,12 +944,14 @@ internal sealed partial class MainWindow : Window
         if (readyToClose) { SavePlacement(); return; }
         if (!closing)
         {
-            string[] unresolved = AllTabs.Select(tab => (tab.Content as FormView)?.UnresolvedPublication)
-                .OfType<string>().ToArray();
-            if (unresolved.Length > 0 && app.Modal(() => ThemedMessageBox.Show(this,
+            var context = new StackPanel();
+            foreach (var tab in AllTabs)
+                if (tab.Content is FormView form && form.UnresolvedPublication is { } unresolved)
+                    context.Children.Add(form.DiscardContext(unresolved));
+            if (context.Children.Count > 0 && app.Modal(() => ThemedMessageBox.Show(this,
                 Text("DiscardChangesAndCloseWindow"), Text("DiscardAndClose"),
                 MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No, acceptKey: "DiscardAndClose",
-                context: new DialogText(string.Join("\n\n", unresolved), 220))) != MessageBoxResult.Yes)
+                context: context)) != MessageBoxResult.Yes)
             {
                 e.Cancel = true;
                 return;
@@ -983,18 +988,24 @@ internal sealed partial class MainWindow : Window
         bool confirmed = false;
         try
         {
-            string transfers = string.Concat(terminals.Where(terminal => terminal.HasActiveTransfer)
-                .Select(terminal => $"\n{Text("FileTransfer")} — {terminal.TabCaption}"));
-            string macros = string.Concat(terminals.Where(terminal => terminal.HasActiveMacro)
-                .Select(terminal => $"\n{Text("MacroRunningOnClose")} — {terminal.TabCaption}"));
+            var context = new StackPanel();
+            AddTargets("AffectedTabs", terminals);
+            AddTargets("FileTransfer", terminals.Where(terminal => terminal.HasActiveTransfer));
+            AddTargets("MacroRunningOnClose", terminals.Where(terminal => terminal.HasActiveMacro));
             bool connected = terminals.Any(terminal => terminal.IsRunning);
             string action = connected ? "DisconnectAndClose" : "StopWorkAndClose";
             string prompt = Text(connected ? "CloseConnections" : "CloseTabWork");
-            string affected = string.Join("\n", terminals.Select(terminal => PermissionDisplay.Literal(terminal.TabCaption)));
             confirmed = app.Modal(() => ThemedMessageBox.Show(this, prompt, Text(action),
                 MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No, acceptKey: action,
-                context: new DialogText(affected + transfers + macros, 180))) == MessageBoxResult.Yes;
+                context: context)) == MessageBoxResult.Yes;
             return confirmed;
+
+            void AddTargets(string key, IEnumerable<TerminalTab> targets)
+            {
+                string[] names = targets.Select(tab => PermissionDisplay.Literal(tab.TabCaption)).ToArray();
+                if (names.Length != 0)
+                    context.Children.Add(new DialogField(Text(key), new DialogText(string.Join("\n", names), names.Length == 1 ? null : 180)));
+            }
         }
         finally
         {
@@ -1003,11 +1014,20 @@ internal sealed partial class MainWindow : Window
         }
     }
 
-    internal static void ShowError(Window owner, Exception exception) =>
+    internal static void ShowError(Window owner, Exception exception)
+    {
+        string message = exception.Message;
+        StackPanel? context = null;
+        if (exception is FilePublicationException publication)
+        {
+            var fields = JsonStoreRecovery.FailureFields(publication.Result);
+            message = fields[0].Value;
+            context = new StackPanel();
+            foreach (var field in fields.Skip(1)) context.Children.Add(field.Create());
+        }
         ((App)Application.Current).Modal(() =>
-            ThemedMessageBox.Show(owner, exception is FilePublicationException publication ?
-                JsonStoreRecovery.DescribeFailure(publication.Result) : exception.Message,
-                Text("Error"), MessageBoxButton.OK, MessageBoxImage.Error));
+            ThemedMessageBox.Show(owner, message, Text("Error"), icon: MessageBoxImage.Error, context: context));
+    }
 
     internal sealed class WindowTab : TabItem
     {
@@ -1301,11 +1321,11 @@ internal sealed partial class MainWindow : Window
             form.AddDialogAction(key, action, isDefault);
         internal void AddCloseAction() => form.AddDialogAction("CloseDialog", Close, isDefault: true).IsCancel = true;
         public void AddField(string key, Control control, bool inlineCheckBox = false,
-            string? actionKey = null, Func<Task>? action = null) =>
-            form.AddField(key, control, actionKey: actionKey, action: action, inlineCheckBox: inlineCheckBox);
+            string? actionKey = null, Func<Task>? action = null, bool inline = false) =>
+            form.AddField(key, control, actionKey: actionKey, action: action, inlineCheckBox: inlineCheckBox, inline: inline);
         public void AddPrompt(string caption, Control control) => form.AddPrompt(caption, control);
         internal Action<string> AddValidation(Control field) => form.AddValidation(field);
-        internal void AddDisplay(string key, FrameworkElement element) => form.AddDisplay(key, element);
+        internal void AddDisplay(string key, FrameworkElement element, bool inline = false) => form.AddDisplay(key, element, inline);
         public void AddNotice(string key) => form.AddNotice(key);
         internal void AddHeading(string key) => form.AddNotice(key, heading: true);
         internal void AddStatusBar() => form.AddStatusBar();
@@ -1316,6 +1336,15 @@ internal sealed partial class MainWindow : Window
             DockPanel.SetDock(notice, Dock.Top);
             form.Body.Children.Insert(0, notice);
             return notice;
+        }
+        internal DialogField AddPinnedField(string key, FrameworkElement value)
+        {
+            // The scrollable form body already supplies the remaining 14 DIP above its first field.
+            var field = new DialogField(Text(key), value) { Margin = new Thickness(14, 10, 14, 2) };
+            form.AddLocalizedUpdate(() => field.SetCaption(Text(key)));
+            DockPanel.SetDock(field, Dock.Top);
+            form.Body.Children.Insert(0, field);
+            return field;
         }
         public Button AddButtons(Action save, string acceptKey = "Save", bool cancelDefault = false, string cancelKey = "Cancel") =>
             form.AddButtons(save, acceptKey, cancelDefault, cancelKey);

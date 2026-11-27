@@ -252,7 +252,7 @@ internal sealed class BroadcastInput(App app)
             if (text.RequiresConfirmation)
             {
                 Task<PasteDecision?> answer = preview(text, new PastePreview(
-                    Array.AsReadOnly(targets.Select(target => TerminalTab.BroadcastTargetLabel(target.Session)).ToArray()), defaults), stop.Token);
+                    Array.AsReadOnly(targets.Select(target => TerminalTab.DialogTargetLabel(target.Session)).ToArray()), defaults), stop.Token);
                 try
                 {
                     if (await answer.WaitAsync(stop.Token) is not { } decision) return PasteOutcome.Stopped;
@@ -445,7 +445,7 @@ internal sealed class BroadcastInput(App app)
         {
             string outcome = gesture?.Submitted.Contains(target) == true ? "BroadcastSubmitted" :
                 gesture?.Sending == target ? "NoticeBroadcastUncertain" : "BroadcastNotSent";
-            return $"{TerminalTab.BroadcastTargetLabel(target.Session)} — {Text(outcome)}";
+            return $"{TerminalTab.DialogTargetLabel(target.Session)} — {Text(outcome)}";
         }));
         ReportResult(mode, "BroadcastGestureCancelled", details);
     }
@@ -617,9 +617,9 @@ internal sealed class BroadcastInput(App app)
                         string.Format(Text("ConfirmedInputPrefix"), confirmed) :
                     Text("BroadcastNotSent");
                 string failure = target == failed ? Text("BroadcastFailedTarget") + " · " : "";
-                return $"{TerminalTab.BroadcastTargetLabel(target.Session)} — {failure}{disposition}";
+                return $"{TerminalTab.DialogTargetLabel(target.Session)} — {failure}{disposition}";
             }));
-            ReportFailure(mode, $"{exception.Message}\n{details}");
+            ReportFailure(mode, exception.Message, details);
             return false;
         }
         finally
@@ -633,21 +633,23 @@ internal sealed class BroadcastInput(App app)
     }
 
     private void ReportQueueFull(Mode mode, IEnumerable<Target> targets) => ReportFailure(mode,
-        Text("InputQueueFull") + "\n" + string.Join("\n", targets.Select(target =>
-            $"{TerminalTab.BroadcastTargetLabel(target.Session)} — {Text("BroadcastNotSent")}")));
+        Text("InputQueueFull"), string.Join("\n", targets.Select(target =>
+            $"{TerminalTab.DialogTargetLabel(target.Session)} — {Text("BroadcastNotSent")}")));
 
-    private void ReportFailure(Mode mode, string details)
+    private void ReportFailure(Mode mode, string reason, string details)
     {
-        ReportResult(mode, "BroadcastFailed", details);
+        ReportResult(mode, "BroadcastFailed", details, reason);
         Stop(mode, reportGesture: false);
         Refresh();
     }
 
-    private void ReportResult(Mode mode, string key, string details)
+    private void ReportResult(Mode mode, string key, string details, string? reason = null)
     {
         string summary = $"{Text(key)} ({Text(mode.Window is null ? "BroadcastGlobal" : "BroadcastLocal")})";
-        app.StatusReports.Report(new object(), mode.Window, summary,
-            details.Length == 0 ? summary : $"{summary}\n{details}");
+        var fields = new List<ReportField>();
+        if (!string.IsNullOrEmpty(reason)) fields.Add(new(Text("OperationReportReason"), reason));
+        if (details.Length > 0) fields.Add(new(Text("BroadcastTargetOutcomes"), details, Framed: true));
+        app.StatusReports.Report(new object(), mode.Window, new(summary, fields.ToArray()));
     }
 
     private static bool IsInputError(Exception exception) => exception is IOException or SocketException or

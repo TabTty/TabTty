@@ -1,5 +1,4 @@
 using System.Windows;
-using System.Windows.Controls;
 using System.Windows.Input;
 using TabTty.Core;
 using static TabTty.App.App;
@@ -64,7 +63,8 @@ internal sealed class TabDecision(Window dialog, bool shared = false, Action? ho
     }
 
     private TerminalTab[] targets = [];
-    private TextBlock? targetLabel;
+    private DialogText? targetNames;
+    private DialogField? targetField;
     private bool shown;
     private bool retired;
 
@@ -76,10 +76,10 @@ internal sealed class TabDecision(Window dialog, bool shared = false, Action? ho
         targets = next;
         if (dialog is MainWindow.FormWindow form)
         {
-            targetLabel ??= form.AddPinnedNotice("");
-            targetLabel.Visibility = next.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
-            targetLabel.Text = string.Join(Environment.NewLine, next.Select(tab =>
-                string.Format(Text("DecisionTargetTab"), PermissionDisplay.Literal(tab.TabCaption))));
+            targetNames ??= new DialogText("", shared ? 100 : null) { IsTabStop = false };
+            targetField ??= form.AddPinnedField("DecisionTargetTabLabel", targetNames);
+            targetField.Visibility = next.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+            targetNames.Text = string.Join(Environment.NewLine, next.Select(tab => PermissionDisplay.Literal(tab.TabCaption)));
         }
         UpdateOwner();
     }

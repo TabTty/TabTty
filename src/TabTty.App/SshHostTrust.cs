@@ -49,7 +49,7 @@ internal sealed class SshHostTrust(App app, string pathName, Action<string, stri
         };
         var form = new MainWindow.FormWindow(owner, Text(title));
         form.AddField("SshDestination", new DialogText(key.Destination.ToString()));
-        form.AddField("HostKeyType", new DialogText(key.Format));
+        form.AddField("HostKeyType", new DialogText(key.Format), inline: true);
         if (priorFingerprint is not null)
             form.AddField("PreviousFingerprint", new DialogText(priorFingerprint));
         else if (keys is not null)
@@ -100,9 +100,13 @@ internal sealed class SshHostTrust(App app, string pathName, Action<string, stri
         form.AddAsyncButtons(async () =>
         {
             if (list.SelectedItem is not HostRow row) throw new ArgumentException(Text("SelectHostKey"));
+            var details = new StackPanel();
+            details.Children.Add(new DialogField(Text("SshDestination"), new DialogText(row.Target.ToString())));
+            details.Children.Add(new DialogField(Text("HostKeyType"), new DialogText(row.Key["format"]!.GetValue<string>()), inline: true));
+            details.Children.Add(new DialogField(Text("PreviousFingerprint"), new DialogText(row.Key["fingerprint"]!.GetValue<string>())));
             if (app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow, Text("ConfirmDeleteHostKey"), Text("DeleteHostKey"),
                     MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No,
-                    acceptKey: "DeleteHostKey", context: new DialogText(row.ToString()))) != MessageBoxResult.Yes)
+                    acceptKey: "DeleteHostKey", context: details)) != MessageBoxResult.Yes)
                 return false;
             var keys = row.Destination["keys"]!.AsArray();
             int index = keys.IndexOf(row.Key);
@@ -178,12 +182,8 @@ internal sealed class SshHostTrust(App app, string pathName, Action<string, stri
 
     private sealed record HostRow(JsonObject Destination, JsonObject Key)
     {
-        public override string ToString()
-        {
-            var destination = new SshDestination(Destination["kind"]!.GetValue<string>(),
-                Destination["host"]!.GetValue<string>(), Destination["scopeId"]?.GetValue<long>(),
-                Destination["port"]!.GetValue<int>());
-            return $"{destination}   {Key["format"]!.GetValue<string>()}   {Key["fingerprint"]!.GetValue<string>()}";
-        }
+        public SshDestination Target => new(Destination["kind"]!.GetValue<string>(), Destination["host"]!.GetValue<string>(),
+            Destination["scopeId"]?.GetValue<long>(), Destination["port"]!.GetValue<int>());
+        public override string ToString() => $"{Target}   {Key["format"]!.GetValue<string>()}   {Key["fingerprint"]!.GetValue<string>()}";
     }
 }

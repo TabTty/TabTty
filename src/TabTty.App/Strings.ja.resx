@@ -69,6 +69,11 @@
   <data name="Save" xml:space="preserve"><value>保存</value></data>
   <data name="Create" xml:space="preserve"><value>作成</value></data>
   <data name="DiscardChanges" xml:space="preserve"><value>変更を破棄</value></data>
+  <data name="DialogFieldCaption" xml:space="preserve"><value>{0}:</value></data>
+  <data name="DialogDetails" xml:space="preserve"><value>詳細</value></data>
+  <data name="AffectedTabs" xml:space="preserve"><value>対象タブ</value></data>
+  <data name="AffectedWindow" xml:space="preserve"><value>対象ウィンドウ</value></data>
+  <data name="ReferencedCredentialNames" xml:space="preserve"><value>参照する認証情報名</value></data>
   <data name="DiscardChangesAndClose" xml:space="preserve"><value>変更を破棄してこのタブを閉じますか？</value></data>
   <data name="DiscardChangesAndCloseWindow" xml:space="preserve"><value>変更を破棄してこのウィンドウを閉じますか？</value></data>
   <data name="Cancel" xml:space="preserve"><value>キャンセル</value></data>
@@ -175,7 +180,8 @@
   <data name="InitializeEmptyVaultDescription" xml:space="preserve"><value>選択した空ファイルを新しい暗号化 vault として初期化します。</value></data>
   <data name="VaultPath" xml:space="preserve"><value>認証情報 vault のパス</value></data>
   <data name="VaultPathDisplay" xml:space="preserve"><value>認証情報 vault のパス: {0}</value></data>
-  <data name="VaultUnlockPathDisplay" xml:space="preserve"><value>認証情報 vault のパス:&#xA;{0}</value></data>
+  <data name="BackupFilePath" xml:space="preserve"><value>バックアップファイルのパス</value></data>
+  <data name="VaultArchivePath" xml:space="preserve"><value>退避先のパス</value></data>
   <data name="BrowsePath" xml:space="preserve"><value>参照</value></data>
   <data name="InvalidVaultPath" xml:space="preserve"><value>.tttykey ファイルの絶対パスを指定してください。</value></data>
   <data name="VaultBusy" xml:space="preserve"><value>実行中の vault 操作が終わるまでお待ちください。</value></data>
@@ -187,7 +193,7 @@
   <data name="ArchiveVaultConfirm" xml:space="preserve"><value>現在の vault を同じフォルダーの別ファイルに移動しますか？ 新しい vault を作成した後、プロファイルで認証情報を選び直してください。</value></data>
   <data name="VaultArchiveDestination" xml:space="preserve"><value>前回の退避先：{0}</value></data>
   <data name="VaultArchived" xml:space="preserve"><value>次のパスに vault を退避しました。解除または管理を選ぶと、新しいマスターパスワードを設定できます。</value></data>
-  <data name="VaultRestoreCompleted" xml:space="preserve"><value>{0} から {1} に vault を復元しました。</value></data>
+  <data name="VaultRestoreCompleted" xml:space="preserve"><value>バックアップから vault を復元しました。</value></data>
   <data name="AddVaultPassword" xml:space="preserve"><value>パスワードを追加</value></data>
   <data name="VaultEntries" xml:space="preserve"><value>vault の項目</value></data>
   <data name="VaultEntryList" xml:space="preserve"><value>保存済みの認証情報</value></data>
@@ -222,7 +228,12 @@
   <data name="TransferExisting" xml:space="preserve"><value>既存のファイル</value></data>
   <data name="TransferFilePath" xml:space="preserve"><value>ファイルのパス</value></data>
   <data name="TransferPermanentlyDelete" xml:space="preserve"><value>完全に削除</value></data>
-  <data name="PendingOperationReports" xml:space="preserve"><value>未確認の操作結果：{0} 件</value></data>
+  <data name="PendingOperationReports" xml:space="preserve"><value>未確認の操作結果</value></data>
+  <data name="OperationReportCount" xml:space="preserve"><value>{0} 件</value></data>
+  <data name="OperationReportResult" xml:space="preserve"><value>結果</value></data>
+  <data name="OperationReportSummaryLabel" xml:space="preserve"><value>概要</value></data>
+  <data name="OperationReportReason" xml:space="preserve"><value>理由</value></data>
+  <data name="BroadcastTargetOutcomes" xml:space="preserve"><value>送信先ごとの結果</value></data>
   <data name="NewSsh" xml:space="preserve"><value>新規SSHプロファイル</value></data>
   <data name="SshUsername" xml:space="preserve"><value>SSHユーザー名</value></data>
   <data name="SshPasswordSource" xml:space="preserve"><value>パスワード認証</value></data>
@@ -230,12 +241,15 @@
   <data name="SelectSavedPassword" xml:space="preserve"><value>保存済みパスワードを選択</value></data>
   <data name="SshSavedPasswordDestinationNotice" xml:space="preserve"><value>パスワード認証を使うと、プロファイルで指定した接続先へ保存済みパスワードを自動送信し、指定したユーザー名で認証します。プロファイルが外部で編集されると、送信先やユーザー名が変わる場合があります。</value></data>
   <data name="SshDestination" xml:space="preserve"><value>SSH接続先</value></data>
-  <data name="SshServerQuestions" xml:space="preserve"><value>以下は SSH サーバー {0} からの質問です。回答はこのサーバーに送信されます。TabTty の vault のマスターパスワードは入力しないでください。</value></data>
+  <data name="SshServerQuestions" xml:space="preserve"><value>以下は上記の SSH サーバーからの質問です。回答はこのサーバーに送信されます。TabTty の vault のマスターパスワードは入力しないでください。</value></data>
+  <data name="SshChallengeName" xml:space="preserve"><value>サーバーが付けた質問名</value></data>
   <data name="SendSshAnswers" xml:space="preserve"><value>サーバーに回答を送信</value></data>
   <data name="VerifyHostFingerprint" xml:space="preserve"><value>鍵を承認する前に、サーバーの管理者から別の経路で入手したフィンガープリントと照合してください。</value></data>
   <data name="TelnetPrivacyNotice" xml:space="preserve"><value>Telnet ではパスワード、コマンド、端末出力が平文で送られ、通信を傍受できる相手に読み取られます。</value></data>
   <data name="TelnetUnencrypted" xml:space="preserve"><value>Telnet（暗号化なし）</value></data>
   <data name="ReconnectDestinationChanged" xml:space="preserve"><value>接続先が変わりました</value></data>
+  <data name="ReconnectPreviousDestination" xml:space="preserve"><value>変更前の{0}</value></data>
+  <data name="ReconnectCurrentDestination" xml:space="preserve"><value>変更後の{0}</value></data>
   <data name="ReconnectDestinationDetails" xml:space="preserve"><value>「{0}」が別の接続先に再接続しました。&#10;&#10;変更前：{1}&#10;変更後：{2}</value></data>
   <data name="NewHostKey" xml:space="preserve"><value>新しいSSHホスト鍵</value></data>
   <data name="AdditionalHostKey" xml:space="preserve"><value>登録済みの SSH 接続先から別の形式の鍵が提示されました</value></data>
@@ -361,10 +375,13 @@
   <data name="TryAnotherSshMethod" xml:space="preserve"><value>別の認証方式を試す</value></data>
   <data name="CancelSshConnection" xml:space="preserve"><value>接続をキャンセル</value></data>
   <data name="KnownCredentialReferences" xml:space="preserve"><value>参照している登録済みプロファイル</value></data>
+  <data name="ReferenceScanResult" xml:space="preserve"><value>プロファイルの参照確認結果</value></data>
   <data name="ReferenceScanScope" xml:space="preserve"><value>読み取れる登録済みプロファイルを確認しました。ほかのプロファイルファイルから参照されている可能性もあります。</value></data>
   <data name="DuplicateCredentialName" xml:space="preserve"><value>この vault には同じ名前の認証情報がすでにあります。</value></data>
   <data name="InvalidCredentialName" xml:space="preserve"><value>認証情報名を 1～256 Unicode 文字で入力してください。</value></data>
-  <data name="RenameCredentialWarning" xml:space="preserve"><value>{0} を {1} に改名しますか。古い名前を使うプロファイルやマクロからは、この認証情報を参照できなくなります。マクロやその他のプロファイルファイルは手動で更新してください。</value></data>
+  <data name="RenameCredentialWarning" xml:space="preserve"><value>この認証情報を改名しますか。古い名前を使うプロファイルやマクロからは、この認証情報を参照できなくなります。マクロやその他のプロファイルファイルは手動で更新してください。</value></data>
+  <data name="CurrentCredentialName" xml:space="preserve"><value>現在の認証情報名</value></data>
+  <data name="NewCredentialName" xml:space="preserve"><value>新しい認証情報名</value></data>
   <data name="RenameCredentialProfileScope" xml:space="preserve"><value>以下の登録済みプロファイルは一括で更新できます。</value></data>
   <data name="RenameAndUpdateProfiles" xml:space="preserve"><value>改名して登録済みプロファイルを更新</value></data>
   <data name="RenameCredentialOnly" xml:space="preserve"><value>改名のみ</value></data>
@@ -418,6 +435,14 @@
   <data name="PublishedImageOther" xml:space="preserve"><value>異なる内容が見つかりました</value></data>
   <data name="PublishedImageUnavailable" xml:space="preserve"><value>ファイルの内容を確認できません</value></data>
   <data name="PublicationCleanupFailed" xml:space="preserve"><value>準備したファイルを削除できませんでした。</value></data>
+  <data name="PublicationTargetPath" xml:space="preserve"><value>保存先ファイルのパス</value></data>
+  <data name="PublicationTargetState" xml:space="preserve"><value>保存先ファイルの状態</value></data>
+  <data name="PublicationPreservedPath" xml:space="preserve"><value>復旧用コピーのパス</value></data>
+  <data name="PublicationPreservedState" xml:space="preserve"><value>復旧用コピーの状態</value></data>
+  <data name="PublicationPreparedPath" xml:space="preserve"><value>書き込み用一時ファイルのパス</value></data>
+  <data name="PublicationPreparedState" xml:space="preserve"><value>書き込み用一時ファイルの状態</value></data>
+  <data name="PublicationCleanupResult" xml:space="preserve"><value>一時ファイルの削除結果</value></data>
+  <data name="RetainedFilePaths" xml:space="preserve"><value>残っているファイルのパス</value></data>
   <data name="PublicationRetainedStages" xml:space="preserve"><value>ファイル操作の一時ファイルが残っています。以下のパスを確認してください。</value></data>
   <data name="StoreSaveFailed" xml:space="preserve"><value>ファイルを保存できませんでした。以前のファイルを保持しています。</value></data>
   <data name="RecoveryFileFilter" xml:space="preserve"><value>JSON (*.json;*.bak)|*.json;*.bak|すべてのファイル (*.*)|*.*</value></data>
@@ -460,6 +485,8 @@
   <data name="TransferDownload" xml:space="preserve"><value>受信</value></data>
   <data name="TransferRetry" xml:space="preserve"><value>失敗した項目を再試行</value></data>
   <data name="TransferResults" xml:space="preserve"><value>結果</value></data>
+  <data name="TransferSelectedItems" xml:space="preserve"><value>選択した項目</value></data>
+  <data name="TransferOutcomeCounts" xml:space="preserve"><value>未解決の結果の種類別件数</value></data>
   <data name="TransferResultsLimit" xml:space="preserve"><value>一部の結果を省略しました。</value></data>
   <data name="TransferDropTarget" xml:space="preserve"><value>{0} にコピー</value></data>
   <data name="TransferWorking" xml:space="preserve"><value>処理中…</value></data>
@@ -638,24 +665,19 @@
   <data name="AiSshTarget" xml:space="preserve"><value>SSH アカウントと接続先：{0}</value></data>
   <data name="AiTelnetTarget" xml:space="preserve"><value>Telnet 接続先：{0}</value></data>
   <data name="AiSerialTarget" xml:space="preserve"><value>シリアルポート：{0}</value></data>
+  <data name="AiSshTargetValue" xml:space="preserve"><value>SSH {0} — {1}</value></data>
+  <data name="AiTelnetTargetValue" xml:space="preserve"><value>Telnet {0} — {1}</value></data>
+  <data name="AiSerialTargetValue" xml:space="preserve"><value>シリアル {0} — {1}</value></data>
   <data name="AiHandoffMessage" xml:space="preserve"><value>AI 連携先からのメッセージ：{0}</value></data>
-  <data name="AiConfirmShare" xml:space="preserve"><value>「{0}」の出力を連携先 {1} と共有しますか。
-{3}
-{2}
-
-Windows が記録したブリッジの親プロセスを表示しています。AI アプリ側の照合コードと突き合わせて、権限を付与する接続を確認してください。この接続を共用するプログラムやチャットは同じ権限を使えます。
+  <data name="AiConfirmShare" xml:space="preserve"><value>AI アプリ側の照合コードと突き合わせて、権限を付与する接続を確認してください。この接続を共用するプログラムやチャットは同じ権限を使えます。
 
 AI アプリは現在の画面と保持されている端末履歴を読み取り、検索できます。全画面アプリの背後にある通常画面、共有開始前の履歴、共有を終了していた間の出力も、残っていれば対象です。ブリッジはこの PC で動作します。AI アプリの設定によっては、内容が保存されたり外部のモデルに送られたりします。
 
 以後の読み取りを止めるには「AIとの共有を終了」を選びます。再び共有すると、その時点で残っている履歴を連携先が読めます。</value></data>
-  <data name="AiConfirmControl" xml:space="preserve"><value>「{0}」の端末操作を連携先 {1} に許可しますか。
-{3}
-{2}
-
-Windows が記録したブリッジの親プロセスを表示しています。AI アプリ側の照合コードと突き合わせて、権限を付与する接続を確認してください。この接続を共用するプログラムやチャットは同じ権限を使えます。
+  <data name="AiConfirmControl" xml:space="preserve"><value>AI アプリ側の照合コードと突き合わせて、権限を付与する接続を確認してください。この接続を共用するプログラムやチャットは同じ権限を使えます。
 
 AI アプリは個別の確認なしでキーや複数行のコマンドを入力し、この端末で利用できる接続先の権限で操作できます。操作を引き継ぐと AI からの新しい入力は止まり、出力の共有は続きます。パスワードやワンタイムコードを入力する前に「AIとの共有を終了」を選んでください。</value></data>
-  <data name="AiConfirmSwitch" xml:space="preserve"><value>続行すると、このタブと連携先 {0} との共有は終了します。</value></data>
+  <data name="AiConfirmSwitch" xml:space="preserve"><value>続行すると、このタブと現在の連携先との共有は終了します。</value></data>
   <data name="AiUnattendedConsent" xml:space="preserve"><value>Windows をロックしたとき、ユーザーを切り替えたとき、リモート デスクトップを切断したときも、この権限は続きます。</value></data>
   <data name="AiConsentExpired" xml:space="preserve"><value>端末または共有権限が変わりました。現在のタブと連携先を確認してから、もう一度許可してください。</value></data>
   <data name="AiEndSharing" xml:space="preserve"><value>AIとの共有を終了</value></data>
@@ -681,6 +703,7 @@ AI アプリは個別の確認なしでキーや複数行のコマンドを入�
   <data name="PasteSourceTooLarge" xml:space="preserve"><value>クリップボードの本文が貼り付け上限を超えています。</value></data>
   <data name="PasteClipboardUnavailable" xml:space="preserve"><value>クリップボードの本文を読み取れませんでした。</value></data>
   <data name="PastePreviewPageLabel" xml:space="preserve"><value>ページ</value></data>
+  <data name="PreviewPageNumbers" xml:space="preserve"><value>{0} / {1}</value></data>
   <data name="PastePreviousPage" xml:space="preserve"><value>前のページ</value></data>
   <data name="PasteNextPage" xml:space="preserve"><value>次のページ</value></data>
   <data name="PastePreviewPage" xml:space="preserve"><value>{0} / {1} ページ</value></data>
@@ -752,7 +775,29 @@ AI アプリは個別の確認なしでキーや複数行のコマンドを入�
   <data name="PostConnectionCompletionKeys" xml:space="preserve"><value>Ctrl+Space で補完候補を表示します。上下キーで選択し、Tab または Enter で挿入、Esc で候補を閉じます。</value></data>
   <data name="PostConnectionCompletions" xml:space="preserve"><value>補完候補</value></data>
   <data name="PostConnectionCurrentArgument" xml:space="preserve"><value>{0}。現在の引数は {1} です。</value></data>
-  <data name="DecisionTargetTab" xml:space="preserve"><value>対象タブ：{0}</value></data>
+  <data name="DecisionTargetTabLabel" xml:space="preserve"><value>対象タブ</value></data>
+  <data name="MacroDialogMessage" xml:space="preserve"><value>メッセージ</value></data>
+  <data name="MacroSourceContents" xml:space="preserve"><value>マクロの内容</value></data>
+  <data name="MacroConstantsContents" xml:space="preserve"><value>定数ファイルの内容</value></data>
+  <data name="ProfilePasswordEntry" xml:space="preserve"><value>vault のパスワード項目</value></data>
+  <data name="ProfilePrivateKeyEntry" xml:space="preserve"><value>vault の秘密鍵項目</value></data>
+  <data name="ProfileImportLogBase" xml:space="preserve"><value>取り込み後のログ基準フォルダー</value></data>
+  <data name="LogRequestedDestination" xml:space="preserve"><value>設定されたログ保存先</value></data>
+  <data name="LogEffectiveDestination" xml:space="preserve"><value>実際のログ保存先</value></data>
+  <data name="AiPairingCode" xml:space="preserve"><value>連携先の照合コード</value></data>
+  <data name="AiBridgeParent" xml:space="preserve"><value>Windows が記録したブリッジの親プロセス</value></data>
+  <data name="AiBridgeParentId" xml:space="preserve"><value>親プロセス ID</value></data>
+  <data name="AiPreviousPairingCode" xml:space="preserve"><value>現在の連携先の照合コード</value></data>
+  <data name="AiSshTargetLabel" xml:space="preserve"><value>SSH アカウントと接続先</value></data>
+  <data name="AiTelnetTargetLabel" xml:space="preserve"><value>Telnet 接続先</value></data>
+  <data name="AiSerialTargetLabel" xml:space="preserve"><value>シリアルポート</value></data>
+  <data name="SshExchangeAlgorithm" xml:space="preserve"><value>鍵交換アルゴリズム</value></data>
+  <data name="SshHostKeyAlgorithm" xml:space="preserve"><value>ホスト鍵アルゴリズム</value></data>
+  <data name="SshTransmitCipher" xml:space="preserve"><value>送信暗号</value></data>
+  <data name="SshTransmitMac" xml:space="preserve"><value>送信 MAC</value></data>
+  <data name="SshReceiveCipher" xml:space="preserve"><value>受信暗号</value></data>
+  <data name="SshReceiveMac" xml:space="preserve"><value>受信 MAC</value></data>
+  <data name="SshStrictExchange" xml:space="preserve"><value>厳密な鍵交換</value></data>
   <data name="PasteTargets" xml:space="preserve"><value>貼り付け先</value></data>
   <data name="NoticeStackShow" xml:space="preserve"><value>通知を表示 ({0})</value></data>
   <data name="NoticeStackHide" xml:space="preserve"><value>通知を折りたたむ ({0})</value></data>

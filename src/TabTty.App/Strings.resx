@@ -69,6 +69,11 @@
   <data name="Save" xml:space="preserve"><value>Save</value></data>
   <data name="Create" xml:space="preserve"><value>Create</value></data>
   <data name="DiscardChanges" xml:space="preserve"><value>Discard changes</value></data>
+  <data name="DialogFieldCaption" xml:space="preserve"><value>{0}:</value></data>
+  <data name="DialogDetails" xml:space="preserve"><value>Details</value></data>
+  <data name="AffectedTabs" xml:space="preserve"><value>Affected tabs</value></data>
+  <data name="AffectedWindow" xml:space="preserve"><value>Affected window</value></data>
+  <data name="ReferencedCredentialNames" xml:space="preserve"><value>Referenced credential names</value></data>
   <data name="DiscardChangesAndClose" xml:space="preserve"><value>Discard changes and close this tab?</value></data>
   <data name="DiscardChangesAndCloseWindow" xml:space="preserve"><value>Discard changes and close this window?</value></data>
   <data name="Cancel" xml:space="preserve"><value>Cancel</value></data>
@@ -175,7 +180,8 @@
   <data name="InitializeEmptyVaultDescription" xml:space="preserve"><value>Initialize the selected empty file as a new encrypted vault.</value></data>
   <data name="VaultPath" xml:space="preserve"><value>Credential vault path</value></data>
   <data name="VaultPathDisplay" xml:space="preserve"><value>Credential vault path: {0}</value></data>
-  <data name="VaultUnlockPathDisplay" xml:space="preserve"><value>Credential vault path:&#xA;{0}</value></data>
+  <data name="BackupFilePath" xml:space="preserve"><value>Backup file path</value></data>
+  <data name="VaultArchivePath" xml:space="preserve"><value>Archive location</value></data>
   <data name="BrowsePath" xml:space="preserve"><value>Browse</value></data>
   <data name="InvalidVaultPath" xml:space="preserve"><value>Enter an absolute path to a .tttykey file.</value></data>
   <data name="VaultBusy" xml:space="preserve"><value>Wait for the current vault operation to finish.</value></data>
@@ -187,7 +193,7 @@
   <data name="ArchiveVaultConfirm" xml:space="preserve"><value>Move the current vault to a new file in the same folder? After creating a new vault, select the credentials again in the connection profiles.</value></data>
   <data name="VaultArchiveDestination" xml:space="preserve"><value>Last archive location: {0}</value></data>
   <data name="VaultArchived" xml:space="preserve"><value>The vault was moved to the path below. Choose Unlock vault or Vault management to set a new master password.</value></data>
-  <data name="VaultRestoreCompleted" xml:space="preserve"><value>Restored the vault from {0} to {1}.</value></data>
+  <data name="VaultRestoreCompleted" xml:space="preserve"><value>The vault was restored from the backup.</value></data>
   <data name="AddVaultPassword" xml:space="preserve"><value>Add password</value></data>
   <data name="VaultEntries" xml:space="preserve"><value>Vault entries</value></data>
   <data name="VaultEntryList" xml:space="preserve"><value>Saved credentials</value></data>
@@ -222,7 +228,12 @@
   <data name="TransferExisting" xml:space="preserve"><value>Existing file</value></data>
   <data name="TransferFilePath" xml:space="preserve"><value>File path</value></data>
   <data name="TransferPermanentlyDelete" xml:space="preserve"><value>Delete permanently</value></data>
-  <data name="PendingOperationReports" xml:space="preserve"><value>Pending reports: {0}</value></data>
+  <data name="PendingOperationReports" xml:space="preserve"><value>Pending reports</value></data>
+  <data name="OperationReportCount" xml:space="preserve"><value>{0}</value></data>
+  <data name="OperationReportResult" xml:space="preserve"><value>Result</value></data>
+  <data name="OperationReportSummaryLabel" xml:space="preserve"><value>Summary</value></data>
+  <data name="OperationReportReason" xml:space="preserve"><value>Reason</value></data>
+  <data name="BroadcastTargetOutcomes" xml:space="preserve"><value>Delivery by target</value></data>
   <data name="NewSsh" xml:space="preserve"><value>New SSH profile</value></data>
   <data name="SshUsername" xml:space="preserve"><value>SSH username</value></data>
   <data name="SshPasswordSource" xml:space="preserve"><value>Password authentication</value></data>
@@ -230,12 +241,15 @@
   <data name="SelectSavedPassword" xml:space="preserve"><value>Choose saved password</value></data>
   <data name="SshSavedPasswordDestinationNotice" xml:space="preserve"><value>When password authentication is used, TabTty automatically sends the saved password to the destination specified in the profile to authenticate as the configured user. Editing the profile outside TabTty can change the destination or username.</value></data>
   <data name="SshDestination" xml:space="preserve"><value>SSH destination</value></data>
-  <data name="SshServerQuestions" xml:space="preserve"><value>The SSH server at {0} supplies these questions and receives your answers. Never enter your TabTty vault master password here.</value></data>
+  <data name="SshServerQuestions" xml:space="preserve"><value>The SSH server shown above supplies these questions and receives your answers. Never enter your TabTty vault master password here.</value></data>
+  <data name="SshChallengeName" xml:space="preserve"><value>Challenge name from the server</value></data>
   <data name="SendSshAnswers" xml:space="preserve"><value>Send answers to server</value></data>
   <data name="VerifyHostFingerprint" xml:space="preserve"><value>Before accepting this key, compare its fingerprint with one obtained independently from the server administrator.</value></data>
   <data name="TelnetPrivacyNotice" xml:space="preserve"><value>Telnet sends passwords, commands and output in clear text. Anyone able to monitor the connection can read them.</value></data>
   <data name="TelnetUnencrypted" xml:space="preserve"><value>Telnet (unencrypted)</value></data>
   <data name="ReconnectDestinationChanged" xml:space="preserve"><value>Connection destination changed</value></data>
+  <data name="ReconnectPreviousDestination" xml:space="preserve"><value>Previous {0}</value></data>
+  <data name="ReconnectCurrentDestination" xml:space="preserve"><value>Current {0}</value></data>
   <data name="ReconnectDestinationDetails" xml:space="preserve"><value>{0} reconnected to a different destination.&#10;&#10;Previous: {1}&#10;Current: {2}</value></data>
   <data name="NewHostKey" xml:space="preserve"><value>New SSH host key</value></data>
   <data name="AdditionalHostKey" xml:space="preserve"><value>A registered SSH destination presented a different key type</value></data>
@@ -361,10 +375,13 @@
   <data name="TryAnotherSshMethod" xml:space="preserve"><value>Try another authentication method</value></data>
   <data name="CancelSshConnection" xml:space="preserve"><value>Cancel connection</value></data>
   <data name="KnownCredentialReferences" xml:space="preserve"><value>Referring registered profiles</value></data>
+  <data name="ReferenceScanResult" xml:space="preserve"><value>Profile scan result</value></data>
   <data name="ReferenceScanScope" xml:space="preserve"><value>Only readable registered profiles were checked. Other profile files may also refer to this credential.</value></data>
   <data name="DuplicateCredentialName" xml:space="preserve"><value>A credential with this name already exists in this vault.</value></data>
   <data name="InvalidCredentialName" xml:space="preserve"><value>Enter a credential name of 1 to 256 Unicode characters.</value></data>
-  <data name="RenameCredentialWarning" xml:space="preserve"><value>Rename {0} to {1}? Profile and macro references using the old name will stop finding this credential. Edit macros and other profile files manually.</value></data>
+  <data name="RenameCredentialWarning" xml:space="preserve"><value>Rename this credential? Profile and macro references using the old name will stop finding it. Edit macros and other profile files manually.</value></data>
+  <data name="CurrentCredentialName" xml:space="preserve"><value>Current credential name</value></data>
+  <data name="NewCredentialName" xml:space="preserve"><value>New credential name</value></data>
   <data name="RenameCredentialProfileScope" xml:space="preserve"><value>You can update the registered profiles listed below together.</value></data>
   <data name="RenameAndUpdateProfiles" xml:space="preserve"><value>Rename and update registered profiles</value></data>
   <data name="RenameCredentialOnly" xml:space="preserve"><value>Rename only</value></data>
@@ -418,6 +435,14 @@
   <data name="PublishedImageOther" xml:space="preserve"><value>Different contents were found</value></data>
   <data name="PublishedImageUnavailable" xml:space="preserve"><value>The file could not be inspected</value></data>
   <data name="PublicationCleanupFailed" xml:space="preserve"><value>The prepared file could not be removed.</value></data>
+  <data name="PublicationTargetPath" xml:space="preserve"><value>Target file path</value></data>
+  <data name="PublicationTargetState" xml:space="preserve"><value>Target file status</value></data>
+  <data name="PublicationPreservedPath" xml:space="preserve"><value>Recovery copy path</value></data>
+  <data name="PublicationPreservedState" xml:space="preserve"><value>Recovery copy status</value></data>
+  <data name="PublicationPreparedPath" xml:space="preserve"><value>Prepared file path</value></data>
+  <data name="PublicationPreparedState" xml:space="preserve"><value>Prepared file status</value></data>
+  <data name="PublicationCleanupResult" xml:space="preserve"><value>Cleanup result</value></data>
+  <data name="RetainedFilePaths" xml:space="preserve"><value>Retained file paths</value></data>
   <data name="PublicationRetainedStages" xml:space="preserve"><value>Temporary files from a file operation are still present. Check the paths below.</value></data>
   <data name="StoreSaveFailed" xml:space="preserve"><value>The file could not be saved. The previous file remains in place.</value></data>
   <data name="RecoveryFileFilter" xml:space="preserve"><value>JSON (*.json;*.bak)|*.json;*.bak|All files (*.*)|*.*</value></data>
@@ -460,6 +485,8 @@
   <data name="TransferDownload" xml:space="preserve"><value>Download</value></data>
   <data name="TransferRetry" xml:space="preserve"><value>Retry failed items</value></data>
   <data name="TransferResults" xml:space="preserve"><value>Results</value></data>
+  <data name="TransferSelectedItems" xml:space="preserve"><value>Selected items</value></data>
+  <data name="TransferOutcomeCounts" xml:space="preserve"><value>Unresolved outcomes by type</value></data>
   <data name="TransferResultsLimit" xml:space="preserve"><value>Some results were omitted.</value></data>
   <data name="TransferDropTarget" xml:space="preserve"><value>Copy to {0}</value></data>
   <data name="TransferWorking" xml:space="preserve"><value>Working…</value></data>
@@ -638,24 +665,19 @@
   <data name="AiSshTarget" xml:space="preserve"><value>SSH account and destination: {0}</value></data>
   <data name="AiTelnetTarget" xml:space="preserve"><value>Telnet destination: {0}</value></data>
   <data name="AiSerialTarget" xml:space="preserve"><value>Serial port: {0}</value></data>
+  <data name="AiSshTargetValue" xml:space="preserve"><value>SSH {0} — {1}</value></data>
+  <data name="AiTelnetTargetValue" xml:space="preserve"><value>Telnet {0} — {1}</value></data>
+  <data name="AiSerialTargetValue" xml:space="preserve"><value>Serial {0} — {1}</value></data>
   <data name="AiHandoffMessage" xml:space="preserve"><value>Message from the AI integration: {0}</value></data>
-  <data name="AiConfirmShare" xml:space="preserve"><value>Share output from “{0}” with integration {1}?
-{3}
-{2}
-
-The bridge's parent process recorded by Windows is shown above. Check the pairing code in your AI app to confirm which connection you are granting access to. Programs and chats that share this connection can use the same permission.
+  <data name="AiConfirmShare" xml:space="preserve"><value>Check the pairing code in your AI app to confirm which connection you are granting access to. Programs and chats that share this connection can use the same permission.
 
 The AI app can read the current screen and read or search retained terminal history. This includes the normal screen behind a full-screen app and any retained output from before sharing began or while sharing was off. The bridge runs on this PC. The AI app may save the output or send it to an external model, depending on its settings.
 
 Use End AI sharing to stop future reads. Sharing again gives the recipient access to the history still retained then.</value></data>
-  <data name="AiConfirmControl" xml:space="preserve"><value>Allow integration {1} to operate the terminal in “{0}”?
-{3}
-{2}
-
-The bridge's parent process recorded by Windows is shown above. Check the pairing code in your AI app to confirm which connection you are granting access to. Programs and chats that share this connection can use the same permission.
+  <data name="AiConfirmControl" xml:space="preserve"><value>Check the pairing code in your AI app to confirm which connection you are granting access to. Programs and chats that share this connection can use the same permission.
 
 The AI app can send keys and multiple lines of commands without asking again, using the permissions this terminal has at the destination. Taking control back stops new AI input and keeps output shared. Choose End AI sharing before entering a password or one-time code.</value></data>
-  <data name="AiConfirmSwitch" xml:space="preserve"><value>Continuing ends this tab’s sharing with integration {0}.</value></data>
+  <data name="AiConfirmSwitch" xml:space="preserve"><value>Continuing ends this tab’s sharing with its current integration.</value></data>
   <data name="AiUnattendedConsent" xml:space="preserve"><value>This permission stays active when Windows locks, you switch users, or Remote Desktop disconnects.</value></data>
   <data name="AiConsentExpired" xml:space="preserve"><value>The terminal or its sharing permissions changed. Review the current tab and integration before granting access again.</value></data>
   <data name="AiEndSharing" xml:space="preserve"><value>End AI sharing</value></data>
@@ -681,6 +703,7 @@ The AI app can send keys and multiple lines of commands without asking again, us
   <data name="PasteSourceTooLarge" xml:space="preserve"><value>The clipboard text exceeds the configured paste size.</value></data>
   <data name="PasteClipboardUnavailable" xml:space="preserve"><value>The clipboard text could not be read.</value></data>
   <data name="PastePreviewPageLabel" xml:space="preserve"><value>Page</value></data>
+  <data name="PreviewPageNumbers" xml:space="preserve"><value>{0} / {1}</value></data>
   <data name="PastePreviousPage" xml:space="preserve"><value>Previous page</value></data>
   <data name="PasteNextPage" xml:space="preserve"><value>Next page</value></data>
   <data name="PastePreviewPage" xml:space="preserve"><value>Page {0} of {1}</value></data>
@@ -752,7 +775,29 @@ The AI app can send keys and multiple lines of commands without asking again, us
   <data name="PostConnectionCompletionKeys" xml:space="preserve"><value>Ctrl+Space shows completions. Use Up or Down to select, Tab or Enter to insert, and Esc to dismiss.</value></data>
   <data name="PostConnectionCompletions" xml:space="preserve"><value>Completion suggestions</value></data>
   <data name="PostConnectionCurrentArgument" xml:space="preserve"><value>{0}. Current argument is {1}.</value></data>
-  <data name="DecisionTargetTab" xml:space="preserve"><value>Tab: {0}</value></data>
+  <data name="DecisionTargetTabLabel" xml:space="preserve"><value>Target tab</value></data>
+  <data name="MacroDialogMessage" xml:space="preserve"><value>Message</value></data>
+  <data name="MacroSourceContents" xml:space="preserve"><value>Macro contents</value></data>
+  <data name="MacroConstantsContents" xml:space="preserve"><value>Constants file contents</value></data>
+  <data name="ProfilePasswordEntry" xml:space="preserve"><value>Vault password entry</value></data>
+  <data name="ProfilePrivateKeyEntry" xml:space="preserve"><value>Vault private key entry</value></data>
+  <data name="ProfileImportLogBase" xml:space="preserve"><value>Log folder after import</value></data>
+  <data name="LogRequestedDestination" xml:space="preserve"><value>Configured log destination</value></data>
+  <data name="LogEffectiveDestination" xml:space="preserve"><value>Resolved log destination</value></data>
+  <data name="AiPairingCode" xml:space="preserve"><value>Integration pairing code</value></data>
+  <data name="AiBridgeParent" xml:space="preserve"><value>Bridge parent process recorded by Windows</value></data>
+  <data name="AiBridgeParentId" xml:space="preserve"><value>Parent process ID</value></data>
+  <data name="AiPreviousPairingCode" xml:space="preserve"><value>Current integration pairing code</value></data>
+  <data name="AiSshTargetLabel" xml:space="preserve"><value>SSH account and destination</value></data>
+  <data name="AiTelnetTargetLabel" xml:space="preserve"><value>Telnet destination</value></data>
+  <data name="AiSerialTargetLabel" xml:space="preserve"><value>Serial port</value></data>
+  <data name="SshExchangeAlgorithm" xml:space="preserve"><value>Key exchange algorithm</value></data>
+  <data name="SshHostKeyAlgorithm" xml:space="preserve"><value>Host key algorithm</value></data>
+  <data name="SshTransmitCipher" xml:space="preserve"><value>Transmit cipher</value></data>
+  <data name="SshTransmitMac" xml:space="preserve"><value>Transmit MAC</value></data>
+  <data name="SshReceiveCipher" xml:space="preserve"><value>Receive cipher</value></data>
+  <data name="SshReceiveMac" xml:space="preserve"><value>Receive MAC</value></data>
+  <data name="SshStrictExchange" xml:space="preserve"><value>Strict key exchange</value></data>
   <data name="PasteTargets" xml:space="preserve"><value>Paste destinations</value></data>
   <data name="NoticeStackShow" xml:space="preserve"><value>Show notices ({0})</value></data>
   <data name="NoticeStackHide" xml:space="preserve"><value>Collapse notices ({0})</value></data>

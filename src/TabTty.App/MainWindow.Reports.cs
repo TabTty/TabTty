@@ -11,7 +11,8 @@ internal sealed partial class MainWindow
     private Window? reportReview;
     private Button? reportClose;
     private readonly StackPanel reportRows = new();
-    private readonly TextBlock reportCount = new() { Margin = new Thickness(14, 8, 14, 4), TextWrapping = TextWrapping.Wrap };
+    private readonly TextBlock reportCount = new() { TextWrapping = TextWrapping.Wrap };
+    private DialogField? reportCountField;
 
     private void UpdateWindowReports()
     {
@@ -19,8 +20,8 @@ internal sealed partial class MainWindow
         string summary = pending.Count switch
         {
             0 => "",
-            1 => pending[0].Summary,
-            _ => string.Format(Text("WindowReportSummary"), pending.Count, pending[^1].Summary)
+            1 => pending[0].Content.Summary,
+            _ => string.Format(Text("WindowReportSummary"), pending.Count, pending[^1].Content.Summary)
         };
         windowReportSummary.Text = summary.ReplaceLineEndings(" ");
         windowReportButton.ToolTip = summary;
@@ -32,7 +33,8 @@ internal sealed partial class MainWindow
         if (pending.Count == 0) { reportReview.Close(); return; }
         reportReview.Title = Text("WindowReportsTitle");
         if (reportClose is not null) reportClose.Content = Text("CloseDialog");
-        reportCount.Text = string.Format(Text("PendingOperationReports"), pending.Count);
+        reportCountField?.SetCaption(Text("PendingOperationReports"));
+        reportCount.Text = string.Format(Text("OperationReportCount"), pending.Count);
 
         // Preserve focus and text selection when another report arrives or is acknowledged.
         var existing = reportRows.Children.OfType<ReportRow>().ToDictionary(row => row.Report);
@@ -51,29 +53,34 @@ internal sealed partial class MainWindow
     private sealed class ReportRow : StackPanel
     {
         internal WindowStatusReport Report { get; }
-        private readonly TextBlock heading = new() { FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap };
-        private readonly DialogText details = new("", 250);
+        private readonly DialogText summary = new("");
+        private readonly DialogField summaryField;
+        private readonly StackPanel fields = new();
         private readonly Button ok = new() { MinWidth = 72, HorizontalAlignment = HorizontalAlignment.Right };
+        private WindowReportContent? displayed;
 
         internal ReportRow(WindowStatusReport report, WindowStatusReports reports)
         {
             Report = report;
-            Margin = new Thickness(14, 8, 14, 8);
-            Children.Add(heading);
-            Children.Add(details);
+            Margin = new Thickness(0, 0, 0, 8);
+            summaryField = new DialogField(Text("OperationReportSummaryLabel"), summary);
+            Children.Add(summaryField);
+            Children.Add(fields);
             Children.Add(ok);
             ok.Click += (_, _) => reports.Acknowledge(report);
         }
 
         internal void Update()
         {
-            heading.Text = Report.Summary;
-            heading.Visibility = Report.Details.StartsWith(Report.Summary, StringComparison.Ordinal)
-                ? Visibility.Collapsed : Visibility.Visible;
-            if (details.Text != Report.Details) details.Text = Report.Details;
-            AutomationProperties.SetName(details, Report.Summary);
+            var content = Report.Content;
+            summaryField.SetCaption(Text("OperationReportSummaryLabel"));
             ok.Content = Text("OK");
-            AutomationProperties.SetHelpText(ok, Report.Details);
+            if (ReferenceEquals(displayed, content)) return;
+            displayed = content;
+            summary.Text = content.Summary;
+            fields.Children.Clear();
+            foreach (var field in content.Fields) fields.Children.Add(field.Create());
+            AutomationProperties.SetHelpText(ok, content.Fields.Length > 0 ? content.Details : content.Summary);
         }
     }
 
@@ -83,8 +90,9 @@ internal sealed partial class MainWindow
     {
         if (reportReview is { } open) { open.Activate(); return; }
         if (app.StatusReports.Pending(this).Count == 0) return;
-        var body = new StackPanel { Children = { reportCount, reportRows } };
-        var layout = new DialogLayout(body, new Thickness(0, 0, 8, 8));
+        reportCountField ??= new DialogField(Text("PendingOperationReports"), reportCount, inline: true);
+        var body = new StackPanel { Children = { reportCountField, reportRows } };
+        var layout = new DialogLayout(body, new Thickness(14, 8, 14, 8));
         var review = new Window
         {
             Owner = this, Icon = WindowIcons.App, ShowInTaskbar = false,
@@ -107,8 +115,8 @@ internal sealed partial class MainWindow
         review.SetResourceReference(ForegroundProperty, "WindowForeground");
         review.Closed += (_, _) =>
         {
-            body.Children.Clear();
             reportRows.Children.Clear();
+            body.Children.Clear();
             reportReview = null;
             reportClose = null;
         };

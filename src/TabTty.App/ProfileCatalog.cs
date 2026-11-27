@@ -439,7 +439,8 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
             {
                 if (app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow, Text("RecycleProfileConfirm"),
                     Text("RecycleProfile"), MessageBoxButton.YesNo, MessageBoxImage.Warning,
-                    MessageBoxResult.No, acceptKey: "RecycleProfile", context: new DialogText(item.Path))) != MessageBoxResult.Yes) return;
+                    MessageBoxResult.No, acceptKey: "RecycleProfile",
+                    context: new DialogField(Text("ProfileListFilePath"), new DialogText(item.Path)))) != MessageBoxResult.Yes) return;
                 await registrationChanges.WaitAsync();
                 try
                 {
@@ -596,8 +597,8 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
         try { await EditAsync(null, path, duplicate: false); }
         catch (Exception exception) when (IsFileProblem(exception) || exception is OperationCanceledException)
         {
-            app.Modal(() => ThemedMessageBox.Show(
-                $"{path}\n\n{exception.Message}", Text("EditProfile"), icon: MessageBoxImage.Error));
+            app.Modal(() => ThemedMessageBox.Show(null, exception.Message, Text("EditProfile"), icon: MessageBoxImage.Error,
+                context: new DialogField(Text("ProfileListFilePath"), new DialogText(path))));
         }
     }
 
@@ -637,8 +638,8 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
         Action? savedBaseline = null;
         form.DescribeUnresolvedPublication = () => CurrentRecovery() is { } pending
             ? pending.Publication is { } publication
-                ? JsonStoreRecovery.DescribeFailure(publication)
-                : Text(RecoveryLabels(pending).Message)
+                ? JsonStoreRecovery.FailureFields(publication)
+                : [new(Text("OperationReportResult"), Text(RecoveryLabels(pending).Message))]
             : null;
 
         async Task RecheckAsync()
@@ -699,9 +700,10 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                     string[] references = new[] { verified.SshPassword?.Name, verified.SshPrivateKey?.Name }
                         .OfType<string>().Select(PermissionDisplay.Literal).ToArray();
                     if (app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow,
-                        Text("CredentialRenameReviewProfile") + "\n\n" + string.Join("\n", references),
+                        Text("CredentialRenameReviewProfile"),
                         Text("EditProfile"), MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No,
-                        acceptKey: "Save")) !=
+                        acceptKey: "Save", context: references.Length == 0 ? null :
+                            new DialogField(Text("ReferencedCredentialNames"), new DialogText(string.Join("\n", references))))) !=
                         MessageBoxResult.Yes) return false;
                     profile = verified;
                     editor.UseSavedRevision(verified);

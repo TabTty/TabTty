@@ -69,10 +69,17 @@ internal static class JsonStoreRecovery
             await RunAsync(store, validate => Commit(store.Path, store.Defaults(), original, recovery: true,
                 validate));
         });
-        bool Confirm(Store store, string action, string? backup = null) => app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow,
-            Text("StoreRecoveryWarning"), Text(action),
-            MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No, acceptKey: action,
-            context: new DialogText(backup is null ? $"{store.Name}\n{store.Path}" : $"{store.Name}\n{store.Path}\n\n{backup}"))) == MessageBoxResult.Yes;
+        bool Confirm(Store store, string action, string? backup = null)
+        {
+            var context = new StackPanel();
+            context.Children.Add(new DialogField(Text("RecoveryStore"), new DialogText(store.Name), inline: true));
+            context.Children.Add(new DialogField(Text("ProfileListFilePath"), new DialogText(store.Path)));
+            if (backup is not null)
+                context.Children.Add(new DialogField(Text("BackupFilePath"), new DialogText(backup)));
+            return app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow, Text("StoreRecoveryWarning"), Text(action),
+                MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No, acceptKey: action,
+                context: context)) == MessageBoxResult.Yes;
+        }
 
         async Task RunAsync(Store store, Action<Action<string>> action)
         {
@@ -98,9 +105,13 @@ internal static class JsonStoreRecovery
     {
         if (stages.Length == 0) return false;
         string paths = string.Join("\n", stages);
-        form.Reports.Report(("retained-stages", paths), Text("PublicationRetainedStages") + "\n\n" + paths);
+        var fields = RetainedStageFields(paths);
+        form.Reports.Report(("retained-stages", paths), ReportField.Describe(fields), fields);
         return true;
     }
+
+    internal static ReportField[] RetainedStageFields(string paths) =>
+        [new(Text("OperationReportResult"), Text("PublicationRetainedStages")), new(Text("RetainedFilePaths"), paths, Framed: true)];
 
     public static void Restore(string path, string backup, Action<string> validate) =>
         Restore(path, backup, FileDigest(path), validate);
@@ -192,7 +203,9 @@ internal static class JsonStoreRecovery
             throw new FilePublicationException(DescribeFailure(result), result);
     }
 
-    internal static string DescribeFailure(FilePublicationResult result)
+    internal static string DescribeFailure(FilePublicationResult result) => ReportField.Describe(FailureFields(result));
+
+    internal static ReportField[] FailureFields(FilePublicationResult result)
     {
         string key = result.Status switch
         {
@@ -201,13 +214,20 @@ internal static class JsonStoreRecovery
                 => "StoreChanged",
             _ => "StoreSaveUnverified",
         };
-        var lines = new List<string> { Text(key), Describe(result.TargetPath, result.Target) };
-        if (result.PreservationPath is { } preservation) lines.Add(Describe(preservation, result.Preservation));
+        var fields = new List<ReportField> { new(Text("OperationReportResult"), Text(key)) };
+        AddFile("PublicationTargetPath", "PublicationTargetState", result.TargetPath, result.Target);
+        if (result.PreservationPath is { } preservation)
+            AddFile("PublicationPreservedPath", "PublicationPreservedState", preservation, result.Preservation);
         if (result.Candidate is not (FileImageStatus.Missing or FileImageStatus.Unavailable))
-            lines.Add(Describe(result.CandidatePath, result.Candidate));
-        if (result.CleanupError is not null) lines.Add(Text("PublicationCleanupFailed"));
-        return string.Join("\n\n", lines);
+            AddFile("PublicationPreparedPath", "PublicationPreparedState", result.CandidatePath, result.Candidate);
+        if (result.CleanupError is not null)
+            fields.Add(new(Text("PublicationCleanupResult"), Text("PublicationCleanupFailed")));
+        return fields.ToArray();
 
-        static string Describe(string path, FileImageStatus state) => $"{Text($"PublishedImage{state}")}\n{path}";
+        void AddFile(string pathKey, string stateKey, string path, FileImageStatus state)
+        {
+            fields.Add(new(Text(pathKey), path));
+            fields.Add(new(Text(stateKey), Text($"PublishedImage{state}"), Inline: true));
+        }
     }
 }

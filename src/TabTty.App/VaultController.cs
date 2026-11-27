@@ -121,7 +121,8 @@ internal sealed class VaultController(App app) : IDisposable
         catch (Exception exception) when (ProfileCatalog.IsFileProblem(exception) || exception is OperationCanceledException)
         {
             app.Modal(() => ThemedMessageBox.ShowVault(null,
-                $"{path}\n\n{exception.Message}", Text("Vault"), icon: MessageBoxImage.Error));
+                exception.Message, Text("Vault"), icon: MessageBoxImage.Error,
+                context: new DialogField(Text("VaultPath"), new DialogText(path))));
             return;
         }
 

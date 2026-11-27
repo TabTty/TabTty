@@ -6,6 +6,13 @@ namespace TabTty.Core;
 public sealed record SshHostKey(SshDestination Destination, string Format, ReadOnlyMemory<byte> PublicBlob,
     string Fingerprint);
 
+internal sealed record SshNegotiatedAlgorithms(string KeyExchange, string HostKey, string TransmitCipher, string? TransmitMac,
+    string ReceiveCipher, string? ReceiveMac, bool StrictKeyExchange)
+{
+    public override string ToString() =>
+        $"{KeyExchange}\n{HostKey}\nTX {TransmitCipher} {TransmitMac}\nRX {ReceiveCipher} {ReceiveMac}\nStrict KEX {StrictKeyExchange}";
+}
+
 internal sealed class SshKeyExchange(SshPackets packets, SshDestination destination, IReadOnlyList<string> approvedFormats)
 {
     private static readonly byte[] ClientVersion = "SSH-2.0-TabTty"u8.ToArray();
@@ -22,7 +29,7 @@ internal sealed class SshKeyExchange(SshPackets packets, SshDestination destinat
         .OrderByDescending(name => approvedFormats.Contains(name.StartsWith("rsa-sha2-", StringComparison.Ordinal) ?
             "ssh-rsa" : name)).ToArray();
     public ReadOnlyMemory<byte> SessionId => sessionId ?? throw new InvalidOperationException("SSH keys are not established.");
-    public string Details { get; private set; } = "";
+    public SshNegotiatedAlgorithms? Algorithms { get; private set; }
 
     public bool IsDue => packets.RekeyDue || Environment.TickCount64 - lastExchange >= 3600_000;
 
@@ -156,7 +163,7 @@ internal sealed class SshKeyExchange(SshPackets packets, SshDestination destinat
         }
 
         lastExchange = Environment.TickCount64;
-        Details = $"{exchange}\n{host}\nTX {outgoing} {outgoingMac}\nRX {incoming} {incomingMac}\nStrict KEX {strict}";
+        Algorithms = new(exchange, host, outgoing, outgoingMac, incoming, incomingMac, strict);
         Span<byte> hash = stackalloc byte[32];
         OpenSsl.Sha256(hostBlob, hash);
         string format = host.StartsWith("rsa-sha2-", StringComparison.Ordinal) ? "ssh-rsa" : host;

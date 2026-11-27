@@ -115,7 +115,7 @@ internal sealed partial class MainWindow
             string values = arguments.Length == 0 ? Text("MacroNoArguments") : string.Join("\n",
                 arguments.Select((value, index) => $"[{index}] \"{PermissionDisplay.Literal(value)}\""));
             review.AddField("MacroArguments", new DialogText(values, 180));
-            review.AddAction("MacroInspectSource", () => InspectMacroText(review, "MacroInspectSource", program.Source));
+            review.AddAction("MacroInspectSource", () => InspectMacroText(review, "MacroSourceContents", program.Source));
             if (program.Constants.Count != 0)
             {
                 review.AddField("MacroConstantsVersion", new DialogText(key.ConstantsDigest));
@@ -134,7 +134,7 @@ internal sealed partial class MainWindow
                 review.AddField("MacroReadFilePath", path);
                 review.AddField("MacroConstantsFileDigest", fileDigest);
                 review.AddAction("MacroInspectConstants", () =>
-                    InspectMacroText(review, "MacroInspectConstants", program.Constants[aliases.SelectedIndex].File.Source));
+                    InspectMacroText(review, "MacroConstantsContents", program.Constants[aliases.SelectedIndex].File.Source));
             }
             MacroTrustDecision? choice = null;
             if (pending.CanRemember(MacroTrustDecision.Allow))
