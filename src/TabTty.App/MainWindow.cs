@@ -9,6 +9,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Shell;
 using Microsoft.Win32;
 using TabTty.Core;
 using static TabTty.App.App;
@@ -69,7 +70,11 @@ internal sealed partial class MainWindow : Window
             else SystemCommands.MaximizeWindow(this);
         };
         closeButton.Click += (_, _) => SystemCommands.CloseWindow(this);
-        StateChanged += (_, _) => UpdateMaximizeButton();
+        var chrome = WindowChrome.GetWindowChrome(this);
+        var resizeBorder = chrome.ResizeBorderThickness;
+        double captionHeight = chrome.CaptionHeight;
+        SourceInitialized += (_, _) => UpdateWindowState();
+        StateChanged += (_, _) => UpdateWindowState();
         app.Vault.ManagementChanged += UpdateVaultStatus;
         Closed += (_, _) => app.Vault.ManagementChanged -= UpdateVaultStatus;
         app.StatusReports.Changed += UpdateWindowReports;
@@ -83,6 +88,15 @@ internal sealed partial class MainWindow : Window
         PreviewKeyDown += OnTabShortcutKeyDown;
         ConfigureTabDrag();
         UpdateLabels();
+
+        void UpdateWindowState()
+        {
+            bool maximized = WindowState == WindowState.Maximized;
+            // Let the native caption reach the top edge when the window cannot be resized.
+            chrome.ResizeBorderThickness = maximized ? new Thickness(0) : resizeBorder;
+            chrome.CaptionHeight = maximized ? captionHeight + resizeBorder.Top : captionHeight;
+            UpdateMaximizeButton();
+        }
     }
 
     protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
@@ -865,7 +879,7 @@ internal sealed partial class MainWindow : Window
             vaultPath.Text = app.VaultPath;
             profileDirectory.Text = app.ProfileSaveDirectory;
             return true;
-        });
+        }, fullWidthActions: true);
 
         static string? Change(string draft, string saved) => draft == saved ? null : draft;
 

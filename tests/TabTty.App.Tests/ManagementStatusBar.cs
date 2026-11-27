@@ -96,6 +96,17 @@ internal static partial class Program
                 $"{page} actions {actions} (Close {closeBounds}), local status {status} and vault {vault} " +
                 $"did not fit above and within the bottom row at window size {root.RenderSize}.");
 
+        if (page == "Settings")
+        {
+            var tab = Bounds(form);
+            var divider = Bounds(footer.Children.OfType<Border>().Single(border => border.BorderThickness.Top > 0));
+            double rightInset = tab.Right - closeBounds.Right;
+            if (divider.Height <= 0 || Math.Abs(divider.Left - tab.Left) > 1 ||
+                Math.Abs(divider.Right - tab.Right) > 1 || Math.Abs(rightInset - 24) > 1)
+                throw new InvalidOperationException(
+                    $"The settings divider {divider} and Close inset {rightInset} did not fit the tab {tab}.");
+        }
+
         Rect Bounds(FrameworkElement element) => new(element.TranslatePoint(new Point(), root), element.RenderSize);
     }
 

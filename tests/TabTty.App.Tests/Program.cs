@@ -1421,7 +1421,7 @@ internal static partial class Program
 
                 if (titleKeys[index] is "HighlightSets" or "Settings")
                 {
-                    foreach (var size in new[] { new Size(1112, 696), new Size(520, 460) })
+                    foreach (var size in new[] { new Size(1112, 696), new Size(520, 460), new Size(1920, 1040) })
                     {
                         Layout(size);
                         CheckEditorStatusLayout(window, form, titleKeys[index]);

@@ -730,7 +730,7 @@ internal sealed class FormView : Grid
         return Task.FromResult(true);
     });
 
-    public void AddEditorButtons(Func<Task<bool>> save, Func<bool>? isCreating = null)
+    public void AddEditorButtons(Func<Task<bool>> save, Func<bool>? isCreating = null, bool fullWidthActions = false)
     {
         foreach (EditField edit in edits) edit.Snapshot()();
         tracksEdits = true;
@@ -739,7 +739,7 @@ internal sealed class FormView : Grid
             if (IsBusy || !HasUnsavedChanges) return;
             foreach (EditField edit in edits) edit.Restore();
             updateEditorButtons?.Invoke();
-        }, isCreating);
+        }, isCreating, fullWidthActions: fullWidthActions);
         AddHandler(TextBoxBase.TextChangedEvent, new TextChangedEventHandler(OnEditorInputChanged), true);
         AddHandler(Selector.SelectionChangedEvent, new SelectionChangedEventHandler(OnEditorInputChanged), true);
         AddHandler(ToggleButton.CheckedEvent, new RoutedEventHandler(OnEditorInputChanged), true);
@@ -754,7 +754,7 @@ internal sealed class FormView : Grid
     }
 
     private Button AddButtonRow(Func<Task<bool>> save, string acceptKey, bool cancelDefault, string cancelKey,
-        Action cancelAction, Func<bool>? isCreating = null, bool acceptOnEnter = true)
+        Action cancelAction, Func<bool>? isCreating = null, bool acceptOnEnter = true, bool fullWidthActions = false)
     {
         Panel buttons = modal ? DialogActions() : new StackPanel
         {
@@ -797,7 +797,7 @@ internal sealed class FormView : Grid
         buttons.Children.Add(cancel);
         if (tracksEdits)
         {
-            var close = new Button { Margin = new Thickness(4) };
+            var close = new Button { Margin = fullWidthActions ? new Thickness(4, 4, 0, 4) : new Thickness(4) };
             SetText("CloseDialog", value => close.Content = value);
             close.Click += (_, _) =>
             {
@@ -814,14 +814,18 @@ internal sealed class FormView : Grid
         }
         if (!modal && tracksEdits && (pageTitle is not null || hasNavigation))
         {
-            var footer = new Grid { MaxWidth = 1000, Margin = new Thickness(24, 0, 24, 8) };
+            var footer = new Grid
+            {
+                MaxWidth = fullWidthActions ? double.PositiveInfinity : 1000,
+                Margin = fullWidthActions ? new Thickness(0, 0, 0, 8) : new Thickness(24, 0, 24, 8),
+            };
             footer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             footer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             footer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             var divider = new Border { BorderThickness = new Thickness(0, 1, 0, 0), Opacity = 0.18,
                 IsHitTestVisible = false };
             divider.SetResourceReference(Border.BorderBrushProperty, "WindowForeground");
-            buttons.Margin = new Thickness(0, 5, 0, 0);
+            buttons.Margin = new Thickness(0, 5, fullWidthActions ? 24 : 0, 0);
             Grid.SetRow(buttons, 2);
             footer.Children.Add(divider);
             footer.Children.Add(buttons);

@@ -34,6 +34,12 @@ For a menu command, identify the affected tab, file, view, window or application
 
 If a tab move fails, its source tab owns the report. If splitting or removing a tab group fails, the report belongs to the window whose layout the command would change.
 
+### Settings tab actions
+
+Keep **Save**, **Discard changes**, and **Close** in a fixed row directly above the status bar. Run the row's top divider across the full width of the Settings tab, below both the category navigation and the settings pane. Right-align the button group with 24 DIP between the right edge of **Close** and the right edge of the tab. Use the same inset at every window width.
+
+Verify the divider reaches both edges and **Close** keeps its right inset while resizing, maximizing, and restoring the window. Check that the buttons remain visible above the status bar when the settings pane scrolls.
+
 ## Stacking and ownership
 
 - Use one compact floating presentation at the upper right of the owning content area. A terminal tab owns one stack across its split panes, including for a macro run before connection. Its notices move with the tab. An editor or transfer window owns its own notices.

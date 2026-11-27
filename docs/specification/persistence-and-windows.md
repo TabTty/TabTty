@@ -866,6 +866,21 @@ work area if needed. Restore maximized separately. Detached windows use source
 normal size near the drop. Coalesce layout notifications to the final grid per
 layout transaction; changed grids go through the session resize contract.
 
+### Restoring from the title bar
+
+In a maximized main window, double-clicking empty title-bar space restores the
+same position and size as the **Restore window** button. The title-bar hit area includes
+the topmost visible pixel row wherever the pointer is over empty title-bar
+space. Tab headers and window controls keep their own hit areas. A normal
+window retains its resizable edges. [WPF title-bar hit areas](https://learn.microsoft.com/en-us/dotnet/api/system.windows.shell.windowchrome.captionheight?view=windowsdesktop-10.0)
+
+Start with a visible normal window at a known position and size. Maximize it
+and use the mouse to double-click the topmost visible row in empty title-bar
+space. Verify that the window returns to its original bounds. Repeat at 100%
+and at a higher display scale, including on a secondary monitor when available.
+Check that normal-window edge resizing, tab and button clicks, and taskbar
+access while maximized still work.
+
 ### Dragging a tab
 
 Once a drag starts on a tab header, the header follows the pointer. In the
