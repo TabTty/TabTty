@@ -52,6 +52,23 @@ For attention purposes, a tab is inactive when it is not the user's current tab,
 
 Arrival must not activate a tab or window, redirect text typed for another terminal, or treat a pending Enter as approval. Background reports for one owning window may share one notice window with oldest-first entries. A single request has one pending answer or acknowledgement across its surfaces. An answered, cancelled or expired request cannot be applied again after a tab move or reconnect. Ongoing terminal input and broadcast continue during post-event reports. A decision holds only the work that depends on its answer wherever the existing operation allows.
 
+## Dialog placement and contents
+
+Place application dialogs in the context of the window the operation belongs to. Center ordinary dialogs over their visible owner and startup dialogs without an owner on the screen. A decision belonging to a tab follows the tab's host and respects the focus rules above. A shared vault unlock can be positioned relative to the current waiting window without binding its lifetime to that window. Use Windows system dialogs and their layout for opening and saving files or selecting folders.
+
+| Area | Layout and presentation |
+| --- | --- |
+| Title and target | Name the operation in the title and put the affected tab, destination, file, recipient or scope at the top of the body when it matters. Put the decision and its consequences before optional settings and technical details. Keep information needed for a safe choice visible. |
+| Short display-only text | Use plain, unframed display text for a value or passage expected to fit in about five lines. Use a nearby label when the meaning is otherwise unclear. Wrap long values and keep the full value available. Examples include a destination, path, fingerprint, count and page number. |
+| Long display-only text | Use a flat rectangular border for content that can regularly run longer, such as a preview, server message, source listing or diagnostic report. Use a display surface without an input-field fill or elevation. Constrain the height and let the content scroll or page when needed. Keep the representation stable when the value, dialog width, language or scaling changes. Five lines is a design guide based on the usual content at the intended reading width. |
+| Editable input | Use input styling for editable fields, including fields that become editable after an option is enabled. Put a visible label with each field and show its error next to it while preserving the user's draft. A value that can only be changed with a separate picker can be displayed beside that picker action. |
+| Comparison, selection and reports | Give compared values parallel headings and the same field order. Put choice lists and their empty state in the body. For reports, show the outcome and counts before long details, and make optional details expandable as needed. Provide a visible or keyboard-accessible way to copy identifiers, paths and relevant read-only details. Respect masked and escaped representations. |
+| Actions | Keep actions that finish the dialog together at the bottom, right-aligned in the English and Japanese interfaces. Keep related actions such as browsing, preview paging and inspecting source beside their content. Keep the bottom action area reachable while the body scrolls. Allow long localized button labels to fit or wrap. Use verbs such as **Delete**, **Overwrite** and **Send** for decisions. Use **OK** for acknowledgement and **Close** for an independent viewer. Keep per-report acknowledgement distinct from closing the viewer. |
+
+Use the safe action as the default for destructive changes, permission grants, reviewed terminal sends and remembered decisions. Require explicit activation of the consequential action. Escape and closing the window preserve the operation's cancellation behavior. In particular, skipping one transfer item and cancelling the batch are different choices. A macro-supplied question preserves its supported choices and results while using the shared layout and focus rules.
+
+Verify with long Japanese and English text, both themes, narrow windows and increased display scaling. The distinction between display and input must remain visible. Ensure logical keyboard order, visible focus, accessible field names and roles, and keyboard access to copy and completion actions.
+
 ## Adding a notification
 
 A request from a minimized window leaves that window minimized. Its decision dialog can be reached from the taskbar. Choosing **Show tab** in a background report restores the source window and selects the tab.
