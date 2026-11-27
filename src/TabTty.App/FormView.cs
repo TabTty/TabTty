@@ -90,15 +90,15 @@ internal sealed class FormView : Grid
     internal void AddStatusBar()
     {
         if (statusBarText is not null) return;
-        var text = new TextBlock { Height = 20, TextTrimming = TextTrimming.CharacterEllipsis };
+        var text = new TextBlock { VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
         AutomationProperties.SetLiveSetting(text, AutomationLiveSetting.Polite);
         var bar = new Border
         {
-            Child = text, Padding = new Thickness(14, 4, 14, 4),
+            Child = text, Height = MainWindow.StatusBarHeight, Padding = new Thickness(14, 0, 14, 0),
             BorderThickness = new Thickness(0, 1, 0, 0),
         };
         bar.SetResourceReference(Border.BorderBrushProperty, "SurfaceStrokeColorDefaultBrush");
-        bar.SetResourceReference(MarginProperty, "WindowStatusInset");
+        text.SetResourceReference(MarginProperty, "WindowStatusInset");
         statusBarText = text;
         DockPanel.SetDock(bar, Dock.Bottom);
         Body.Children.Insert(0, bar);

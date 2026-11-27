@@ -103,7 +103,7 @@ internal sealed partial class TerminalTab : UserControl
         this.sshInteraction = sshInteraction;
         this.fixedViewport = fixedViewport;
         this.fixtureHighlights = fixtureHighlights;
-        statusBar = new LocalStatusBar(status, recordingStatus) { Height = 30, ClipToBounds = true, LastChildFill = false };
+        statusBar = new LocalStatusBar(status, recordingStatus) { Height = MainWindow.StatusBarHeight, ClipToBounds = true, LastChildFill = false };
         statusBar.SetResourceReference(MarginProperty, "WindowStatusInset");
         visibleHighlights = new(Dispatcher, highlightState);
         this.captureClipboard = captureClipboard ?? ClipboardPaste.CaptureAsync;

@@ -13,6 +13,7 @@ internal sealed partial class MainWindow
 {
     private static readonly Size GroupMinimum = new(240, 160 + 43);
     private const double MinimumSharedTabBarWidth = 488;
+    public const double StatusBarHeight = 30;
     public static readonly DependencyProperty CompactTabBarProperty =
         DependencyProperty.RegisterAttached("CompactTabBar", typeof(bool), typeof(MainWindow));
     public static bool GetCompactTabBar(DependencyObject element) => (bool)element.GetValue(CompactTabBarProperty);
@@ -365,7 +366,7 @@ internal sealed partial class MainWindow
     {
         if (windowRoot.ActualWidth <= 0) return;
         double budget = windowRoot.ActualWidth * (Grid.GetRowSpan(groupHost) == 2 ? 0.5 : 1);
-        vaultStatus.Measure(new Size(double.PositiveInfinity, 30));
+        vaultStatus.Measure(new Size(double.PositiveInfinity, StatusBarHeight));
         bool hasBroadcast = broadcastStatus.Visibility == Visibility.Visible;
         bool hasReport = windowReportButton.Visibility == Visibility.Visible;
         double remaining = Math.Max(0, budget - vaultStatus.DesiredSize.Width -

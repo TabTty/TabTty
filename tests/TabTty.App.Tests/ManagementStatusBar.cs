@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Media;
 using TabTty.App;
 
 internal static partial class Program
@@ -63,13 +64,50 @@ internal static partial class Program
             while (status.Text.Length == 0) await Task.Delay(20, timeout.Token);
             window.UpdateLayout();
             var left = local.TransformToAncestor(window).TransformBounds(new Rect(local.RenderSize));
+            var message = status.TransformToAncestor(window).TransformBounds(new Rect(status.RenderSize));
             var right = shared.TransformToAncestor(window).TransformBounds(new Rect(shared.RenderSize));
-            if (status.Text != App.Text("SavingChanges") || left.Width < 1 || right.Width < 1 ||
-                Math.Abs(left.Bottom - right.Bottom) > 1 || left.Right > right.Left + 1)
-                throw new InvalidOperationException($"The form's progress and window status did not share the bottom row: {left}, {right}.");
+            if (status.Text != App.Text("SavingChanges") || message.Width < 1 || right.Width < 1 ||
+                Math.Abs(left.Top - right.Top) > 1 || Math.Abs(left.Bottom - right.Bottom) > 1 ||
+                !left.Contains(message) || message.Right > right.Left + 1)
+                throw new InvalidOperationException($"The form's progress {message} and window status {right} did not share the bottom row {left}.");
             CheckVaultStatus(window, unlocked: false);
         }
         form.RequestClose(() => true);
+    }
+
+    private static void CheckVaultStatusSeparator(MainWindow window, FormView form)
+    {
+        var root = (FrameworkElement)window.Content;
+        var local = form.Body.Children.OfType<Border>().Single(child =>
+            DockPanel.GetDock(child) == Dock.Bottom && child.Child is TextBlock);
+        var indicator = (TextBlock)window.FindName("vaultStatus");
+        var left = local.TransformToAncestor(root).TransformBounds(new Rect(local.RenderSize));
+        var vault = indicator.TransformToAncestor(root).TransformBounds(new Rect(indicator.RenderSize));
+        int leftX = (int)(left.Left + left.Width / 2);
+        int vaultX = (int)(vault.Left + vault.Width / 2);
+        var bitmap = RenderLayout(root, window.Background);
+        int top = (int)Math.Floor(left.Top);
+        var background = Pixel(leftX, top + 4);
+        int dividerY = Enumerable.Range(top - 2, 5).FirstOrDefault(y => Pixel(leftX, y) != background, -1);
+        if (dividerY < 0)
+            throw new InvalidOperationException($"The profile status row has no visible top divider near y={top}.");
+        var divider = Pixel(leftX, dividerY);
+        var right = Pixel(vaultX, dividerY);
+        var edge = Pixel(bitmap.PixelWidth - 2, dividerY);
+        if (divider != right || edge != divider)
+            throw new InvalidOperationException(
+                $"The profile status divider at y={dividerY} did not span the window: {divider} at x={leftX}, " +
+                $"{right} above the vault at x={vaultX}, {edge} at the right edge.");
+        var statusBounds = new Rect(0, dividerY + 1, root.ActualWidth, root.ActualHeight - dividerY - 1);
+        if (vault.Width <= 0 || vault.Height <= 0 || !statusBounds.Contains(vault))
+            throw new InvalidOperationException($"The vault at {vault} exceeded the profile status bounds {statusBounds}.");
+
+        Color Pixel(int x, int y)
+        {
+            byte[] pixel = new byte[4];
+            bitmap.CopyPixels(new Int32Rect(x, y, 1, 1), pixel, 4, 0);
+            return Color.FromArgb(pixel[3], pixel[2], pixel[1], pixel[0]);
+        }
     }
 
     // Read the actual report and acknowledge its own button, including every expected detail.

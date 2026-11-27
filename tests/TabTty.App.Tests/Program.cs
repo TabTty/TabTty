@@ -1479,6 +1479,7 @@ internal static partial class Program
                     var selected = (TabItem)tabs.SelectedItem;
                     var unselected = (TabItem)tabs.Items[(index + 1) % titleKeys.Length];
                     var form = (FormView)tabs.SelectedContent;
+                    if (titleKeys[index] == "ProfileCatalog") CheckVaultStatusSeparator(window, form);
                     var heading = FindControls<TextBlock>(form).Single(text =>
                         AutomationProperties.GetHeadingLevel(text) == AutomationHeadingLevel.Level1);
                     if (form.Background is not null || heading.Background is not null ||
@@ -1632,7 +1633,7 @@ internal static partial class Program
         }
     }
 
-    private static void RenderLayoutPreview(FrameworkElement root, Brush background, string path)
+    private static RenderTargetBitmap RenderLayout(FrameworkElement root, Brush background)
     {
         var visual = new DrawingVisual();
         using (DrawingContext context = visual.RenderOpen())
@@ -1643,8 +1644,13 @@ internal static partial class Program
         }
         var bitmap = new RenderTargetBitmap((int)root.ActualWidth, (int)root.ActualHeight, 96, 96, PixelFormats.Pbgra32);
         bitmap.Render(visual);
+        return bitmap;
+    }
+
+    private static void RenderLayoutPreview(FrameworkElement root, Brush background, string path)
+    {
         var encoder = new PngBitmapEncoder();
-        encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        encoder.Frames.Add(BitmapFrame.Create(RenderLayout(root, background)));
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         using var file = File.Create(path);
         encoder.Save(file);
