@@ -66,10 +66,11 @@ retention readings of Q13/Q34 below; see the not-yet-implemented
 - Q15 (amended): Provide Upload and Download buttons for the selection in the
   source pane, using the directory displayed in the other pane when the user
   starts the transfer. Also support mouse drag-and-drop between the two panes.
-- Q16 (amended): Dropping on a folder row in the opposite pane copies to that
-  folder. Dropping on a file row copies to the folder containing that file.
-  Dropping on empty list space copies to the displayed folder. Preview the
-  destination before release. Dropping in the source pane starts no transfer.
+- Q16 (amended): Preview the destination before release. In the opposite pane,
+  a folder row targets that folder and a file row or empty space targets the
+  displayed folder. Within the source pane, an unmodified left-button drop on
+  another folder moves the selection into that folder. Use the transfer
+  contract for modifier keys and the right-button menu.
 - Q17: Let the user explicitly retry failed items from byte zero while the
   original connection remains available. After disconnect, reopen transfer and
   select the items again. Partial-file resume is deferred.
@@ -86,11 +87,13 @@ retention readings of Q13/Q34 below; see the not-yet-implemented
 - Q21: Fail an item when its name cannot be saved as given on the destination.
   When multiple items in the batch map to one destination name, report all
   colliding items as errors without choosing a winner.
-- Q22: Limit initial drag-and-drop to the two panes of the dedicated transfer
-  window.
+- Q22 (amended): Keep drag-and-drop within one transfer window. Reject drops
+  originating outside it and drops leaving it, including between transfer windows.
 - Q23 (amended): Provide editable paths, parent-folder navigation, refresh,
-  folder creation, deletion, and rename in the transfer window. Permission
-  editing is deferred.
+  folder creation, deletion, and rename in the transfer window. The parent of
+  a local drive root is the drive list. Drive rows only open drive roots.
+  Disable the parent button where no parent is available. Permission editing
+  is deferred.
 - Q24: Cancelling a batch stops the current transfer and all remaining items,
   preserves committed files and created folders, and attempts to remove its
   temporary files. If the connection is lost after sending the final rename

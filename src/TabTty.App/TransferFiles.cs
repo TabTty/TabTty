@@ -31,9 +31,7 @@ internal sealed class TransferFiles(SftpClient client, TimeSpan wait, FileOperat
         return new TransferPath(await client.ResolveAsync(wire, token));
     }
 
-    public Task<TransferPath> ParentAsync(TransferPath path, CancellationToken token) => path.Local is { } local
-        ? Task.FromResult(new TransferPath(Path.GetDirectoryName(local) ?? local))
-        : ResolveAsync(true, "..", path, token);
+    public Task<string[]> ListDrivesAsync(CancellationToken token) => LocalAsync(Directory.GetLogicalDrives, token);
 
     public async Task<TransferItem[]> ListAsync(TransferPath path, CancellationToken token)
     {
@@ -153,7 +151,11 @@ internal sealed class TransferFiles(SftpClient client, TimeSpan wait, FileOperat
         }
         else
         {
-            await RequireRemoteDirectoryAsync(Parent(source), token);
+            TransferPath sourceParent = Parent(source);
+            TransferPath targetParent = Parent(target);
+            await RequireRemoteDirectoryAsync(sourceParent, token);
+            if (!sourceParent.Remote.AsSpan().SequenceEqual(targetParent.Remote))
+                await RequireRemoteDirectoryAsync(targetParent, token);
             await client.RenameAsync(source.Remote!, target.Remote!, replace, token);
         }
     }

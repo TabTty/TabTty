@@ -198,7 +198,29 @@ internal sealed class FileOperations
         AddResult(files.Display(path), "TransferDone");
     });
 
-    public Task<string>? Rename(TransferPath parent, TransferItem item, string name) => Start(async token =>
+    public Task<string>? Rename(TransferPath parent, TransferItem item, string name) =>
+        Start(token => RenameItemAsync(parent, item, name, token));
+
+    public Task<string>? MoveToFolder(TransferItem[] selection, TransferPath folder) => Start(async token =>
+    {
+        foreach (TransferItem item in selection)
+        {
+            token.ThrowIfCancellationRequested();
+            try
+            {
+                if ((item.Path.Local is null) != (folder.Local is null)) throw new SftpException(SftpFailure.Unsupported);
+                if (item.Name is null) throw new SftpException(SftpFailure.InvalidName);
+                await RenameItemAsync(folder, item, item.Name, token);
+            }
+            catch (Exception error) when (TransferBatch.IsFileError(error) &&
+                error is not SftpException { Failure: SftpFailure.UnknownOutcome or SftpFailure.Disconnected })
+            {
+                AddResult(item.Label, TransferBatch.ErrorKey(error));
+            }
+        }
+    });
+
+    private async Task RenameItemAsync(TransferPath parent, TransferItem item, string name, CancellationToken token)
     {
         TransferPath target = files.Child(parent, name);
         if (await files.StatAsync(target, token) is not null) throw new SftpException(SftpFailure.ServerError);
@@ -211,7 +233,7 @@ internal sealed class FileOperations
             throw;
         }
         AddResult(files.Display(target), "TransferDone");
-    });
+    }
 
     public Task<string>? Delete(TransferPath parent, TransferItem[] items,
         Func<TransferQuestion, ValueTask<TransferChoice>> confirm) => Start(async token =>

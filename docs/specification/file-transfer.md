@@ -16,6 +16,16 @@ ready for separately authorized implementation.
 
 Use the same compact row height as connection profile and vault management in
 both panes.
+In each pane, show a folder icon before each folder name and a generic file
+icon with a folded upper-left corner before each regular file name, regardless
+of file extension.
+
+From a local drive root, **Parent folder** opens the drive list with an empty
+address field. Show a vertical cylinder icon beside each drive. Double-click or
+Enter opens the selected drive root. Drive rows are available for navigation.
+Block drag sources, drop targets, and file operations in the drive list.
+Disable **Parent folder** in the drive list and at a root with no parent,
+including the remote root.
 
 Place square upload `＞` and download `＜` buttons between the two file lists.
 Give both buttons localized accessible names and tooltips. Align **Retry failed
@@ -72,15 +82,20 @@ correction. A background refresh must preserve an outstanding draft. These
 rules apply to new operations; a running batch keeps its captured paths.
 
 Buttons, keyboard shortcuts, and drag-and-drop use the same availability rules
-for the same action. While copying is unavailable, including during a required
-refresh, suppress the copy cursor and target highlight.
+for the same action. Suppress the transfer cursor and target highlight while
+the action is unavailable, including during a required refresh.
 Buttons capture the selected source entries and the opposite pane's displayed
 directory at invocation. A cross-pane drop captures the highlighted directory,
 or the displayed directory for a drop on a file row or empty space. Highlight
 only folder rows during the drag, using the theme's accent outline while keeping
-the normal row background and foreground. Accept a drop only if copying is still
-available and its destination matches the last preview for that drag. Both use
-the same copy operation. Discard a drag if its
+the normal row background and foreground. For a cross-pane left-button drop,
+no modifier and Ctrl alone copy. Shift alone, Shift+Alt, Ctrl+Alt, and
+Ctrl+Shift+Alt move using the same checked source removal as Cut and Paste.
+Within a pane, a left-button drop on another folder moves with no modifier or
+any of the move modifier combinations. Same-pane drops use non-replacing
+renames and report collisions per item. Alt alone and Ctrl+Shift disable a
+left-button drop. Ctrl alone has no same-pane action. Accept a drop only if its action is still available
+and its destination matches the last preview for that drag. Discard a drag if its
 selection or either captured listing generation is stale. After capture,
 navigation and refresh leave the batch's paths intact. A second batch and
 file-management mutations in that window
@@ -88,6 +103,13 @@ are unavailable while a transfer batch is active. Serialize create, rename,
 and delete in that window, with no new batch admitted while a mutation is in
 progress. Browsing and transfer never generate terminal input or broadcast
 actions.
+
+A cross-pane right-button drop opens a context menu at the drop point with **Copy here**,
+**Move here**, and **Cancel**, regardless of modifier keys. Start a transfer
+only after the user chooses Copy or Move and both listings still match the
+captured drop. Cancel or dismiss the menu to discard the drop.
+
+Both the drag source and drop target must belong to the same transfer window.
 
 The owning window's close confirmation lists affected active operations once.
 Closing the transfer window itself confirms cancellation if work is active.

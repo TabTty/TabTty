@@ -489,6 +489,10 @@
   <data name="TransferOutcomeCounts" xml:space="preserve"><value>未解決の結果の種類別件数</value></data>
   <data name="TransferResultsLimit" xml:space="preserve"><value>一部の結果を省略しました。</value></data>
   <data name="TransferDropTarget" xml:space="preserve"><value>{0} にコピー</value></data>
+  <data name="TransferMoveDropTarget" xml:space="preserve"><value>{0} に移動</value></data>
+  <data name="TransferChooseDropTarget" xml:space="preserve"><value>{0} にドロップ</value></data>
+  <data name="TransferCopyHere" xml:space="preserve"><value>ここにコピー</value></data>
+  <data name="TransferMoveHere" xml:space="preserve"><value>ここに移動</value></data>
   <data name="TransferWorking" xml:space="preserve"><value>処理中…</value></data>
   <data name="TransferFinished" xml:space="preserve"><value>処理が終了しました</value></data>
   <data name="TransferCancelled" xml:space="preserve"><value>処理を中止しました</value></data>

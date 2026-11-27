@@ -262,10 +262,20 @@ internal static partial class Program
             localList.SelectedIndex = 1;
             var drag = StartFileDrag();
             long revision = transfer.OperationRevision;
-            if (RouteDrag(remoteList, DragDrop.DragOverEvent, drag) != DragDropEffects.Copy ||
+            if (RouteDrag(remoteList, DragDrop.DragEnterEvent, drag) != DragDropEffects.Copy ||
                 RouteDrag(folderRow, DragDrop.DropEvent, drag) != DragDropEffects.None || transfer.OperationRevision != revision)
                 throw new InvalidOperationException("A drop on a folder absent from the last preview was accepted.");
-            drag = StartFileDrag();
+            const DragDropKeyStates shift = DragDropKeyStates.ShiftKey;
+            const DragDropKeyStates ctrl = DragDropKeyStates.ControlKey;
+            const DragDropKeyStates alt = DragDropKeyStates.AltKey;
+            foreach (var modifiers in new[] { alt, ctrl | shift })
+            {
+                drag = StartFileDrag();
+                if (RouteDrag(folderRow, DragDrop.DragOverEvent, drag) != DragDropEffects.Copy ||
+                    RouteDrag(folderRow, DragDrop.DropEvent, drag, modifiers) != DragDropEffects.None ||
+                    folderRow.ReadLocalValue(Control.BorderBrushProperty) != DependencyProperty.UnsetValue || transfer.OperationRevision != revision)
+                    throw new InvalidOperationException($"A drop with {modifiers} was accepted or retained its folder outline.");
+            }
 #pragma warning disable WPF0001 // Confirm the drop outline in both Fluent themes.
             var app = (App)Application.Current;
             var previousTheme = app.ThemeMode;
@@ -276,6 +286,13 @@ internal static partial class Program
                     app.ThemeMode = theme;
                     transfer.UpdateLayout();
                     folderRow = (ListViewItem)remoteList.ItemContainerGenerator.ContainerFromIndex(0);
+                    var localFolder = RowIcon(localList, 0);
+                    var localFile = RowIcon(localList, 1);
+                    var remoteFolder = RowIcon(remoteList, 0);
+                    if (localFolder.Data is null || localFile.Data is null ||
+                        Equals(localFolder.Data, localFile.Data) || !Equals(localFolder.Data, remoteFolder.Data) ||
+                        !Equals(remoteFolder.Stroke, folderRow.Foreground))
+                        throw new InvalidOperationException($"Transfer rows did not show distinct themed file and folder icons in {theme} mode.");
                     drag = StartFileDrag();
                     var background = folderRow.Background;
                     var foreground = folderRow.Foreground;
@@ -287,6 +304,11 @@ internal static partial class Program
                         !Equals(folderRow.BorderBrush, outline))
                         throw new InvalidOperationException($"Drop preview in {theme} mode: effect {effect}, outline {folderRow.BorderBrush} (expected {outline}), " +
                             $"background {background} → {folderRow.Background}, foreground {foreground} → {folderRow.Foreground}.");
+                    if (RouteDrag(folderRow, DragDrop.DragOverEvent, drag, ctrl | shift) != DragDropEffects.None ||
+                        folderRow.ReadLocalValue(Control.BorderBrushProperty) != DependencyProperty.UnsetValue ||
+                        FindControls<TextBlock>(transfer).Any(text => text.Text.Contains("/home/inbox", StringComparison.Ordinal)))
+                        throw new InvalidOperationException("Holding Ctrl and Shift did not clear the folder drop preview.");
+                    RouteDrag(folderRow, DragDrop.DragOverEvent, drag);
                     RouteDrag(folderRow, DragDrop.DragLeaveEvent, drag);
                     if (folderRow.ReadLocalValue(Control.BorderBrushProperty) != DependencyProperty.UnsetValue)
                         throw new InvalidOperationException("Leaving the folder did not clear its drop outline.");
@@ -354,18 +376,18 @@ internal static partial class Program
 
             transfer.UpdateLayout();
             var fileRow = (ListViewItem)remoteList.ItemContainerGenerator.ContainerFromIndex(0);
-            if (fileRow.ActualHeight != folderHeight)
-                throw new InvalidOperationException("Files and folders have different transfer row heights.");
+            if (fileRow.ActualHeight != folderHeight || !Equals(RowIcon(remoteList, 0).Data, RowIcon(localList, 1).Data))
+                throw new InvalidOperationException("Transfer rows did not use the same height and file icon in both panes.");
             localList.SelectedIndex = 2;
             drag = StartFileDrag();
-            if (RouteDrag(fileRow, DragDrop.DragOverEvent, drag) != DragDropEffects.Copy ||
+            if (RouteDrag(fileRow, DragDrop.DragOverEvent, drag, ctrl) != DragDropEffects.Copy ||
                 fileRow.ReadLocalValue(Control.BorderBrushProperty) != DependencyProperty.UnsetValue ||
-                RouteDrag(fileRow, DragDrop.DropEvent, drag) != DragDropEffects.Copy)
+                RouteDrag(fileRow, DragDrop.DropEvent, drag, ctrl) != DragDropEffects.Copy)
                 throw new InvalidOperationException("Dropping on a file must target the displayed folder without highlighting the file.");
             while (!remoteList.IsEnabled || remoteList.Items.Count != 2 || !create[1].IsEnabled)
                 await Task.Delay(10, deadline.Token);
             remoteList.SelectedIndex = 1;
-            if (!Equals(remoteList.SelectedValue, "other.txt"))
+            if (!Equals(remoteList.SelectedValue, "other.txt") || !File.Exists(Path.Combine(dropSource, "other.txt")))
                 throw new InvalidOperationException("Dropping on the file did not copy into its displayed folder.");
 
             string copySource = Path.Combine(dropSource, "clipboard.txt");
@@ -437,6 +459,141 @@ internal static partial class Program
                 throw new InvalidOperationException("Cut and Paste did not move the remote file to the newly listed local folder.");
             Console.WriteLine("PASS SftpClipboardCopiesAndMovesAcrossPanes");
 
+            remoteList.SelectedValue = "other.txt";
+            drag = transfer.CreateDragData(remoteList, remoteList.SelectedItem)
+                ?? throw new InvalidOperationException("The selected remote file could not start a drag.");
+            string movePreview = string.Format(App.Text("TransferMoveDropTarget"), PermissionDisplay.Literal(downloadTarget));
+            foreach (var modifiers in new[] { shift, shift | alt, ctrl | alt, ctrl | shift | alt })
+            {
+                if (RouteDrag(localList, DragDrop.DragOverEvent, drag, modifiers) != DragDropEffects.Move ||
+                    !FindControls<TextBlock>(transfer).Any(text => text.Text == movePreview))
+                    throw new InvalidOperationException($"A drag with {modifiers} did not preview a move.");
+            }
+            if (RouteDrag(localList, DragDrop.DropEvent, drag, ctrl | shift | alt) != DragDropEffects.Move)
+                throw new InvalidOperationException("A drop with all three modifiers did not accept a move.");
+            await WaitForListsAsync(() => localList.Items.Count == 2);
+            if (HasRow(remoteList, "other.txt") ||
+                await File.ReadAllTextAsync(Path.Combine(downloadTarget, "other.txt"), deadline.Token) != "SFTP drop onto a file")
+                throw new InvalidOperationException("The drop did not move the file from the remote pane to the local pane.");
+            Console.WriteLine("PASS SftpDropModifiersAndEntryIcons");
+
+            localList.SelectedValue = "clipboard.txt";
+            long menuRevision = transfer.OperationRevision;
+            var dropChoices = await OpenDropMenuAsync(localList, remoteList);
+            dropChoices[2].RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            if (transfer.OperationRevision != menuRevision || HasRow(remoteList, "clipboard.txt"))
+                throw new InvalidOperationException("Cancelling the right-button drop started a transfer.");
+
+            dropChoices = await OpenDropMenuAsync(localList, remoteList);
+            dropChoices[0].RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            await WaitForListsAsync(() => HasRow(remoteList, "clipboard.txt"));
+            if (!File.Exists(Path.Combine(downloadTarget, "clipboard.txt")))
+                throw new InvalidOperationException("Copy here removed the original file.");
+
+            remoteList.SelectedValue = "note.txt";
+            dropChoices = await OpenDropMenuAsync(remoteList, localList);
+            dropChoices[1].RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            await WaitForListsAsync(() => localList.Items.Count == 3);
+            if (HasRow(remoteList, "note.txt") ||
+                await File.ReadAllTextAsync(Path.Combine(downloadTarget, "note.txt"), deadline.Token) != "SFTP drop fixture")
+                throw new InvalidOperationException("Move here did not transfer and remove the original file.");
+            Console.WriteLine("PASS SftpRightDropMenuCopiesMovesAndCancels");
+
+            string localDropFolder = Directory.CreateDirectory(Path.Combine(downloadTarget, "local-destination")).FullName;
+            string localFolderSource = Directory.CreateDirectory(Path.Combine(downloadTarget, "local-source")).FullName;
+            Press(editors[0], Key.Enter);
+            await WaitForListsAsync(() => HasRow(localList, "local-source/"));
+            localList.SelectedValue = "other.txt";
+            localList.SelectedItems.Add(localList.Items.Cast<object>().Single(row => RowName(row) == "local-source/"));
+            DropInsidePane(localList, "local-destination/");
+            await WaitForListsAsync(() => !HasRow(localList, "other.txt"));
+            if (Directory.Exists(localFolderSource) || !Directory.Exists(Path.Combine(localDropFolder, "local-source")) ||
+                !File.Exists(Path.Combine(localDropFolder, "other.txt")))
+                throw new InvalidOperationException("A local same-pane drop did not move the selected file and folder.");
+
+            remoteList.SelectedValue = "clipboard.txt";
+            DropInsidePane(remoteList, "clipboard-folder/");
+            await WaitForListsAsync(() => !HasRow(remoteList, "clipboard.txt"));
+            remoteList.SelectedValue = "clipboard-folder/";
+            Press(remoteList, Key.Enter);
+            await WaitForListsAsync(() => HasRow(remoteList, "clipboard.txt"));
+            Console.WriteLine("PASS SftpSamePaneDropsMoveFilesAndFolders");
+
+            var parents = buttons.Where(button => Equals(button.Content, App.Text("TransferParent"))).ToArray();
+            string driveRoot = Path.GetPathRoot(downloadTarget)!;
+            editors[0].Text = driveRoot;
+            Press(editors[0], Key.Enter);
+            await WaitForListsAsync(() => editors[0].Text == driveRoot && parents[0].IsEnabled);
+            parents[0].RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            while (!localList.IsEnabled || editors[0].Text.Length != 0) await Task.Delay(10, deadline.Token);
+            localList.SelectedValue = driveRoot;
+            long driveRevision = transfer.OperationRevision;
+            transfer.UpdateLayout();
+            var driveRow = (ListViewItem)localList.ItemContainerGenerator.ContainerFromItem(localList.SelectedItem);
+            if (RowIcon(localList, localList.SelectedIndex).Data is null || parents[0].IsEnabled || create[0].IsEnabled || upload.IsEnabled || download.IsEnabled ||
+                ApplicationCommands.Cut.CanExecute(null, localList) || ApplicationCommands.Copy.CanExecute(null, localList) ||
+                ApplicationCommands.Paste.CanExecute(null, localList) ||
+                transfer.CreateDragData(localList, localList.SelectedItem) is not null || await OpenFileMenuAsync(localList, driveRow))
+                throw new InvalidOperationException("The local drive list accepted a file action or still offered a parent.");
+            Press(localList, Key.Delete);
+            Press(localList, Key.F2);
+            remoteList.SelectedValue = "clipboard.txt";
+            var remoteDrag = transfer.CreateDragData(remoteList, remoteList.SelectedItem)
+                ?? throw new InvalidOperationException("The remote file could not start a drag.");
+            if (RouteDrag(driveRow, DragDrop.DragOverEvent, remoteDrag) != DragDropEffects.None ||
+                RouteDrag(driveRow, DragDrop.DropEvent, remoteDrag) != DragDropEffects.None || transfer.OperationRevision != driveRevision)
+                throw new InvalidOperationException("The local drive list accepted a drop or a mutation.");
+            Press(localList, Key.Enter);
+            await WaitForListsAsync(() => editors[0].Text == driveRoot);
+
+            while (editors[1].Text != "/")
+            {
+                string previous = editors[1].Text;
+                if (!parents[1].IsEnabled) throw new InvalidOperationException("A non-root remote folder had no parent action.");
+                parents[1].RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                await WaitForListsAsync(() => editors[1].Text != previous);
+            }
+            if (parents[1].IsEnabled) throw new InvalidOperationException("The remote root still offered a parent.");
+            var outside = new DataObject(DataFormats.FileDrop, new[] { Path.Combine(localDropFolder, "other.txt") });
+            if (editors.Any(editor => editor.AllowDrop) || RouteDrag(remoteList, DragDrop.DragEnterEvent, outside) != DragDropEffects.None ||
+                RouteDrag(remoteList, DragDrop.DropEvent, outside) != DragDropEffects.None)
+                throw new InvalidOperationException("The transfer window accepted an external drag.");
+            Console.WriteLine("PASS SftpDriveListAndRootNavigation");
+
+            void DropInsidePane(ListView list, string folderName)
+            {
+                transfer.UpdateLayout();
+                var folderItem = list.Items.Cast<object>().Single(row => RowName(row) == folderName);
+                var targetRow = (ListViewItem)list.ItemContainerGenerator.ContainerFromItem(folderItem);
+                IDataObject data = transfer.CreateDragData(list, list.SelectedItem)
+                    ?? throw new InvalidOperationException("The selected item could not start a same-pane drag.");
+                if (RouteDrag(list, DragDrop.DragOverEvent, data) != DragDropEffects.None ||
+                    RouteDrag(targetRow, DragDrop.DragOverEvent, data, ctrl) != DragDropEffects.None ||
+                    RouteDrag(targetRow, DragDrop.DragOverEvent, data) != DragDropEffects.Move ||
+                    RouteDrag(targetRow, DragDrop.DropEvent, data) != DragDropEffects.Move)
+                    throw new InvalidOperationException("A same-pane drop did not restrict moving to a folder row.");
+            }
+
+            async Task<MenuItem[]> OpenDropMenuAsync(ListView source, ListView destination)
+            {
+                long beforeDrop = transfer.OperationRevision;
+                var rightDrag = transfer.CreateDragData(source, source.SelectedItem, showMenu: true)
+                    ?? throw new InvalidOperationException("The selected file could not start a right-button drag.");
+                if (RouteDrag(destination, DragDrop.DragEnterEvent, rightDrag, alt, DragDropKeyStates.RightMouseButton) != DragDropEffects.Copy ||
+                    RouteDrag(destination, DragDrop.DropEvent, rightDrag, alt, button: 0) != DragDropEffects.Copy)
+                    throw new InvalidOperationException("The opposite pane did not accept the right-button drop.");
+                await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                var menu = typeof(FileTransferWindow).GetField("dropMenu",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)?.GetValue(transfer) as ContextMenu;
+                if (menu is not { IsOpen: true } || menu.PlacementTarget != destination || transfer.OperationRevision != beforeDrop)
+                    throw new InvalidOperationException("The right-button drop did not wait for a choice in the destination pane.");
+                var choices = menu.Items.OfType<MenuItem>().ToArray();
+                if (!choices.Select(item => item.Header).SequenceEqual(
+                    [App.Text("TransferCopyHere"), App.Text("TransferMoveHere"), App.Text("Cancel")]))
+                    throw new InvalidOperationException("The right-button drop menu did not offer Copy here, Move here, and Cancel in order.");
+                return choices;
+            }
+
             async Task WaitForListsAsync(Func<bool> condition)
             {
                 while (!localList.IsEnabled || !remoteList.IsEnabled || !create.All(button => button.IsEnabled) || !condition())
@@ -455,6 +612,17 @@ internal static partial class Program
 
             static bool HasRow(ListView list, string name) => list.Items.Cast<object>().Any(row => RowName(row) == name);
             static string? RowName(object row) => System.ComponentModel.TypeDescriptor.GetProperties(row)["Name"]?.GetValue(row) as string;
+            static System.Windows.Shapes.Path RowIcon(ListView list, int index) =>
+                FindIcon((ListViewItem)list.ItemContainerGenerator.ContainerFromIndex(index))
+                    ?? throw new InvalidOperationException("The transfer row did not render an icon.");
+
+            static System.Windows.Shapes.Path? FindIcon(DependencyObject visual)
+            {
+                if (visual is System.Windows.Shapes.Path { Width: 14 } icon) return icon;
+                for (int index = 0; index < System.Windows.Media.VisualTreeHelper.GetChildrenCount(visual); index++)
+                    if (FindIcon(System.Windows.Media.VisualTreeHelper.GetChild(visual, index)) is { } child) return child;
+                return null;
+            }
 
             static void InvokeMenu(ListView list, string key)
             {
@@ -489,9 +657,11 @@ internal static partial class Program
             IDataObject StartFileDrag() => transfer.CreateDragData(localList, localList.SelectedItem)
                 ?? throw new InvalidOperationException("The selected local file could not start a drag.");
 
-            static DragDropEffects RouteDrag(UIElement origin, RoutedEvent routedEvent, IDataObject data)
+            static DragDropEffects RouteDrag(UIElement origin, RoutedEvent routedEvent, IDataObject data,
+                DragDropKeyStates modifiers = 0, DragDropKeyStates button = DragDropKeyStates.LeftMouseButton)
             {
-                var args = CreateDragEvent(data, DragDropKeyStates.LeftMouseButton, DragDropEffects.Copy, origin, new Point());
+                var args = CreateDragEvent(data, button | modifiers,
+                    DragDropEffects.Copy | DragDropEffects.Move, origin, new Point());
                 args.RoutedEvent = routedEvent;
                 origin.RaiseEvent(args);
                 return args.Effects;

@@ -129,14 +129,16 @@ const server = new Server({ hostKeys: [key], algorithms }, client => {
       const fileTimes = new Map();
       const heldReads = [];
       if (ownership) data.set('/home/held-reads', Buffer.from('01234567'));
-      const directories = new Set(['/home']);
+      const directories = new Set(['/', '/home']);
       const directory = { mode: 0o40755, uid: 0, gid: 0, size: 0, atime: 1, mtime: 1 };
       const file = (size, path) => ({ ...directory, ...fileTimes.get(path), mode: 0o100644, size });
       const status = (id, code) => channel.status(id, code);
       channel.on('REALPATH', (id, path) => {
         if (username === 'tabtty-sftp' && path === '/fixture-oversize-frame')
           return client._protocol.channelData(channel.outgoing.id, Buffer.from([0, 4, 0, 1]));
-        channel.name(id, [{ filename: '/home', attrs: directory }]);
+        const resolved = require('node:path').posix.resolve('/home', path);
+        if (!directories.has(resolved)) return status(id, 2);
+        channel.name(id, [{ filename: resolved, attrs: directory }]);
       });
       channel.on('LSTAT', (id, path) => {
         if (ownership && path === '/fixture-held-read-count')
@@ -186,7 +188,7 @@ const server = new Server({ hostKeys: [key], algorithms }, client => {
         const parent = require('node:path').posix.dirname;
         const basename = require('node:path').posix.basename;
         channel.name(id, [{ filename: '.', attrs: directory }, ...Array.from(directories)
-          .filter(name => parent(name) === path).map(name => ({ filename: basename(name), attrs: directory })),
+          .filter(name => name !== path && parent(name) === path).map(name => ({ filename: basename(name), attrs: directory })),
           ...Array.from(data).filter(([name]) => parent(name) === path).map(([name, content]) =>
             ({ filename: basename(name), attrs: file(content.length, name) }))]);
       });

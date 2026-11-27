@@ -489,6 +489,10 @@
   <data name="TransferOutcomeCounts" xml:space="preserve"><value>Unresolved outcomes by type</value></data>
   <data name="TransferResultsLimit" xml:space="preserve"><value>Some results were omitted.</value></data>
   <data name="TransferDropTarget" xml:space="preserve"><value>Copy to {0}</value></data>
+  <data name="TransferMoveDropTarget" xml:space="preserve"><value>Move to {0}</value></data>
+  <data name="TransferChooseDropTarget" xml:space="preserve"><value>Drop in {0}</value></data>
+  <data name="TransferCopyHere" xml:space="preserve"><value>Copy here</value></data>
+  <data name="TransferMoveHere" xml:space="preserve"><value>Move here</value></data>
   <data name="TransferWorking" xml:space="preserve"><value>Working…</value></data>
   <data name="TransferFinished" xml:space="preserve"><value>Operation finished</value></data>
   <data name="TransferCancelled" xml:space="preserve"><value>Operation cancelled</value></data>
