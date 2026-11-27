@@ -1008,6 +1008,9 @@ initialization, open the ordinary picker with its empty list. Cancellation
 returns to the editor with its draft intact.
 [Vault initialization](vault-format.md#complete-vault-management-operations)
 
+The connection profile editor uses the same full-width heading background as
+the Settings tab in both light and dark themes.
+
 In both profile credential pickers, show **Manage vault** with any number of
 entries. Choosing it closes the picker, preserves the profile draft, and
 opens or activates the management tab in an available main window. If only

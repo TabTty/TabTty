@@ -57,8 +57,9 @@ internal sealed class ProfileEditorWindow : Window
 
     private void UpdatePageTitle(string displayName)
     {
-        if (TitleKey == "EditProfile") form.SetPageTitle("EditNamedProfile", PermissionDisplay.Literal(displayName));
-        else form.SetPageTitle(TitleKey);
+        if (TitleKey == "EditProfile")
+            form.SetPageTitle("EditNamedProfile", PermissionDisplay.Literal(displayName), useTitleBand: true);
+        else form.SetPageTitle(TitleKey, useTitleBand: true);
     }
 
     private void UpdateTitle() => Title = TitleKey switch

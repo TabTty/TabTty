@@ -192,8 +192,8 @@ internal sealed partial class MainWindow : Window
     {
         if (closing || SelectForm(titleKey)) return;
         var form = new FormView();
-        form.SetPageTitle(pageTitleKey ?? titleKey, useTabBackground: true);
         var item = new WindowTab(form) { FormKey = titleKey, Caption = Text(titleKey) };
+        form.SetPageTitle(pageTitleKey ?? titleKey, useTitleBand: true);
         form.Completed += _ =>
         {
             item.Host?.RemoveFormTab(item);

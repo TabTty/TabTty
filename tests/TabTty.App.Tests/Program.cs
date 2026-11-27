@@ -1461,7 +1461,8 @@ internal static partial class Program
 
             Color darkBackground = CheckManagementTitleBackgrounds();
             app.ThemeMode = ThemeMode.Light;
-            if (CheckManagementTitleBackgrounds() == darkBackground)
+            Color lightBackground = CheckManagementTitleBackgrounds();
+            if (lightBackground == darkBackground)
                 throw new InvalidOperationException("The management title backgrounds did not update when the theme changed.");
             app.ThemeMode = ThemeMode.Dark;
 
@@ -1479,12 +1480,25 @@ internal static partial class Program
                     form.UpdateLayout();
                     CheckNavigationEditorActionsLayout(form);
                 }
+                CheckProfileTitleBackground(darkBackground);
+                app.ThemeMode = ThemeMode.Light;
+                CheckProfileTitleBackground(lightBackground);
+                app.ThemeMode = ThemeMode.Dark;
                 if (Environment.GetEnvironmentVariable("TABTTY_MANAGEMENT_RENDER_DIR") is { } preview)
                 {
                     form.Measure(new Size(940, 660));
                     form.Arrange(new Rect(0, 0, 940, 660));
                     form.UpdateLayout();
                     RenderLayoutPreview(form, editor.Background, Path.Combine(preview, "NewProfile.png"));
+                }
+
+                void CheckProfileTitleBackground(Color expected)
+                {
+                    var heading = ProfileEditorHeading(form);
+                    if (heading.Parent is not Border { Background: SolidColorBrush background } band ||
+                        background.Color != expected || Math.Abs(band.ActualWidth - form.ActualWidth) > 1 ||
+                        Math.Abs(band.TranslatePoint(new Point(), form).Y) > 0.01)
+                        throw new InvalidOperationException($"The profile editor title did not match Settings in {app.ThemeMode} mode.");
                 }
             }
             finally { editor.Close(); }

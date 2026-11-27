@@ -174,26 +174,27 @@ internal sealed class FormView : Grid
         }
     }
 
-    public void SetPageTitle(string key, string? argument = null, bool useTabBackground = false)
+    public void SetPageTitle(string key, string? argument = null, bool useTitleBand = false)
     {
         pageTitleKey = key;
         pageTitleArgument = argument;
         if (pageTitle is null)
         {
-            fields.Margin = new Thickness(24, useTabBackground ? 0 : 20, 24, 24);
+            fields.Margin = new Thickness(24, useTitleBand ? 0 : 20, 24, 24);
             fields.MaxWidth = 1000;
             pageTitle = new TextBlock { FontSize = 26, FontWeight = FontWeights.SemiBold,
                 TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 18) };
             AutomationProperties.SetHeadingLevel(pageTitle, AutomationHeadingLevel.Level1);
-            if (useTabBackground)
+            if (useTitleBand)
             {
                 pageTitle.Margin = new Thickness(24, 20, 24, 18);
                 // Cover the gap under the tab without shifting the title or body.
+                double tabOverlap = Tab is null ? 0 : 1;
                 var header = new Border
                 {
                     Child = pageTitle,
-                    Margin = new Thickness(0, -1, 0, 0),
-                    Padding = new Thickness(0, 1, 0, 0),
+                    Margin = new Thickness(0, -tabOverlap, 0, 0),
+                    Padding = new Thickness(0, tabOverlap, 0, 0),
                 };
                 header.SetResourceReference(Border.BackgroundProperty, "TabViewItemHeaderBackgroundSelected");
                 DockPanel.SetDock(header, Dock.Top);

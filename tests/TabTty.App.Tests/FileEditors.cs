@@ -62,6 +62,8 @@ internal static partial class Program
                 throw new InvalidOperationException("The editor window did not use a fixed title.");
             if (heading.Text != string.Format(App.Text("EditNamedProfile"), expected))
                 throw new InvalidOperationException($"The editor heading did not show the saved profile name: {expected}.");
+            if (heading.Parent is not Border { Background: not null })
+                throw new InvalidOperationException("The editor heading did not have a themed background.");
         }
     }
 
