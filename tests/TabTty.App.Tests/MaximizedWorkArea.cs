@@ -1,5 +1,7 @@
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Interop;
 using System.Windows.Threading;
 using TabTty.App;
 
@@ -34,14 +36,24 @@ internal static partial class Program
         }
         finally { startupWindow.Close(); }
 
-        MainWindow CreateWindow() => new(app)
+        MainWindow CreateWindow()
         {
-            WindowStartupLocation = WindowStartupLocation.Manual,
-            Left = workArea.Left + 40,
-            Top = workArea.Top + 40,
-            Width = 640,
-            Height = 480,
-        };
+            var target = new MainWindow(app)
+            {
+                WindowStartupLocation = WindowStartupLocation.Manual,
+                Left = workArea.Left + 40,
+                Top = workArea.Top + 40,
+                Width = 640,
+                Height = 480,
+            };
+            target.SourceInitialized += (_, _) =>
+            {
+                nint handle = new WindowInteropHelper(target).Handle;
+                if (GetPropW(handle, "NonRudeHWND") != 1)
+                    throw new InvalidOperationException("The taskbar can treat the window as fullscreen when shown.");
+            };
+            return target;
+        }
 
         async Task CheckMaximizedAsync(MainWindow target)
         {
@@ -64,4 +76,7 @@ internal static partial class Program
             Math.Abs(left.Left - right.Left) <= 1 && Math.Abs(left.Top - right.Top) <= 1 &&
             Math.Abs(left.Right - right.Right) <= 1 && Math.Abs(left.Bottom - right.Bottom) <= 1;
     }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    private static extern nint GetPropW(nint window, string property);
 }

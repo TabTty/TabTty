@@ -1,11 +1,13 @@
 using System.ComponentModel;
 using System.Globalization;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using Microsoft.Win32;
 using TabTty.Core;
@@ -15,6 +17,7 @@ namespace TabTty.App;
 
 internal sealed partial class MainWindow : Window
 {
+    private const string NonFullscreenWindowProperty = "NonRudeHWND";
     private readonly App app;
     private readonly Func<bool> hasForeground;
     private readonly TerminalClosure terminalClosure;
@@ -24,6 +27,7 @@ internal sealed partial class MainWindow : Window
     private bool closing;
     private bool readyToClose;
     private bool closed;
+    private nint taskbarPropertyWindow;
     private static readonly DependencyProperty TabWheelRemainderProperty = DependencyProperty.RegisterAttached(
         "TabWheelRemainder", typeof(int), typeof(MainWindow), new PropertyMetadata(0));
     private Color? headerAccent;
@@ -44,8 +48,14 @@ internal sealed partial class MainWindow : Window
         };
         // Register before WindowChrome so right-clicking the caption can open the tab menu.
         SourceInitialized += (_, _) =>
-            System.Windows.Interop.HwndSource.FromHwnd(new System.Windows.Interop.WindowInteropHelper(this).Handle)
-                ?.AddHook(HandleWindowMessage);
+        {
+            nint handle = new WindowInteropHelper(this).Handle;
+            if (HwndSource.FromHwnd(handle) is not { } source) return;
+            source.AddHook(HandleWindowMessage);
+
+            // Keep the taskbar available when the maximized client area covers the monitor.
+            if (SetPropW(handle, NonFullscreenWindowProperty, 1)) taskbarPropertyWindow = handle;
+        };
         InitializeComponent();
         UpdateActiveHeaderShade();
         Icon = WindowIcons.App;
@@ -514,6 +524,11 @@ internal sealed partial class MainWindow : Window
 
     internal nint HandleWindowMessage(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
     {
+        if (message == 0x0002 && taskbarPropertyWindow == hwnd) // WM_DESTROY
+        {
+            RemovePropW(hwnd, NonFullscreenWindowProperty);
+            taskbarPropertyWindow = 0;
+        }
         if (message == 0x0046) // WM_WINDOWPOSCHANGING
             WindowPlacement.FitMaximizedWindowToWorkArea(hwnd, lParam);
         if (message is 0x007e or 0x02e0) // WM_DISPLAYCHANGE, WM_DPICHANGED
@@ -540,6 +555,13 @@ internal sealed partial class MainWindow : Window
         }
         return 0;
     }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetPropW(nint window, string property, nint value);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    private static extern nint RemovePropW(nint window, string property);
 
     private void OnTabStripMenuOpened(object sender, RoutedEventArgs args)
     {
