@@ -291,7 +291,9 @@
   <data name="AddHighlightRule" xml:space="preserve"><value>Create new rule</value></data>
   <data name="EditHighlightRule" xml:space="preserve"><value>Edit…</value></data>
   <data name="HighlightRuleEditorTitle" xml:space="preserve"><value>Highlight rule editor</value></data>
-  <data name="HighlightRulePriority" xml:space="preserve"><value>Highest priority at the top</value></data>
+  <data name="HighlightRulePriority" xml:space="preserve"><value>Priority</value></data>
+  <data name="HighlightRulePriorityHigh" xml:space="preserve"><value>High</value></data>
+  <data name="HighlightRulePriorityLow" xml:space="preserve"><value>Low</value></data>
   <data name="MoveRuleUp" xml:space="preserve"><value>Move rule up</value></data>
   <data name="MoveRuleDown" xml:space="preserve"><value>Move rule down</value></data>
   <data name="RemoveHighlightRule" xml:space="preserve"><value>Delete</value></data>

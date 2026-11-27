@@ -336,11 +336,14 @@ attributes. A deleted set also produces the existing missing-set warning.
 
 ### Rule list and priority
 
-Show rules in evaluation order, with the first applicable rule winning. To the
-right of the list, stack the `▲` button, **Highest priority at the top** label
-and `▼` button. Give the buttons localized accessible names and tooltips. They
-move the selected rule by one position and are enabled when a move in that
-direction is possible.
+Show rules in evaluation order, with the first applicable rule winning. Align
+the top of the `▲` button and the bottom of the `▼` button with the top and
+bottom edges of the rule list frame. Place **High** directly below `▲`, **Low**
+directly above `▼`, and **Priority** at the vertical midpoint. Connect **Priority**
+to **High** with an upward arrow and to **Low** with a downward arrow. Both
+arrows stretch with the height of the list. Give the buttons localized
+accessible names and tooltips. They move the selected rule by one position
+and are enabled when a move in that direction is possible.
 
 On a rule row, the context menu offers **Edit…**, **Copy** and **Delete**.
 Double-click a rule to edit it. **Copy** duplicates the rule's fields with a

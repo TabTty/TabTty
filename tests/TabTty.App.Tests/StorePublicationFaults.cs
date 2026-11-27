@@ -263,6 +263,14 @@ internal static partial class Program
             if (!(enabled.TranslatePoint(new Point(), editor).Y < createRule.TranslatePoint(new Point(), editor).Y &&
                 createRule.TranslatePoint(new Point(), editor).Y < ruleList.TranslatePoint(new Point(), editor).Y))
                 throw new InvalidOperationException("The rule creation button was not between Enabled and the rule list.");
+            double initialHeight = editor.Height;
+            var tallArrows = CheckPriorityLayout(editor, ruleList);
+            editor.Height = editor.MinHeight;
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            var shortArrows = CheckPriorityLayout(editor, ruleList);
+            if (tallArrows.Upper <= shortArrows.Upper || tallArrows.Lower <= shortArrows.Lower)
+                throw new InvalidOperationException("Both priority arrows must change length when the editor is resized.");
+            editor.Height = initialHeight;
             var name = FindControls<TextBox>(editor).Single(box => !box.IsReadOnly);
             name.Text = "Saved set";
             Click(await VisibleButtonAsync(editor, "Save"));
@@ -310,6 +318,34 @@ internal static partial class Program
                     if (FindSetCheckBox(VisualTreeHelper.GetChild(visual, index)) is { } checkbox) return checkbox;
                 return null;
             }
+        }
+
+        static (double Upper, double Lower) CheckPriorityLayout(Window editor, ListView ruleList)
+        {
+            editor.UpdateLayout();
+            var frame = Bounds(MainWindow.Ancestor<Border>(ruleList)!);
+            var up = Bounds(FindControls<Button>(editor).Single(button => Equals(button.Content, "▲")));
+            var down = Bounds(FindControls<Button>(editor).Single(button => Equals(button.Content, "▼")));
+            var high = Bounds(Label("HighlightRulePriorityHigh"));
+            var low = Bounds(Label("HighlightRulePriorityLow"));
+            var priorityLabel = Label("HighlightRulePriority");
+            var priority = Bounds(priorityLabel);
+            var arrows = ((Grid)priorityLabel.Parent).Children.OfType<Grid>()
+                .OrderBy(arrow => Bounds(arrow).Top).ToArray();
+            var upper = Bounds(arrows[0]);
+            var lower = Bounds(arrows[1]);
+            if (!Aligned(up.Top, frame.Top) || !Aligned(down.Bottom, frame.Bottom) ||
+                !Aligned(up.Bottom, high.Top) || !Aligned(low.Bottom, down.Top) ||
+                !Aligned(priority.Top + priority.Height / 2, frame.Top + frame.Height / 2) ||
+                !Aligned(upper.Top, high.Bottom) || !Aligned(upper.Bottom, priority.Top) ||
+                !Aligned(lower.Top, priority.Bottom) || !Aligned(lower.Bottom, low.Top))
+                throw new InvalidOperationException($"The priority column was not aligned with the rule list. " +
+                    $"Frame {frame}, up {up}, high {high}, upper {upper}, priority {priority}, lower {lower}, low {low}, down {down}.");
+            return (upper.Height, lower.Height);
+
+            TextBlock Label(string key) => FindControls<TextBlock>(editor).Single(label => label.Text == App.Text(key));
+            Rect Bounds(FrameworkElement element) => new(element.TranslatePoint(new Point(), editor), element.RenderSize);
+            static bool Aligned(double first, double second) => Math.Abs(first - second) <= 1;
         }
 
         async Task<ListView> VisibleListAsync(DependencyObject parent, string key)

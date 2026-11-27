@@ -6,6 +6,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Shapes;
 using System.Windows.Threading;
 using TabTty.Core;
 using static TabTty.App.App;
@@ -35,7 +36,7 @@ internal sealed class HighlightSetEditorWindow : Window
         Width = 820;
         Height = 650;
         MinWidth = 520;
-        MinHeight = 510;
+        MinHeight = 600;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         SetResourceReference(BackgroundProperty, "WindowBackground");
         SetResourceReference(ForegroundProperty, "WindowForeground");
@@ -146,13 +147,25 @@ internal sealed class HighlightSetEditorWindow : Window
         };
         frame.SetResourceReference(Border.BorderBrushProperty, "SurfaceStrokeColorDefaultBrush");
 
-        var side = new StackPanel { Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
-        var priority = new TextBlock { Margin = new Thickness(0, 6, 0, 6), HorizontalAlignment = HorizontalAlignment.Center };
         Button up = DirectionButton("▲", "MoveRuleUp", -1);
-        side.Children.Add(up);
-        side.Children.Add(priority);
         Button down = DirectionButton("▼", "MoveRuleDown", 1);
-        side.Children.Add(down);
+        var high = new TextBlock { HorizontalAlignment = HorizontalAlignment.Center };
+        var priority = new TextBlock { HorizontalAlignment = HorizontalAlignment.Center };
+        var low = new TextBlock { HorizontalAlignment = HorizontalAlignment.Center };
+        var side = new Grid { Margin = new Thickness(10, 0, 0, 0), UseLayoutRounding = true };
+        FrameworkElement[] priorityColumn =
+            [up, high, PriorityArrow(pointsUp: true), priority, PriorityArrow(pointsUp: false), low, down];
+        for (int row = 0; row < priorityColumn.Length; row++)
+        {
+            FrameworkElement element = priorityColumn[row];
+            side.RowDefinitions.Add(new RowDefinition
+            {
+                Height = row is 2 or 4 ? new GridLength(1, GridUnitType.Star) : GridLength.Auto,
+                MinHeight = element.MinHeight,
+            });
+            Grid.SetRow(element, row);
+            side.Children.Add(element);
+        }
         var display = new DockPanel { Margin = new Thickness(24, 0, 24, 0) };
         DockPanel.SetDock(side, Dock.Right);
         display.Children.Add(side);
@@ -165,7 +178,9 @@ internal sealed class HighlightSetEditorWindow : Window
         form.AddLocalizedUpdate(() =>
         {
             columns.UpdateHeaders();
+            high.Text = Text("HighlightRulePriorityHigh");
             priority.Text = Text("HighlightRulePriority");
+            low.Text = Text("HighlightRulePriorityLow");
             impactField.SetCaption(Text("AffectedTabs"));
             AutomationProperties.SetName(list, Text("HighlightRules"));
         });
@@ -289,6 +304,24 @@ internal sealed class HighlightSetEditorWindow : Window
             list.SelectedItem = rule;
             list.ScrollIntoView(rule);
         }
+    }
+
+    private static Grid PriorityArrow(bool pointsUp)
+    {
+        var arrow = new Grid { MinHeight = 5, IsHitTestVisible = false };
+        var shaft = new Border { Width = 1, HorizontalAlignment = HorizontalAlignment.Center };
+        shaft.SetResourceReference(Border.BackgroundProperty, "WindowForeground");
+        var head = new Polygon
+        {
+            Points = pointsUp ? [new Point(4, 0), new Point(8, 5), new Point(0, 5)]
+                : [new Point(0, 0), new Point(8, 0), new Point(4, 5)],
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = pointsUp ? VerticalAlignment.Top : VerticalAlignment.Bottom,
+        };
+        head.SetResourceReference(Shape.FillProperty, "WindowForeground");
+        arrow.Children.Add(shaft);
+        arrow.Children.Add(head);
+        return arrow;
     }
 
     private void EnableRuleDrag(ListView list, DetailsColumns columns, Grid area, Border blank,
