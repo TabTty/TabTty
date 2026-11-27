@@ -140,7 +140,7 @@ internal static partial class Program
             await Wait(() => app.Windows.OfType<MacroDialogWindow>().Any(window => window.IsVisible));
             var macroQuestion = app.Windows.OfType<MacroDialogWindow>().Single();
             CheckMacroLaunch(macroTab.HasPendingDecision && !macroQuestion.ShowActivated && !macroQuestion.IsActive &&
-                FindControls<TextBox>(macroQuestion).Single().IsKeyboardFocused == false &&
+                FindControls<TextBox>(macroQuestion).Single(input => !input.IsReadOnly).IsKeyboardFocused == false &&
                 FindControls<Button>(macroQuestion).Single(button => button.IsDefault).Content.Equals(App.Text("No")),
                 "A background macro question changed focus or its defined controls.");
             run.Stop();

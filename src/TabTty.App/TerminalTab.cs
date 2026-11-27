@@ -618,8 +618,8 @@ internal sealed partial class TerminalTab : UserControl
         {
             var form = new MainWindow.FormWindow(owner, Text("SshPasswordSource"));
             var password = new PasswordBox { MaxLength = 16 * 1024 };
-            form.AddField("SshDestination", new TextBox { Text = request.Destination.ToString(), IsReadOnly = true });
-            form.AddField("SshUsername", new TextBox { Text = PermissionDisplay.Literal(request.Username), IsReadOnly = true });
+            form.AddField("SshDestination", new DialogText(request.Destination.ToString()));
+            form.AddField("SshUsername", new DialogText(PermissionDisplay.Literal(request.Username)));
             form.AddField("VaultPassword", password);
             form.Loaded += (_, _) => { if (form.ShowActivated) password.Focus(); };
             form.AddButtons(() => { }, acceptKey: "Authenticate");
@@ -637,13 +637,8 @@ internal sealed partial class TerminalTab : UserControl
         var form = new MainWindow.FormWindow(owner, Text("KeyboardInteractive")) { Width = 540 };
         form.AddPinnedNotice(string.Format(CultureInfo.CurrentCulture, Text("SshServerQuestions"), challenge.Destination));
         if (challenge.Name.Length > 0 || challenge.Instruction.Length > 0)
-            form.AddField("SshInstructions", new TextBox
-            {
-                Text = string.Join(Environment.NewLine, new[] { challenge.Name, challenge.Instruction }
-                    .Where(value => value.Length > 0)),
-                IsReadOnly = true, TextWrapping = TextWrapping.Wrap, MaxHeight = 160,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            });
+            form.AddField("SshInstructions", new DialogText(string.Join(Environment.NewLine,
+                new[] { challenge.Name, challenge.Instruction }.Where(value => value.Length > 0)), 160));
         var inputs = new List<Control>();
         foreach (SshPrompt prompt in challenge.Prompts)
         {
@@ -792,9 +787,8 @@ internal sealed partial class TerminalTab : UserControl
         {
             if (Window.GetWindow(this) is not { } owner) return;
             var form = new MainWindow.FormWindow(owner, Text("ConnectionDetails")) { Width = 650 };
-            form.AddField("ConnectionDetails", new TextBox { Text = active.ConnectionDetails, IsReadOnly = true,
-                TextWrapping = TextWrapping.Wrap, MaxHeight = 350, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
-            form.AddButtons(() => { }, acceptKey: "CloseDialog");
+            form.AddDisplay("ConnectionDetails", new DialogText(active.ConnectionDetails, active.IsSsh ? 350 : null));
+            form.AddCloseAction();
             ((App)Application.Current).Modal(form.ShowDialog);
         };
         menu.Items.Add(details);
@@ -926,12 +920,8 @@ internal sealed partial class TerminalTab : UserControl
     {
         if (Window.GetWindow(this) is not { } owner) return;
         var form = new MainWindow.FormWindow(owner, Text("SshMessages")) { Width = 650 };
-        form.AddField("SshMessages", new TextBox
-        {
-            Text = string.Join(Environment.NewLine, sshMessages), IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
-            MinHeight = 80, MaxHeight = 360, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-        });
-        form.AddButtons(() => { }, acceptKey: "CloseDialog");
+        form.AddDisplay("SshMessages", new DialogText(string.Join(Environment.NewLine, sshMessages), 360) { MinHeight = 80 });
+        form.AddCloseAction();
         ((App)Application.Current).Modal(form.ShowDialog);
     }
 
@@ -1621,42 +1611,45 @@ internal sealed partial class TerminalTab : UserControl
         // Include escaped captions, their joined text and the read-only controls.
         long captionMemory = targets.Sum(name => 128L + 64L * name.Length);
         using var previewMemory = ApplicationResources.TerminalState.Reserve(1024 * 1024 + captionMemory);
-        var previewText = new TextBox
+        form.AddField("PasteTargets", new DialogText(string.Join(Environment.NewLine, targets),
+            targets.Count > 1 ? 130 : null));
+        form.AddField("PasteCountsLabel", new DialogText(summary) { IsTabStop = false });
+        var previewText = new DialogText("", 260)
         {
-            IsReadOnly = true,
-            IsUndoEnabled = false,
-            AcceptsReturn = true,
-            MaxHeight = 260,
             MinHeight = 100,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            TextWrapping = TextWrapping.NoWrap,
         };
         ReadOnlyPreview.Add(form, "PastePreview", previewText, paste.Text);
-
-        form.AddField("PasteCountsLabel", new TextBox { Text = summary, IsReadOnly = true });
-        form.AddField("PasteTargets", new TextBox
-        {
-            Text = string.Join(Environment.NewLine, targets), TextWrapping = TextWrapping.Wrap,
-            IsReadOnly = true, MaxHeight = 130, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-        });
         var character = new TextBox { Text = characterDelay.ToString(CultureInfo.InvariantCulture) };
         var line = new TextBox { Text = lineDelay.ToString(CultureInfo.InvariantCulture) };
         var rememberDelays = new CheckBox { IsChecked = remember };
         form.AddField("CharacterDelay", character);
+        var characterError = form.AddValidation(character);
         form.AddField("LineDelay", line);
-        form.AddField("RememberDelays", rememberDelays);
-        form.AddButtons(() =>
+        var lineError = form.AddValidation(line);
+        character.TextChanged += (_, _) => characterError("");
+        line.TextChanged += (_, _) => lineError("");
+        form.AddField("RememberDelays", rememberDelays, inlineCheckBox: true);
+        form.AddAsyncButtons(() => Task.FromResult(Validate()), acceptKey: "SendPaste", cancelDefault: true);
+        await PresentDecisionAsync(form, token);
+        return form.Accepted ? new(characterDelay, lineDelay, rememberDelays.IsChecked == true) : null;
+
+        bool Validate()
         {
-            if (!int.TryParse(character.Text, NumberStyles.None, CultureInfo.InvariantCulture, out int parsedCharacter) ||
-                !int.TryParse(line.Text, NumberStyles.None, CultureInfo.InvariantCulture, out int parsedLine) ||
-                parsedCharacter is < 0 or > 10000 || parsedLine is < 0 or > 10000)
-                throw new ArgumentException(Text("BadDelay"));
+            bool validCharacter = TryDelay(character.Text, out int parsedCharacter);
+            bool validLine = TryDelay(line.Text, out int parsedLine);
+            characterError(validCharacter ? "" : Text("BadDelay"));
+            lineError(validLine ? "" : Text("BadDelay"));
+            if (!validCharacter || !validLine) return false;
             characterDelay = parsedCharacter;
             lineDelay = parsedLine;
-            remember = rememberDelays.IsChecked == true;
-        }, acceptKey: "SendPaste", cancelDefault: true);
-        await PresentDecisionAsync(form, token);
-        return form.Accepted ? new(characterDelay, lineDelay, remember) : null;
+            return true;
+        }
+
+        static bool TryDelay(string value, out int milliseconds) =>
+            int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out milliseconds) &&
+            milliseconds is >= 0 and <= 10000;
     }
 
     private async Task SendAsync(TerminalInput input)

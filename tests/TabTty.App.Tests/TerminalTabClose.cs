@@ -54,7 +54,7 @@ internal static partial class Program
             }
             var wait = FindControls<Button>(dialog).SingleOrDefault(button => Equals(button.Content, App.Text("ContinueWaiting")));
             var answer = wait is null
-                ? FindControls<Button>(dialog).SingleOrDefault(button => Equals(button.Content, App.Text("Yes")))
+                ? FindControls<Button>(dialog).SingleOrDefault(button => Equals(button.Content, App.Text("DisconnectAndClose")))
                 : questions == 0 ? wait : FindControls<Button>(dialog).Single(button => Equals(button.Content, App.Text("CloseWithLoss")));
             if (answer is null) return;
             lastQuestion = dialog;
@@ -153,7 +153,7 @@ internal static partial class Program
             using TcpClient oldPeer = await ConnectAsync();
             object oldGeneration = terminal.ConnectionGeneration;
             close.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            Button approve = await WaitForDialogButtonAsync("Yes");
+            Button approve = await WaitForDialogButtonAsync("DisconnectAndClose");
             oldPeer.Client.Shutdown(SocketShutdown.Send);
             await terminal.Completion.WaitAsync(deadline.Token);
             using TcpClient newPeer = await ConnectAsync();
@@ -228,9 +228,9 @@ internal static partial class Program
         dialogTimer.Tick += (_, _) =>
         {
             var dialog = host.OwnedWindows.Cast<Window>().FirstOrDefault(window =>
-                window.IsVisible && window.Title == host.Title);
+                window.IsVisible && window.Title == App.Text("DisconnectAndClose"));
             if (dialog is null) return;
-            var answer = FindControls<Button>(dialog).Single(button => Equals(button.Content, App.Text(accept ? "Yes" : "No")));
+            var answer = FindControls<Button>(dialog).Single(button => Equals(button.Content, App.Text(accept ? "DisconnectAndClose" : "Cancel")));
             reviews++;
             close.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             answer.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -333,7 +333,7 @@ internal static partial class Program
             }
             bool approve = ++reviews == 1 || acceptWindow;
             if (reviews == 2) secondReviewedWhileFirstPending = !first.Completion.IsCompleted;
-            FindControls<Button>(dialog).Single(button => Equals(button.Content, App.Text(approve ? "Yes" : "No")))
+            FindControls<Button>(dialog).Single(button => Equals(button.Content, App.Text(approve ? "DisconnectAndClose" : "Cancel")))
                 .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         };
         try

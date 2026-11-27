@@ -212,6 +212,17 @@
   <data name="VaultAlreadyOpen" xml:space="preserve"><value>今回の起動では、すでに vault のロックが解除されています。</value></data>
   <data name="VaultStateInvalid" xml:space="preserve"><value>vault の選択設定が無効です。</value></data>
   <data name="CloseDialog" xml:space="preserve"><value>閉じる</value></data>
+  <data name="DisconnectAndClose" xml:space="preserve"><value>切断して閉じる</value></data>
+  <data name="StopWorkAndClose" xml:space="preserve"><value>処理を中止して閉じる</value></data>
+  <data name="DiscardAndClose" xml:space="preserve"><value>破棄して閉じる</value></data>
+  <data name="UseTemporaryDefaults" xml:space="preserve"><value>一時的な既定値を使う</value></data>
+  <data name="NoSavedPasswords" xml:space="preserve"><value>保存済みのパスワードはありません。</value></data>
+  <data name="CreateTransferFolder" xml:space="preserve"><value>フォルダーを作成</value></data>
+  <data name="TransferIncoming" xml:space="preserve"><value>転送元のファイル</value></data>
+  <data name="TransferExisting" xml:space="preserve"><value>既存のファイル</value></data>
+  <data name="TransferFilePath" xml:space="preserve"><value>ファイルのパス</value></data>
+  <data name="TransferPermanentlyDelete" xml:space="preserve"><value>完全に削除</value></data>
+  <data name="PendingOperationReports" xml:space="preserve"><value>未確認の操作結果：{0} 件</value></data>
   <data name="NewSsh" xml:space="preserve"><value>新規SSHプロファイル</value></data>
   <data name="SshUsername" xml:space="preserve"><value>SSHユーザー名</value></data>
   <data name="SshPasswordSource" xml:space="preserve"><value>パスワード認証</value></data>
@@ -456,13 +467,13 @@
   <data name="TransferCancelled" xml:space="preserve"><value>処理を中止しました</value></data>
   <data name="TransferProgress" xml:space="preserve"><value>{0} · {1} / {2} バイト</value></data>
   <data name="TransferUnavailable" xml:space="preserve"><value>取得できません</value></data>
-  <data name="TransferConflict" xml:space="preserve"><value>転送先に同名のファイルがあります。&#10;&#10;転送元&#10;{0}&#10;{1} バイト · {2}&#10;&#10;既存のファイル&#10;{3}&#10;{4} バイト · {5}</value></data>
+  <data name="TransferConflict" xml:space="preserve"><value>転送先に同名のファイルがあります。</value></data>
   <data name="TransferOverwrite" xml:space="preserve"><value>上書き</value></data>
   <data name="TransferSkip" xml:space="preserve"><value>スキップ</value></data>
   <data name="TransferMore" xml:space="preserve"><value>ほか {0} 件</value></data>
-  <data name="TransferDeleteLocal" xml:space="preserve"><value>手元の PC から選択した項目を削除しますか？ フォルダーの中身も対象です。&#10;&#10;{0}&#10;{1}</value></data>
-  <data name="TransferDeleteRemote" xml:space="preserve"><value>接続先から選択した項目を完全に削除しますか？ フォルダーの中身も対象です。&#10;&#10;{0}&#10;{1}</value></data>
-  <data name="TransferDeletePermanent" xml:space="preserve"><value>ごみ箱に移動できません。この項目とその中身を完全に削除しますか？&#10;&#10;{0}</value></data>
+  <data name="TransferDeleteLocal" xml:space="preserve"><value>手元の PC から選択した項目を削除しますか？ フォルダーの中身も対象です。</value></data>
+  <data name="TransferDeleteRemote" xml:space="preserve"><value>接続先から選択した項目を完全に削除しますか？ フォルダーの中身も対象です。</value></data>
+  <data name="TransferDeletePermanent" xml:space="preserve"><value>ごみ箱に移動できません。この項目とその中身を完全に削除しますか？</value></data>
   <data name="TransferCloseBusy" xml:space="preserve"><value>処理を中止して転送画面を閉じますか？</value></data>
   <data name="TransferSkipped" xml:space="preserve"><value>スキップ</value></data>
   <data name="TransferSkippedType" xml:space="preserve"><value>スキップ · リンクまたは未対応の項目</value></data>

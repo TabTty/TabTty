@@ -22,7 +22,7 @@ internal static class LocalState
         {
             if (ThemedMessageBox.Show(App.Text("UseTemporaryState"), "TabTty",
                 System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Warning,
-                System.Windows.MessageBoxResult.No) != System.Windows.MessageBoxResult.Yes) return false;
+                System.Windows.MessageBoxResult.No, acceptKey: "UseTemporaryDefaults") != System.Windows.MessageBoxResult.Yes) return false;
             temporaryDefaults = true;
             return true;
         }

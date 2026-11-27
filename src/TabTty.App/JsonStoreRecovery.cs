@@ -58,20 +58,21 @@ internal static class JsonStoreRecovery
                 InitialDirectory = LocalState.DirectoryPath, FileName = System.IO.Path.GetFileName(store.Path) + ".bak" };
             if (app.Modal(() => picker.ShowDialog(form.OwnerWindow)) != true) return;
             byte[]? original = await Task.Run(() => FileDigest(store.Path));
-            if (!form.IsLoaded || !Confirm(store)) return;
+            if (!form.IsLoaded || !Confirm(store, "RestoreStoreBackup", picker.FileName)) return;
             await RunAsync(store, validate => Restore(store.Path, picker.FileName, original, validate, store.SanitizeBackup));
         });
         form.AddAsyncAction("RecreateStore", async () =>
         {
             if (choice.SelectedItem is not Store store) return;
             byte[]? original = await Task.Run(() => FileDigest(store.Path));
-            if (!form.IsLoaded || !Confirm(store)) return;
+            if (!form.IsLoaded || !Confirm(store, "RecreateStore")) return;
             await RunAsync(store, validate => Commit(store.Path, store.Defaults(), original, recovery: true,
                 validate));
         });
-        bool Confirm(Store store) => app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow,
-            $"{Text("StoreRecoveryWarning")}\n\n{store.Name}\n{store.Path}", Text("RecoverStores"),
-            MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No)) == MessageBoxResult.Yes;
+        bool Confirm(Store store, string action, string? backup = null) => app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow,
+            Text("StoreRecoveryWarning"), Text(action),
+            MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No, acceptKey: action,
+            context: new DialogText(backup is null ? $"{store.Name}\n{store.Path}" : $"{store.Name}\n{store.Path}\n\n{backup}"))) == MessageBoxResult.Yes;
 
         async Task RunAsync(Store store, Action<Action<string>> action)
         {

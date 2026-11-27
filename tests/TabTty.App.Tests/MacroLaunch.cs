@@ -65,7 +65,7 @@ internal static partial class Program
             CheckMacroLaunch(run.IsActive, "Resetting macro trust ended an admitted run.");
             if (!ReferenceEquals(prompt.Owner, window) || !window.IsEnabled)
                 throw new InvalidOperationException("The macro dialog disabled or lost its host.");
-            if (!FindControls<TextBlock>(prompt).Any(block => block.Text == "A B"))
+            if (!FindControls<DialogText>(prompt).Any(block => block.Text == "A B"))
                 throw new InvalidOperationException("The macro did not receive the launch argument.");
             var ok = FindControls<Button>(prompt).Single(button => Equals(button.Content, App.Text("OK")));
             var cancel = FindControls<Button>(prompt).Single(button => Equals(button.Content, App.Text("Cancel")));

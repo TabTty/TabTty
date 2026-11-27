@@ -691,11 +691,9 @@ internal sealed partial class AiCollaboration(App app, TimeProvider? clock = nul
         string configuration = JsonSerializer.Serialize(new { mcpServers = new { tabtty = new { command = bridge, args = new[] { "--stdio" } } } },
             new JsonSerializerOptions { WriteIndented = true });
         var form = new MainWindow.FormWindow(owner, Text("AiSetup")) { Width = 670 };
-        form.AddField("AiSetupInstructions", new TextBox { Text = Text("AiSetupHelp"), TextWrapping = TextWrapping.Wrap,
-            IsReadOnly = true, BorderThickness = new Thickness(0) });
-        form.AddField("AiSetupConfiguration", new TextBox { Text = configuration, IsReadOnly = true,
-            AcceptsReturn = true, TextWrapping = TextWrapping.Wrap });
-        form.AddButtons(() => { }, acceptKey: "CloseDialog");
+        form.AddNotice("AiSetupHelp");
+        form.AddField("AiSetupConfiguration", new DialogText(configuration, 200));
+        form.AddCloseAction();
         app.Modal(form.ShowDialog);
     }
 

@@ -8,29 +8,35 @@ namespace TabTty.App;
 internal static class ThemedMessageBox
 {
     public static MessageBoxResult Show(string message, string title, MessageBoxButton buttons = MessageBoxButton.OK,
-        MessageBoxImage icon = MessageBoxImage.None, MessageBoxResult defaultResult = MessageBoxResult.None) =>
-        Show(null, message, title, buttons, icon, defaultResult);
+        MessageBoxImage icon = MessageBoxImage.None, MessageBoxResult defaultResult = MessageBoxResult.None,
+        string? acceptKey = null) =>
+        Show(null, message, title, buttons, icon, defaultResult, acceptKey: acceptKey);
 
     public static MessageBoxResult Show(Window? owner, string message, string title,
         MessageBoxButton buttons = MessageBoxButton.OK, MessageBoxImage icon = MessageBoxImage.None,
-        MessageBoxResult defaultResult = MessageBoxResult.None, ImageSource? windowIcon = null)
+        MessageBoxResult defaultResult = MessageBoxResult.None, ImageSource? windowIcon = null,
+        string? acceptKey = null, FrameworkElement? context = null)
     {
         MessageBoxResult result = DismissalResult(buttons);
         Window dialog = Create(owner, message, title, buttons, icon, defaultResult, selected => result = selected,
-            windowIcon: windowIcon);
+            label: acceptKey is null ? null : DecisionLabels(acceptKey), windowIcon: windowIcon, context: context);
         dialog.ShowDialog();
         return result;
     }
 
     public static MessageBoxResult ShowVault(Window? owner, string message, string title,
         MessageBoxButton buttons = MessageBoxButton.OK, MessageBoxImage icon = MessageBoxImage.None,
-        MessageBoxResult defaultResult = MessageBoxResult.None) =>
-        Show(owner, message, title, buttons, icon, defaultResult, WindowIcons.Vault);
+        MessageBoxResult defaultResult = MessageBoxResult.None,
+        string? acceptKey = null, FrameworkElement? context = null) =>
+        Show(owner, message, title, buttons, icon, defaultResult, WindowIcons.Vault, acceptKey, context);
+
+    internal static Func<MessageBoxResult, string> DecisionLabels(string acceptKey, string dismissKey = "Cancel") =>
+        choice => Text(choice is MessageBoxResult.Yes or MessageBoxResult.OK ? acceptKey : dismissKey);
 
     internal static Window Create(Window? owner, string message, string title, MessageBoxButton buttons,
         MessageBoxImage icon, MessageBoxResult defaultResult, Action<MessageBoxResult> select,
         Func<MessageBoxResult, string>? label = null, ImageSource? windowIcon = null,
-        string? details = null, bool modelessDecision = false)
+        string? details = null, bool modelessDecision = false, FrameworkElement? context = null)
     {
         owner = owner is { IsVisible: true } ? owner : null;
         var dialog = new Window
@@ -39,24 +45,14 @@ internal static class ThemedMessageBox
             Width = 480, SizeToContent = SizeToContent.Height,
             ResizeMode = ResizeMode.NoResize, ShowInTaskbar = owner is null,
             WindowStartupLocation = owner is null ? WindowStartupLocation.CenterScreen : WindowStartupLocation.CenterOwner,
-            MaxWidth = Math.Max(300, SystemParameters.WorkArea.Width - 32),
-            MaxHeight = Math.Max(240, SystemParameters.WorkArea.Height - 32),
         };
+        DialogLayout.SetWindowBounds(dialog);
 #pragma warning disable WPF0001 // WPF Fluent theme integration.
         ThemeMode mode = Application.Current?.ThemeMode ?? ThemeMode.System;
         dialog.ThemeMode = mode == ThemeMode.None ? ThemeMode.System : mode;
 #pragma warning restore WPF0001
         dialog.SetResourceReference(Control.BackgroundProperty, "WindowBackground");
         dialog.SetResourceReference(Control.ForegroundProperty, "WindowForeground");
-
-        var layout = new DockPanel { Margin = new Thickness(20) };
-        var actions = new StackPanel
-        {
-            Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right,
-            Margin = new Thickness(0, 16, 0, 0),
-        };
-        DockPanel.SetDock(actions, Dock.Bottom);
-        layout.Children.Add(actions);
 
         var body = new DockPanel();
         string? glyph = icon switch
@@ -79,19 +75,19 @@ internal static class ThemedMessageBox
         }
         var content = new StackPanel();
         content.Children.Add(new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap });
+        if (context is not null)
+        {
+            context.Margin = new Thickness(0, 8, 0, 0);
+            content.Children.Add(context);
+        }
         if (!string.IsNullOrEmpty(details))
             content.Children.Add(new Expander
             {
                 Header = Text("TransferAllUnresolved"),
-                Content = new TextBox { Text = details, IsReadOnly = true, TextWrapping = TextWrapping.Wrap },
+                Content = new DialogText(details, 250),
             });
-        body.Children.Add(new ScrollViewer
-        {
-            Content = content,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            MaxHeight = Math.Max(100, SystemParameters.WorkArea.Height - 180),
-        });
-        layout.Children.Add(body);
+        body.Children.Add(content);
+        var layout = new DialogLayout(body, new Thickness(20));
         dialog.Content = layout;
 
         MessageBoxResult[] choices = buttons switch
@@ -104,11 +100,11 @@ internal static class ThemedMessageBox
         MessageBoxResult initial = choices.Contains(defaultResult) ? defaultResult : choices[0];
         foreach (MessageBoxResult choice in choices)
         {
-            var button = new Button
+            var button = DialogLayout.StyleAction(new Button
             {
-                Content = label?.Invoke(choice) ?? Text(choice.ToString()), MinWidth = 84, Margin = new Thickness(8, 0, 0, 0),
+                Content = label?.Invoke(choice) ?? Text(choice.ToString()), MinWidth = 84,
                 IsDefault = choice == initial, IsCancel = choice == DismissalResult(buttons),
-            };
+            });
             button.Click += (_, _) =>
             {
                 if (!dialog.IsVisible) return;
@@ -117,7 +113,7 @@ internal static class ThemedMessageBox
                 else dialog.DialogResult = true;
             };
             if (button.IsDefault) dialog.Loaded += (_, _) => { if (dialog.ShowActivated) button.Focus(); };
-            actions.Children.Add(button);
+            layout.Actions.Children.Add(button);
         }
         return dialog;
     }

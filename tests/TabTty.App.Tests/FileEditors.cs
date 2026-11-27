@@ -331,10 +331,10 @@ internal static partial class Program
 
             var close = FindControls<Button>(form).Single(button => Equals(button.Content, App.Text("CloseDialog")));
             _ = app.Dispatcher.BeginInvoke(() => close.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)));
-            await RespondAsync(firstEditor.Title, "Cancel");
+            await RespondAsync(App.Text("DiscardAndClose"), "Cancel");
             if (!firstEditor.IsVisible) throw new InvalidOperationException("Declining closure dismissed the editor.");
             _ = app.Dispatcher.BeginInvoke(() => close.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)));
-            await RespondAsync(firstEditor.Title, "OK");
+            await RespondAsync(App.Text("DiscardAndClose"), "DiscardAndClose");
             await UntilAsync(() => !firstEditor.IsVisible);
             if (!VerifiedFilePublication.IsUnresolved(first) || !candidate.AsSpan().SequenceEqual(File.ReadAllBytes(first)))
                 throw new InvalidOperationException("Closing the profile editor changed its physical outcome or write restriction.");

@@ -105,9 +105,9 @@ internal static partial class Program
             var fields = FindControls<PasswordBox>(prompt).ToArray();
             string expectedPath = string.Format(App.Text("VaultPathDisplay"), ProfileLocation.Normalize(path));
             var labels = FindControls<TextBlock>(prompt).ToArray();
-            bool showsPathLabel = labels.Any(label => label.Text == expectedPath);
+            bool showsPathLabel = FindControls<DialogText>(prompt).Any(label => label.Text == expectedPath);
             bool showsExpectedPrompt = labels.Any(label => label.Text == expectedPrompt);
-            bool hasTextBox = FindControls<TextBox>(prompt).Any();
+            bool hasTextBox = FindControls<TextBox>(prompt).Any(field => !field.IsReadOnly);
             if (fields.Length != 2 || showsPathLabel != empty || !showsExpectedPrompt || hasTextBox)
             {
                 prompt.Close();
@@ -121,7 +121,8 @@ internal static partial class Program
             if (empty)
             {
                 var picker = await FindDialogAsync("SelectSavedPassword");
-                if (!FindControls<Button>(picker).Any(button => Equals(button.Content, App.Text("ManageVault"))))
+                if (!FindControls<Button>(picker).Any(button => Equals(button.Content, App.Text("ManageVault"))) ||
+                    !FindControls<TextBlock>(picker).Any(label => label.Text == App.Text("NoSavedPasswords")))
                     throw new InvalidOperationException("An empty profile credential picker must offer vault management.");
                 picker.Close();
             }
@@ -193,7 +194,8 @@ internal static partial class Program
                 var body = (FrameworkElement)targetedUnlock.Content;
                 var labels = FindControls<TextBlock>(targetedUnlock).ToArray();
                 var tabLabel = labels.Single(label => label.Text == string.Format(App.Text("DecisionTargetTab"), target.TabCaption));
-                var pathLabel = labels.Single(label => label.Text == $"{App.Text("VaultPath")}:\n{ProfileLocation.Normalize(vaultPath)}");
+                var pathLabel = FindControls<DialogText>(targetedUnlock).Single(label =>
+                    label.Text == $"{App.Text("VaultPath")}:\n{ProfileLocation.Normalize(vaultPath)}");
                 var masterLabel = labels.Single(label => label.Text == App.Text("MasterPassword"));
                 double offset = pathLabel.TranslatePoint(new Point(), body).X - tabLabel.TranslatePoint(new Point(), body).X;
                 double gap = masterLabel.TranslatePoint(new Point(), body).Y -
@@ -210,9 +212,9 @@ internal static partial class Program
             Task management = host.Dispatcher.InvokeAsync(() => app.Vault.ManageAsync(host)).Task.Unwrap();
             var unlock = await FindDialogAsync("UnlockVault", form: true);
             string expectedPath = $"{App.Text("VaultPath")}:\n{ProfileLocation.Normalize(vaultPath)}";
-            if (!FindControls<TextBlock>(unlock).Any(label => label.Text == expectedPath &&
+            if (!FindControls<DialogText>(unlock).Any(label => label.Text == expectedPath &&
                 label.TextWrapping == TextWrapping.Wrap && System.Windows.Automation.AutomationProperties.GetName(label) == expectedPath) ||
-                FindControls<TextBox>(unlock).Any())
+                FindControls<TextBox>(unlock).Any(field => !field.IsReadOnly))
             {
                 unlock.Close();
                 throw new InvalidOperationException("Vault unlock must display the readable path on its own line.");
@@ -332,11 +334,11 @@ internal static partial class Program
                 if (editAction.IsEnabled || !deleteAction.IsEnabled)
                     throw new InvalidOperationException("The vault menu offered the wrong actions for multiple entries.");
                 _ = host.Dispatcher.BeginInvoke(() => deleteAction.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent)));
-                var delete = await FindDialogAsync("Vault", form: false);
-                if (!FindControls<TextBlock>(delete).Any(block => block.Text.Contains("Final password") &&
+                var delete = await FindDialogAsync("DeleteCredential", form: false);
+                if (!FindControls<DialogText>(delete).Any(block => block.Text.Contains("Final password") &&
                     block.Text.Contains(another)))
                     throw new InvalidOperationException("The confirmation did not identify both selected vault entries.");
-                Click(delete, attempt == 0 ? "No" : "Yes");
+                Click(delete, attempt == 0 ? "Cancel" : "DeleteCredential");
                 await WaitIdleAsync();
                 if (list.Items.Count != (attempt == 0 ? 2 : 0))
                     throw new InvalidOperationException("The vault bulk deletion did not follow the confirmation.");
@@ -550,7 +552,7 @@ internal static partial class Program
             await UntilAsync(() => CurrentButton("RestoreVault") is not null);
             byte[] prior = File.ReadAllBytes(first);
             Start("RestoreVault");
-            Click(await FindDialogAsync("RestoreVault", form: false), "Yes");
+            Click(await FindDialogAsync("RestoreVault", form: false), "RestoreVault");
             (await FindDialogAsync("RestoreVault", form: true)).Close();
             await UntilIdleAsync();
             if (!File.ReadAllBytes(first).AsSpan().SequenceEqual(prior) ||
@@ -560,7 +562,7 @@ internal static partial class Program
             using (var hold = fixture.Restore.PauseNextWrite())
             {
                 Start("RestoreVault");
-                Click(await FindDialogAsync("RestoreVault", form: false), "Yes");
+                Click(await FindDialogAsync("RestoreVault", form: false), "RestoreVault");
                 await AcceptPasswordAsync("RestoreVault", "UnlockVault");
                 await hold.Issued.Task.WaitAsync(token);
                 string preservation = hold.Preservation!;
@@ -610,7 +612,7 @@ internal static partial class Program
             await UntilAsync(() => FindControls<Button>(archiveEditor!).Any(button =>
                 button.IsEnabled && Equals(button.Content, App.Text("ArchiveVault"))));
             _ = app.Dispatcher.BeginInvoke(() => Click(archiveEditor!, "ArchiveVault"));
-            Click(await FindDialogAsync("ArchiveVault", form: false), "Yes");
+            Click(await FindDialogAsync("ArchiveVault", form: false), "ArchiveVault");
             string archive = await fixture.Archived.Task.WaitAsync(token);
             archiveEditor!.Close();
             if (!archiveEditor.IsVisible || !app.Vault.HasActiveOperations || File.Exists(first) ||
@@ -643,7 +645,7 @@ internal static partial class Program
                 using (var heldRestore = fixture.Restore.PauseNextWrite())
                 {
                     var restoring = app.Dispatcher.InvokeAsync(() => app.Vault.RestoreFromMenuAsync(host)).Task.Unwrap();
-                    Click(await FindDialogAsync("RestoreVault", form: false), "Yes");
+                    Click(await FindDialogAsync("RestoreVault", form: false), "RestoreVault");
                     await AcceptPasswordAsync("RestoreVault", "UnlockVault");
                     await heldRestore.Issued.Task.WaitAsync(token);
                     host.OpenForm("Settings", _ => { });
@@ -656,7 +658,7 @@ internal static partial class Program
                 await AcknowledgeWindowReportAsync(peer, string.Format(App.Text("VaultRestoreCompleted"), backup, first));
 
                 var archiving = app.Dispatcher.InvokeAsync(() => app.Vault.ArchiveAsync(host)).Task.Unwrap();
-                Click(await FindDialogAsync("ArchiveVault", form: false), "Yes");
+                Click(await FindDialogAsync("ArchiveVault", form: false), "ArchiveVault");
                 await archiving.WaitAsync(token);
                 var archiveReport = app.StatusReports.Pending(peer).Single();
                 var archivedPath = archiveReport.Details.Split('\n', StringSplitOptions.RemoveEmptyEntries)[^1].TrimEnd();

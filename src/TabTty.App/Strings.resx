@@ -212,6 +212,17 @@
   <data name="VaultAlreadyOpen" xml:space="preserve"><value>A vault is already unlocked for this application run.</value></data>
   <data name="VaultStateInvalid" xml:space="preserve"><value>The vault selection settings are invalid.</value></data>
   <data name="CloseDialog" xml:space="preserve"><value>Close</value></data>
+  <data name="DisconnectAndClose" xml:space="preserve"><value>Disconnect and close</value></data>
+  <data name="StopWorkAndClose" xml:space="preserve"><value>Stop work and close</value></data>
+  <data name="DiscardAndClose" xml:space="preserve"><value>Discard and close</value></data>
+  <data name="UseTemporaryDefaults" xml:space="preserve"><value>Use temporary defaults</value></data>
+  <data name="NoSavedPasswords" xml:space="preserve"><value>The vault has no saved passwords.</value></data>
+  <data name="CreateTransferFolder" xml:space="preserve"><value>Create folder</value></data>
+  <data name="TransferIncoming" xml:space="preserve"><value>Incoming file</value></data>
+  <data name="TransferExisting" xml:space="preserve"><value>Existing file</value></data>
+  <data name="TransferFilePath" xml:space="preserve"><value>File path</value></data>
+  <data name="TransferPermanentlyDelete" xml:space="preserve"><value>Delete permanently</value></data>
+  <data name="PendingOperationReports" xml:space="preserve"><value>Pending reports: {0}</value></data>
   <data name="NewSsh" xml:space="preserve"><value>New SSH profile</value></data>
   <data name="SshUsername" xml:space="preserve"><value>SSH username</value></data>
   <data name="SshPasswordSource" xml:space="preserve"><value>Password authentication</value></data>
@@ -456,15 +467,13 @@
   <data name="TransferCancelled" xml:space="preserve"><value>Operation cancelled</value></data>
   <data name="TransferProgress" xml:space="preserve"><value>{0} · {1} / {2} bytes</value></data>
   <data name="TransferUnavailable" xml:space="preserve"><value>Unavailable</value></data>
-  <data name="TransferConflict" xml:space="preserve"><value>A file already exists at the destination.&#10;&#10;Incoming&#10;{0}&#10;{1} bytes · {2}&#10;&#10;Existing&#10;{3}&#10;{4} bytes · {5}</value></data>
+  <data name="TransferConflict" xml:space="preserve"><value>A file already exists at the destination.</value></data>
   <data name="TransferOverwrite" xml:space="preserve"><value>Overwrite</value></data>
   <data name="TransferSkip" xml:space="preserve"><value>Skip</value></data>
   <data name="TransferMore" xml:space="preserve"><value>And {0} more</value></data>
-  <data name="TransferDeleteLocal" xml:space="preserve"><value>Delete the selected items from the local PC? Folders include all contents.&#10;&#10;{0}&#10;{1}</value></data>
-  <data name="TransferDeleteRemote" xml:space="preserve"><value>Permanently delete the selected items from the server? Folders include all contents.&#10;&#10;{0}&#10;{1}</value></data>
-  <data name="TransferDeletePermanent" xml:space="preserve"><value>The item could not be moved to the Recycle Bin. Permanently delete it and any contents?
-
-{0}</value></data>
+  <data name="TransferDeleteLocal" xml:space="preserve"><value>Delete the selected items from the local PC? Folders include all contents.</value></data>
+  <data name="TransferDeleteRemote" xml:space="preserve"><value>Permanently delete the selected items from the server? Folders include all contents.</value></data>
+  <data name="TransferDeletePermanent" xml:space="preserve"><value>The item could not be moved to the Recycle Bin. Permanently delete it and any contents?</value></data>
   <data name="TransferCloseBusy" xml:space="preserve"><value>Cancel active work and close the transfer window?</value></data>
   <data name="TransferSkipped" xml:space="preserve"><value>Skipped</value></data>
   <data name="TransferSkippedType" xml:space="preserve"><value>Skipped · link or unsupported item type</value></data>

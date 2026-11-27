@@ -121,6 +121,10 @@ public sealed class App : Application
         {
             Source = new Uri("/TabTty;component/DetailsTabs.xaml", UriKind.Relative),
         });
+        Resources.MergedDictionaries.Add(new ResourceDictionary
+        {
+            Source = new Uri("/TabTty;component/DialogStyles.xaml", UriKind.Relative),
+        });
         Broadcast = new BroadcastInput(this);
         Ai = new AiCollaboration(this);
         this.settingsPath = settingsPath;
@@ -210,7 +214,7 @@ public sealed class App : Application
         {
             ApplySettings();
             if (ThemedMessageBox.Show(Text("RestoreSettings"), "TabTty", MessageBoxButton.YesNo,
-                    MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes)
+                    MessageBoxImage.Warning, MessageBoxResult.No, acceptKey: "UseTemporaryDefaults") != MessageBoxResult.Yes)
             {
                 Shutdown();
                 return;

@@ -652,6 +652,19 @@ internal static partial class Program
                 summary.TranslatePoint(new Point(summary.ActualWidth, 0), window).X > vault.TranslatePoint(new Point(), window).X ||
                 vault.TranslatePoint(new Point(vault.ActualWidth, 0), window).X > window.ActualWidth)
                 throw new InvalidOperationException("Reports, broadcast or vault status were clipped or overlapped at minimum window width.");
+            summary.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var viewer = window.OwnedWindows.Cast<Window>().Single(candidate => candidate.IsVisible &&
+                candidate.Title == App.Text("WindowReportsTitle"));
+            viewer.MaxHeight = 240;
+            viewer.UpdateLayout();
+            var viewerLayout = (DialogLayout)viewer.Content;
+            var close = viewerLayout.Actions.Children.OfType<Button>().Single(button => Equals(button.Content, App.Text("CloseDialog")));
+            if (!FindControls<TextBlock>(viewer).Any(text => text.Text == string.Format(App.Text("PendingOperationReports"), 2)) ||
+                !FindControls<DialogText>(viewer).Any(text => text.Text == reports[0].Details))
+                throw new InvalidOperationException("The result viewer did not display the count and copyable details.");
+            close.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            if (viewer.IsVisible || app.StatusReports.Pending(window).Count != 2)
+                throw new InvalidOperationException("Closing the result viewer acknowledged a report.");
             await AcknowledgeWindowReportAsync(window, reports[0].Details);
             if (app.StatusReports.Pending(window).Single() != reports[1])
                 throw new InvalidOperationException("Acknowledging the older report cleared another operation's report.");

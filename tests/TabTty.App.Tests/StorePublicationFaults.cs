@@ -2,7 +2,10 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Automation.Peers;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
 using TabTty.App;
 using TabTty.Core;
@@ -180,10 +183,27 @@ internal static partial class Program
         Window? keyDialog = null;
         await WaitForAsync(() => (keyDialog = app.Windows.Cast<Window>().SingleOrDefault(window =>
             window.IsVisible && window.Owner == owner && window.Title == App.Text("AdditionalHostKey"))) is not null);
-        var shown = FindControls<TextBox>(keyDialog!).Select(control => control.Text).ToArray();
+        var shown = FindControls<DialogText>(keyDialog!).Select(control => control.Text).ToArray();
         if (!shown.Any(text => text.Contains(algorithm) && text.Contains(host.Fingerprint)) ||
             !shown.Contains(additional.Fingerprint) || !(await VisibleButtonAsync(keyDialog!, "Cancel")).IsDefault)
             throw new InvalidOperationException("Additional host-key approval omitted trust history or default cancellation.");
+        var constrained = keyDialog!;
+        constrained.Width = 280;
+        constrained.MaxHeight = 220;
+        constrained.UpdateLayout();
+        var formView = (FormView)constrained.Content;
+        var bodyScroll = formView.Body.Children.OfType<ScrollViewer>().Single();
+        var cancelButton = await VisibleButtonAsync(constrained, "Cancel");
+        var fingerprint = FindControls<DialogText>(constrained).Single(value => value.Text == additional.Fingerprint);
+        var history = FindControls<DialogText>(constrained).Single(value => value.Text.Contains(host.Fingerprint));
+        fingerprint.SelectAll();
+        var peer = UIElementAutomationPeer.CreatePeerForElement(fingerprint)!;
+        if (!ApplicationCommands.Copy.CanExecute(null, fingerprint) || peer.GetAutomationControlType() != AutomationControlType.Text ||
+            fingerprint.BorderBrush is not SolidColorBrush { Color.A: 0 } ||
+            history.BorderBrush is not SolidColorBrush { Color.A: > 0 } ||
+            bodyScroll.ScrollableHeight <= 0 || formView.Body.IsAncestorOf(cancelButton) ||
+            cancelButton.TranslatePoint(new Point(0, cancelButton.ActualHeight), formView).Y > formView.ActualHeight)
+            throw new InvalidOperationException("The constrained host-key dialog did not keep copyable display text and its footer reachable.");
         keyDialog!.Close();
         if (await declined || !app.HostTrust.ApprovedFormats(host.Destination).SequenceEqual([algorithm]))
             throw new InvalidOperationException("Declining an additional host key changed trust.");

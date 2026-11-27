@@ -26,7 +26,7 @@ internal sealed class HighlightCatalog(App app, string pathName, Action<string, 
         catch (Exception exception) when (InvalidStore(exception))
         {
             if (ThemedMessageBox.Show(Text("UseTemporaryHighlighting"), "TabTty", MessageBoxButton.YesNo,
-                MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return false;
+                MessageBoxImage.Warning, MessageBoxResult.No, acceptKey: "UseTemporaryDefaults") != MessageBoxResult.Yes) return false;
             temporaryDefaults = true;
             sets = [];
             return true;

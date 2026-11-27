@@ -10,16 +10,16 @@ internal static class ReadOnlyPreview
 {
     internal const int PageUnits = 8192;
 
-    internal static void Add(MainWindow.FormWindow dialog, string contentKey, TextBox contents, string source)
+    internal static void Add(MainWindow.FormWindow dialog, string contentKey, DialogText contents, string source)
     {
         int page = -1;
         int pages = Math.Max(1, (source.Length + PageUnits - 1) / PageUnits);
-        var position = new TextBox { IsReadOnly = true, IsTabStop = false };
+        var position = new TextBlock { TextWrapping = System.Windows.TextWrapping.Wrap };
         dialog.AddField(contentKey, contents);
         AutomationProperties.SetLabeledBy(contents, null);
         if (pages > 1)
         {
-            dialog.AddField("PastePreviewPageLabel", position);
+            dialog.AddDisplay("PastePreviewPageLabel", position);
             dialog.AddAction("PastePreviousPage", () => Show(Math.Max(0, page - 1)));
             dialog.AddAction("PasteNextPage", () => Show(Math.Min(pages - 1, page + 1)));
         }

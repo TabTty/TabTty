@@ -580,28 +580,47 @@ internal sealed class FileTransferWindow : Window
     private ValueTask<TransferChoice> PresentQuestion(TransferQuestion question)
     {
         if (question.Kind == TransferQuestionKind.PermanentDelete)
-            return ValueTask.FromResult(Confirm(Format("TransferDeletePermanent", files!.Display(question.Path)), question.Lifetime) ? TransferChoice.Overwrite : TransferChoice.Skip);
+            return ValueTask.FromResult(Confirm(Text("TransferDeletePermanent"), "TransferPermanentlyDelete", question.Lifetime,
+                new DialogText(files!.Display(question.Path)), "TransferSkip") ? TransferChoice.Overwrite : TransferChoice.Skip);
         if (question.Kind == TransferQuestionKind.Delete)
         {
             var items = question.Selection!;
             string names = string.Join('\n', items.Take(40).Select(item => item.Label));
             if (items.Count > 40) names += "\n" + Format("TransferMore", items.Count - 40);
             string key = question.Path.Remote is null ? "TransferDeleteLocal" : "TransferDeleteRemote";
-            return ValueTask.FromResult(Confirm(Format(key, files!.Display(question.Path), names), question.Lifetime) ? TransferChoice.Overwrite : TransferChoice.Cancel);
+            string action = question.Path.Remote is null ? "TransferDelete" : "TransferPermanentlyDelete";
+            var context = new DialogText($"{files!.Display(question.Path)}\n\n{names}", 200);
+            return ValueTask.FromResult(Confirm(Text(key), action, question.Lifetime, context) ? TransferChoice.Overwrite : TransferChoice.Cancel);
         }
         TransferItem source = question.Source!;
         TransferPath target = question.Path;
         TransferAttributes existing = question.Existing!;
-        string message = Format("TransferConflict", files!.Display(source.Path), Size(source.Attributes), Modified(source.Attributes),
-            files.Display(target), Size(existing), Modified(existing));
-        MessageBoxResult selected = MessageBoxResult.Cancel;
-        Window dialog = ThemedMessageBox.Create(this, message, Text("FileTransfer"), MessageBoxButton.YesNoCancel,
-            MessageBoxImage.Warning, MessageBoxResult.Cancel, value => selected = value,
-            value => Text(value == MessageBoxResult.Yes ? "TransferOverwrite" : value == MessageBoxResult.No ? "TransferSkip" : "Cancel"));
+        TransferChoice selected = TransferChoice.Cancel;
+        var dialog = new MainWindow.FormWindow(this, Text("TransferOverwrite")) { Width = 510 };
+        dialog.AddNotice("TransferConflict");
+        AddFile("TransferIncoming", source.Path, source.Attributes);
+        AddFile("TransferExisting", target, existing);
+        dialog.AddDialogAction("TransferOverwrite", () => Finish(TransferChoice.Overwrite));
+        dialog.AddDialogAction("TransferSkip", () => Finish(TransferChoice.Skip));
+        dialog.AddDialogAction("Cancel", () => dialog.Finish(false), isDefault: true).IsCancel = true;
         using CancellationTokenRegistration registration = question.Lifetime.Register(() => Dispatcher.BeginInvoke(() =>
         { if (dialog.IsVisible) dialog.Close(); }));
-        dialog.ShowDialog();
-        return ValueTask.FromResult(selected == MessageBoxResult.Yes ? TransferChoice.Overwrite : selected == MessageBoxResult.No ? TransferChoice.Skip : TransferChoice.Cancel);
+        if (!question.Lifetime.IsCancellationRequested) dialog.ShowDialog();
+        return ValueTask.FromResult(question.Lifetime.IsCancellationRequested ? TransferChoice.Cancel : selected);
+
+        void AddFile(string heading, TransferPath path, TransferAttributes attributes)
+        {
+            dialog.AddHeading(heading);
+            dialog.AddField("TransferFilePath", new DialogText(files!.Display(path)));
+            dialog.AddField("TransferSize", new DialogText(Size(attributes)) { IsTabStop = false });
+            dialog.AddField("TransferModified", new DialogText(Modified(attributes)) { IsTabStop = false });
+        }
+
+        void Finish(TransferChoice choice)
+        {
+            selected = choice;
+            dialog.Finish(true);
+        }
     }
 
     private void StartCreate(Pane pane)
@@ -631,31 +650,24 @@ internal sealed class FileTransferWindow : Window
 
     private string? PromptName(string title, string initial)
     {
-        var box = new TextBox { Text = initial, MinWidth = 320 };
-        AutomationProperties.SetName(box, Text("TransferName"));
-        var layout = new StackPanel { Margin = new Thickness(12) };
-        var dialog = new Window { Owner = this, Title = Text(title), Icon = WindowIcons.App,
-            Content = layout, SizeToContent = SizeToContent.WidthAndHeight,
-            WindowStartupLocation = WindowStartupLocation.CenterOwner, ResizeMode = ResizeMode.NoResize, ShowInTaskbar = false };
-        layout.Children.Add(box);
-        var commands = new WrapPanel();
-        layout.Children.Add(commands);
-        Button ok = Button("OK", () => { if (box.Text.Length != 0) dialog.DialogResult = true; }, track: false);
-        ok.IsDefault = true;
-        Button dismiss = Button("Cancel", () => dialog.Close(), track: false);
-        dismiss.IsCancel = true;
-        commands.Children.Add(ok);
-        commands.Children.Add(dismiss);
+        var box = new TextBox { Text = initial };
+        var dialog = new MainWindow.FormWindow(this, Text(title));
+        dialog.AddField("TransferName", box);
+        var accept = dialog.AddButtons(() => { }, acceptKey: title == "TransferNewFolder" ? "CreateTransferFolder" : title);
+        accept.IsEnabled = box.Text.Length != 0;
+        box.TextChanged += (_, _) => accept.IsEnabled = box.Text.Length != 0;
         dialog.Loaded += (_, _) => { box.Focus(); box.SelectAll(); };
         return dialog.ShowDialog() == true ? box.Text : null;
     }
 
-    private bool Confirm(string message, CancellationToken token = default)
+    private bool Confirm(string message, string action, CancellationToken token = default, FrameworkElement? context = null,
+        string dismissKey = "Cancel")
     {
         if (token.IsCancellationRequested) return false;
         var answer = MessageBoxResult.No;
-        Window dialog = ThemedMessageBox.Create(this, message, Title,
-            MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No, value => answer = value);
+        Window dialog = ThemedMessageBox.Create(this, message, Text(action),
+            MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No, value => answer = value,
+            ThemedMessageBox.DecisionLabels(action, dismissKey), context: context);
         using var registration = token.Register(() => Dispatcher.BeginInvoke(() =>
         {
             if (dialog.IsVisible) dialog.Close();
@@ -713,13 +725,13 @@ internal sealed class FileTransferWindow : Window
                 string counts = string.Join("\n", unresolved.GroupBy(entry => (entry.Mutation, entry.Reason))
                     .Select(group => $"{ResultLabel(group.First())}  ({group.Count():N0})"));
                 var entries = unresolved.Select(ResultDetails).ToArray();
-                string[] summary = [Text("SftpUnknownOutcome"), counts, .. entries.Take(10)];
                 try
                 {
                     Window report = ThemedMessageBox.Create(this,
-                        string.Join("\n", summary.Where(line => line.Length != 0)),
+                        Text("SftpUnknownOutcome") + (counts.Length == 0 ? "" : "\n\n" + counts),
                         Title, MessageBoxButton.OK, MessageBoxImage.Warning, MessageBoxResult.OK, _ => { },
-                        details: entries.Length > 10 ? string.Join("\n", entries) : null);
+                        details: entries.Length > 10 ? string.Join("\n", entries) : null,
+                        context: entries.Length == 0 ? null : new DialogText(string.Join("\n", entries.Take(10)), 180));
                     bool presented = false;
                     report.ContentRendered += (_, _) => presented = true;
                     ((App)Application.Current).Modal(report.ShowDialog);
@@ -781,7 +793,7 @@ internal sealed class FileTransferWindow : Window
         if (!HasActiveOperation && !ownership.NeedsRefresh && work.IsCompletedSuccessfully &&
             (operations?.UnresolvedForClose().Length ?? 0) == 0) return;
         e.Cancel = true;
-        if (!HasActiveOperation || Confirm(Text("TransferCloseBusy"))) _ = CloseWithTerminalAsync();
+        if (!HasActiveOperation || Confirm(Text("TransferCloseBusy"), "StopWorkAndClose")) _ = CloseWithTerminalAsync();
     }
 
     protected override void OnClosed(EventArgs e)

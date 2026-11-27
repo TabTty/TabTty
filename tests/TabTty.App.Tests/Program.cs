@@ -1783,9 +1783,8 @@ internal static partial class Program
                 MessageBoxImage.Warning, MessageBoxResult.No, _ => { });
             try
             {
-                var layout = (DockPanel)dialog.Content;
-                var actions = (StackPanel)layout.Children[0];
-                Button no = actions.Children.OfType<Button>().Single(button => Equals(button.Content, App.Text("No")));
+                var layout = (DialogLayout)dialog.Content;
+                Button no = layout.Actions.Children.OfType<Button>().Single(button => Equals(button.Content, App.Text("No")));
                 if (!no.IsDefault || !no.IsCancel || dialog.ThemeMode != mode)
                     throw new InvalidOperationException("The confirmation did not preserve its negative default.");
                 return (((SolidColorBrush)dialog.Background).Color, ((SolidColorBrush)dialog.Foreground).Color);

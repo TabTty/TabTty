@@ -178,7 +178,7 @@ internal static partial class Program
                 var confirm = app.Windows.OfType<Window>().FirstOrDefault(window => window.Title == App.Text("ProfileTrustReset"));
                 if (confirm is null) return;
                 timer.Stop();
-                Click(confirm, "Yes");
+                Click(confirm, "Reset");
             };
             timer.Start();
             var sourceDigest = new string('A', 64);
@@ -342,7 +342,7 @@ internal static partial class Program
                     throw new InvalidOperationException("The verified save did not retain its unfinished registration update.");
             }
             _ = editor.Dispatcher.BeginInvoke(() => editor.Close());
-            await AnswerEditorNotice(editor, editor.Title);
+            await AnswerEditorNotice(editor);
             while (editor.IsVisible) await Task.Delay(10, token);
             byte[] bytes = await File.ReadAllBytesAsync(path, token);
 
@@ -363,16 +363,16 @@ internal static partial class Program
                 !bytes.AsSpan().SequenceEqual(after))
                 throw new InvalidOperationException("Explicit completion overwrote the draft or failed to update the registration.");
             _ = editor.Dispatcher.BeginInvoke(() => editor.Close());
-            await AnswerEditorNotice(editor, editor.Title);
+            await AnswerEditorNotice(editor);
             while (editor.IsVisible) await Task.Delay(10, token);
 
-            async Task AnswerEditorNotice(Window source, string title)
+            async Task AnswerEditorNotice(Window source)
             {
                 Window? dialog;
                 while ((dialog = app.Windows.OfType<Window>().SingleOrDefault(window =>
-                    window.IsVisible && window.Owner == source && window.Title == title)) is null)
+                    window.IsVisible && window.Owner == source && window.Title == App.Text("DiscardAndClose"))) is null)
                     await Task.Delay(10, token);
-                Click(dialog, "OK");
+                Click(dialog, "DiscardAndClose");
             }
         }
 

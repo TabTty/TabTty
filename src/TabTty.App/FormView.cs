@@ -30,6 +30,7 @@ internal sealed class FormView : Grid
     private bool tracksEdits;
     private Action? updateEditorButtons;
     private Grid? editorFooter;
+    private WrapPanel? dialogActions;
     internal DockPanel Body { get; } = new();
     private readonly NoticeStack notices = new();
     internal NoticeStack Notices => notices;
@@ -217,9 +218,9 @@ internal sealed class FormView : Grid
         Window owner = OwnerWindow;
         bool isTab = TabOwner is not null;
         string key = isTab ? "DiscardChangesAndClose" : "DiscardChangesAndCloseWindow";
-        string title = isTab ? Text("CloseTab") : owner.Title;
-        return ((App)Application.Current).Modal(() => ThemedMessageBox.Show(owner, ClosePrompt(key), title,
-            MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel)) == MessageBoxResult.OK;
+        return ((App)Application.Current).Modal(() => ThemedMessageBox.Show(owner, ClosePrompt(key), Text("DiscardAndClose"),
+            MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel,
+            acceptKey: "DiscardAndClose", context: new DialogText(Tab?.Caption ?? owner.Title))) == MessageBoxResult.OK;
     }
 
     internal string ClosePrompt(string key) =>
@@ -470,9 +471,10 @@ internal sealed class FormView : Grid
         return description;
     }
 
-    public void AddNotice(string key)
+    public void AddNotice(string key, bool heading = false)
     {
         var notice = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 6) };
+        if (heading) notice.FontWeight = FontWeights.SemiBold;
         SetText(key, value => notice.Text = value);
         (section ?? fields).Children.Add(notice);
     }
@@ -503,6 +505,29 @@ internal sealed class FormView : Grid
         var button = CreateAction(actionKey, action);
         button.HorizontalAlignment = HorizontalAlignment.Left;
         AddField(key, button, trackEdit: false);
+    }
+
+    private WrapPanel DialogActions()
+    {
+        if (dialogActions is not null) return dialogActions;
+        RowDefinitions.Add(new RowDefinition());
+        RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        dialogActions = DialogLayout.CreateActions(new Thickness(10, 2, 10, 8));
+        SetRow(dialogActions, 1);
+        Children.Add(dialogActions);
+        return dialogActions;
+    }
+
+    internal Button AddDialogAction(string key, Action action, bool isDefault = false)
+    {
+        var button = DialogLayout.StyleAction(CreateAction(key, action));
+        button.IsDefault = isDefault;
+        if (isDefault) Loaded += (_, _) =>
+        {
+            if (Window.GetWindow(this)?.ShowActivated != false) button.Focus();
+        };
+        DialogActions().Children.Add(button);
+        return button;
     }
 
     private Button CreateAction(string key, Action action)
@@ -617,6 +642,20 @@ internal sealed class FormView : Grid
 
     public void AddPrompt(string caption, Control control) => AddLabel(control).Text = caption;
 
+    internal Action<string> AddValidation(Control field)
+    {
+        var error = new TextBlock { Visibility = Visibility.Collapsed, TextWrapping = TextWrapping.Wrap };
+        AutomationProperties.SetLiveSetting(error, AutomationLiveSetting.Polite);
+        (section ?? fields).Children.Add(error);
+        return message =>
+        {
+            error.Text = message;
+            error.Visibility = message.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+            AutomationProperties.SetHelpText(field, message);
+            UIElementAutomationPeer.FromElement(error)?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+        };
+    }
+
     private TextBlock AddLabel(Control control, bool addControl = true, string? descriptionKey = null)
     {
         var text = new TextBlock { TextWrapping = TextWrapping.Wrap };
@@ -678,7 +717,7 @@ internal sealed class FormView : Grid
     private Button AddButtonRow(Func<Task<bool>> save, string acceptKey, bool cancelDefault, string cancelKey,
         Action cancelAction, Func<bool>? isCreating = null, bool acceptOnEnter = true)
     {
-        var buttons = new StackPanel
+        Panel buttons = modal ? DialogActions() : new StackPanel
         {
             Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Right,
@@ -688,6 +727,11 @@ internal sealed class FormView : Grid
         var apply = new Button { IsDefault = acceptsReturn && !cancelDefault, Margin = new Thickness(4) };
         if (!acceptsReturn) KeyboardNavigation.SetAcceptsReturn(apply, false);
         var cancel = new Button { IsCancel = modal, IsDefault = cancelDefault, Margin = new Thickness(4) };
+        if (modal)
+        {
+            DialogLayout.StyleAction(apply);
+            DialogLayout.StyleAction(cancel);
+        }
         if (!tracksEdits) SetText(acceptKey, value => apply.Content = value);
         SetText(cancelKey, value => cancel.Content = value);
         apply.Click += async (_, _) =>
@@ -746,7 +790,7 @@ internal sealed class FormView : Grid
             Body.Children.Insert(0, footer);
             editorFooter = footer;
         }
-        else fields.Children.Add(buttons);
+        else if (!modal) fields.Children.Add(buttons);
         return apply;
     }
 
@@ -784,6 +828,7 @@ internal sealed class FormView : Grid
         IsBusy = true;
         fileWorkAttempted = false;
         Body.IsEnabled = false;
+        if (dialogActions is not null) dialogActions.IsEnabled = false;
         try
         {
             await action();
@@ -800,6 +845,7 @@ internal sealed class FormView : Grid
         {
             IsBusy = false;
             Body.IsEnabled = true;
+            if (dialogActions is not null) dialogActions.IsEnabled = true;
             updateEditorButtons?.Invoke();
         }
     }

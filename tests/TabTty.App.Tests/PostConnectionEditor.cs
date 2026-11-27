@@ -195,7 +195,7 @@ internal static partial class Program
         foreach (string boundary in new[] { "😀", "\r\n" })
         {
             var window = new MainWindow.FormWindow(null, App.Text(label));
-            var contents = new TextBox { IsReadOnly = true, AcceptsReturn = true };
+            var contents = new DialogText("", 120);
             ReadOnlyPreview.Add(window, label, contents, prefix + boundary + "tail");
             window.Show();
             try
@@ -224,7 +224,7 @@ internal static partial class Program
         }
 
         var single = new MainWindow.FormWindow(null, App.Text(label));
-        var singleContents = new TextBox { IsReadOnly = true };
+        var singleContents = new DialogText("", 120);
         ReadOnlyPreview.Add(single, label, singleContents, "");
         single.Show();
         try

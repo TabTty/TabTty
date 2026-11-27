@@ -9,7 +9,9 @@ internal sealed partial class MainWindow
 {
     private MenuItem? windowReportsMenu;
     private Window? reportReview;
+    private Button? reportClose;
     private readonly StackPanel reportRows = new();
+    private readonly TextBlock reportCount = new() { Margin = new Thickness(14, 8, 14, 4), TextWrapping = TextWrapping.Wrap };
 
     private void UpdateWindowReports()
     {
@@ -29,6 +31,8 @@ internal sealed partial class MainWindow
         if (reportReview is null) return;
         if (pending.Count == 0) { reportReview.Close(); return; }
         reportReview.Title = Text("WindowReportsTitle");
+        if (reportClose is not null) reportClose.Content = Text("CloseDialog");
+        reportCount.Text = string.Format(Text("PendingOperationReports"), pending.Count);
 
         // Preserve focus and text selection when another report arrives or is acknowledged.
         var existing = reportRows.Children.OfType<ReportRow>().ToDictionary(row => row.Report);
@@ -48,10 +52,7 @@ internal sealed partial class MainWindow
     {
         internal WindowStatusReport Report { get; }
         private readonly TextBlock heading = new() { FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap };
-        private readonly TextBox details = new()
-        {
-            IsReadOnly = true, IsUndoEnabled = false, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 6)
-        };
+        private readonly DialogText details = new("", 250);
         private readonly Button ok = new() { MinWidth = 72, HorizontalAlignment = HorizontalAlignment.Right };
 
         internal ReportRow(WindowStatusReport report, WindowStatusReports reports)
@@ -82,21 +83,34 @@ internal sealed partial class MainWindow
     {
         if (reportReview is { } open) { open.Activate(); return; }
         if (app.StatusReports.Pending(this).Count == 0) return;
-        var scroll = new ScrollViewer { Content = reportRows, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        var body = new StackPanel { Children = { reportCount, reportRows } };
+        var layout = new DialogLayout(body, new Thickness(0, 0, 8, 8));
         var review = new Window
         {
             Owner = this, Icon = WindowIcons.App, ShowInTaskbar = false,
             Width = Math.Min(560, SystemParameters.WorkArea.Width), SizeToContent = SizeToContent.Height,
-            MaxHeight = Math.Max(160, SystemParameters.WorkArea.Height * 0.75),
-            WindowStartupLocation = WindowStartupLocation.CenterOwner, Content = scroll
+            WindowStartupLocation = WindowStartupLocation.CenterOwner, Content = layout
         };
+        DialogLayout.SetWindowBounds(review);
+        review.MaxHeight = Math.Min(review.MaxHeight, Math.Max(160, SystemParameters.WorkArea.Height * 0.75));
+        var close = DialogLayout.Action(Text("CloseDialog"));
+        reportClose = close;
+        close.Click += (_, _) => review.Close();
+        review.PreviewKeyDown += (_, args) =>
+        {
+            if (args.Key != System.Windows.Input.Key.Escape) return;
+            args.Handled = true;
+            review.Close();
+        };
+        layout.Actions.Children.Add(close);
         review.SetResourceReference(BackgroundProperty, "WindowBackground");
         review.SetResourceReference(ForegroundProperty, "WindowForeground");
         review.Closed += (_, _) =>
         {
-            scroll.Content = null;
+            body.Children.Clear();
             reportRows.Children.Clear();
             reportReview = null;
+            reportClose = null;
         };
         reportReview = review;
         UpdateWindowReports();

@@ -166,7 +166,8 @@ internal sealed partial class TerminalTab
         if (ClosePending || AiSession is not { } sessionAtPrompt || AiHost is not { } owner || !collaboration.Peers.Contains(peer)) return;
         var generation = ConnectionGeneration;
         var revision = aiAuthorityRevision;
-        string title = Text(grantControl ? "AiGiveControl" : "AiShareOutput");
+        string action = grantControl ? "AiGiveControl" : "AiShareOutput";
+        string title = Text(action);
         string message = string.Format(Text(grantControl ? "AiConfirmControl" : "AiConfirmShare"),
             PermissionDisplay.Literal(TabCaption), peer.Code, LauncherDescription(peer), ConnectionDestination.From(sessionAtPrompt));
         message += "\n\n" + Text("AiUnattendedConsent");
@@ -174,7 +175,8 @@ internal sealed partial class TerminalTab
             message += "\n\n" + string.Format(Text("AiConfirmSwitch"), share.Peer.Code);
         var answer = MessageBoxResult.Cancel;
         var dialog = ThemedMessageBox.Create(owner, message, title, MessageBoxButton.OKCancel, MessageBoxImage.Question,
-            MessageBoxResult.Cancel, selected => answer = selected, modelessDecision: true);
+            MessageBoxResult.Cancel, selected => answer = selected,
+            ThemedMessageBox.DecisionLabels(action), modelessDecision: true);
         aiConsent = dialog;
         try { await PresentDecisionAsync(dialog, IsRunning ? InputLifetime : CancellationToken.None); }
         catch (OperationCanceledException) { return; }

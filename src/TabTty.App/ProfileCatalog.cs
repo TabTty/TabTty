@@ -437,9 +437,9 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
 
             async Task RecycleAsync(Registration item)
             {
-                if (app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow, $"{Text("RecycleProfileConfirm")}\n\n{item.Path}",
+                if (app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow, Text("RecycleProfileConfirm"),
                     Text("RecycleProfile"), MessageBoxButton.YesNo, MessageBoxImage.Warning,
-                    MessageBoxResult.No)) != MessageBoxResult.Yes) return;
+                    MessageBoxResult.No, acceptKey: "RecycleProfile", context: new DialogText(item.Path))) != MessageBoxResult.Yes) return;
                 await registrationChanges.WaitAsync();
                 try
                 {
@@ -700,7 +700,8 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                         .OfType<string>().Select(PermissionDisplay.Literal).ToArray();
                     if (app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow,
                         Text("CredentialRenameReviewProfile") + "\n\n" + string.Join("\n", references),
-                        Text("EditProfile"), MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No)) !=
+                        Text("EditProfile"), MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No,
+                        acceptKey: "Save")) !=
                         MessageBoxResult.Yes) return false;
                     profile = verified;
                     editor.UseSavedRevision(verified);

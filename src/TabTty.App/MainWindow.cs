@@ -944,8 +944,9 @@ internal sealed partial class MainWindow : Window
             string[] unresolved = AllTabs.Select(tab => (tab.Content as FormView)?.UnresolvedPublication)
                 .OfType<string>().ToArray();
             if (unresolved.Length > 0 && app.Modal(() => ThemedMessageBox.Show(this,
-                $"{Text("DiscardChangesAndCloseWindow")}\n\n{string.Join("\n\n", unresolved)}", Title,
-                MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No)) != MessageBoxResult.Yes)
+                Text("DiscardChangesAndCloseWindow"), Text("DiscardAndClose"),
+                MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No, acceptKey: "DiscardAndClose",
+                context: new DialogText(string.Join("\n\n", unresolved), 220))) != MessageBoxResult.Yes)
             {
                 e.Cancel = true;
                 return;
@@ -971,10 +972,7 @@ internal sealed partial class MainWindow : Window
     private bool ConfirmCleanupLoss()
     {
         var choice = new FormWindow(this, Text("ClosingConnection"));
-        choice.AddField("CleanupPending", new TextBox
-        {
-            Text = Text("CleanupPendingExplanation"), IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
-        });
+        choice.AddNotice("CleanupPendingExplanation");
         choice.AddButtons(() => { }, acceptKey: "CloseWithLoss", cancelDefault: true, cancelKey: "ContinueWaiting");
         return app.Modal(choice.ShowDialog) == true;
     }
@@ -989,9 +987,13 @@ internal sealed partial class MainWindow : Window
                 .Select(terminal => $"\n{Text("FileTransfer")} — {terminal.TabCaption}"));
             string macros = string.Concat(terminals.Where(terminal => terminal.HasActiveMacro)
                 .Select(terminal => $"\n{Text("MacroRunningOnClose")} — {terminal.TabCaption}"));
-            string prompt = Text(terminals.Any(terminal => terminal.IsRunning) ? "CloseConnections" : "CloseTabWork");
-            confirmed = app.Modal(() => ThemedMessageBox.Show(this, prompt + transfers + macros,
-                Title, MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No)) == MessageBoxResult.Yes;
+            bool connected = terminals.Any(terminal => terminal.IsRunning);
+            string action = connected ? "DisconnectAndClose" : "StopWorkAndClose";
+            string prompt = Text(connected ? "CloseConnections" : "CloseTabWork");
+            string affected = string.Join("\n", terminals.Select(terminal => PermissionDisplay.Literal(terminal.TabCaption)));
+            confirmed = app.Modal(() => ThemedMessageBox.Show(this, prompt, Text(action),
+                MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No, acceptKey: action,
+                context: new DialogText(affected + transfers + macros, 180))) == MessageBoxResult.Yes;
             return confirmed;
         }
         finally
@@ -1272,8 +1274,8 @@ internal sealed partial class MainWindow : Window
             Width = 400;
             SizeToContent = SizeToContent.Height;
             ResizeMode = ResizeMode.NoResize;
-            WindowStartupLocation = WindowStartupLocation.CenterOwner;
-            MaxHeight = Math.Max(300, SystemParameters.WorkArea.Height - 40);
+            WindowStartupLocation = owner is null ? WindowStartupLocation.CenterScreen : WindowStartupLocation.CenterOwner;
+            DialogLayout.SetWindowBounds(this);
             SetResourceReference(BackgroundProperty, "WindowBackground");
             SetResourceReference(ForegroundProperty, "WindowForeground");
             Content = form;
@@ -1295,12 +1297,17 @@ internal sealed partial class MainWindow : Window
         }
 
         public Button AddAction(string key, Action action) => form.AddAction(key, action);
+        internal Button AddDialogAction(string key, Action action, bool isDefault = false) =>
+            form.AddDialogAction(key, action, isDefault);
+        internal void AddCloseAction() => form.AddDialogAction("CloseDialog", Close, isDefault: true).IsCancel = true;
         public void AddField(string key, Control control, bool inlineCheckBox = false,
             string? actionKey = null, Func<Task>? action = null) =>
             form.AddField(key, control, actionKey: actionKey, action: action, inlineCheckBox: inlineCheckBox);
         public void AddPrompt(string caption, Control control) => form.AddPrompt(caption, control);
+        internal Action<string> AddValidation(Control field) => form.AddValidation(field);
         internal void AddDisplay(string key, FrameworkElement element) => form.AddDisplay(key, element);
         public void AddNotice(string key) => form.AddNotice(key);
+        internal void AddHeading(string key) => form.AddNotice(key, heading: true);
         internal void AddStatusBar() => form.AddStatusBar();
         internal IDisposable BeginProgress(string key) => form.BeginProgress(key);
         public TextBlock AddPinnedNotice(string message)

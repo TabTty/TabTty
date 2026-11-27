@@ -115,7 +115,7 @@ internal static partial class Program
             if (app.MaxPasteTextBytes != 511 || !beforeInvalidSave.AsSpan().SequenceEqual(afterInvalidSave))
                 throw new InvalidOperationException("A failed limit Save changed the effective or persisted limit.");
 
-            var preview = FindControls<TextBox>(prompt).Single(box => box.IsReadOnly && box.IsUndoEnabled == false);
+            var preview = FindControls<DialogText>(prompt).Single(box => box.HorizontalScrollBarVisibility == ScrollBarVisibility.Auto);
             var value = (IValueProvider)new TextBoxAutomationPeer(preview).GetPattern(PatternInterface.Value)!;
             if (!value.IsReadOnly || value.Value != original[..(pageUnits - 1)])
                 throw new InvalidOperationException("The first accessible preview page split the supplementary character.");

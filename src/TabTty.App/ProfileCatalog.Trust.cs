@@ -77,7 +77,8 @@ internal sealed partial class ProfileCatalog
     internal void ResetTrust(Window owner, Action<Exception> reportFailure)
     {
         if (app.Modal(() => ThemedMessageBox.Show(owner, Text("ProfileTrustResetConfirm"), Text("ProfileTrustReset"),
-            MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No)) != MessageBoxResult.Yes) return;
+            MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No,
+            acceptKey: "Reset")) != MessageBoxResult.Yes) return;
         try
         {
             trustReset++;
@@ -193,8 +194,8 @@ internal sealed partial class ProfileCatalog
             string? previous = RememberedMapping();
             if (previous == version) return;
             if (previous is not null && await AskAsync(owner, "LogDestinationReview",
-                Text("LogDestinationReviewNotice") + "\n\n" + PermissionDisplay.Literal(destination.Path) + "\n" +
-                PermissionDisplay.Literal(destination.EffectivePath), "ApproveLogDestination", null, token, tab) == ProfileAnswer.Cancel)
+                PermissionDisplay.Literal(destination.Path) + "\n" + PermissionDisplay.Literal(destination.EffectivePath) +
+                "\n\n" + Text("LogDestinationReviewNotice"), "ApproveLogDestination", null, token, tab) == ProfileAnswer.Cancel)
                 throw new RecordingStartException(Text("LogDestinationRejected"));
 
             token.ThrowIfCancellationRequested();
@@ -222,7 +223,7 @@ internal sealed partial class ProfileCatalog
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
         var profile = await ConnectionProfile.TryLoadLocalAsync(path, timeout.Token);
         if (profile is not null) return profile;
-        var details = Text("ProfileReadSourceNotice") + "\n\n" + PermissionDisplay.Literal(path);
+        var details = PermissionDisplay.Literal(path) + "\n\n" + Text("ProfileReadSourceNotice");
         if (macroName is not null) details += "\n" + Text("MacroSourceFile") + "  " + PermissionDisplay.Literal(macroName);
         if (await AskAsync(owner, "ProfileReadSource", details, "ProfileReadSource", null, token, tab) == ProfileAnswer.Cancel)
             throw new SshInteractionCancelledException();
@@ -233,10 +234,10 @@ internal sealed partial class ProfileCatalog
     private static string Describe(string path, ConnectionProfile profile, string? macro, bool changed)
     {
         var lines = new List<string> { PermissionDisplay.Literal(path) };
-        if (changed) lines.Add(Text("ProfileTrustVersionChanged"));
-        if (macro is not null) lines.Add(Text("MacroSourceFile") + "  " + PermissionDisplay.Literal(macro));
         string target = profile.Type == "serial" ? profile.Serial.PortName : $"{profile.Host} [{profile.Port}]";
         lines.Add($"{profile.Type.ToUpperInvariant()}  {PermissionDisplay.Literal(target)}");
+        if (changed) lines.Add(Text("ProfileTrustVersionChanged"));
+        if (macro is not null) lines.Add(Text("MacroSourceFile") + "  " + PermissionDisplay.Literal(macro));
         if (profile.Type == "ssh")
         {
             lines.Add(PermissionDisplay.Literal(profile.SshUsername));
@@ -272,16 +273,11 @@ internal sealed partial class ProfileCatalog
             Width = 650,
             WindowStartupLocation = owner is null ? WindowStartupLocation.CenterScreen : WindowStartupLocation.CenterOwner,
         };
-        window.AddField(title, new TextBox
-        {
-            Text = details, IsReadOnly = true, IsUndoEnabled = false, TextWrapping = TextWrapping.Wrap,
-            MaxHeight = Math.Max(120, SystemParameters.WorkArea.Height / 2),
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-        });
-        window.AddAction(once, () => Complete(ProfileAnswer.Once));
-        if (remember is not null) window.AddAction(remember, () => Complete(ProfileAnswer.Remember));
-        var cancel = window.AddAction("Cancel", () => Complete(ProfileAnswer.Cancel));
-        cancel.IsDefault = true;
+        window.AddDisplay(title, new DialogText(details,
+            title == "ProfileReadSource" ? null : Math.Max(120, SystemParameters.WorkArea.Height / 2)));
+        window.AddDialogAction(once, () => Complete(ProfileAnswer.Once));
+        if (remember is not null) window.AddDialogAction(remember, () => Complete(ProfileAnswer.Remember));
+        var cancel = window.AddDialogAction("Cancel", () => Complete(ProfileAnswer.Cancel), isDefault: true);
         window.PreviewKeyDown += (_, args) =>
         {
             if (args.Key != Key.Escape) return;
@@ -291,7 +287,6 @@ internal sealed partial class ProfileCatalog
         window.Closed += (_, _) => answer.TrySetResult(ProfileAnswer.Cancel);
         if (tab is not null)
         {
-            window.Loaded += (_, _) => { if (window.ShowActivated) cancel.Focus(); };
             await tab.PresentDecisionAsync(window, token);
             return await answer.Task;
         }

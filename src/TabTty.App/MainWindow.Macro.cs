@@ -86,7 +86,7 @@ internal sealed partial class MainWindow
     {
         var review = new FormWindow(this, Text("MacroReadRemote")) { Width = 560 };
         review.AddPinnedNotice(Text("MacroReadRemoteNotice"));
-        review.AddField("MacroReadFilePath", ReadOnlyMacroValue(PermissionDisplay.Literal(path)));
+        review.AddField("MacroReadFilePath", new DialogText(PermissionDisplay.Literal(path)));
         review.AddButtons(() => { }, acceptKey: "MacroReadSource", cancelDefault: true);
         return app.Modal(review.ShowDialog) == true && CanAcceptTabs;
     }
@@ -109,19 +109,19 @@ internal sealed partial class MainWindow
             int largestText = program.Constants.Aggregate(program.Source.Length, (length, binding) => Math.Max(length, binding.File.Source.Length));
             using var reviewMemory = program.ReserveReview(16_384 + 96 * (reviewUnits + Math.Min(largestText, ReadOnlyPreview.PageUnits + 1)));
             var review = new FormWindow(this, Text("MacroReview")) { Width = 600 };
-            review.AddPinnedNotice(Text(elevated ? "MacroElevatedNotice" : "MacroTrustNotice"));
-            review.AddField("MacroSourceFile", ReadOnlyMacroValue(PermissionDisplay.Literal(program.FullPath)));
-            review.AddField("MacroSourceDigest", ReadOnlyMacroValue(key.SourceDigest));
+            review.AddField("MacroSourceFile", new DialogText(PermissionDisplay.Literal(program.FullPath)));
+            review.AddNotice(elevated ? "MacroElevatedNotice" : "MacroTrustNotice");
+            review.AddField("MacroSourceDigest", new DialogText(key.SourceDigest));
             string values = arguments.Length == 0 ? Text("MacroNoArguments") : string.Join("\n",
                 arguments.Select((value, index) => $"[{index}] \"{PermissionDisplay.Literal(value)}\""));
-            review.AddField("MacroArguments", ReadOnlyMacroValue(values));
+            review.AddField("MacroArguments", new DialogText(values, 180));
             review.AddAction("MacroInspectSource", () => InspectMacroText(review, "MacroInspectSource", program.Source));
             if (program.Constants.Count != 0)
             {
-                review.AddField("MacroConstantsVersion", ReadOnlyMacroValue(key.ConstantsDigest));
+                review.AddField("MacroConstantsVersion", new DialogText(key.ConstantsDigest));
                 var aliases = new ComboBox { ItemsSource = program.Constants.Select(binding => binding.Alias).ToArray() };
-                var path = ReadOnlyMacroValue("");
-                var fileDigest = ReadOnlyMacroValue("");
+                var path = new DialogText("");
+                var fileDigest = new DialogText("");
                 aliases.SelectionChanged += (_, _) =>
                 {
                     if (aliases.SelectedIndex < 0) return;
@@ -138,9 +138,9 @@ internal sealed partial class MainWindow
             }
             MacroTrustDecision? choice = null;
             if (pending.CanRemember(MacroTrustDecision.Allow))
-                review.AddAction("MacroAlwaysAllow", () => Select(MacroTrustDecision.Allow));
+                review.AddDialogAction("MacroAlwaysAllow", () => Select(MacroTrustDecision.Allow));
             if (pending.CanRemember(MacroTrustDecision.Block))
-                review.AddAction("MacroAlwaysBlock", () => Select(MacroTrustDecision.Block));
+                review.AddDialogAction("MacroAlwaysBlock", () => Select(MacroTrustDecision.Block));
             review.AddButtons(() => { }, acceptKey: "MacroRunOnce", cancelDefault: true);
             if (app.Modal(review.ShowDialog) != true || !CanAcceptTabs) return false;
             var result = pending.Confirm(choice);
@@ -164,18 +164,11 @@ internal sealed partial class MainWindow
     private void InspectMacroText(Window owner, string titleKey, string text)
     {
         var dialog = new FormWindow(owner, Text(titleKey)) { Width = 780 };
-        var contents = ReadOnlyMacroValue("");
-        contents.MaxHeight = Math.Max(180, SystemParameters.WorkArea.Height - 240);
+        var contents = new DialogText("", Math.Max(180, SystemParameters.WorkArea.Height - 240));
         ReadOnlyPreview.Add(dialog, titleKey, contents, text);
-        dialog.AddButtons(() => { }, acceptKey: "OK");
+        dialog.AddCloseAction();
         app.Modal(dialog.ShowDialog);
     }
-
-    private static TextBox ReadOnlyMacroValue(string value) => new()
-    {
-        Text = value, IsReadOnly = true, IsUndoEnabled = false, TextWrapping = TextWrapping.Wrap,
-        MaxHeight = 180, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-    };
 
     private void ResetMacroTrust(Window owner)
     {

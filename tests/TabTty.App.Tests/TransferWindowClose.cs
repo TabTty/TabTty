@@ -312,6 +312,44 @@ internal static partial class Program
                 throw new InvalidOperationException("The SFTP server did not list note.txt in the previewed folder.");
             Console.WriteLine("PASS SftpDropRequiresPreviewedFolder");
 
+            _ = transfer.Dispatcher.BeginInvoke(() => create[1].RaiseEvent(new RoutedEventArgs(Button.ClickEvent)));
+            var nameDialog = await WaitForTransferDialogAsync("TransferNewFolder");
+            try
+            {
+                var nameField = FindControls<TextBox>(nameDialog).Single(field => !field.IsReadOnly);
+                if (AutomationProperties.GetLabeledBy(nameField) is not Label { Content: TextBlock nameLabel } ||
+                    nameLabel.Text != App.Text("TransferName") ||
+                    !FindControls<Button>(nameDialog).Any(button => Equals(button.Content, App.Text("CreateTransferFolder")) && !button.IsEnabled))
+                    throw new InvalidOperationException("The name dialog did not expose its field and keep Create unavailable for an empty name.");
+                if (!FindControls<Button>(nameDialog).Any(button => Equals(button.Content, App.Text("Cancel")) && button.IsCancel))
+                    throw new InvalidOperationException("The name dialog had no cancellation action.");
+            }
+            finally { nameDialog.Close(); }
+
+            await WaitForListsAsync(() => true);
+            localList.SelectedValuePath = "Name";
+            localList.SelectedValue = "note.txt";
+            if (!upload.IsEnabled || !Equals(localList.SelectedValue, "note.txt"))
+                throw new InvalidOperationException("The duplicate upload fixture did not select note.txt.");
+            _ = transfer.Dispatcher.BeginInvoke(() => upload.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)));
+            var overwrite = await WaitForTransferDialogAsync("TransferOverwrite");
+            try
+            {
+                overwrite.Width = 300;
+                overwrite.MaxHeight = 250;
+                overwrite.UpdateLayout();
+                var values = FindControls<DialogText>(overwrite).ToArray();
+                var skip = FindControls<Button>(overwrite).Single(button => Equals(button.Content, App.Text("TransferSkip")));
+                if (values.Length != 6 || !values[0].Text.EndsWith("note.txt", StringComparison.Ordinal) ||
+                    values[3].Text != "/home/inbox/note.txt" || !FindControls<Button>(overwrite).Single(button => button.IsDefault).IsCancel ||
+                    ((FormView)overwrite.Content).Body.IsAncestorOf(skip))
+                    throw new InvalidOperationException("The overwrite dialog did not keep the comparison and safe action accessible.");
+                skip.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            }
+            finally { if (overwrite.IsVisible) overwrite.Close(); }
+            await WaitForListsAsync(() => remoteList.Items.Count == 1);
+            Console.WriteLine("PASS SftpNameAndOverwriteUseSharedDialogs");
+
             transfer.UpdateLayout();
             var fileRow = (ListViewItem)remoteList.ItemContainerGenerator.ContainerFromIndex(0);
             if (fileRow.ActualHeight != folderHeight)
@@ -388,6 +426,16 @@ internal static partial class Program
             {
                 while (!localList.IsEnabled || !remoteList.IsEnabled || !create.All(button => button.IsEnabled) || !condition())
                     await Task.Delay(10, deadline.Token);
+            }
+
+            async Task<Window> WaitForTransferDialogAsync(string title)
+            {
+                for (;;)
+                {
+                    if (transfer.OwnedWindows.Cast<Window>().FirstOrDefault(window =>
+                        window.IsVisible && window.Title == App.Text(title)) is { } dialog) return dialog;
+                    await Task.Delay(10, deadline.Token);
+                }
             }
 
             static bool HasRow(ListView list, string name) => list.Items.Cast<object>().Any(row => RowName(row) == name);

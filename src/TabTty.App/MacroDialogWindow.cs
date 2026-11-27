@@ -13,6 +13,7 @@ internal sealed class MacroDialogWindow : Window
     private readonly Dictionary<MacroDialogButton, Button> buttons = [];
     private readonly TextBlock validation = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextBox? input;
+    private readonly TextBlock? inputLabel;
     private bool invalid;
 
     public MacroDialogWindow(Window owner, string macro, MacroDialogRequest request, string targetTab)
@@ -21,22 +22,25 @@ internal sealed class MacroDialogWindow : Window
         Icon = WindowIcons.App;
         Title = request.Title.Length == 0 ? macro : $"{request.Title} ({macro})";
         Width = 480;
-        MaxHeight = SystemParameters.WorkArea.Height;
+        DialogLayout.SetWindowBounds(this);
         SizeToContent = SizeToContent.Height;
         ShowInTaskbar = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         SetResourceReference(BackgroundProperty, "WindowBackground");
         SetResourceReference(ForegroundProperty, "WindowForeground");
-        var panel = new StackPanel { Margin = new Thickness(16) };
-        Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        var panel = new StackPanel();
+        var layout = new DialogLayout(panel, new Thickness(16));
+        Content = layout;
         panel.Children.Add(new TextBlock
         {
             Text = string.Format(Text("DecisionTargetTab"), PermissionDisplay.Literal(targetTab)), TextWrapping = TextWrapping.Wrap,
         });
-        panel.Children.Add(new TextBlock { Text = request.Message, TextWrapping = TextWrapping.Wrap });
+        panel.Children.Add(new DialogText(request.Message, 240));
         if (request.InputEnabled)
         {
-            input = new TextBox { Text = request.InitialText, MaxLength = 4096, Margin = new Thickness(0, 8, 0, 0) };
+            inputLabel = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 4) };
+            input = new TextBox { Text = request.InitialText, MaxLength = 4096 };
+            AutomationProperties.SetLabeledBy(input, inputLabel);
             input.TextChanged += (_, _) => { invalid = false; UpdateLabels(); };
             DataObject.AddPastingHandler(input, (_, e) =>
             {
@@ -49,12 +53,11 @@ internal sealed class MacroDialogWindow : Window
                     UpdateLabels();
                 }
             });
+            panel.Children.Add(inputLabel);
             panel.Children.Add(input);
             panel.Children.Add(validation);
             Loaded += (_, _) => { if (ShowActivated) input.Focus(); };
         }
-        var bar = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right };
-        panel.Children.Add(bar);
         MacroDialogButton[] choices = request.Buttons switch
         {
             MacroDialogButtons.OK => [MacroDialogButton.OK],
@@ -64,10 +67,10 @@ internal sealed class MacroDialogWindow : Window
         };
         foreach (MacroDialogButton choice in choices)
         {
-            var button = new Button { IsDefault = choice == choices[^1], MinWidth = 75, Margin = new Thickness(8, 8, 0, 0) };
+            var button = DialogLayout.StyleAction(new Button { IsDefault = choice == choices[^1], MinWidth = 75 });
             button.Click += (_, _) => Answer(choice);
             buttons.Add(choice, button);
-            bar.Children.Add(button);
+            layout.Actions.Children.Add(button);
         }
         PreviewKeyDown += (_, e) =>
         {
@@ -82,7 +85,7 @@ internal sealed class MacroDialogWindow : Window
     internal void UpdateLabels()
     {
         foreach (var (choice, button) in buttons) button.Content = Text(choice.ToString());
-        if (input is not null) AutomationProperties.SetName(input, Text("MacroInput"));
+        if (inputLabel is not null) inputLabel.Text = Text("MacroInput");
         validation.Text = invalid ? Text("MacroInvalidInput") : "";
     }
 

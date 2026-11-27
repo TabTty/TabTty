@@ -48,14 +48,14 @@ internal sealed class SshHostTrust(App app, string pathName, Action<string, stri
             _ => ("ChangedHostKey", "ReplaceHostKey"),
         };
         var form = new MainWindow.FormWindow(owner, Text(title));
-        form.AddField("SshDestination", ReadOnly(key.Destination.ToString()));
-        form.AddField("HostKeyType", ReadOnly(key.Format));
+        form.AddField("SshDestination", new DialogText(key.Destination.ToString()));
+        form.AddField("HostKeyType", new DialogText(key.Format));
         if (priorFingerprint is not null)
-            form.AddField("PreviousFingerprint", ReadOnly(priorFingerprint));
+            form.AddField("PreviousFingerprint", new DialogText(priorFingerprint));
         else if (keys is not null)
-            form.AddField("ApprovedHostKeys", ReadOnly(string.Join(Environment.NewLine,
-                keys.OfType<JsonObject>().Select(item => $"{item["format"]}   {item["fingerprint"]}"))));
-        form.AddField("PresentedFingerprint", ReadOnly(key.Fingerprint));
+            form.AddField("ApprovedHostKeys", new DialogText(string.Join(Environment.NewLine,
+                keys.OfType<JsonObject>().Select(item => $"{item["format"]}   {item["fingerprint"]}")), 150));
+        form.AddField("PresentedFingerprint", new DialogText(key.Fingerprint));
         form.AddNotice("VerifyHostFingerprint");
         form.AddButtons(() => { }, acceptKey: accept, cancelDefault: true);
         if (!await TabDecision.ShowFormAsync(app, form, token, tab)) return false;
@@ -100,8 +100,9 @@ internal sealed class SshHostTrust(App app, string pathName, Action<string, stri
         form.AddAsyncButtons(async () =>
         {
             if (list.SelectedItem is not HostRow row) throw new ArgumentException(Text("SelectHostKey"));
-            if (app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow, Text("ConfirmDeleteHostKey"), Text("HostKeys"),
-                    MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No)) != MessageBoxResult.Yes)
+            if (app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow, Text("ConfirmDeleteHostKey"), Text("DeleteHostKey"),
+                    MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No,
+                    acceptKey: "DeleteHostKey", context: new DialogText(row.ToString()))) != MessageBoxResult.Yes)
                 return false;
             var keys = row.Destination["keys"]!.AsArray();
             int index = keys.IndexOf(row.Key);
@@ -118,8 +119,6 @@ internal sealed class SshHostTrust(App app, string pathName, Action<string, stri
             return true;
         }, acceptKey: "DeleteHostKey", cancelDefault: true);
     });
-
-    private static TextBox ReadOnly(string value) => new() { Text = value, IsReadOnly = true };
 
     private (JsonObject Document, byte[]? Original) Read(string? path = null)
     {
