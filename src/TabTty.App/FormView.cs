@@ -649,7 +649,7 @@ internal sealed class FormView : Grid
         check.Content = content;
     }
 
-    public void TrackValue<T>(Func<T> read, Action<T> restore, Func<T, T, bool>? equals = null)
+    public Action<T> TrackValue<T>(Func<T> read, Action<T> restore, Func<T, T, bool>? equals = null)
     {
         T saved = default!;
         Func<bool>? savesField = savesSection;
@@ -662,7 +662,14 @@ internal sealed class FormView : Grid
             T snapshot = read();
             return () => saved = snapshot;
         }, savesField));
+        return value =>
+        {
+            saved = value;
+            RefreshEditorButtons();
+        };
     }
+
+    internal void RefreshEditorButtons() => updateEditorButtons?.Invoke();
 
     internal Action CaptureSaveBaseline()
     {
@@ -733,7 +740,7 @@ internal sealed class FormView : Grid
         return Task.FromResult(true);
     });
 
-    public void AddEditorButtons(Func<Task<bool>> save, Func<bool>? isCreating = null)
+    public void AddEditorButtons(Func<Task<bool>> save, Func<bool>? isCreating = null, Func<bool>? canSaveInitialValues = null)
     {
         foreach (EditField edit in edits) edit.Snapshot()();
         tracksEdits = true;
@@ -742,7 +749,7 @@ internal sealed class FormView : Grid
             if (IsBusy || !HasUnsavedChanges) return;
             foreach (EditField edit in edits) edit.Restore();
             updateEditorButtons?.Invoke();
-        }, isCreating);
+        }, isCreating, canSaveInitialValues: canSaveInitialValues);
         AddHandler(TextBoxBase.TextChangedEvent, new TextChangedEventHandler(OnEditorInputChanged), true);
         AddHandler(Selector.SelectionChangedEvent, new SelectionChangedEventHandler(OnEditorInputChanged), true);
         AddHandler(ToggleButton.CheckedEvent, new RoutedEventHandler(OnEditorInputChanged), true);
@@ -757,7 +764,7 @@ internal sealed class FormView : Grid
     }
 
     private Button AddButtonRow(Func<Task<bool>> save, string acceptKey, bool cancelDefault, string cancelKey,
-        Action cancelAction, Func<bool>? isCreating = null, bool acceptOnEnter = true)
+        Action cancelAction, Func<bool>? isCreating = null, bool acceptOnEnter = true, Func<bool>? canSaveInitialValues = null)
     {
         Panel buttons = modal ? DialogActions() : new StackPanel
         {
@@ -778,7 +785,7 @@ internal sealed class FormView : Grid
         SetText(cancelKey, value => cancel.Content = value);
         apply.Click += async (_, _) =>
         {
-            if (tracksEdits && !HasUnsavedChanges) return;
+            if (tracksEdits && !CanSave()) return;
             bool committed = false;
             await RunAsync(async () => committed = await save());
             if (!committed) return;
@@ -811,7 +818,8 @@ internal sealed class FormView : Grid
             updateEditorButtons = () =>
             {
                 apply.Content = Text(isCreating?.Invoke() == true ? "Create" : acceptKey);
-                apply.IsEnabled = cancel.IsEnabled = HasUnsavedChanges;
+                apply.IsEnabled = CanSave();
+                cancel.IsEnabled = HasUnsavedChanges;
             };
             updateEditorButtons();
         }
@@ -837,6 +845,8 @@ internal sealed class FormView : Grid
         }
         else if (!modal) fields.Children.Add(buttons);
         return apply;
+
+        bool CanSave() => HasUnsavedChanges || canSaveInitialValues?.Invoke() == true;
     }
 
     internal Action AddEditorSaveRecovery(Func<(string Message, string Action)?> recovery, Func<Task> retry)

@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Automation.Peers;
+using System.Windows.Automation.Provider;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -16,7 +17,7 @@ internal static partial class Program
     private static async Task CheckHighlightAndHostTrustPublicationAsync(App app, MainWindow owner,
         FilePublicationFixture fixture)
     {
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(40));
         using var closeDialogsOnTimeout = deadline.Token.Register(() => app.Dispatcher.BeginInvoke(() =>
         {
             foreach (var dialog in app.Windows.Cast<Window>().Where(window => window.Owner == owner).ToArray())
@@ -36,10 +37,9 @@ internal static partial class Program
         });
         File.WriteAllBytes(highlights.Path, priorHighlights);
         app.Highlights.Show(owner);
-        Click(await VisibleButtonAsync(owner, "RemoveHighlightSet"));
         byte[] changedHighlights = [.. priorHighlights, (byte)'\n'];
         File.WriteAllBytes(highlights.Path, changedHighlights);
-        Click(await VisibleButtonAsync(owner, "Save"));
+        await DeleteHighlightAsync();
         await AcknowledgeReportAsync(owner, App.Text("StoreChanged"));
         if (!File.ReadAllBytes(highlights.Path).AsSpan().SequenceEqual(changedHighlights) ||
             app.Highlights.Find(highlightId)?.Name != "Previous" || File.Exists(highlights.Path + ".bak"))
@@ -48,7 +48,7 @@ internal static partial class Program
         using (HoldArtifactCapacity())
         {
             var dismissal = AcknowledgeReportAsync(owner, "The file publication artifact budget reached its limit.");
-            Click(await VisibleButtonAsync(owner, "Save"));
+            await DeleteHighlightAsync();
             await dismissal;
             if (!File.ReadAllBytes(highlights.Path).AsSpan().SequenceEqual(priorHighlights) ||
                 app.Highlights.Find(highlightId)?.Name != "Previous" || File.Exists(highlights.Path + ".bak"))
@@ -56,7 +56,7 @@ internal static partial class Program
         }
         using (var held = fixture.PauseNextWrite())
         {
-            Click(await VisibleButtonAsync(owner, "Save"));
+            await DeleteHighlightAsync();
             await held.Issued.Task.WaitAsync(deadline.Token);
             if (app.Highlights.Find(highlightId)?.Name != "Previous" ||
                 !File.ReadAllBytes(held.Preservation!).AsSpan().SequenceEqual(priorHighlights))
@@ -78,6 +78,7 @@ internal static partial class Program
                 throw new InvalidOperationException("Highlight reinspection did not adopt the validated stored revision.");
         }
         Console.WriteLine("PASS HighlightPublicationRetainsEffectiveCatalogUntilReinspection");
+        await CheckHighlightManagerAndEditorAsync();
 
         byte[] priorHosts = hosts.Defaults();
         File.WriteAllBytes(hosts.Path, priorHosts);
@@ -235,6 +236,98 @@ internal static partial class Program
 
         IDisposable HoldArtifactCapacity() => VerifiedFilePublication.ReserveNamespace(
             [Path.Combine(Path.GetDirectoryName(highlights.Path)!, "capacity-reservation")], 256L * 1024 * 1024);
+
+        async Task DeleteHighlightAsync()
+        {
+            app.Highlights.Show(owner);
+            var list = await VisibleListAsync(owner, "HighlightSetList");
+            ListViewItem? row = null;
+            await WaitForAsync(() => (row = list.ItemContainerGenerator.ContainerFromIndex(0) as ListViewItem) is not null);
+            MenuItem delete = ContextCommand(list, row!, "RemoveHighlightSet");
+            _ = owner.Dispatcher.BeginInvoke(() => delete.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent)));
+            await DismissAsync("DeleteHighlightSet", "DeleteHighlightSet");
+        }
+
+        async Task CheckHighlightManagerAndEditorAsync()
+        {
+            app.Highlights.Show(owner);
+            var manager = await VisibleListAsync(owner, "HighlightSetList");
+            var create = ContextCommand(manager, manager, "NewListItem");
+            if (manager.ContextMenu.Items.OfType<MenuItem>().Count(item => item.Visibility == Visibility.Visible) != 1)
+                throw new InvalidOperationException("The empty highlight list exposed row commands.");
+            create.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            var editor = app.Windows.OfType<HighlightSetEditorWindow>().Single();
+            var ruleList = await VisibleListAsync(editor, "HighlightRules");
+            var createRule = await VisibleButtonAsync(editor, "AddHighlightRule");
+            var enabled = FindControls<CheckBox>(editor).Single();
+            if (!(enabled.TranslatePoint(new Point(), editor).Y < createRule.TranslatePoint(new Point(), editor).Y &&
+                createRule.TranslatePoint(new Point(), editor).Y < ruleList.TranslatePoint(new Point(), editor).Y))
+                throw new InvalidOperationException("The rule creation button was not between Enabled and the rule list.");
+            var name = FindControls<TextBox>(editor).Single(box => !box.IsReadOnly);
+            name.Text = "Saved set";
+            Click(await VisibleButtonAsync(editor, "Save"));
+            await WaitForAsync(() => app.Highlights.Find(editor.SetId)?.Name == "Saved set" &&
+                manager.Items.Count == 1 && !editor.HasPendingEdits);
+            if (!editor.IsVisible || editor.Owner is not null)
+                throw new InvalidOperationException("Saving a highlight set dismissed its standalone editor.");
+
+            name.Text = "Draft change";
+            HighlightSetCheckBox? checkbox = null;
+            await WaitForAsync(() => (checkbox = FindSetCheckBox(manager)) is not null);
+            if (UIElementAutomationPeer.CreatePeerForElement(checkbox!)?.GetPattern(PatternInterface.Toggle) is not IToggleProvider toggle)
+                throw new InvalidOperationException("The highlight checkbox was not accessible as a toggle.");
+            using (var held = fixture.PauseNextWrite())
+            {
+                toggle.Toggle();
+                await held.Issued.Task.WaitAsync(deadline.Token);
+                if (checkbox!.IsChecked != true || enabled.IsChecked != true ||
+                    app.Highlights.Find(editor.SetId)?.Enabled != true)
+                    throw new InvalidOperationException("A pending checkbox save changed a committed enabled state.");
+            }
+            await WaitForAsync(() => app.Highlights.Find(editor.SetId) is { Enabled: false } &&
+                enabled.IsChecked == false && MainWindow.Ancestor<FormView>(manager)?.IsBusy == false);
+            if (name.Text != "Draft change")
+                throw new InvalidOperationException("A management toggle discarded an unrelated editor field.");
+            Click(await VisibleButtonAsync(editor, "DiscardChanges"));
+            if (name.Text != "Saved set" || enabled.IsChecked != false || editor.HasPendingEdits)
+                throw new InvalidOperationException("Discard did not retain the separately saved enabled state.");
+            Click(await VisibleButtonAsync(editor, "CloseDialog"));
+            await WaitForAsync(() => !editor.IsVisible);
+
+            app.Profiles.Show(owner);
+            var profiles = await VisibleListAsync(owner, "ProfileCatalog");
+            ContextCommand(profiles, profiles, "NewListItem").RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            var profileEditor = app.Windows.OfType<ProfileEditorWindow>().Single();
+            if (profileEditor.TitleKey != "NewProfile")
+                throw new InvalidOperationException("The empty profile list did not open the new-profile editor.");
+            profileEditor.Close();
+            Console.WriteLine("PASS HighlightEditorCommitsAndRebasesManagementToggleAndEmptyListsCreate");
+
+            static HighlightSetCheckBox? FindSetCheckBox(DependencyObject visual)
+            {
+                if (visual is HighlightSetCheckBox found) return found;
+                for (int index = 0; index < VisualTreeHelper.GetChildrenCount(visual); index++)
+                    if (FindSetCheckBox(VisualTreeHelper.GetChild(visual, index)) is { } checkbox) return checkbox;
+                return null;
+            }
+        }
+
+        async Task<ListView> VisibleListAsync(DependencyObject parent, string key)
+        {
+            ListView? list = null;
+            await WaitForAsync(() => (list = FindControls<ListView>(parent).SingleOrDefault(item =>
+                item.IsVisible && AutomationProperties.GetName(item) == App.Text(key))) is not null);
+            return list!;
+        }
+
+        static MenuItem ContextCommand(ListView list, UIElement source, string key)
+        {
+            var opening = CreateContextMenuEvent(source, true, 1, 1);
+            source.RaiseEvent(opening);
+            if (opening.Handled) throw new InvalidOperationException("The list suppressed its context menu.");
+            return list.ContextMenu.Items.OfType<MenuItem>().Single(item =>
+                item.Visibility == Visibility.Visible && Equals(item.Header, App.Text(key)));
+        }
 
         async Task RecheckAsync(JsonStoreRecovery.Store store)
         {

@@ -14,7 +14,8 @@ namespace TabTty.App;
 internal static class JsonStoreRecovery
 {
     internal sealed record Store(string Name, string Path, Action<string> Validate, Action Reload, Func<byte[]> Defaults,
-        Func<string, Adoption>? PrepareAdoption = null, Func<byte[], byte[]>? SanitizeBackup = null);
+        Func<string, Adoption>? PrepareAdoption = null, Func<byte[], byte[]>? SanitizeBackup = null,
+        SemaphoreSlim? WriteGate = null);
 
     internal sealed record Adoption(IDisposable? Reservation, Action Apply);
 
@@ -27,6 +28,7 @@ internal static class JsonStoreRecovery
         {
             if (choice.SelectedItem is not Store store) return;
             Adoption? adoption = null;
+            if (store.WriteGate is { } gate) await gate.WaitAsync();
             try
             {
                 using var progress = form.BeginProgress("FileOperationPending");
@@ -49,7 +51,11 @@ internal static class JsonStoreRecovery
                 else adoption.Apply();
                 ShowRetainedStages(form, VerifiedFilePublication.GetRetainedStagePaths(store.Path));
             }
-            finally { adoption?.Reservation?.Dispose(); }
+            finally
+            {
+                adoption?.Reservation?.Dispose();
+                store.WriteGate?.Release();
+            }
         });
         form.AddAsyncAction("RestoreStoreBackup", async () =>
         {
@@ -84,6 +90,7 @@ internal static class JsonStoreRecovery
         async Task RunAsync(Store store, Action<Action<string>> action)
         {
             Adoption? adoption = null;
+            if (store.WriteGate is { } gate) await gate.WaitAsync();
             try
             {
                 using var progress = form.BeginProgress("FileOperationPending");
@@ -97,7 +104,11 @@ internal static class JsonStoreRecovery
                 else adoption.Apply();
                 ShowRetainedStages(form, VerifiedFilePublication.GetRetainedStagePaths(store.Path));
             }
-            finally { adoption?.Reservation?.Dispose(); }
+            finally
+            {
+                adoption?.Reservation?.Dispose();
+                store.WriteGate?.Release();
+            }
         }
     });
 

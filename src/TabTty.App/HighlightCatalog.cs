@@ -12,8 +12,11 @@ namespace TabTty.App;
 
 internal sealed record HighlightSet(Guid Id, string Name, bool Enabled, IReadOnlyList<TerminalHighlightRule> Rules);
 
-internal sealed class HighlightCatalog(App app, string pathName, Action<string, string, string?>? issue)
+internal sealed partial class HighlightCatalog(App app, string pathName, Action<string, string, string?>? issue)
 {
+    private const int MaximumSets = 1000;
+    internal const int MaximumRules = 100;
+    private readonly SemaphoreSlim writes = new(1);
     private IReadOnlyList<HighlightSet>? sets;
     private byte[]? original;
     private JsonObject? originalDocument;
@@ -42,7 +45,7 @@ internal sealed class HighlightCatalog(App app, string pathName, Action<string, 
             temporaryDefaults = false;
             _ = GetSets();
             Changed?.Invoke();
-        }, () => "{\"schemaVersion\":1,\"requiredFeatures\":[],\"sets\":[]}"u8.ToArray());
+        }, () => "{\"schemaVersion\":1,\"requiredFeatures\":[],\"sets\":[]}"u8.ToArray(), WriteGate: writes);
 
     public HighlightSet? Find(Guid? id)
     {
@@ -66,162 +69,9 @@ internal sealed class HighlightCatalog(App app, string pathName, Action<string, 
         return () => (selection.SelectedItem as HighlightChoice)?.Id;
     }
 
-    public void Show(MainWindow owner)
+    internal TerminalHighlightRule? EditRule(Window owner, TerminalHighlightRule rule)
     {
-        try
-        {
-            owner.OpenForm("HighlightSets", Build);
-        }
-        catch (Exception exception) when (InvalidStore(exception))
-        {
-            owner.ReportCommandFailure("HighlightSets", new InvalidDataException(Text("HighlightStoreInvalid")));
-        }
-
-        void Build(FormView form)
-        {
-            form.AddStatusBar();
-            var originalSets = GetSets();
-            var draft = originalSets.ToList();
-            var list = new ListBox { DisplayMemberPath = nameof(HighlightSet.Name), Height = 250 };
-            var rules = new ListBox { DisplayMemberPath = nameof(TerminalHighlightRule.Name), Height = 208 };
-            var summary = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 8) };
-            var selectedActions = new List<Button>();
-            form.AddActionRow(() => form.AddAction("AddHighlightSet", () =>
-            {
-                if (draft.Count == 1000) return;
-                if (EditSet(form.OwnerWindow, new HighlightSet(Guid.NewGuid(), "", true, [])) is not { } updated) return;
-                draft.Add(updated);
-                Refresh(list, draft, draft.Count - 1);
-            }));
-            form.AddColumns(() => form.AddGroup("HighlightSetList", () =>
-            {
-                form.AddDisplay("HighlightSetList", list);
-            }), () => form.AddGroup("HighlightRules", () =>
-            {
-                form.AddDisplay("HighlightSet", summary);
-                form.AddDisplay("HighlightRules", rules);
-                form.AddActionRow(() =>
-                {
-                    selectedActions.Add(form.AddAction("EditHighlightSet", EditSelected));
-                    selectedActions.Add(form.AddAction("DuplicateHighlightSet", DuplicateSelected));
-                    selectedActions.Add(form.AddAction("RemoveHighlightSet", RemoveSelected));
-                });
-            }));
-            list.SelectionChanged += (_, _) => UpdateSelection();
-            form.AddLocalizedUpdate(UpdateSelection);
-            Refresh(list, draft, 0);
-            form.TrackValue(draft.ToArray, saved =>
-            {
-                draft.Clear();
-                draft.AddRange(saved);
-                Refresh(list, draft, list.SelectedIndex);
-            }, (saved, current) => saved.Length == current.Length && saved.Zip(current).All(pair =>
-                pair.First.Id == pair.Second.Id && pair.First.Name == pair.Second.Name &&
-                pair.First.Enabled == pair.Second.Enabled && pair.First.Rules.SequenceEqual(pair.Second.Rules)));
-            form.AddEditorButtons(async () =>
-            {
-                using var progress = form.BeginProgress("FileOperationPending");
-                if (!ReferenceEquals(originalSets, GetSets()))
-                    throw new InvalidOperationException(Text("ManagementTabOutdated"));
-                await SaveAsync(draft.ToArray());
-                originalSets = GetSets();
-                return true;
-            });
-
-            void UpdateSelection()
-            {
-                var selected = list.SelectedItem as HighlightSet;
-                foreach (Button action in selectedActions) action.IsEnabled = selected is not null;
-                summary.Text = selected is null ? Text(draft.Count == 0 ? "HighlightSetsEmpty" : "SelectHighlightSet")
-                    : $"{selected.Name} · {Text(selected.Enabled ? "Enabled" : "Off")}";
-                rules.ItemsSource = selected?.Rules;
-                rules.Visibility = selected is null ? Visibility.Collapsed : Visibility.Visible;
-            }
-
-            void EditSelected()
-            {
-                int index = list.SelectedIndex;
-                if (index < 0 || EditSet(form.OwnerWindow, draft[index]) is not { } updated) return;
-                draft[index] = updated;
-                Refresh(list, draft, index);
-            }
-
-            void DuplicateSelected()
-            {
-                if (list.SelectedItem is not HighlightSet set || draft.Count == 1000) return;
-                if (EditSet(form.OwnerWindow, set with { Id = Guid.NewGuid(),
-                        Rules = set.Rules.Select(rule => rule with { Id = Guid.NewGuid() }).ToArray() }) is not { } updated)
-                    return;
-                draft.Add(updated);
-                Refresh(list, draft, draft.Count - 1);
-            }
-
-            void RemoveSelected()
-            {
-                int index = list.SelectedIndex;
-                if (index < 0) return;
-                draft.RemoveAt(index);
-                Refresh(list, draft, index);
-            }
-        }
-    }
-
-    private HighlightSet? EditSet(Window owner, HighlightSet originalSet)
-    {
-        var form = new MainWindow.FormWindow(owner, Text("HighlightSet")) { Width = 540 };
-        var name = new TextBox { Text = originalSet.Name, MaxLength = 512 };
-        var enabled = new CheckBox { IsChecked = originalSet.Enabled };
-        var list = new ListBox { DisplayMemberPath = nameof(TerminalHighlightRule.Name), MinHeight = 120, MaxHeight = 280 };
-        var draft = originalSet.Rules.ToList();
-        Refresh(list, draft, 0);
-        form.AddField("HighlightName", name);
-        form.AddField("Enabled", enabled);
-        form.AddField("HighlightRules", list);
-        form.AddAction("AddHighlightRule", () =>
-        {
-            if (draft.Count == 100) return;
-            var newRule = new TerminalHighlightRule(Guid.NewGuid(), "", "", true, false, default);
-            if (EditRule(form, newRule) is not { } added) return;
-            draft.Add(added);
-            Refresh(list, draft, draft.Count - 1);
-        });
-        form.AddAction("EditHighlightRule", () =>
-        {
-            int index = list.SelectedIndex;
-            if (index < 0 || EditRule(form, draft[index]) is not { } updated) return;
-            draft[index] = updated;
-            Refresh(list, draft, index);
-        });
-        form.AddAction("MoveRuleUp", () => Move(-1));
-        form.AddAction("MoveRuleDown", () => Move(1));
-        form.AddAction("RemoveHighlightRule", () =>
-        {
-            int index = list.SelectedIndex;
-            if (index < 0) return;
-            draft.RemoveAt(index);
-            Refresh(list, draft, index);
-        });
-        HighlightSet? result = null;
-        form.AddButtons(() =>
-        {
-            ValidateName(name.Text);
-            result = originalSet with { Name = name.Text, Enabled = enabled.IsChecked == true, Rules = draft.ToArray() };
-        });
-        return app.Modal(form.ShowDialog) == true ? result : null;
-
-        void Move(int delta)
-        {
-            int index = list.SelectedIndex;
-            int next = index + delta;
-            if (index < 0 || next < 0 || next >= draft.Count) return;
-            (draft[index], draft[next]) = (draft[next], draft[index]);
-            Refresh(list, draft, next);
-        }
-    }
-
-    private TerminalHighlightRule? EditRule(Window owner, TerminalHighlightRule rule)
-    {
-        var form = new MainWindow.FormWindow(owner, Text("EditHighlightRule")) { Width = 500 };
+        var form = new MainWindow.FormWindow(owner, Text("HighlightRuleEditorTitle")) { Width = 500 };
         var name = new TextBox { Text = rule.Name, MaxLength = 512 };
         var pattern = new TextBox { Text = rule.Pattern, MaxLength = 4096 };
         var enabled = new CheckBox { IsChecked = rule.Enabled };
@@ -232,6 +82,9 @@ internal sealed class HighlightCatalog(App app, string pathName, Action<string, 
         var underline = new CheckBox { IsThreeState = true, IsChecked = rule.Style.Underline };
         form.AddField("HighlightName", name);
         form.AddField("HighlightPattern", pattern);
+        var showPatternError = form.AddValidation(pattern);
+        pattern.TextChanged += (_, _) => RefreshPatternError();
+        RefreshPatternError();
         form.AddField("Enabled", enabled);
         form.AddField("IgnoreCase", ignoreCase);
         form.AddField("HighlightForeground", foreground);
@@ -251,7 +104,51 @@ internal sealed class HighlightCatalog(App app, string pathName, Action<string, 
             result = updated;
         });
         return app.Modal(form.ShowDialog) == true ? result : null;
+
+        void RefreshPatternError()
+        {
+            try
+            {
+                _ = TerminalHighlightRules.CreateExpression(pattern.Text, ignoreCase.IsChecked == true);
+                showPatternError("");
+            }
+            catch (ArgumentException)
+            {
+                showPatternError(Text("InvalidHighlightPattern"));
+            }
+        }
     }
+
+    internal async Task<HighlightSet> SaveEditorAsync(HighlightSet? baseline, Func<HighlightSet> readDraft)
+    {
+        await writes.WaitAsync();
+        try
+        {
+            HighlightSet draft = readDraft();
+            ValidateName(draft.Name);
+            var current = GetSets().ToList();
+            int index = current.FindIndex(set => set.Id == draft.Id);
+            if (index >= 0 && current[index].Enabled == draft.Enabled && SameDefinition(current[index], draft))
+                return current[index];
+
+            if (baseline is null && index < 0)
+            {
+                if (current.Count >= MaximumSets) throw new InvalidOperationException(Text("HighlightSetLimit"));
+                current.Add(draft);
+            }
+            else if (baseline is not null && index >= 0 && SameDefinition(current[index], baseline))
+                current[index] = draft;
+            else
+                throw new InvalidOperationException(Text("ManagementTabOutdated"));
+
+            await SaveAsync(current);
+            return draft;
+        }
+        finally { writes.Release(); }
+    }
+
+    private static bool SameDefinition(HighlightSet first, HighlightSet second) =>
+        first.Name == second.Name && first.Rules.SequenceEqual(second.Rules);
 
     private IReadOnlyList<HighlightSet> GetSets()
     {
@@ -268,7 +165,7 @@ internal sealed class HighlightCatalog(App app, string pathName, Action<string, 
         document = JsonStoreRecovery.ParseObject(bytes);
         if (document["schemaVersion"]?.GetValue<int>() != 1 ||
             document["requiredFeatures"] is not JsonArray { Count: 0 } ||
-            document["sets"] is not JsonArray { Count: <= 1000 } saved)
+            document["sets"] is not JsonArray { Count: <= MaximumSets } saved)
             throw new InvalidDataException(Text("HighlightStoreInvalid"));
         var loaded = new List<HighlightSet>(saved.Count);
         var identifiers = new HashSet<Guid>();
@@ -276,7 +173,7 @@ internal sealed class HighlightCatalog(App app, string pathName, Action<string, 
         {
             if (node is not JsonObject item || item["name"]?.GetValue<string>() is not { } name ||
                 item["enabled"]?.GetValue<bool>() is not { } enabled ||
-                item["rules"] is not JsonArray { Count: <= 100 } definitions ||
+                item["rules"] is not JsonArray { Count: <= MaximumRules } definitions ||
                 !Guid.TryParseExact(item["setId"]?.GetValue<string>(), "D", out Guid id) || id == Guid.Empty || !identifiers.Add(id))
                 throw new InvalidDataException(Text("HighlightStoreInvalid"));
             ValidateName(name);
@@ -351,12 +248,6 @@ internal sealed class HighlightCatalog(App app, string pathName, Action<string, 
             !uint.TryParse(value.AsSpan(1), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out uint color))
             throw new ArgumentException(Text("InvalidHighlightColor"));
         return color;
-    }
-
-    private static void Refresh<T>(ListBox list, List<T> draft, int index)
-    {
-        list.ItemsSource = draft.ToArray();
-        list.SelectedIndex = Math.Min(index, draft.Count - 1);
     }
 
     private sealed record HighlightChoice(Guid? Id, string Name);

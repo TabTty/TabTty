@@ -74,6 +74,8 @@ toggles favorite status. Clicking a column header sorts the displayed rows
 and clicking the same header again reverses the order. The new-tab menu shows
 named groups as submenus and ungrouped profiles at the root. Both the menu
 and the list support [connecting multiple profiles](#connecting-multiple-profiles).
+Right-clicking empty space in the profile list, including when it has no rows,
+offers **New**. It opens the same editor as **Create new profile**.
 
 The connection profile manager and every profile editor reserve a single-line
 status bar at the bottom of the view, below the controls and outside the
@@ -270,7 +272,106 @@ for the same vault unlock share its result under the
 | Hover over **Production (5)**, then choose one profile. Repeat using the arrow and the keyboard. | Each navigation gesture opens the submenu. Choosing a child starts one connection. Clicking the group name or pressing Enter on it starts five. |
 | In **All**, select rows from two groups, sort the list, then filter out one selected row. | The selected rows still visible remain selected. Right-clicking one shows their current count. The command opens them in the displayed sort order. |
 | Select A and B, then right-click unselected C. | The single-row menu applies to C alone. Double-clicking C opens its editor. |
+| Right-click empty space in the profile list while rows are selected, then repeat with an empty list. | Both menus offer **New** and open the ordinary editor for a new profile. |
 | From one split, open A, B and C in that order while B already has a tab. Leave A's host-key prompt open until C connects, then cancel A. | Three new tabs appear in that split in A, B, C order, with A initially selected. C can connect while A waits. B's original tab stays open, and cancelling A ends only A's attempt. |
+
+## Highlight set management
+
+### Management tab
+
+The management tab contains **Create new highlight set** at the top, one
+compact framed list and a fixed one-line status bar at the bottom. Use the
+themed controls and row height from connection profile and vault management.
+Show each set's name and **Enabled** checkbox in its row. The set editor
+contains the rule details and the editing buttons.
+
+Double-click a row to open its editor. Clicking its checkbox toggles the set.
+The row context menu offers **Edit…**, **Duplicate…** and **Delete…**. Right-clicking
+empty space, including when the list has no rows, offers **New**, which takes the
+same path as **Create new highlight set**. **Duplicate…** opens a new editor with
+the source set's contents and fresh set and rule IDs. Saving creates the copy.
+
+Save a checkbox change directly to `highlighting.json`. Publish the checked
+state and its terminal effect after a verified write. On failure, restore the
+last committed check state and show the reason. Each open management list
+follows the shared committed catalog. Serialize catalog writes and apply each
+operation to its target set in the latest committed catalog.
+
+**Delete…** confirms the target and lists the affected terminal tabs. Explain
+that profiles referring to the deleted set will open without highlighting and
+show the missing-set warning. Keep their saved reference so the user can
+resolve it in the profile editor. If the set editor has unsaved changes, have
+the user save or discard them before deletion can proceed. A verified deletion
+removes the row and the set's overlays and closes its editor if open.
+
+### Set editor
+
+Use a standalone, non-modal window with the themed heading, compact list and
+fixed status bar used by the management and profile editor views. One editor
+per saved set ID can be open. Reopening that set brings its editor to the
+front with its draft. Keep the set name and **Enabled** fields in the editor.
+Place **Create new rule** directly below **Enabled** and above the rule list.
+
+The footer contains **Save**, **Discard changes** and **Close**. **Save** commits
+one set and keeps the editor open. After a verified save, use the committed
+state as the new editing baseline and update the management lists and terminal
+tabs immediately. Report a failed save in the editor and keep the draft for
+correction or retry. **Discard changes** restores the last saved values while
+leaving the editor open. For an unsaved new set or copy, it restores the values
+present when the editor opened. **Close** and the window close control ask for
+confirmation when there are unsaved changes.
+
+If a management checkbox save succeeds while this editor is open, update its
+**Enabled** field and saved baseline to the committed value. Carry forward the
+draft's other fields and ordered rules. Subsequent saves and discards use the
+updated baseline.
+
+Before saving a set edit or confirming a deletion, show known affected terminal
+tabs across all windows, including disconnected tabs with retained output.
+Identify them by their captured set ID and list each tab once, including when
+it has multiple panes. After a verified change, follow the existing
+[highlight reevaluation schedule](resources-and-validation.md#scheduling-and-immutable-results)
+for retained and incoming output. A disabled set uses the underlying terminal
+attributes. A deleted set also produces the existing missing-set warning.
+
+### Rule list and priority
+
+Show rules in evaluation order, with the first applicable rule winning. To the
+right of the list, stack the `▲` button, **Highest priority at the top** label
+and `▼` button. Give the buttons localized accessible names and tooltips. They
+move the selected rule by one position and are enabled when a move in that
+direction is possible.
+
+On a rule row, the context menu offers **Edit…**, **Copy** and **Delete**.
+Double-click a rule to edit it. **Copy** duplicates the rule's fields with a
+fresh ID and inserts it immediately below the source. The empty-space context
+menu offers **New**, which opens the same rule editor as **Create new rule**.
+Either entry point appends a rule after the rule editor accepts it. Keep empty
+list space reachable below the rows even when they fill the list. All rule
+edits, copies, deletions and reorderings are part of the set draft.
+
+Dragging a rule within its list shows the insertion position between rows or
+at either end and indicates whether the drop will move or copy. A move keeps
+the rule ID. A copy keeps the source and inserts a new rule with a fresh ID.
+Apply the effect for the modifier keys at drop time. Only a valid drop applies
+an edit. Keep the existing 100-rule limit for both menu and drag copies and
+for creation.
+
+| Modifier keys | Drop action |
+| --- | --- |
+| None, Shift, Shift+Alt, Ctrl+Alt, Ctrl+Shift+Alt | Move |
+| Ctrl | Copy |
+| Alt, Ctrl+Shift | Drop unavailable |
+
+### Acceptance cases
+
+| Action | Expected result |
+| --- | --- |
+| Open the manager and editor in English and Japanese and in both themes. Right-click a set row and the list's empty space. Double-click the same set from two lists. | The manager shows the compact list and checkbox. The row offers the three set commands and empty space offers **New**. Both double-clicks activate the same editor, with its draft and the three editor footer buttons. |
+| Change a rule, save, then edit again and discard. Close once with a clean editor and once with a dirty editor. | The first save reaches all lists and affected tabs. The discard returns to the saved revision. Only the dirty close asks for confirmation. |
+| Change a rule in an editor, then toggle that set in another window and save the draft. Repeat with a failing checkbox save. | A successful toggle reaches both views, updates the terminal and survives the later draft save. On failure, the checkbox returns to its committed state, the reason is visible, and the rule edit is still available. |
+| Attempt to delete a set with an unsaved editor. Then discard the changes and confirm deletion with a split terminal tab and a disconnected tab using the set. | The first attempt requires resolving the draft. The confirmation lists each affected tab once. Verified deletion removes the row and styles, closes the editor and shows the missing-set warning on the affected tabs. |
+| Create a rule from the button below **Enabled**, then create another from the empty area of a full list. Right-click a rule row and copy a rule. Move rules using the arrows and valid drops at both ends. Try the unavailable modifiers and copy at the rule limit. | Both creation paths open the same editor and append to the draft. The row menu shows its three commands. Each copy gets a new ID and each move keeps its ID. Evaluation uses the resulting order after save. The unavailable operations preserve the draft order and count. |
 
 ## Application stores
 

@@ -46,12 +46,14 @@ identifiers, editable names, enable/disable, duplication, and ordered rules.
 Profiles refer to a selected shared set; changing that selection in a profile
 applies on the next connection under the existing captured-settings policy.
 
-Rule-editor changes remain a draft until Save. Cancel leaves every active tab
-unchanged. Save applies a new set revision to all tabs already using that shared
-set and reevaluates existing visible output first. Show which known active tabs
-use a shared set before saving/deleting it. To change only some profiles, duplicate
-the set and select the copy in those profiles instead of silently cloning on edit.
-Saving rule changes does not rewrite profiles or any logs.
+Set edits remain a draft until the set editor saves them. The [management and
+editor specification](../specification/persistence-and-windows.md#highlight-set-management)
+defines the editor's Save, Discard changes and Close actions, the management
+tab's direct writes, and how to show affected tabs before saving or deleting.
+Save applies a new set revision to all tabs already using that shared set and
+reevaluates existing visible output first. For profile-specific rules, duplicate
+the set and select the copy in the intended profiles. Saving rule changes does
+not rewrite profiles or any logs.
 
 An invalid regex may be saved only as a disabled rule, with its parse error
 visible. Reject saving it as enabled until corrected or disabled. Missing or
@@ -59,7 +61,7 @@ invalid externally loaded rules produce a nonfatal highlighting status; do not
 block a trusted profile's connection or silently repair its pattern. Never run
 a disabled rule. No unsaved typing in the editor changes live styling.
 
-Deleting a set requires an explicit editor action and confirmation showing
+Deleting a set requires an explicit management action and confirmation showing
 known uses. Remove its overlays from affected active tabs; preserve underlying
 terminal colors. Do not rewrite external profile files or substitute a different
 set. Retained references become unresolved and use no highlighting with a

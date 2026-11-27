@@ -246,7 +246,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
             groupTabs.SetResourceReference(FrameworkElement.StyleProperty, "DetailsTabs");
             var allGroups = CreateGroupTab(null);
             var ungrouped = CreateGroupTab("");
-            var list = new ListView { SelectionMode = SelectionMode.Extended };
+            var list = new ListView { SelectionMode = SelectionMode.Extended, Background = System.Windows.Media.Brushes.Transparent };
             var columns = new DetailsColumns(list);
             var favoriteCell = new FrameworkElementFactory(typeof(Button));
             favoriteCell.SetValue(Control.PaddingProperty, new Thickness(0));
@@ -296,6 +296,10 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
             menu.Items.Add(new Separator());
             AddMenuAction("RemoveRegistration", item => ChangeSelectedAsync(remove: true, item));
             AddMenuAction("RecycleProfile", RecycleAsync);
+            var rowActions = menu.Items.Cast<Control>().ToArray();
+            var create = new MenuItem();
+            create.Click += (_, _) => CreateProfile();
+            menu.Items.Add(create);
             form.AddActionRow(() =>
             {
                 form.AddAction("AddProfile", CreateProfile);
@@ -307,6 +311,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
             {
                 allGroups.Header = Text("AllProfiles");
                 ungrouped.Header = Text("UngroupedProfiles");
+                create.Header = Text("NewListItem");
                 searchLabel.Content = Text("SearchProfiles");
                 AutomationProperties.SetName(list, Text("ProfileCatalog"));
                 columns.UpdateHeaders();
@@ -318,9 +323,19 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 var row = origin is null ? null : columns.RowAt(origin);
                 var item = row?.Content as Registration;
                 if (args.CursorLeft == -1) item ??= list.SelectedItem as Registration;
-                if (item is null)
+                if (origin is DependencyObject element && args.CursorLeft != -1 &&
+                    (MainWindow.Ancestor<GridViewColumnHeader>(element) is not null ||
+                     MainWindow.Ancestor<ScrollBar>(element) is not null))
                 {
                     args.Handled = true;
+                    return;
+                }
+                create.Visibility = item is null ? Visibility.Visible : Visibility.Collapsed;
+                if (item is null)
+                {
+                    menuRegistration = null;
+                    menuPaths = [];
+                    foreach (Control entry in rowActions) entry.Visibility = Visibility.Collapsed;
                     return;
                 }
                 if (!list.SelectedItems.Contains(item))
@@ -334,8 +349,8 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
                 bool multiple = menuPaths.Length > 1;
                 menuRegistration = multiple ? null : item.Id;
                 connect.Header = multiple ? string.Format(Text("ConnectSelectedProfiles"), menuPaths.Length) : Text("ConnectProfile");
-                foreach (Control entry in menu.Items.Cast<Control>().Skip(1))
-                    entry.Visibility = multiple ? Visibility.Collapsed : Visibility.Visible;
+                foreach (Control entry in rowActions)
+                    entry.Visibility = multiple && entry != connect ? Visibility.Collapsed : Visibility.Visible;
                 favoriteMenuItem.Header = item.FavoriteAction;
             };
             list.PreviewMouseLeftButtonDown += async (_, args) =>

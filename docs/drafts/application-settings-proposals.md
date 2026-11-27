@@ -74,9 +74,9 @@ dialogs, lose drafts, reconnect sessions, or change internal identifiers.
 Default terminal font and retained-row limits are examples of application
 defaults resolved through a profile. Existing sessions retain their captured
 values; saving either the profile or its inherited app default does not change
-them. Mark the scope in the editor. Shared highlight sets retain their separate editor's
-Save/Cancel and accepted live-revision behavior; they are not an implicit part
-of a global preferences transaction. Temporary zoom and paste-delay memory
+them. Mark the scope in the editor. Shared highlight sets have their own
+[management and editor save workflow](../specification/persistence-and-windows.md#highlight-set-management)
+and apply saved revisions live. Temporary zoom and paste-delay memory
 retain their own accepted lifetimes and must not be persisted by this editor.
 Changing a profile's selected highlight-set reference remains a next-connection
 change; editing the contents of an already selected shared set remains live.

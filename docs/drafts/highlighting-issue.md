@@ -94,8 +94,9 @@ receive processing. Macros are deferred beyond the initial release.
 - Store rules in named, reusable highlight rule sets selectable in connection
   profiles.
 - Offer a no-highlighting choice.
-- Start with no enabled rule set. Use explicit Save/Cancel for rule edits;
-  saved shared-set changes affect all tabs using it. Save invalid patterns only
+- Start with no enabled rule set. The [management and editor specification](../specification/persistence-and-windows.md#highlight-set-management)
+  defines direct management operations and explicit set editor saves. Saved
+  shared-set changes affect all tabs using the set. Save invalid patterns only
   while disabled. Duplicate a set for independent profile-specific changes.
 - Apply rule edits to existing output as well as future output. Reevaluate the
   visible area first and evaluate off-screen scrollback when it becomes visible.

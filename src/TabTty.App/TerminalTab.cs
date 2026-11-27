@@ -222,6 +222,7 @@ internal sealed partial class TerminalTab : UserControl
         _ => null,
     };
     public string TabCaption => connectedName ?? Path.GetFileNameWithoutExtension(path);
+    internal Guid? HighlightSetId => highlightSetId;
     public string ProfilePath => path;
     internal void UpdateProfilePath(string previous, string destination)
     {

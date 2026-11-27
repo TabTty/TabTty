@@ -27,11 +27,14 @@ public sealed class TerminalHighlightRules
                 rule.Pattern.Length > 4096 || rule.Style.Foreground > 0xFFFFFF || rule.Style.Background > 0xFFFFFF)
                 throw new ArgumentException("Invalid terminal highlight rule.", nameof(rules));
             if (!rule.Enabled) continue;
-            var options = RegexOptions.CultureInvariant | (rule.IgnoreCase ? RegexOptions.IgnoreCase : RegexOptions.None);
-            compiled.Add((rule, new Regex(rule.Pattern, options, TimeSpan.FromMilliseconds(50))));
+            compiled.Add((rule, CreateExpression(rule.Pattern, rule.IgnoreCase)));
         }
         enabled = compiled.ToArray();
     }
+
+    internal static Regex CreateExpression(string pattern, bool ignoreCase) =>
+        new(pattern, RegexOptions.CultureInvariant | (ignoreCase ? RegexOptions.IgnoreCase : RegexOptions.None),
+            TimeSpan.FromMilliseconds(50));
 
     public TerminalHighlightResult Match(ReadOnlySpan<char> line, IReadOnlySet<Guid> suspended,
         CancellationToken cancellationToken = default)

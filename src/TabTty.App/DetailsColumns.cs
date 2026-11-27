@@ -15,7 +15,7 @@ internal sealed class DetailsColumns
     private GridViewColumn? sortedColumn;
     private ListSortDirection direction;
 
-    internal DetailsColumns(ListView list)
+    internal DetailsColumns(ListView list, bool sortable = true)
     {
         this.list = list;
         list.View = view;
@@ -23,7 +23,7 @@ internal sealed class DetailsColumns
         ScrollViewer.SetHorizontalScrollBarVisibility(list, ScrollBarVisibility.Auto);
         ScrollViewer.SetVerticalScrollBarVisibility(list, ScrollBarVisibility.Auto);
         VirtualizingPanel.SetVirtualizationMode(list, VirtualizationMode.Recycling);
-        list.AddHandler(GridViewColumnHeader.ClickEvent, new RoutedEventHandler(SortByHeader));
+        if (sortable) list.AddHandler(GridViewColumnHeader.ClickEvent, new RoutedEventHandler(SortByHeader));
     }
 
     internal GridViewColumn Add(string label, string member, double width, DataTemplate? cell = null,

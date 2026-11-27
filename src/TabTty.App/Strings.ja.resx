@@ -274,20 +274,27 @@
   <data name="HighlightSet" xml:space="preserve"><value>強調セット</value></data>
   <data name="HighlightSets" xml:space="preserve"><value>強調セットの管理</value></data>
   <data name="HighlightSetList" xml:space="preserve"><value>セット一覧</value></data>
-  <data name="HighlightSetsEmpty" xml:space="preserve"><value>強調セットはまだありません。</value></data>
-  <data name="SelectHighlightSet" xml:space="preserve"><value>セットを選ぶと強調ルールが表示されます。</value></data>
-  <data name="AddHighlightSet" xml:space="preserve"><value>セットを追加</value></data>
-  <data name="EditHighlightSet" xml:space="preserve"><value>セットを編集</value></data>
-  <data name="DuplicateHighlightSet" xml:space="preserve"><value>セットを複製</value></data>
-  <data name="RemoveHighlightSet" xml:space="preserve"><value>セットを削除</value></data>
+  <data name="AddHighlightSet" xml:space="preserve"><value>強調セットを新規作成</value></data>
+  <data name="EditHighlightSet" xml:space="preserve"><value>編集…</value></data>
+  <data name="DuplicateHighlightSet" xml:space="preserve"><value>コピー…</value></data>
+  <data name="RemoveHighlightSet" xml:space="preserve"><value>削除…</value></data>
+  <data name="NewListItem" xml:space="preserve"><value>新規作成</value></data>
+  <data name="HighlightSetEditor" xml:space="preserve"><value>強調セット編集</value></data>
+  <data name="DeleteHighlightSet" xml:space="preserve"><value>強調セットを削除</value></data>
+  <data name="DeleteHighlightSetConfirm" xml:space="preserve"><value>この強調セットを削除しますか？使用中の端末タブでは、このセットによる強調が外れます。参照中のプロファイルで次回接続すると、強調セットが見つからない旨の警告が表示されます。</value></data>
+  <data name="ResolveHighlightEditorBeforeDelete" xml:space="preserve"><value>このセットを削除する前に、強調セット編集画面で変更を保存するか破棄してください。</value></data>
+  <data name="NoAffectedHighlightTabs" xml:space="preserve"><value>このセットを使っている端末タブはありません。</value></data>
+  <data name="HighlightSetLimit" xml:space="preserve"><value>強調セットは1000件まで保存できます。</value></data>
   <data name="HighlightName" xml:space="preserve"><value>名前</value></data>
   <data name="Enabled" xml:space="preserve"><value>有効</value></data>
   <data name="HighlightRules" xml:space="preserve"><value>強調ルール</value></data>
-  <data name="AddHighlightRule" xml:space="preserve"><value>ルールを追加</value></data>
-  <data name="EditHighlightRule" xml:space="preserve"><value>ルールを編集</value></data>
+  <data name="AddHighlightRule" xml:space="preserve"><value>ルールを新規作成</value></data>
+  <data name="EditHighlightRule" xml:space="preserve"><value>編集…</value></data>
+  <data name="HighlightRuleEditorTitle" xml:space="preserve"><value>強調ルール編集</value></data>
+  <data name="HighlightRulePriority" xml:space="preserve"><value>上ほど優先</value></data>
   <data name="MoveRuleUp" xml:space="preserve"><value>ルールを上へ</value></data>
   <data name="MoveRuleDown" xml:space="preserve"><value>ルールを下へ</value></data>
-  <data name="RemoveHighlightRule" xml:space="preserve"><value>ルールを削除</value></data>
+  <data name="RemoveHighlightRule" xml:space="preserve"><value>削除</value></data>
   <data name="HighlightPattern" xml:space="preserve"><value>正規表現</value></data>
   <data name="IgnoreCase" xml:space="preserve"><value>大文字と小文字を区別しない</value></data>
   <data name="HighlightForeground" xml:space="preserve"><value>文字色（#RRGGBB または空欄）</value></data>

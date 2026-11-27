@@ -366,7 +366,8 @@ public sealed class App : Application
     }
 
     private bool HasEditor(Window? except = null) =>
-        Windows.Cast<Window>().Any(window => window != except && window is ProfileEditorWindow or VaultEditorWindow);
+        Windows.Cast<Window>().Any(window => window != except &&
+            window is ProfileEditorWindow or VaultEditorWindow or HighlightSetEditorWindow);
 
     private void CommitExit()
     {
@@ -514,6 +515,7 @@ public sealed class App : Application
             if (window is MainWindow main) main.UpdateLabels();
             else if (window is ProfileEditorWindow editor) editor.UpdateLabels();
             else if (window is VaultEditorWindow vaultEditor) vaultEditor.UpdateLabels();
+            else if (window is HighlightSetEditorWindow highlightEditor) highlightEditor.UpdateLabels();
             else if (window is FileTransferWindow transfer) transfer.UpdateLabels();
         }
     }
