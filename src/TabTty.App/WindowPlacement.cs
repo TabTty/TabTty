@@ -85,37 +85,13 @@ internal static class WindowPlacement
         var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>(), Device = "" };
         if (!GetMonitorInfoW(MonitorFromRect(in proposed, 2), ref info)) return;
 
-        NativeRect work = GetMaximizedWorkArea(info);
+        NativeRect work = info.Work;
         position.X = work.Left;
         position.Y = work.Top;
         position.Width = work.Right - work.Left;
         position.Height = work.Bottom - work.Top;
         position.Flags &= ~(noMove | noSize);
         Marshal.StructureToPtr(position, parameters, false);
-    }
-
-    private static NativeRect GetMaximizedWorkArea(MonitorInfo info)
-    {
-        const uint getState = 0x0004, autoHide = 0x0001, getAutoHideBar = 0x000b;
-        const uint left = 0, top = 1, right = 2, bottom = 3;
-        const int revealPixels = 2;
-        var bar = new AppBarData { Size = Marshal.SizeOf<AppBarData>() };
-        NativeRect work = info.Work;
-        if ((SHAppBarMessage(getState, ref bar) & autoHide) == 0) return work;
-
-        // The work area can include an auto-hidden taskbar's edge. Leave its reveal strip accessible.
-        bar.Bounds = info.Monitor;
-        if (work.Left < info.Monitor.Left + revealPixels && HasAutoHideBar(left)) work.Left = info.Monitor.Left + revealPixels;
-        if (work.Top < info.Monitor.Top + revealPixels && HasAutoHideBar(top)) work.Top = info.Monitor.Top + revealPixels;
-        if (work.Right > info.Monitor.Right - revealPixels && HasAutoHideBar(right)) work.Right = info.Monitor.Right - revealPixels;
-        if (work.Bottom > info.Monitor.Bottom - revealPixels && HasAutoHideBar(bottom)) work.Bottom = info.Monitor.Bottom - revealPixels;
-        return work;
-
-        bool HasAutoHideBar(uint edge)
-        {
-            bar.Edge = edge;
-            return SHAppBarMessage(getAutoHideBar, ref bar) != 0;
-        }
     }
 
     public static void PlaceDetached(Window target, Window source, Point screenPixels)
@@ -191,15 +167,6 @@ internal static class WindowPlacement
         public int X, Y, Width, Height;
         public uint Flags;
     }
-    [StructLayout(LayoutKind.Sequential)]
-    private struct AppBarData
-    {
-        public int Size;
-        public nint Window;
-        public uint CallbackMessage, Edge;
-        public NativeRect Bounds;
-        public nint Parameter;
-    }
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct MonitorInfo
     {
@@ -221,5 +188,4 @@ internal static class WindowPlacement
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)] private static extern bool EnumDisplayMonitors(nint dc, nint clip, MonitorCallback callback, nint data);
     [DllImport("shcore.dll")] private static extern int GetDpiForMonitor(nint monitor, int type, out uint x, out uint y);
-    [DllImport("shell32.dll")] private static extern nuint SHAppBarMessage(uint message, ref AppBarData data);
 }
