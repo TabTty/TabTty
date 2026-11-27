@@ -798,13 +798,13 @@ internal sealed partial class TerminalTab : UserControl
             form.AddField(target.CaptionKey, new DialogText(target.Endpoint));
             if (active.SshAlgorithms is { } algorithms)
             {
-                form.AddField("SshExchangeAlgorithm", new DialogText(algorithms.KeyExchange), inline: true);
-                form.AddField("SshHostKeyAlgorithm", new DialogText(algorithms.HostKey), inline: true);
-                form.AddField("SshTransmitCipher", new DialogText(algorithms.TransmitCipher), inline: true);
-                if (algorithms.TransmitMac is { } transmitMac) form.AddField("SshTransmitMac", new DialogText(transmitMac), inline: true);
-                form.AddField("SshReceiveCipher", new DialogText(algorithms.ReceiveCipher), inline: true);
-                if (algorithms.ReceiveMac is { } receiveMac) form.AddField("SshReceiveMac", new DialogText(receiveMac), inline: true);
-                form.AddField("SshStrictExchange", new DialogText(Text(algorithms.StrictKeyExchange ? "Yes" : "No")), inline: true);
+                form.AddField("SshExchangeAlgorithm", new DialogText(algorithms.KeyExchange));
+                form.AddField("SshHostKeyAlgorithm", new DialogText(algorithms.HostKey));
+                form.AddField("SshTransmitCipher", new DialogText(algorithms.TransmitCipher));
+                if (algorithms.TransmitMac is { } transmitMac) form.AddField("SshTransmitMac", new DialogText(transmitMac));
+                form.AddField("SshReceiveCipher", new DialogText(algorithms.ReceiveCipher));
+                if (algorithms.ReceiveMac is { } receiveMac) form.AddField("SshReceiveMac", new DialogText(receiveMac));
+                form.AddField("SshStrictExchange", new DialogText(Text(algorithms.StrictKeyExchange ? "Yes" : "No")));
             }
             form.AddCloseAction();
             ((App)Application.Current).Modal(form.ShowDialog);
@@ -1631,7 +1631,7 @@ internal sealed partial class TerminalTab : UserControl
         using var previewMemory = ApplicationResources.TerminalState.Reserve(1024 * 1024 + captionMemory);
         form.AddField("PasteTargets", new DialogText(string.Join(Environment.NewLine, targets),
             targets.Count > 1 ? 130 : null));
-        form.AddField("PasteCountsLabel", new DialogText(summary) { IsTabStop = false }, inline: true);
+        form.AddField("PasteCountsLabel", new DialogText(summary) { IsTabStop = false });
         var previewText = new DialogText("", 260)
         {
             MinHeight = 100,

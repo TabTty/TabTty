@@ -174,15 +174,15 @@ internal sealed partial class TerminalTab
         var dialog = new MainWindow.FormWindow(owner, Text(action)) { Width = 540 };
         var destination = ConnectionDestination.From(sessionAtPrompt);
         dialog.AddField(destination.CaptionKey, new DialogText(destination.Endpoint));
-        dialog.AddField("AiPairingCode", new DialogText(peer.Code), inline: true);
+        dialog.AddField("AiPairingCode", new DialogText(peer.Code));
         dialog.AddField("AiBridgeParent", new DialogText(PermissionDisplay.Literal(peer.LauncherPath)));
-        dialog.AddField("AiBridgeParentId", new DialogText(peer.LauncherId.ToString(System.Globalization.CultureInfo.CurrentCulture)), inline: true);
+        dialog.AddField("AiBridgeParentId", new DialogText(peer.LauncherId.ToString(System.Globalization.CultureInfo.CurrentCulture)));
         dialog.AddNotice(grantControl ? "AiConfirmControl" : "AiConfirmShare");
         dialog.AddNotice("AiUnattendedConsent");
         if (!grantControl && share is not null)
         {
             dialog.AddNotice("AiConfirmSwitch");
-            dialog.AddField("AiPreviousPairingCode", new DialogText(share.Peer.Code), inline: true);
+            dialog.AddField("AiPreviousPairingCode", new DialogText(share.Peer.Code));
         }
         dialog.AddButtons(() => { }, acceptKey: action, cancelDefault: true);
         aiConsent = dialog;

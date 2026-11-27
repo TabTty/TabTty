@@ -615,8 +615,8 @@ internal sealed class FileTransferWindow : Window
         {
             dialog.AddHeading(heading);
             dialog.AddField("TransferFilePath", new DialogText(files!.Display(path)));
-            dialog.AddField("TransferSize", new DialogText(Size(attributes)) { IsTabStop = false }, inline: true);
-            dialog.AddField("TransferModified", new DialogText(Modified(attributes)) { IsTabStop = false }, inline: true);
+            dialog.AddField("TransferSize", new DialogText(Size(attributes)) { IsTabStop = false });
+            dialog.AddField("TransferModified", new DialogText(Modified(attributes)) { IsTabStop = false });
         }
 
         void Finish(TransferChoice choice)

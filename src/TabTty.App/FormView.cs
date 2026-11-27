@@ -395,20 +395,20 @@ internal sealed class FormView : Grid
         BuildIn(row, build);
     }
 
-    public void AddDisplay(string key, FrameworkElement element, bool inline = false)
+    public void AddDisplay(string key, FrameworkElement element)
     {
         if (modal)
         {
-            AddDialogField(key, element, inline: inline);
+            AddDialogField(key, element);
             return;
         }
         SetText(key, value => AutomationProperties.SetName(element, value));
         (section ?? fields).Children.Add(element);
     }
 
-    private void AddDialogField(string key, FrameworkElement value, FrameworkElement? target = null, bool inline = false)
+    private void AddDialogField(string key, FrameworkElement value, FrameworkElement? target = null)
     {
-        var field = new DialogField(Text(key), value, target, inline);
+        var field = new DialogField(Text(key), value, target);
         (section ?? fields).Children.Add(field);
         AddLocalizedUpdate(() => field.SetCaption(Text(key)));
     }
@@ -564,12 +564,12 @@ internal sealed class FormView : Grid
     public Button AddAsyncAction(string key, Func<Task> action) => AddAction(key, async () => await RunAsync(action));
 
     public void AddField(string key, Control control, bool trackEdit = true, string? actionKey = null,
-        Func<Task>? action = null, string? descriptionKey = null, bool inlineCheckBox = false, Action? reset = null, bool inline = false)
+        Func<Task>? action = null, string? descriptionKey = null, bool inlineCheckBox = false, Action? reset = null)
     {
         if (modal && control is DialogText)
         {
             FrameworkElement content = action is null ? control : FieldWithAction(control, actionKey!, action, reset);
-            AddDialogField(key, content, control, inline);
+            AddDialogField(key, content, control);
             return;
         }
         if (control is CheckBox { Content: null } check && descriptionKey is null &&

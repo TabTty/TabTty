@@ -638,11 +638,12 @@ internal static partial class Program
         {
             window.Show();
             app.Broadcast.Start(window);
-            var first = app.StatusReports.Capture(window, "First file operation");
-            var second = app.StatusReports.Capture(window, "Second file operation");
-            first("result", "Awaiting verification");
-            second("result", "Later operation");
-            first("result", "First operation verified");
+            var first = app.StatusReports.CaptureFields(window, "First file operation");
+            var second = app.StatusReports.CaptureFields(window, "Second file operation");
+            var verified = new ReportField(App.Text("DialogDetails"), "First operation verified");
+            first("result", [new(App.Text("DialogDetails"), "Awaiting verification")]);
+            second("result", [new(App.Text("DialogDetails"), "Later operation")]);
+            first("result", [verified]);
             var reports = app.StatusReports.Pending(window);
             if (reports.Count != 2 || reports[0].Content.Fields.Single().Value != "First operation verified" ||
                 reports[1].Content.Fields.Single().Value != "Later operation")
@@ -673,6 +674,20 @@ internal static partial class Program
                 detailsLabel.Text != App.Text("DialogDetails") + ":" ||
                 !FindControls<DialogText>(viewer).Any(text => text.Text == reports[0].Content.Summary))
                 throw new InvalidOperationException("The result viewer did not separate the count, outcome and copyable details from their labels.");
+            void CheckRows(bool inline) =>
+                CheckDialogFieldLayout(viewer, inline, [count, .. FindControls<DialogText>(viewer)]);
+            CheckRows(true);
+            string caption = string.Format(App.Text("DialogFieldCaption"), verified.Caption);
+            if (reports[0].Content.Details != $"{caption} {verified.Value}")
+                throw new InvalidOperationException("The short report used a different caption format in plain text.");
+            var backup = new ReportField(App.Text("BackupFilePath"), "copy.tttykey", Framed: true);
+            first("result", [verified, backup]);
+            CheckRows(false);
+            string backupCaption = string.Format(App.Text("DialogFieldCaption"), backup.Caption);
+            if (reports[0].Content.Details != $"{caption}\n{verified.Value}\n\n{backupCaption}\n{backup.Value}")
+                throw new InvalidOperationException("The framed report mixed caption formats in plain text.");
+            first("result", [verified]);
+            CheckRows(true);
             close.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             if (viewer.IsVisible || app.StatusReports.Pending(window).Count != 2)
                 throw new InvalidOperationException("Closing the result viewer acknowledged a report.");

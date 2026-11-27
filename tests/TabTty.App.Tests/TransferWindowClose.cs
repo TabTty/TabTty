@@ -337,18 +337,10 @@ internal static partial class Program
             {
                 overwrite.UpdateLayout();
                 var values = FindControls<DialogText>(overwrite).ToArray();
-                foreach (var value in values)
-                {
-                    var caption = (TextBlock)AutomationProperties.GetLabeledBy(value);
-                    double captionTop = caption.TranslatePoint(new Point(), overwrite).Y;
-                    double valueTop = value.TranslatePoint(new Point(), overwrite).Y;
-                    bool isPath = caption.Text == App.Text("TransferFilePath") + ":";
-                    if (isPath ? valueTop < captionTop + caption.ActualHeight - 1 : Math.Abs(valueTop - captionTop) > 1)
-                        throw new InvalidOperationException("The file comparison did not stack paths and show size and timestamp inline.");
-                }
+                CheckDialogFieldLayout(overwrite, null, values);
                 overwrite.Width = 300;
                 overwrite.MaxHeight = 250;
-                overwrite.UpdateLayout();
+                CheckDialogFieldLayout(overwrite, false, values);
                 var skip = FindControls<Button>(overwrite).Single(button => Equals(button.Content, App.Text("TransferSkip")));
                 if (values.Length != 6 || !values[0].Text.EndsWith("note.txt", StringComparison.Ordinal) ||
                     values[3].Text != "/home/inbox/note.txt" || !FindControls<Button>(overwrite).Single(button => button.IsDefault).IsCancel ||

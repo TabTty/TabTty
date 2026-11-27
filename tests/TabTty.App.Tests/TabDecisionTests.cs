@@ -2,7 +2,9 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Threading;
 using TabTty.App;
@@ -10,6 +12,37 @@ using TabTty.Core;
 
 internal static partial class Program
 {
+    private static void CheckDialogFieldLayout(Window window, bool? inline, params FrameworkElement[] values)
+    {
+        window.UpdateLayout();
+        if (values.Length == 0) throw new InvalidOperationException("The dialog has no fields to check.");
+        foreach (var value in values)
+        {
+            if (AutomationProperties.GetLabeledBy(value) is not TextBlock caption || !caption.IsVisible || !value.IsVisible ||
+                caption.Parent is not DialogField field)
+                throw new InvalidOperationException($"Missing visible field or caption in {window.Title}.");
+            var name = new Rect(caption.TranslatePoint(new Point(), window), caption.RenderSize);
+            var content = value.TranslatePoint(new Point(), window);
+            Rect slot = LayoutInformation.GetLayoutSlot(field);
+            var visible = new Rect(value.TranslatePoint(new Point(), field), value.RenderSize);
+            var allocated = new Rect(0, 0, Math.Max(0, slot.Width - field.Margin.Left - field.Margin.Right),
+                Math.Max(0, slot.Height - field.Margin.Top - field.Margin.Bottom));
+            visible.Intersect(allocated);
+            if (LayoutInformation.GetLayoutClip(field) is { } clip) visible.Intersect(clip.Bounds);
+            if (LayoutInformation.GetLayoutClip(value) is { } valueClip)
+                visible.Intersect(value.TransformToAncestor(field).TransformBounds(valueClip.Bounds));
+            if (visible.Width < 1 || visible.Height < caption.FontSize)
+                throw new InvalidOperationException(
+                    $"{window.Title}, {caption.Text} has no readable line in its allocated space: visible {visible}, slot {slot}.");
+            bool sameLine = Math.Abs(content.Y - name.Top) <= 1 && content.X > name.Right;
+            bool stacked = Math.Abs(content.Y - name.Bottom) <= 1 && Math.Abs(content.X - name.Left) <= 1;
+            inline ??= sameLine;
+            if (!(inline.Value ? sameLine : stacked))
+                throw new InvalidOperationException(
+                    $"{window.Title}, {caption.Text} expected {(inline.Value ? "inline" : "stacked")}, caption {name}, value {content}.");
+        }
+    }
+
     private static async Task CheckTabDecisionsAsync(App app, string directory)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(22));
@@ -93,6 +126,7 @@ internal static partial class Program
             typing.FocusPane();
             var paste = target.PasteAsync();
             var preview = await FindForm("PastePreview");
+            CheckDialogFieldLayout(preview, false, FindControls<DialogText>(preview).ToArray());
             CheckMacroLaunch(!preview.ShowActivated && !preview.IsActive && target.HasPendingDecision &&
                 FindControls<TextBox>(preview).Any(box => box.Text.Contains(endpoint.ToString())), "Paste preview lost its frozen session.");
             Press(preview, "Cancel");
@@ -107,6 +141,13 @@ internal static partial class Program
                 "SHA256:" + Convert.ToBase64String(System.Security.Cryptography.SHA256.HashData(blob)).TrimEnd('='));
             var approve = app.HostTrust.ApproveAsync(movedHost, key, token, target);
             var trust = await FindForm("NewHostKey");
+            var trustValues = FindControls<DialogText>(trust).ToArray();
+            trust.Width = 800;
+            CheckDialogFieldLayout(trust, true, trustValues);
+            trust.Width = 240;
+            CheckDialogFieldLayout(trust, false, trustValues);
+            trust.Width = 800;
+            CheckDialogFieldLayout(trust, true, trustValues);
             CheckMacroLaunch(target.HasPendingDecision && !trust.ShowActivated && !trust.IsActive &&
                 FindControls<TextBox>(trust).Any(box => box.Text == key.Destination.ToString()) &&
                 FindControls<Button>(trust).Single(button => button.IsDefault).IsCancel,

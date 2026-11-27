@@ -90,7 +90,7 @@ internal sealed partial class MainWindow
     {
         if (reportReview is { } open) { open.Activate(); return; }
         if (app.StatusReports.Pending(this).Count == 0) return;
-        reportCountField ??= new DialogField(Text("PendingOperationReports"), reportCount, inline: true);
+        reportCountField ??= new DialogField(Text("PendingOperationReports"), reportCount);
         var body = new StackPanel { Children = { reportCountField, reportRows } };
         var layout = new DialogLayout(body, new Thickness(14, 8, 14, 8));
         var review = new Window

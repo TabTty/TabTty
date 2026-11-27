@@ -203,13 +203,12 @@ internal static partial class Program
                     pathLabel.Text != App.Text("VaultPath") + ":")
                     throw new InvalidOperationException("The vault unlock fields did not identify the target and path.");
                 var masterLabel = labels.Single(label => label.Text == App.Text("MasterPassword"));
+                CheckDialogFieldLayout(targetedUnlock, false, tabValue, pathValue);
                 double offset = pathLabel.TranslatePoint(new Point(), body).X - tabLabel.TranslatePoint(new Point(), body).X;
-                double innerGap = pathValue.TranslatePoint(new Point(), body).Y -
-                    pathLabel.TranslatePoint(new Point(0, pathLabel.ActualHeight), body).Y;
                 double outerGap = masterLabel.TranslatePoint(new Point(), body).Y -
                     pathValue.TranslatePoint(new Point(0, pathValue.ActualHeight), body).Y;
-                if (Math.Abs(offset) > 1 || Math.Abs(innerGap) > 1 || outerGap < 16)
-                    throw new InvalidOperationException($"Vault unlock layout offsets (DIP): left {offset:F1}, within field {innerGap:F1}, between fields {outerGap:F1}.");
+                if (Math.Abs(offset) > 1 || outerGap < 16)
+                    throw new InvalidOperationException($"Vault unlock layout offsets (DIP): left {offset:F1}, between fields {outerGap:F1}.");
             }
             finally
             {
@@ -225,7 +224,7 @@ internal static partial class Program
                 FindControls<TextBox>(unlock).Any(field => !field.IsReadOnly))
             {
                 unlock.Close();
-                throw new InvalidOperationException("Vault unlock must display the readable path on its own line.");
+                throw new InvalidOperationException("Vault unlock must display the labeled, copyable path.");
             }
             FindControls<PasswordBox>(unlock).Single().Password = master;
             Click(unlock, "UnlockVault");

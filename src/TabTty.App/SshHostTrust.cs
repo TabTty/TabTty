@@ -49,7 +49,7 @@ internal sealed class SshHostTrust(App app, string pathName, Action<string, stri
         };
         var form = new MainWindow.FormWindow(owner, Text(title));
         form.AddField("SshDestination", new DialogText(key.Destination.ToString()));
-        form.AddField("HostKeyType", new DialogText(key.Format), inline: true);
+        form.AddField("HostKeyType", new DialogText(key.Format));
         if (priorFingerprint is not null)
             form.AddField("PreviousFingerprint", new DialogText(priorFingerprint));
         else if (keys is not null)
@@ -102,7 +102,7 @@ internal sealed class SshHostTrust(App app, string pathName, Action<string, stri
             if (list.SelectedItem is not HostRow row) throw new ArgumentException(Text("SelectHostKey"));
             var details = new StackPanel();
             details.Children.Add(new DialogField(Text("SshDestination"), new DialogText(row.Target.ToString())));
-            details.Children.Add(new DialogField(Text("HostKeyType"), new DialogText(row.Key["format"]!.GetValue<string>()), inline: true));
+            details.Children.Add(new DialogField(Text("HostKeyType"), new DialogText(row.Key["format"]!.GetValue<string>())));
             details.Children.Add(new DialogField(Text("PreviousFingerprint"), new DialogText(row.Key["fingerprint"]!.GetValue<string>())));
             if (app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow, Text("ConfirmDeleteHostKey"), Text("DeleteHostKey"),
                     MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No,

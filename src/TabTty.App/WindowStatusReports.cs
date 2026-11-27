@@ -1,10 +1,16 @@
 namespace TabTty.App;
 
-internal sealed record ReportField(string Caption, string Value, bool Framed = false, bool Inline = false)
+internal sealed record ReportField(string Caption, string Value, bool Framed = false)
 {
-    internal DialogField Create() => new(Caption, new DialogText(Value, Framed ? 250 : null), inline: Inline);
-    internal static string Describe(IEnumerable<ReportField> fields) => string.Join("\n\n", fields.Select(item =>
-        string.Format(App.Text("DialogFieldCaption"), item.Caption) + (item.Inline ? " " : "\n") + item.Value));
+    internal DialogField Create() => new(Caption, new DialogText(Value, Framed ? 250 : null));
+
+    internal static string Describe(IReadOnlyList<ReportField> fields)
+    {
+        bool stacked = fields.Any(item => item.Framed || DialogField.HasLineBreak(item.Caption) || DialogField.HasLineBreak(item.Value));
+        string separator = stacked ? "\n" : " ";
+        return string.Join("\n\n", fields.Select(item =>
+            string.Format(App.Text("DialogFieldCaption"), item.Caption) + separator + item.Value));
+    }
 }
 
 internal sealed record WindowReportContent(string Summary, ReportField[] Fields)

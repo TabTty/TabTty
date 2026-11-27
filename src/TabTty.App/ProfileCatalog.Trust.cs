@@ -246,7 +246,7 @@ internal sealed partial class ProfileCatalog
         string target = profile.Type == "serial" ? profile.Serial.PortName : $"{profile.Host} [{profile.Port}]";
         if (changed) window.AddNotice("ProfileTrustVersionChanged");
         window.AddField("ProfileListFilePath", new DialogText(PermissionDisplay.Literal(path)));
-        window.AddField("ProfileListProtocol", new DialogText(profile.Type.ToUpperInvariant()), inline: true);
+        window.AddField("ProfileListProtocol", new DialogText(profile.Type.ToUpperInvariant()));
         window.AddField("ProfileListDestination", new DialogText(PermissionDisplay.Literal(target)));
         if (macro is not null) window.AddField("MacroSourceFile", new DialogText(PermissionDisplay.Literal(macro)));
         if (profile.Type == "ssh")
@@ -255,7 +255,7 @@ internal sealed partial class ProfileCatalog
             var methods = profile.SshMethods;
             var names = methods.Select(method => Text(method == "publicKey" ? "PublicKey" : "VaultPassword"));
             if (profile.SshAllowsKeyboardInteractive) names = names.Append(Text("KeyboardInteractive"));
-            window.AddField("ProfileAuthenticationGroup", new DialogText(string.Join(", ", names)), inline: true);
+            window.AddField("ProfileAuthenticationGroup", new DialogText(string.Join(", ", names)));
             if (profile.SshPassword is { } password)
                 window.AddField("ProfilePasswordEntry", new DialogText(PermissionDisplay.Literal(password.Name)));
             if (profile.SshPrivateKey is { } key)
@@ -265,7 +265,7 @@ internal sealed partial class ProfileCatalog
         {
             var formats = new[] { (profile.RecordRaw, "RecordRaw"), (profile.RecordText, "RecordText"), (profile.RecordTerminal, "RecordTerminal") };
             var selected = formats.Where(format => format.Item1).Select(format => Text(format.Item2));
-            window.AddField("RecordedLogs", new DialogText(string.Join(", ", selected)), inline: true);
+            window.AddField("RecordedLogs", new DialogText(string.Join(", ", selected)));
         }
         if (profile.HasPostConnectionMacro)
         {

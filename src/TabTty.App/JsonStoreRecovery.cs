@@ -72,7 +72,7 @@ internal static class JsonStoreRecovery
         bool Confirm(Store store, string action, string? backup = null)
         {
             var context = new StackPanel();
-            context.Children.Add(new DialogField(Text("RecoveryStore"), new DialogText(store.Name), inline: true));
+            context.Children.Add(new DialogField(Text("RecoveryStore"), new DialogText(store.Name)));
             context.Children.Add(new DialogField(Text("ProfileListFilePath"), new DialogText(store.Path)));
             if (backup is not null)
                 context.Children.Add(new DialogField(Text("BackupFilePath"), new DialogText(backup)));
@@ -227,7 +227,7 @@ internal static class JsonStoreRecovery
         void AddFile(string pathKey, string stateKey, string path, FileImageStatus state)
         {
             fields.Add(new(Text(pathKey), path));
-            fields.Add(new(Text(stateKey), Text($"PublishedImage{state}"), Inline: true));
+            fields.Add(new(Text(stateKey), Text($"PublishedImage{state}")));
         }
     }
 }

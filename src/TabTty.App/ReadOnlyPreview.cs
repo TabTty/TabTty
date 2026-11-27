@@ -18,7 +18,7 @@ internal static class ReadOnlyPreview
         dialog.AddField(contentKey, contents);
         if (pages > 1)
         {
-            dialog.AddDisplay("PastePreviewPageLabel", position, inline: true);
+            dialog.AddDisplay("PastePreviewPageLabel", position);
             dialog.AddAction("PastePreviousPage", () => Show(Math.Max(0, page - 1)));
             dialog.AddAction("PasteNextPage", () => Show(Math.Min(pages - 1, page + 1)));
         }

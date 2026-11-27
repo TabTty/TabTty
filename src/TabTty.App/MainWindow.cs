@@ -1321,11 +1321,11 @@ internal sealed partial class MainWindow : Window
             form.AddDialogAction(key, action, isDefault);
         internal void AddCloseAction() => form.AddDialogAction("CloseDialog", Close, isDefault: true).IsCancel = true;
         public void AddField(string key, Control control, bool inlineCheckBox = false,
-            string? actionKey = null, Func<Task>? action = null, bool inline = false) =>
-            form.AddField(key, control, actionKey: actionKey, action: action, inlineCheckBox: inlineCheckBox, inline: inline);
+            string? actionKey = null, Func<Task>? action = null) =>
+            form.AddField(key, control, actionKey: actionKey, action: action, inlineCheckBox: inlineCheckBox);
         public void AddPrompt(string caption, Control control) => form.AddPrompt(caption, control);
         internal Action<string> AddValidation(Control field) => form.AddValidation(field);
-        internal void AddDisplay(string key, FrameworkElement element, bool inline = false) => form.AddDisplay(key, element, inline);
+        internal void AddDisplay(string key, FrameworkElement element) => form.AddDisplay(key, element);
         public void AddNotice(string key) => form.AddNotice(key);
         internal void AddHeading(string key) => form.AddNotice(key, heading: true);
         internal void AddStatusBar() => form.AddStatusBar();
