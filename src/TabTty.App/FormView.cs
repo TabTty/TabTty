@@ -426,7 +426,6 @@ internal sealed class FormView : Grid
         SetText(key, value => AutomationProperties.SetName(element, value));
         Body.Children.Remove(scroller);
         scroller.Content = null;
-        double previousMaxWidth = fields.MaxWidth;
         fields.MaxWidth = double.PositiveInfinity;
         Thickness margin = fields.Margin;
         fields.Margin = new Thickness(margin.Left, margin.Top, margin.Right, 8);
@@ -434,7 +433,8 @@ internal sealed class FormView : Grid
         Body.Children.Add(fields);
         if (buildFooter is not null)
         {
-            var footer = new StackPanel { MaxWidth = previousMaxWidth, Margin = new Thickness(margin.Left, 8, margin.Right, 0) };
+            Thickness displayMargin = element.Margin;
+            var footer = new StackPanel { Margin = new Thickness(displayMargin.Left, 8, displayMargin.Right, 0) };
             var footerScroll = new ScrollViewer
             {
                 Content = footer, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
