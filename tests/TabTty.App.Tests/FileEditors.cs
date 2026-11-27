@@ -315,6 +315,9 @@ internal static partial class Program
             using var paused = profileFixture.PauseNextWrite();
             save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             await paused.Issued.Task.WaitAsync(deadline.Token);
+            var close = FindControls<Button>(form).Single(button => Equals(button.Content, App.Text("CloseDialog")));
+            if (save.IsEnabled || close.IsEnabled)
+                throw new InvalidOperationException("The editor actions remained enabled during publication.");
             firstEditor.Close();
             if (!firstEditor.IsVisible)
                 throw new InvalidOperationException("Issued publication lost its editor lifetime.");
@@ -329,7 +332,7 @@ internal static partial class Program
             await AcknowledgeReportAsync(firstEditor, first + ".bak", App.Text("StoreSaveUnverified"));
             await UntilAsync(() => !form.IsBusy);
 
-            var close = FindControls<Button>(form).Single(button => Equals(button.Content, App.Text("CloseDialog")));
+            if (!close.IsEnabled) throw new InvalidOperationException("The editor actions stayed disabled after publication.");
             _ = app.Dispatcher.BeginInvoke(() => close.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)));
             await RespondAsync(App.Text("DiscardAndClose"), "Cancel");
             if (!firstEditor.IsVisible) throw new InvalidOperationException("Declining closure dismissed the editor.");

@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Automation;
+using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Media;
 using TabTty.App;
@@ -50,12 +51,15 @@ internal static partial class Program
             throw new InvalidOperationException($"The window did not show its selected vault's state once on the right: {state}.");
     }
 
+    private static Border FormStatusBar(FormView form) => FindControls<Border>(form).Single(border =>
+        border.Child is TextBlock { TextTrimming: TextTrimming.CharacterEllipsis } text &&
+        AutomationProperties.GetLiveSetting(text) == AutomationLiveSetting.Polite);
+
     private static async Task CheckSharedStatusRowAsync(MainWindow window)
     {
         window.OpenForm("Settings", _ => { });
         var form = (FormView)((TabControl)window.FindName("tabs")).SelectedContent;
-        var local = form.Body.Children.OfType<Border>().Single(child => DockPanel.GetDock(child) == Dock.Bottom &&
-            child.Child is TextBlock);
+        var local = FormStatusBar(form);
         var status = (TextBlock)local.Child;
         var shared = (FrameworkElement)window.FindName("windowStatusBar");
         using (form.BeginProgress("SavingChanges"))
@@ -75,11 +79,58 @@ internal static partial class Program
         form.RequestClose(() => true);
     }
 
+    private static void CheckEditorStatusLayout(MainWindow window, FormView form, string page)
+    {
+        var root = (FrameworkElement)window.Content;
+        var save = FindControls<Button>(form).Single(button => Equals(button.Content, App.Text("Save")));
+        var buttons = (Panel)save.Parent;
+        var footer = (Grid)buttons.Parent;
+        var close = buttons.Children.OfType<Button>().Single(button => Equals(button.Content, App.Text("CloseDialog")));
+        var actions = Bounds(footer);
+        var closeBounds = Bounds(close);
+        var vault = Bounds((TextBlock)window.FindName("vaultStatus"));
+        var status = Bounds(FormStatusBar(form));
+        if (actions.Bottom > status.Top || closeBounds.Height <= 0 || !actions.Contains(closeBounds) ||
+            vault.Height <= 0 || !status.Contains(vault) || Math.Abs(status.Bottom - root.ActualHeight) > 1)
+            throw new InvalidOperationException(
+                $"{page} actions {actions} (Close {closeBounds}), local status {status} and vault {vault} " +
+                $"did not fit above and within the bottom row at window size {root.RenderSize}.");
+
+        Rect Bounds(FrameworkElement element) => new(element.TranslatePoint(new Point(), root), element.RenderSize);
+    }
+
+    private static void CheckModalStatusLayout()
+    {
+        foreach (bool statusFirst in new[] { true, false })
+        {
+            var dialog = new MainWindow.FormWindow(null, App.Text("AddVaultPassword"));
+            try
+            {
+                var form = (FormView)dialog.Content;
+                var password = new PasswordBox();
+                dialog.AddField("VaultPassword", password);
+                if (statusFirst) dialog.AddStatusBar();
+                var save = dialog.AddButtons(() => { });
+                if (!statusFirst) dialog.AddStatusBar();
+                form.Measure(new Size(dialog.Width, double.PositiveInfinity));
+                form.Arrange(new Rect(form.DesiredSize));
+                form.UpdateLayout();
+                var actions = Bounds((Panel)save.Parent);
+                var status = Bounds(FormStatusBar(form));
+                if (Bounds(password).Bottom > actions.Top || actions.Bottom > status.Top ||
+                    status.Height <= 0 || Math.Abs(status.Bottom - form.ActualHeight) > 1)
+                    throw new InvalidOperationException($"Dialog actions {actions} did not precede the bottom status {status} (status first: {statusFirst}).");
+
+                Rect Bounds(FrameworkElement element) => new(element.TranslatePoint(new Point(), form), element.RenderSize);
+            }
+            finally { dialog.Close(); }
+        }
+    }
+
     private static void CheckVaultStatusSeparator(MainWindow window, FormView form)
     {
         var root = (FrameworkElement)window.Content;
-        var local = form.Body.Children.OfType<Border>().Single(child =>
-            DockPanel.GetDock(child) == Dock.Bottom && child.Child is TextBlock);
+        var local = FormStatusBar(form);
         var indicator = (TextBlock)window.FindName("vaultStatus");
         var left = local.TransformToAncestor(root).TransformBounds(new Rect(local.RenderSize));
         var vault = indicator.TransformToAncestor(root).TransformBounds(new Rect(indicator.RenderSize));
@@ -142,7 +193,7 @@ internal static partial class Program
         form.AddField("SearchProfiles", search);
         form.AddFillingDisplay("ProfileGroups", list);
         form.AddStatusBar();
-        var bar = form.Body.Children.OfType<Border>().Single();
+        var bar = FormStatusBar(form);
         var status = (TextBlock)bar.Child;
 
         var bounds = new Rect(0, 0, 360, 280);

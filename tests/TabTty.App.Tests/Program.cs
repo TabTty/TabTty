@@ -1411,10 +1411,14 @@ internal static partial class Program
                         throw new InvalidOperationException("The narrow management layout did not stack its columns.");
                 }
 
-                if (titleKeys[index] is "HighlightSets" or "Settings" &&
-                    !form.Body.Children.OfType<Grid>().Any(footer => DockPanel.GetDock(footer) == Dock.Bottom &&
-                        FindControls<Button>(footer).Any(button => Equals(button.Content, App.Text("Save")))))
-                    throw new InvalidOperationException("The editor save button was not fixed at the bottom of the page.");
+                if (titleKeys[index] is "HighlightSets" or "Settings")
+                {
+                    foreach (var size in new[] { new Size(1112, 696), new Size(520, 460) })
+                    {
+                        Layout(size);
+                        CheckEditorStatusLayout(window, form, titleKeys[index]);
+                    }
+                }
 
                 if (titleKeys[index] == "ManageVault")
                 {
@@ -1453,6 +1457,7 @@ internal static partial class Program
                 throw new InvalidOperationException("The management title backgrounds did not update when the theme changed.");
             app.ThemeMode = ThemeMode.Dark;
 
+            CheckModalStatusLayout();
             var editor = new ProfileEditorWindow(app, "NewProfile", null, ProfileEditor.NewProfile("ssh"), creating: true);
             try
             {

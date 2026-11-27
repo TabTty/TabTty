@@ -26,7 +26,7 @@ Choose the side of the bar by asking what the information describes. Keep each i
 
 Keep the window's right side available with a terminal, a management or settings view, or no tab visible. Switching or moving tabs and splitting the window preserve a single copy of each applicable wider state in that window. Use floating notices only for a specific affected view. Window and application status and results are presented through the right side, including in a main window with no terminal.
 
-When a management view shares its status row with the window, both sides occupy the same 30 DIP row. The top divider runs the full width, including above the vault state. Reserve space for the right-hand indicators when laying out the left-hand message.
+When a management view shares its status row with the window, both sides occupy the same 30 DIP row. The top divider runs the full width, including above the vault state. Reserve space for the right-hand indicators when laying out the left-hand message. Keep editor actions such as Save, Discard, Close and save recovery above this row even when the local status is empty.
 
 A paste belongs to its source tab. Show its progress on the left there, including progress for each target of a broadcast paste. The right side continues to show the current broadcast mode and target counts. Show broadcast outcomes, including a cancelled remote mouse gesture, on the right in the affected windows. If delivery fails or its extent is uncertain, retain a report with each target and what is known about delivery to it. Keep it accessible from the right until acknowledged, even after the mode ends. Acknowledgement in one window clears that report across its presentations. Arrival leaves keyboard focus and active tabs in place.
 

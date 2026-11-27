@@ -44,6 +44,10 @@ internal sealed class FormView : Grid
     public FormView(bool modal = false)
     {
         this.modal = modal;
+        // Keep content, fixed actions and status in that order regardless of when a view adds them.
+        RowDefinitions.Add(new RowDefinition());
+        RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         Children.Add(Body);
         var overlay = new Canvas { ClipToBounds = true };
         Canvas.SetRight(notices, 0);
@@ -100,8 +104,8 @@ internal sealed class FormView : Grid
         bar.SetResourceReference(Border.BorderBrushProperty, "SurfaceStrokeColorDefaultBrush");
         text.SetResourceReference(MarginProperty, "WindowStatusInset");
         statusBarText = text;
-        DockPanel.SetDock(bar, Dock.Bottom);
-        Body.Children.Insert(0, bar);
+        SetRow(bar, 2);
+        Children.Add(bar);
         AddLocalizedUpdate(UpdateStatusBar);
     }
 
@@ -529,12 +533,16 @@ internal sealed class FormView : Grid
     private WrapPanel DialogActions()
     {
         if (dialogActions is not null) return dialogActions;
-        RowDefinitions.Add(new RowDefinition());
-        RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         dialogActions = DialogLayout.CreateActions(new Thickness(10, 2, 10, 8));
-        SetRow(dialogActions, 1);
-        Children.Add(dialogActions);
+        AddFixedActions(dialogActions);
         return dialogActions;
+    }
+
+    private void AddFixedActions(Panel actions)
+    {
+        actions.SetBinding(IsEnabledProperty, new Binding(nameof(IsEnabled)) { Source = Body });
+        SetRow(actions, 1);
+        Children.Add(actions);
     }
 
     internal Button AddDialogAction(string key, Action action, bool isDefault = false)
@@ -817,8 +825,7 @@ internal sealed class FormView : Grid
             Grid.SetRow(buttons, 2);
             footer.Children.Add(divider);
             footer.Children.Add(buttons);
-            DockPanel.SetDock(footer, Dock.Bottom);
-            Body.Children.Insert(0, footer);
+            AddFixedActions(footer);
             editorFooter = footer;
         }
         else if (!modal) fields.Children.Add(buttons);
@@ -859,7 +866,6 @@ internal sealed class FormView : Grid
         IsBusy = true;
         fileWorkAttempted = false;
         Body.IsEnabled = false;
-        if (dialogActions is not null) dialogActions.IsEnabled = false;
         try
         {
             await action();
@@ -876,7 +882,6 @@ internal sealed class FormView : Grid
         {
             IsBusy = false;
             Body.IsEnabled = true;
-            if (dialogActions is not null) dialogActions.IsEnabled = true;
             updateEditorButtons?.Invoke();
         }
     }
