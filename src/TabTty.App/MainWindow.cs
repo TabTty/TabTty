@@ -514,6 +514,8 @@ internal sealed partial class MainWindow : Window
 
     internal nint HandleWindowMessage(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
     {
+        if (message == 0x0046) // WM_WINDOWPOSCHANGING
+            WindowPlacement.FitMaximizedWindowToWorkArea(hwnd, lParam);
         if (message is 0x007e or 0x02e0) // WM_DISPLAYCHANGE, WM_DPICHANGED
             Dispatcher.BeginInvoke(() => { if (IsLoaded) WindowPlacement.KeepOnScreen(this); });
         bool wheel = message == 0x020a; // WM_MOUSEWHEEL

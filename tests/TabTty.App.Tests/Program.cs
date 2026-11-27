@@ -77,6 +77,12 @@ internal static partial class Program
 #pragma warning restore WPF0001
         try
         {
+            if (args is ["--maximized-work-area"])
+            {
+                RunScenario(application.Dispatcher, () => CheckMaximizedWorkAreaAsync(application));
+                Console.WriteLine("PASS MaximizedWorkArea");
+                return 0;
+            }
             if (args is ["--popup-appearance"])
             {
                 RunScenario(application.Dispatcher, () => CheckPopupAppearanceAsync(application));
@@ -279,6 +285,8 @@ internal static partial class Program
             Console.WriteLine("PASS AuthenticationDialogsIdentifyTheRecipient");
             WindowPlacementKeepsNormalBoundsInsideChangedWorkAreas();
             Console.WriteLine("PASS WindowPlacementKeepsNormalBoundsInsideChangedWorkAreas");
+            RunScenario(application.Dispatcher, () => CheckMaximizedWorkAreaAsync(application));
+            Console.WriteLine("PASS MaximizedWorkArea");
             ProfileLocationUsesTheStoredSpelling();
             Console.WriteLine("PASS ProfileLocationUsesTheStoredSpelling");
             StoreRecoveryPreservesTheOriginalAndValidatesTheBackup();
