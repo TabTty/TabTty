@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Threading;
 using TabTty.App;
 using TabTty.Core;
 
@@ -23,6 +24,10 @@ internal static partial class Program
         var name = (TextBox)form.FindName("Name");
         try
         {
+            editor.Show();
+            await CheckLayoutAsync(WindowState.Normal);
+            await CheckLayoutAsync(WindowState.Maximized);
+            await CheckLayoutAsync(WindowState.Normal);
             CheckHeading(originalName);
             name.Text = newName;
             CheckHeading(originalName);
@@ -42,6 +47,13 @@ internal static partial class Program
         finally
         {
             if (!form.HasUnsavedChanges && !form.IsBusy && form.UnresolvedPublication is null) editor.Close();
+        }
+
+        async Task CheckLayoutAsync(WindowState state)
+        {
+            editor.WindowState = state;
+            await editor.Dispatcher.InvokeAsync(editor.UpdateLayout, DispatcherPriority.ApplicationIdle);
+            CheckNavigationEditorActionsLayout(form);
         }
 
         void CheckHeading(string expected)

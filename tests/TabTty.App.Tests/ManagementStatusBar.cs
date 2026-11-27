@@ -96,18 +96,26 @@ internal static partial class Program
                 $"{page} actions {actions} (Close {closeBounds}), local status {status} and vault {vault} " +
                 $"did not fit above and within the bottom row at window size {root.RenderSize}.");
 
-        if (page == "Settings")
-        {
-            var tab = Bounds(form);
-            var divider = Bounds(footer.Children.OfType<Border>().Single(border => border.BorderThickness.Top > 0));
-            double rightInset = tab.Right - closeBounds.Right;
-            if (divider.Height <= 0 || Math.Abs(divider.Left - tab.Left) > 1 ||
-                Math.Abs(divider.Right - tab.Right) > 1 || Math.Abs(rightInset - 24) > 1)
-                throw new InvalidOperationException(
-                    $"The settings divider {divider} and Close inset {rightInset} did not fit the tab {tab}.");
-        }
+        if (page == "Settings") CheckNavigationEditorActionsLayout(form);
 
         Rect Bounds(FrameworkElement element) => new(element.TranslatePoint(new Point(), root), element.RenderSize);
+    }
+
+    private static void CheckNavigationEditorActionsLayout(FormView form)
+    {
+        var close = FindControls<Button>(form).Single(button => Equals(button.Content, App.Text("CloseDialog")));
+        var footer = (Grid)((Panel)close.Parent).Parent;
+        var navigation = FindControls<ListBox>(form).Single(list => Equals(AutomationProperties.GetName(list), App.Text("SettingsCategories")));
+        var columns = (Grid)navigation.Parent;
+        var horizontal = Bounds(footer.Children.OfType<Border>().Single(border => border.BorderThickness.Top > 0));
+        var vertical = Bounds(columns.Children.OfType<Border>().Single(border => border.Width == 1));
+        double rightInset = form.ActualWidth - Bounds(close).Right;
+        if (horizontal.Height <= 0 || Math.Abs(horizontal.Left) > 1 || Math.Abs(horizontal.Right - form.ActualWidth) > 1 ||
+            Math.Abs(rightInset - 24) > 1 || vertical.Height <= 0 || Math.Abs(vertical.Bottom - horizontal.Top) > 0.01)
+            throw new InvalidOperationException(
+                $"Horizontal divider {horizontal}, navigation divider {vertical} and Close inset {rightInset} did not fit the form {form.RenderSize}.");
+
+        Rect Bounds(FrameworkElement element) => new(element.TranslatePoint(new Point(), form), element.RenderSize);
     }
 
     private static void CheckModalStatusLayout()

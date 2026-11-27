@@ -15,6 +15,8 @@ namespace TabTty.App;
 
 internal sealed class FormView : Grid
 {
+    private const double EditorActionInset = 24;
+    private const double EditorDividerOpacity = 0.18;
     private readonly StackPanel fields = new() { Margin = new Thickness(14) };
     private readonly ScrollViewer scroller;
     private Panel? section;
@@ -369,8 +371,8 @@ internal sealed class FormView : Grid
             var margin = fields.Margin;
             fields.Margin = new Thickness(margin.Left, 0, margin.Right, margin.Bottom);
         }
-        var separator = new Border { Width = 1, Opacity = 0.16, HorizontalAlignment = HorizontalAlignment.Right,
-            Margin = new Thickness(0, 0, 0, 12), IsHitTestVisible = false };
+        var separator = new Border { Width = 1, Opacity = EditorDividerOpacity,
+            HorizontalAlignment = HorizontalAlignment.Right, IsHitTestVisible = false };
         separator.SetResourceReference(Border.BackgroundProperty, "WindowForeground");
         Body.Children.Remove(scroller);
         Grid.SetRow(navigation, 1);
@@ -730,7 +732,7 @@ internal sealed class FormView : Grid
         return Task.FromResult(true);
     });
 
-    public void AddEditorButtons(Func<Task<bool>> save, Func<bool>? isCreating = null, bool fullWidthActions = false)
+    public void AddEditorButtons(Func<Task<bool>> save, Func<bool>? isCreating = null)
     {
         foreach (EditField edit in edits) edit.Snapshot()();
         tracksEdits = true;
@@ -739,7 +741,7 @@ internal sealed class FormView : Grid
             if (IsBusy || !HasUnsavedChanges) return;
             foreach (EditField edit in edits) edit.Restore();
             updateEditorButtons?.Invoke();
-        }, isCreating, fullWidthActions: fullWidthActions);
+        }, isCreating);
         AddHandler(TextBoxBase.TextChangedEvent, new TextChangedEventHandler(OnEditorInputChanged), true);
         AddHandler(Selector.SelectionChangedEvent, new SelectionChangedEventHandler(OnEditorInputChanged), true);
         AddHandler(ToggleButton.CheckedEvent, new RoutedEventHandler(OnEditorInputChanged), true);
@@ -754,7 +756,7 @@ internal sealed class FormView : Grid
     }
 
     private Button AddButtonRow(Func<Task<bool>> save, string acceptKey, bool cancelDefault, string cancelKey,
-        Action cancelAction, Func<bool>? isCreating = null, bool acceptOnEnter = true, bool fullWidthActions = false)
+        Action cancelAction, Func<bool>? isCreating = null, bool acceptOnEnter = true)
     {
         Panel buttons = modal ? DialogActions() : new StackPanel
         {
@@ -797,7 +799,7 @@ internal sealed class FormView : Grid
         buttons.Children.Add(cancel);
         if (tracksEdits)
         {
-            var close = new Button { Margin = fullWidthActions ? new Thickness(4, 4, 0, 4) : new Thickness(4) };
+            var close = new Button { Margin = hasNavigation ? new Thickness(4, 4, 0, 4) : new Thickness(4) };
             SetText("CloseDialog", value => close.Content = value);
             close.Click += (_, _) =>
             {
@@ -816,16 +818,16 @@ internal sealed class FormView : Grid
         {
             var footer = new Grid
             {
-                MaxWidth = fullWidthActions ? double.PositiveInfinity : 1000,
-                Margin = fullWidthActions ? new Thickness(0, 0, 0, 8) : new Thickness(24, 0, 24, 8),
+                MaxWidth = hasNavigation ? double.PositiveInfinity : 1000,
+                Margin = hasNavigation ? new Thickness(0, 0, 0, 8) : new Thickness(24, 0, 24, 8),
             };
             footer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             footer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             footer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            var divider = new Border { BorderThickness = new Thickness(0, 1, 0, 0), Opacity = 0.18,
+            var divider = new Border { BorderThickness = new Thickness(0, 1, 0, 0), Opacity = EditorDividerOpacity,
                 IsHitTestVisible = false };
             divider.SetResourceReference(Border.BorderBrushProperty, "WindowForeground");
-            buttons.Margin = new Thickness(0, 5, fullWidthActions ? 24 : 0, 0);
+            buttons.Margin = new Thickness(0, 5, hasNavigation ? EditorActionInset : 0, 0);
             Grid.SetRow(buttons, 2);
             footer.Children.Add(divider);
             footer.Children.Add(buttons);
@@ -838,12 +840,14 @@ internal sealed class FormView : Grid
 
     internal Action AddEditorSaveRecovery(Func<(string Message, string Action)?> recovery, Func<Task> retry)
     {
-        var row = new Grid { Margin = new Thickness(0, 8, 0, 0) };
+        double sideInset = hasNavigation ? EditorActionInset : 0;
+        var row = new Grid { Margin = new Thickness(sideInset, 8, sideInset, 0) };
         row.ColumnDefinitions.Add(new ColumnDefinition());
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var message = new TextBlock { TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
         AutomationProperties.SetLiveSetting(message, AutomationLiveSetting.Polite);
-        var button = new Button { Margin = new Thickness(8, 0, 4, 0), VerticalAlignment = VerticalAlignment.Center };
+        var button = new Button { Margin = new Thickness(8, 0, hasNavigation ? 0 : 4, 0),
+            VerticalAlignment = VerticalAlignment.Center };
         KeyboardNavigation.SetAcceptsReturn(button, false);
         button.Click += async (_, _) => await RunAsync(retry);
         Grid.SetColumn(button, 1);

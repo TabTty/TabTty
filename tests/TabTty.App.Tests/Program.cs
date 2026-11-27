@@ -1472,6 +1472,13 @@ internal static partial class Program
                 var form = (FormView)editor.Content;
                 AssertNavigation(form, "ProfileConnectionGroup", "ProfileAuthenticationGroup",
                     "ProfileTerminalGroup", "ProfileLoggingGroup", "PostConnectionMacro");
+                foreach (var size in new[] { new Size(520, 460), new Size(940, 660), new Size(1920, 1040) })
+                {
+                    form.Measure(size);
+                    form.Arrange(new Rect(size));
+                    form.UpdateLayout();
+                    CheckNavigationEditorActionsLayout(form);
+                }
                 if (Environment.GetEnvironmentVariable("TABTTY_MANAGEMENT_RENDER_DIR") is { } preview)
                 {
                     form.Measure(new Size(940, 660));

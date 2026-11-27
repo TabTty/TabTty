@@ -879,7 +879,7 @@ internal sealed partial class MainWindow : Window
             vaultPath.Text = app.VaultPath;
             profileDirectory.Text = app.ProfileSaveDirectory;
             return true;
-        }, fullWidthActions: true);
+        });
 
         static string? Change(string draft, string saved) => draft == saved ? null : draft;
 
