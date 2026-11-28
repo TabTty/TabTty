@@ -231,8 +231,9 @@ public sealed class ConnectionProfile
         return ParseProfile(source, bytes);
     }
 
-    private static ConnectionProfile ParseProfile(string source, byte[] bytes)
+    internal static ConnectionProfile ParseProfile(string source, byte[] bytes)
     {
+        if (bytes.Length > MaximumBytes) throw new InvalidDataException("Connection profile exceeds 1 MiB.");
         int start = bytes.AsSpan().StartsWith(Encoding.UTF8.Preamble) ? 3 : 0;
         try
         {

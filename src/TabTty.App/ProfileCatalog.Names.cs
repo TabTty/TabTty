@@ -55,7 +55,7 @@ internal sealed partial class ProfileCatalog
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             string target = ProfilePathFor(Path.GetDirectoryName(path)!, name);
             string existing = await NormalizeLocationAsync(target, timeout.Token);
-            if (existing != path && (FindRegistration(LocalState.ReadForProfileTrust(), existing) is not null ||
+            if (existing != path && (FindRegistration(ProfileState.ReadForProfileTrust(), existing) is not null ||
                 await Task.Run(() => Path.Exists(target), timeout.Token).WaitAsync(timeout.Token)))
                 throw new IOException(Text("ProfileFileInUse"));
             destination = target;
@@ -79,7 +79,7 @@ internal sealed partial class ProfileCatalog
             TrustState current = ReadTrust(path);
             string? version = edit.PreviousVersion is not null && edit.Trust.Version == edit.PreviousVersion && current == edit.Trust
                 ? saved.TrustVersion : null;
-            JsonObject snapshot = LocalState.ReadForProfileTrust();
+            JsonObject snapshot = ProfileState.ReadForProfileTrust();
             JsonObject? existing = FindRegistration(snapshot, path);
             bool updateRegistration = existing is not null && (moved ||
                 existing["groupName"]?.GetValue<string>() != saved.GroupName);
@@ -88,7 +88,7 @@ internal sealed partial class ProfileCatalog
             bool removeOldTrust = moved && (current.Version is not null || snapshot[TrustKey]?[destination] is not null);
             if (!registrationMoved && (removeOldTrust || updateRegistration || version is not null))
             {
-                LocalState.Change(state =>
+                ProfileState.Change(state =>
                 {
                     var registration = FindRegistration(state, path);
                     if (moved)

@@ -13,7 +13,12 @@ internal static class LocalState
     private static bool temporaryDefaults;
     private static byte[]? verifiedBytes;
 
-    internal static void UseTestDirectory(string path) => DirectoryPath = path;
+    internal static void UseTestDirectory(string path)
+    {
+        DirectoryPath = path;
+        temporaryDefaults = false;
+        verifiedBytes = null;
+    }
 
     public static bool Initialize()
     {
@@ -30,18 +35,13 @@ internal static class LocalState
 
     public static JsonStoreRecovery.Store RecoveryStore() => new(App.Text("LocalStateStore"), StatePath,
         path => _ = ReadSnapshot(path), () => temporaryDefaults = false,
-        () => JsonSerializer.SerializeToUtf8Bytes(Defaults()), SanitizeBackup: bytes =>
-        {
-            JsonObject state = Parse(bytes).State;
-            state.Remove("profileTrust");
-            return JsonSerializer.SerializeToUtf8Bytes(state);
-        });
+        () => JsonSerializer.SerializeToUtf8Bytes(Defaults()), KeepPrevious: false);
 
     public static JsonObject Read() => ReadSnapshot().State;
 
     internal static bool IsTemporary => temporaryDefaults;
 
-    public static JsonObject ReadForProfileTrust()
+    public static JsonObject ReadForRecording()
     {
         if (VerifiedFilePublication.HasPendingPublication(StatePath))
             throw new IOException(App.Text("StoreSaveUnverified"));
@@ -63,15 +63,14 @@ internal static class LocalState
         if (!update(state)) return false;
         byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(state);
         if (bytes.Length > 16 * 1024 * 1024) throw new InvalidDataException(App.Text("LocalStateInvalid"));
-        JsonStoreRecovery.Save(StatePath, bytes, original, path => _ = ReadSnapshot(path));
+        JsonStoreRecovery.Save(StatePath, bytes, original, path => _ = ReadSnapshot(path), keepPrevious: false);
         Volatile.Write(ref verifiedBytes, bytes);
         return true;
     }
 
     private static JsonObject Defaults() => new()
     {
-        ["schemaVersion"] = 1, ["requiredFeatures"] = new JsonArray(), ["registrations"] = new JsonArray(),
-        ["lastWindow"] = null, ["selectedVaultPath"] = null,
+        ["schemaVersion"] = 1, ["requiredFeatures"] = new JsonArray(), ["lastWindow"] = null,
     };
 
     private static (JsonObject State, byte[]? Bytes) ReadSnapshot(string? path = null)
@@ -94,41 +93,12 @@ internal static class LocalState
         if (bytes is null) return (Defaults(), null);
         JsonObject state = JsonStoreRecovery.ParseObject(bytes);
         if (state["schemaVersion"]?.GetValue<int>() != 1 ||
-            state["requiredFeatures"] is not JsonArray { Count: 0 } ||
-            state["registrations"] is not JsonArray { Count: <= 10_000 } registrations ||
-            !state.ContainsKey("lastWindow") || !state.ContainsKey("selectedVaultPath") ||
-            (state["selectedVaultPath"] is not null && state["selectedVaultPath"]?.GetValue<string>() is not { Length: <= 32760 }))
+            state["requiredFeatures"] is not JsonArray { Count: 0 } || !state.ContainsKey("lastWindow"))
             throw new InvalidDataException(App.Text("LocalStateInvalid"));
-        var ids = new HashSet<Guid>();
-        var locations = new HashSet<string>(StringComparer.Ordinal);
-        if (state["selectedVaultPath"]?.GetValue<string>() is { Length: > 0 } legacyPath)
-            try { _ = App.NormalizeVaultPath(legacyPath); }
-            catch (ArgumentException error) { throw new InvalidDataException(App.Text("LocalStateInvalid"), error); }
         WindowPlacement.Validate(state["lastWindow"]);
-        foreach (JsonNode? node in registrations)
-        {
-            if (node is not JsonObject item ||
-                !Guid.TryParseExact(item["registrationId"]?.GetValue<string>(), "D", out Guid id) || id == Guid.Empty ||
-                id.ToString("D") != item["registrationId"]!.GetValue<string>() || !ids.Add(id) ||
-                item["path"]?.GetValue<string>() is not { } location || !OrdinaryWindowsPath.IsValid(location) || !Path.IsPathFullyQualified(location) || !locations.Add(location) ||
-                item["favorite"]?.GetValue<bool>() is not { } || !item.ContainsKey("lastUsed") ||
-                (item["lastUsed"] is not null && item["lastUsed"]?.GetValue<DateTimeOffset>() is not { Offset.Ticks: 0 }))
-                throw new InvalidDataException(App.Text("LocalStateInvalid"));
-            if (item["groupName"]?.GetValue<string>() is { } groupName &&
-                groupName != ConnectionProfile.NormalizeGroupName(groupName))
-                throw new InvalidDataException(App.Text("LocalStateInvalid"));
-        }
-        if (state.ContainsKey("profileTrust"))
-        {
-            if (state["profileTrust"] is not JsonObject trust)
-                throw new InvalidDataException(App.Text("LocalStateInvalid"));
-            foreach (var (location, version) in trust)
-                if (!OrdinaryWindowsPath.IsValid(location) || !Path.IsPathFullyQualified(location) ||
-                    version is not JsonValue value || !value.TryGetValue<string>(out string? stamp) ||
-                    stamp is not { Length: 66 } || stamp[1] != ':' ||
-                    !stamp.Skip(2).All(char.IsAsciiHexDigit))
-                    throw new InvalidDataException(App.Text("LocalStateInvalid"));
-        }
+        state.Remove("registrations");
+        state.Remove("profileTrust");
+        state.Remove("selectedVaultPath");
         if (state.ContainsKey("recordingMappings"))
         {
             if (state["recordingMappings"] is not JsonObject mappings)

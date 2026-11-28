@@ -3,12 +3,13 @@
 TabTty runs on Windows 11 x64. Extract the whole folder and run `TabTty.exe`.
 Keep its .NET runtime, native libraries and license files together.
 
-To register TabTty file types for your Windows account, open **Settings →
-Maintenance** and click **Run** under **Register TabTty file types with Windows**.
+To register TabTty file types for your Windows account, open **Tools →
+Maintenance** and click **Register** under **Register TabTty file types with Windows**.
 This adds TabTty to **Open with** for `.ttty` (connection profiles), `.tttym`
 (macros), and `.tttykey` (credential vaults). It also registers Explorer icons
 for those types and for `.tttylog` (raw and terminal session logs). Keep the
-Assets folder next to the executable.
+Assets folder next to the executable. Select **Unregister** in the same row
+to remove TabTty's registrations for your Windows account.
 
 To uninstall, close all TabTty windows. Open PowerShell in the extracted
 folder using the same Windows account (no administrator rights needed) and run:
@@ -25,13 +26,14 @@ Windows default app choices are left alone; change them in **Settings →
 Apps → Default apps** if needed. The script keeps application files, settings,
 profiles, vaults, macros and logs. After it succeeds, you can delete the
 extracted application files manually, keeping any data you saved there.
-To register the file types again, use the same button in Settings.
+To register the file types again, use **Register** in Maintenance.
 
 Use the menu button at the right of the tab bar to access File, Edit, View,
 Window, Connection and Tools. Drag the empty area of the tab bar to move the
 window. Its right edge contains the minimize, maximize and close buttons.
-Settings, Connection profile management, Vault management, SSH host keys, and
-Highlight set management open as tabs. Close a tab with its × button.
+Settings, Maintenance, Connection profile management, Vault management, and
+Highlight set management open as tabs. Open **SSH host keys → Manage** in
+Maintenance to view and remove saved host keys. Close a tab with its × button.
 Use the Tab list button at the left of the tab bar to jump to any tab in that
 tab group. A faded edge indicates tabs beyond that edge. When tabs overflow,
 use the left and right arrows beside **+** to reveal hidden headers while
@@ -125,9 +127,9 @@ and ordered arguments, TabTty shows the captured inputs before execution. A macr
 terminal commands and submit saved passwords. **Cancel** is the default.
 You can run it once or remember an allow or block for that exact combination.
 Identical copies of the source and its declared constants files use the same
-decision with the same arguments. To forget a decision, open **Settings → Maintenance**.
-Click **Run** under **Manage macro allow and block decisions…**. Windows Credential
-Manager stores decisions for your Windows account on this PC.
+decision with the same arguments. To forget a decision, open **Tools → Maintenance**
+and use **Manage macro trust**. Windows protects the local decision file for
+your Windows account on this PC.
 An external request that could read a remote source requires separate read
 permission. A constants file that could require remote access needs read
 permission on every launch route. An elevated run also requires explicit approval.
@@ -430,11 +432,13 @@ runtime.
 ## Application files
 
 Unpackaged application data resides under `%LOCALAPPDATA%\TabTty`. Settings,
-highlighting, registrations/window state and SSH host keys have independent JSON
-stores. Settings includes explicit backup restore and recreation. Recovery keeps
-the previous file under a unique recovery name. Temporary defaults are read-only
-until deliberate recovery. Removing a registration preserves the profile file.
-Deleting a profile file requests the Windows Recycle Bin.
+highlight sets, profile registrations and local state use separate JSON stores.
+Windows protects the separate files for profile trust, macro trust and SSH host
+keys. In **Tools → Maintenance**, use **Manage application settings** to back up,
+verify or restore a ZIP with settings, highlights, profile files and their
+registrations. Save the vault separately from **Manage vault**. Local state and
+trust records stay on this PC. Removing a registration preserves the profile
+file. Deleting a profile file requests the Windows Recycle Bin.
 
 TabTty sends no telemetry and provides no automatic updater.
 Updates replace the extracted application folder while

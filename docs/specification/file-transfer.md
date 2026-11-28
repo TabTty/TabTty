@@ -31,18 +31,40 @@ Place square upload `＞` and download `＜` buttons between the two file lists.
 Give both buttons localized accessible names and tooltips. Align **Retry failed
 items** and **Cancel** at the right edge below the results.
 
-Offer **Rename** and **Delete** in each list's row context menu and keep F2 and
-Delete available from the list. A context menu on a selected row retains the
-selection. A context menu on an unselected row selects that row. Rename requires
+Offer **Rename** and **Delete** in each list's row context menu. Keep F2 for
+Rename and Delete and Shift+Delete for deletion when a file list has focus.
+A context menu on a selected row retains the selection. A context menu on an
+unselected row selects that row. Rename requires
 one entry with a usable name. Deletion uses the confirmed selection.
 
-**Cut**, **Copy**, and **Paste** also use the row context menu and Ctrl+X,
-Ctrl+C, and Ctrl+V when a file list has focus. Cut and Copy capture the selected
-entries and their source paths in the transfer window. Paste uses the opposite
-pane's displayed directory and is also available from that list's empty space.
-Cut starts a transfer with checked source removal at Paste. Copy keeps the source
-and can be pasted again. Clear the clipboard on disconnection or window closure.
-Use the regular transfer collision prompts and report retained sources per item.
+**Cut**, **Copy**, and **Paste** use the row context menu and Ctrl+X, Ctrl+C,
+and Ctrl+V when a file list has focus. Capture the selected entries and their
+source paths in a clipboard scoped to this transfer window. Paste into the
+displayed directory of either pane, including another directory on the same
+side. The context menu in empty list space can also Paste. Clear the clipboard
+on disconnection or window closure.
+
+Recheck each captured entry before Paste. Skip and report a source that is
+missing, has changed, or cannot be verified. A new Cut or Copy captures the
+current selection. Copy keeps the source and can be pasted repeatedly. Cut
+moves the source at Paste. Remove cut entries from the clipboard when their
+move is confirmed or its outcome becomes unknown. Keep cancelled, skipped, or
+failed entries available only if the original source is confirmed to remain
+in place. Report retained sources per item.
+
+For a same-side cut and paste, report a same-name destination as an item
+failure and continue with other eligible items. The source and the existing
+destination both remain in place. Use the regular collision rules for copies
+and cross-pane moves. Pasting a cut entry into its source directory leaves it
+available for a later paste. Reject pasting a directory into itself or a
+descendant.
+
+Copying into the source directory creates a duplicate. Append the localized
+copy suffix before a file's extension or at the end of a folder name. Use
+`Report - Copy.pdf`, then `Report - Copy (2).pdf` in English, and
+`報告書 - コピー.pdf`, then `報告書 - コピー (2).pdf` in Japanese. Choose the
+first available name under the destination's name-equivalence rules and commit
+without replacement. Validate generated names using the normal path rules.
 
 The tab header command targets the clicked connected SSH terminal tab, including
 an inactive tab in another tab group. Open or focus one transfer window for
@@ -280,6 +302,27 @@ MKDIR and fail that subtree if the server refuses. When merging with a folder
 that already exists, preserve its permissions. As with file creation, the
 remote server enforces the requested access. [Windows directory creation](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createdirectoryw)
 
+## Reading a remote file
+
+Downloads, copies between remote directories, and content hashes for transfer
+history use the same remote read completion check. Count the bytes actually
+read. After a short, nonempty SFTP DATA reply, request the next block at that
+offset. Continue until the server explicitly reports end of file (EOF), even
+when the known size has already been read.
+
+Keep any reliable size obtained for this read from the source path or the open
+handle, including a size first reported during the final attribute check. At
+EOF, compare the byte count with that size. Conflicting sizes, excess data,
+or a premature EOF fail the read. A copy with a failed read follows the
+pre-commit cleanup rules. A failed hash read yields no digest for history
+verification. When the server omits the size throughout, explicit EOF and
+successful rechecks of the available source attributes complete the read.
+
+While copying a remote file of unknown size, show the bytes transferred.
+As soon as the read supplies a reliable size, show the current count and
+total in the same progress display. Reuse the size obtained for the completion
+check without making an extra server request for progress.
+
 ## File write and replacement
 
 Read source attributes at open where available. Stream to an exclusively
@@ -354,6 +397,11 @@ identify committed, skipped, failed, unfinished, and unknown items. Retry failed
 items explicitly from the beginning on the original live generation. Recheck
 the current paths, source, and collisions at retry time.
 
+If the server may have created the temporary file but its creation reply was
+lost, report the intended filename and the full temporary path together as one
+unresolved creation. The [file-operation reporting rules](file-operations.md#results-and-retry)
+distinguish this case from losing the reply to the final rename.
+
 Each admitted copy or retry owns its planning counters and duplicate-result
 tracking until that execution ends. Release them on success, cancellation and
 failure. Retain the latest bounded results, including unfinished entries and
@@ -363,14 +411,77 @@ that interrupted traversal reports every item once, and that starting a retry
 with three results and one retryable failure processes only that file.
 See [#181](https://github.com/TabTty/TabTty/issues/181).
 
+## Undo and redo
+
+When a file list has focus, Ctrl+Z undoes the latest eligible copy or move and
+Ctrl+Y redoes the items that Undo actually reversed. Undo uses the recorded
+paths, so the current directory and selection can differ. Address fields keep
+their normal text editing shortcuts. A shortcut without the corresponding
+history state performs no file operation.
+
+Each transfer window holds one transfer history entry, which is available for
+either Undo or Redo. One copy or move request is one entry, including a
+multi-item request. Upload and Download buttons, drag-and-drop, Paste, and an
+explicit retry of failed copy items can produce an entry. A retry records only
+its own confirmed new effects. Successful Redo makes the entry undoable again.
+Browsing and Refresh preserve history. A new file operation that makes a change
+replaces the entry if eligible and clears it otherwise. Clear the entry if the
+effect of a new operation is unknown. Preserve it when the new operation is
+confirmed to have made no changes. Clear history on disconnection or closure.
+Deletion, rename, and folder creation are outside Undo.
+
+An eligible copy or move creates only new destinations and has confirmed
+effects that can be reversed. Record only the completed entries, including
+verified source removal for moves. If the operation fails, is cancelled
+partway, or has an unknown outcome and changes may remain, clear history and
+report the item outcomes.
+Use the same rules when a staged copy could finish but the move's source could
+not be safely removed.
+
+Warn before an overwrite or existing-directory merge which would make the
+whole copy or move ineligible. If preflight identifies one, give one batch
+warning before starting filesystem changes. If a new collision is discovered
+during execution, warn before acting on it. In English, use **This operation
+cannot be undone. Do you want to continue?** with **Continue** and **Cancel**,
+using the permanent-delete dialog style and defaulting to **Cancel**. Cancelling
+stops the batch, keeping confirmed effects already made. Keep the regular
+per-file overwrite, Skip, and Cancel decisions. An overwrite or merge that
+changes the filesystem clears any earlier transfer history. Completed items
+remain eligible when the other items were skipped and had no effects.
+
+Before either Undo or Redo starts changing files, revalidate every recorded
+source and destination against the expected state, including directory membership
+and the absence of any path that will be created. If a file changed, a directory
+contains an added entry, a path is occupied, or verification fails, make no
+changes and report the affected path and reason. Recheck before mutation under
+the regular file-operation safety rules. Use the original chosen destination
+names on Redo, including names generated for same-directory duplicates.
+
+Undo a move by moving the recorded entries back. Undo a copy by removing only
+the verified copies. Recycle local copies when possible. Confirm permanent
+deletion before removing remote copies or local copies that cannot be recycled.
+If the user cancels before any change, keep Undo available. Stop Undo or Redo
+at the first failure or interruption, keep confirmed changes and show per-item
+results. Clear history if any partial change remains or its outcome is unknown.
+Keep the entry if the operation is confirmed to have made no changes.
+
 ## File management, deadlines, and limits
 
-Confirm deletion once per selection with side, parent path, selected names,
-and inclusion of folder contents. Use Windows recycling where possible. Ask
-separately before attempting permanent deletion of local items that cannot be
-recycled. Show permanent deletion in the initial remote prompt. On a child
-failure stop that top-level tree and continue with other selected entries where
-possible. Cancellation stops new destructive requests, keeps completed effects,
+For a local file list, Delete and the **Delete** context-menu command use the
+Windows Recycle Bin where possible. Shift+Delete requests permanent deletion.
+For a remote file list, Delete, Shift+Delete, and the context-menu command all
+request permanent deletion. Confirm the selection once with side, parent path,
+selected names, and inclusion of folder contents. Ask separately before
+permanently deleting local items that cannot be recycled. An unknown recycling
+outcome does not authorize permanent deletion.
+
+For one file, ask **Permanently delete this file?** in English and
+**このファイルを完全削除しますか？** in Japanese. Use wording suited to a
+folder or multi-item selection, including whether folder contents will be
+deleted. Offer **Permanently delete** and **Cancel**, with **Cancel** as the
+default for permanent-delete confirmation. On a child failure, stop that
+top-level tree and continue with other selected entries where possible.
+Cancellation stops new destructive requests, keeps completed effects,
 and reports failed and unprocessed entries. If an issued mutation's outcome
 cannot be verified, report it as unknown. Before accepting another mutation,
 require both panes to display current listings from reads started after the
@@ -379,6 +490,13 @@ connection, the initial pair counts if it meets those conditions and no newer
 unknown outcome has occurred. Reads started too early, cancelled, superseded
 or failed leave the restriction in effect. Recheck eligibility before
 execution. See [#202](https://github.com/TabTty/TabTty/issues/202).
+
+If only one pane fails to refresh, keep the qualifying listing and selection
+on the successful side. Refresh on the failed side rereads that pane only.
+Correcting its path and pressing Enter also supplies a qualifying listing
+once the result is displayed. If both displayed listings still qualify in the
+current window, other eligible file operations can resume. Background refresh
+preserves path drafts, and each command still checks its own requirements.
 
 Use the profile connection-wait budget for SFTP startup and periods without
 relevant remote reply or forward byte progress. Unrelated terminal traffic and
@@ -394,7 +512,7 @@ or close an SFTP channel whose timed-out requests cannot be safely retired.
 | SFTP buffers | At most 2 MiB per live or closing transfer channel, 32 MiB application-wide. Count receive credit and owned staged/in-flight buffers without double-counting shared ownership. |
 | SSH transfer-channel payload | 1 MiB receive window, 32 KiB maximum SSH channel data. Independently validate SFTP frame lengths before allocation, with a 256 KiB maximum frame body. |
 | File requests | At most eight outstanding read or write requests of up to 32 KiB per file, and a separate bounded slot for interactive browse/control requests. Limit server replies to the requested range. |
-| Listings and tree operations | At most 50,000 entries per listing or operation, maximum depth 128, and bounded encoded paths up to 32 KiB. Charge owned listing/plan/result metadata against 32 MiB per window and 128 MiB app-wide. Report exceeded limits. Preflight recursive deletion before its first app-issued permanent delete. |
+| Listings and tree operations | At most 50,000 entries per listing or operation, maximum depth 128, and bounded encoded paths up to 32 KiB. Charge owned listing, plan, result, and transfer history metadata against 32 MiB per window and 128 MiB app-wide. Report exceeded limits. Preflight recursive deletion before its first app-issued permanent delete. |
 | File I/O | At most eight simultaneous SFTP-related local provider calls app-wide, including late cancelled calls until they return. Transfer work never consumes the reserved terminal/log budgets. |
 
 These bounds are subject to adjustment after measurement without changing the
@@ -411,6 +529,14 @@ accepted interaction, error semantics, or terminal response targets.
   Verify button and cross-pane drag destinations, browsing during transfer,
   and preservation of captured paths. Test distinct terminal transmit/receive
   codecs, invalid filename bytes, ambiguous display names, and byte fidelity.
+- Exercise all three remote read paths with the size omitted from path
+  attributes and reported only by the open handle. For a 100-byte file, a
+  60-byte DATA reply followed by 40 bytes and EOF completes the read. EOF
+  immediately after the first 60 bytes fails it. Verify that the failed copy
+  leaves the final destination intact and that a failed hash cannot verify
+  history. During the successful copy, verify the progress total changes from
+  unknown to 100 when the size becomes available. Also exercise a size first
+  reported by the final check and a file whose size is never reported.
 - Test ordinary new-file commit, approved replacement, Skip and Cancel, missing
   conflict metadata, changes before replacement, read-only/no-space failures,
   link/type conflicts, unrepresentable names, and aliased destination names.
@@ -419,6 +545,19 @@ accepted interaction, error semantics, or terminal response targets.
 - Test local recycle and confirmed permanent delete, remote nonempty-folder
   deletion with links, child failure, cancellation, permission denial, and
   loss of the mutation reply. Verify affected paths and result categories.
+- Paste in all four directions, including a cut between folders on one side.
+  Verify changed-source skipping, cut clipboard retention and consumption,
+  same-side move collisions, descendant rejection, and duplicate name selection
+  in English and Japanese. Test Delete and Shift+Delete on each side, the local
+  recycle fallback, and the permanent-delete wording and Cancel default for a
+  file, folder, and multi-item selection.
+- Exercise Undo, Redo, and Undo again after a multi-item request with a skip,
+  a same-directory duplicate, and a successful copy retry. Navigate and refresh
+  between steps. Verify no changes after a failed preflight, no replay of
+  skipped items, and the different history outcomes for cancelled operations
+  with and without changes. Test a newly discovered collision, an approved
+  overwrite or merge, source and destination changes, and added folder entries.
+  Confirm permanent removal when Undo cannot recycle the copy.
 - Exercise an independent OpenSSH v3 server and the scripted SSH peer under
   simultaneous shell I/O, uploads/downloads, rekey, transfer stalls, and
   disconnect. Compare Raw logs to expected terminal bytes and measure the

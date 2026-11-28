@@ -42,7 +42,7 @@ internal sealed partial class MainWindow
         {
             if (!existing.Remove(report, out var row))
             {
-                row = new ReportRow(report, app.StatusReports);
+                row = new ReportRow(this, report, app.StatusReports);
                 reportRows.Children.Add(row);
             }
             row.Update();
@@ -57,24 +57,52 @@ internal sealed partial class MainWindow
         private readonly DialogField summaryField;
         private readonly StackPanel fields = new();
         private readonly Button ok = new() { MinWidth = 72, HorizontalAlignment = HorizontalAlignment.Right };
+        private readonly Button recheck = new() { HorizontalAlignment = HorizontalAlignment.Right };
+        private readonly MainWindow owner;
         private WindowReportContent? displayed;
 
-        internal ReportRow(WindowStatusReport report, WindowStatusReports reports)
+        internal ReportRow(MainWindow owner, WindowStatusReport report, WindowStatusReports reports)
         {
+            this.owner = owner;
             Report = report;
             Margin = new Thickness(0, 0, 0, 8);
             summaryField = new DialogField(Text("OperationReportSummaryLabel"), summary);
             Children.Add(summaryField);
             Children.Add(fields);
+            Children.Add(recheck);
             Children.Add(ok);
             ok.Click += (_, _) => reports.Acknowledge(report);
+            recheck.Click += async (_, _) =>
+            {
+                if (FindStore() is not { } store) return;
+                recheck.IsEnabled = false;
+                try
+                {
+                    string[] paths = await JsonStoreRecovery.RecheckAsync(owner.app, store);
+                    reports.Acknowledge(report);
+                    owner.app.Modal(() => ThemedMessageBox.Show(owner,
+                        paths.Length == 0 ? Text("StoreRechecked") : string.Join('\n', paths), Text("RecheckFilePublication")));
+                }
+                catch (Exception error) when (ProfileCatalog.IsFileProblem(error))
+                {
+                    owner.app.Modal(() => ThemedMessageBox.Show(owner, error.Message, Text("RecheckFilePublication"),
+                        icon: MessageBoxImage.Error));
+                }
+                finally { recheck.IsEnabled = true; }
+            };
         }
+
+        private JsonStoreRecovery.Store? FindStore() => owner.app.RecheckableStores().FirstOrDefault(store =>
+            TabTty.Core.VerifiedFilePublication.IsUnresolved(store.Path) &&
+            Report.Content.Fields.Any(field => string.Equals(field.Value, store.Path, StringComparison.OrdinalIgnoreCase)));
 
         internal void Update()
         {
             var content = Report.Content;
             summaryField.SetCaption(Text("OperationReportSummaryLabel"));
             ok.Content = Text("OK");
+            recheck.Content = Text("RecheckFilePublication");
+            recheck.Visibility = FindStore() is null ? Visibility.Collapsed : Visibility.Visible;
             if (ReferenceEquals(displayed, content)) return;
             displayed = content;
             summary.Text = content.Summary;

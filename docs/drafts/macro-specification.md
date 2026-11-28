@@ -327,10 +327,9 @@ whose only previous decision came from a development build requires a fresh
 review, whether that decision was allow or block. Cancel is the default.
 Reading or migrating development-build records is outside the release scope.
 
-Store one Windows Credential Manager generic credential per fingerprint,
-scoped to the current Windows user on this PC (`CRED_TYPE_GENERIC`,
-`CRED_PERSIST_LOCAL_MACHINE`). Use `TabTty/MacroTrust/v1/` followed by the
-hexadecimal fingerprint as the target name. The 98-byte record contains the
+Store one record per fingerprint in the separate Windows-protected macro
+trust file defined by [Settings maintenance](../specification/settings-maintenance.md#separate-stores-and-local-recovery).
+Scope it to the current Windows user and PC. The 98-byte logical record contains the
 version byte (1), the decision byte (1 for allow, 2 for block), then the
 source digest, fingerprint and constants version digest in that order.
 Verify the record length, version, decision value and all digests before
@@ -338,10 +337,10 @@ using the decision for a launch. Keep paths, source text, constants file
 contents, argument values and passwords out of the record. Lookup, listing,
 individual removal and reset cover the v1 records. Trust survives sign-out.
 Copying a macro, settings, profile or portable vault to another PC does not
-transfer its approval. Windows protects this store at the user-account boundary.
+transfer its approval. Windows protects this store for the current user and PC.
 Software running as that user
 and administrators with control of the account are within that boundary.
-[Windows credential types and persistence](https://learn.microsoft.com/en-us/windows/win32/api/wincred/ns-wincred-credentialw)
+[Windows user and PC protection](https://learn.microsoft.com/en-us/windows/win32/seccng/cng-dpapi-constants)
 
 An elevated instance still honors blocks. Before executing with elevated rights,
 require an explicit one-time decision in the elevated window, even for a known
@@ -353,7 +352,7 @@ Look up the current record for each launch. A missing record triggers review.
 An unreadable store, invalid record or failed decision write stops the launch
 with a localized error. Do not fall back to cached decisions, file metadata or
 ordinary settings. Rechecking or repairing the store must be possible without
-executing a macro. [Windows credential lookup](https://learn.microsoft.com/en-us/windows/win32/api/wincred/nf-wincred-credreadw)
+executing a macro. [Settings maintenance](../specification/settings-maintenance.md#separate-stores-and-local-recovery)
 
 ## Connection and path handling
 

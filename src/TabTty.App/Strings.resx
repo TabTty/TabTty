@@ -301,6 +301,12 @@
   <data name="IgnoreCase" xml:space="preserve"><value>Ignore case</value></data>
   <data name="HighlightForeground" xml:space="preserve"><value>Foreground (#RRGGBB or blank)</value></data>
   <data name="HighlightBackground" xml:space="preserve"><value>Background (#RRGGBB or blank)</value></data>
+  <data name="ChooseHighlightColor" xml:space="preserve"><value>Choose color…</value></data>
+  <data name="HighlightColorPicker" xml:space="preserve"><value>Choose a color</value></data>
+  <data name="HighlightColorPreview" xml:space="preserve"><value>Color preview</value></data>
+  <data name="ColorRed" xml:space="preserve"><value>Red</value></data>
+  <data name="ColorGreen" xml:space="preserve"><value>Green</value></data>
+  <data name="ColorBlue" xml:space="preserve"><value>Blue</value></data>
   <data name="HighlightBold" xml:space="preserve"><value>Bold (mixed: use the terminal attribute)</value></data>
   <data name="HighlightUnderline" xml:space="preserve"><value>Underline (mixed: use the terminal attribute)</value></data>
   <data name="InvalidHighlightPattern" xml:space="preserve"><value>Enter a valid regular expression or disable this rule.</value></data>
@@ -487,6 +493,14 @@
   <data name="TransferRename" xml:space="preserve"><value>Rename</value></data>
   <data name="TransferCut" xml:space="preserve"><value>Cut</value></data>
   <data name="TransferDelete" xml:space="preserve"><value>Delete</value></data>
+  <data name="TransferCopySuffix" xml:space="preserve"><value> - Copy</value></data>
+  <data name="TransferIrreversible" xml:space="preserve"><value>This operation cannot be undone. Do you want to continue?</value></data>
+  <data name="TransferContinue" xml:space="preserve"><value>Continue</value></data>
+  <data name="TransferLocation" xml:space="preserve"><value>Location</value></data>
+  <data name="TransferHistoryUnavailable" xml:space="preserve"><value>Undo is unavailable because the transfer could not be fully recorded.</value></data>
+  <data name="TransferDeletePermanentFile" xml:space="preserve"><value>Permanently delete this file?</value></data>
+  <data name="TransferDeletePermanentFolder" xml:space="preserve"><value>Permanently delete this folder and its contents?</value></data>
+  <data name="TransferDeletePermanentSelection" xml:space="preserve"><value>Permanently delete the selected items? Folders include all contents.</value></data>
   <data name="TransferName" xml:space="preserve"><value>Name</value></data>
   <data name="TransferSize" xml:space="preserve"><value>Size (bytes)</value></data>
   <data name="TransferModified" xml:space="preserve"><value>Last modified</value></data>
@@ -604,7 +618,7 @@
   <data name="MacroAlwaysBlock" xml:space="preserve"><value>Always block with these arguments</value></data>
   <data name="MacroTrustChanged" xml:space="preserve"><value>A remembered decision changed. Open the macro again to check the current decision.</value></data>
   <data name="MacroTrustUnavailable" xml:space="preserve"><value>TabTty could not read or update macro execution settings in Windows Credential Manager.</value></data>
-  <data name="MacroManageTrust" xml:space="preserve"><value>Manage macro allow and block decisions…</value></data>
+  <data name="MacroManageTrust" xml:space="preserve"><value>Manage macro trust</value></data>
   <data name="MacroTrustEmpty" xml:space="preserve"><value>There are no remembered macro allow or block decisions.</value></data>
   <data name="MacroPairFingerprint" xml:space="preserve"><value>Content and argument fingerprint</value></data>
   <data name="MacroFindArguments" xml:space="preserve"><value>Find by arguments…</value></data>
@@ -826,4 +840,44 @@ The AI app can send keys and multiple lines of commands without asking again, us
   <data name="NoticeRecordingPaused" xml:space="preserve"><value>Recording paused (part {0} saved)</value></data>
   <data name="NoticeRecordingSaved" xml:space="preserve"><value>Recording saved (part {0})</value></data>
   <data name="NoticeBroadcastUncertain" xml:space="preserve"><value>Delivery extent unknown</value></data>
+  <data name="TrustStoreInvalid" xml:space="preserve"><value>The protected trust file could not be read.</value></data>
+  <data name="UseTemporaryCatalog" xml:space="preserve"><value>The profile catalog could not be opened. Continue with a temporary read-only catalog?</value></data>
+  <data name="ProfileCatalogInvalid" xml:space="preserve"><value>The profile catalog is invalid.</value></data>
+  <data name="ProfileRegistrationRollbackFailed" xml:space="preserve"><value>Profile registration failed and the changes could not be completely undone. The affected registration and trust require rechecking.</value></data>
+  <data name="ManageProfileTrust" xml:space="preserve"><value>Manage connection profile trust</value></data>
+  <data name="ProfileTrustEmpty" xml:space="preserve"><value>There are no remembered connection profile trust decisions.</value></data>
+  <data name="ProfileUnregisterAfterTrustRemovalFailed" xml:space="preserve"><value>Trust was removed. Could not remove the registration from the list.</value></data>
+  <data name="RetryUnregisterProfile" xml:space="preserve"><value>Retry unregister</value></data>
+  <data name="RemoveIndividualTrust" xml:space="preserve"><value>Remove individually</value></data>
+  <data name="RemoveAllTrust" xml:space="preserve"><value>Remove all</value></data>
+  <data name="ManageHostKeys" xml:space="preserve"><value>Manage</value></data>
+  <data name="ManageApplicationSettings" xml:space="preserve"><value>Manage application settings</value></data>
+  <data name="AssociationRegister" xml:space="preserve"><value>Register</value></data>
+  <data name="AssociationUnregister" xml:space="preserve"><value>Unregister</value></data>
+  <data name="AssociationUnregistered" xml:space="preserve"><value>TabTty file-type registrations were removed for this Windows user.</value></data>
+  <data name="AssociationNoChange" xml:space="preserve"><value>The Windows file-type registrations did not change.</value></data>
+  <data name="AssociationPartialFailure" xml:space="preserve"><value>The Windows file-type operation failed. Some registration entries may have changed.</value></data>
+  <data name="ArchiveFiles" xml:space="preserve"><value>TabTty backup</value></data>
+  <data name="ArchiveBackup" xml:space="preserve"><value>Back up</value></data>
+  <data name="ArchiveRestore" xml:space="preserve"><value>Restore</value></data>
+  <data name="ArchiveVerify" xml:space="preserve"><value>Verify backup</value></data>
+  <data name="ArchiveInvalid" xml:space="preserve"><value>The backup file is invalid, unsupported, or exceeds a size limit.</value></data>
+  <data name="ArchiveVaultExcluded" xml:space="preserve"><value>The vault is excluded from this ZIP. To save it, open Manage vault and select Create encrypted backup.</value></data>
+  <data name="ArchiveProfileFiles" xml:space="preserve"><value>Connection profile files</value></data>
+  <data name="ArchiveProfileRegistrations" xml:space="preserve"><value>Connection profile registrations</value></data>
+  <data name="ArchiveNoData" xml:space="preserve"><value>No data</value></data>
+  <data name="ArchiveVerified" xml:space="preserve"><value>The backup ZIP passed verification.</value></data>
+  <data name="ArchiveIncluded" xml:space="preserve"><value>Included</value></data>
+  <data name="ArchiveRecyclePaths" xml:space="preserve"><value>Existing files to move to the Recycle Bin</value></data>
+  <data name="ArchiveRestoreConfirm" xml:space="preserve"><value>Restore the selected items to these destinations?</value></data>
+  <data name="ArchiveFailed" xml:space="preserve"><value>Failed</value></data>
+  <data name="ArchiveNotRun" xml:space="preserve"><value>Not run</value></data>
+  <data name="ArchiveCompleted" xml:space="preserve"><value>Completed</value></data>
+  <data name="ArchiveSkippedRegistrations" xml:space="preserve"><value>Registrations excluded from the archive: {0}</value></data>
+  <data name="ArchiveAlternativeProfileFolder" xml:space="preserve"><value>Restore destination: {0}. Select this folder in Settings to see its registrations.</value></data>
+  <data name="ArchiveRecycled" xml:space="preserve"><value>Moved to the Recycle Bin</value></data>
+  <data name="ArchivePlacementAfterRecycleFailed" xml:space="preserve"><value>The original is in the Recycle Bin. The new profile was not verified. You can recover the original using the Recycle Bin.</value></data>
+  <data name="ArchiveMissingFolder" xml:space="preserve"><value>The configured folder does not exist. Choose another folder to continue.</value></data>
+  <data name="StoreRechecked" xml:space="preserve"><value>The previous save was rechecked.</value></data>
+  <data name="ArchiveRestoreItems" xml:space="preserve"><value>Items to restore</value></data>
 </root>

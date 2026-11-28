@@ -157,6 +157,23 @@ internal sealed class TransferWindowsPath : IDisposable
         }
     }
 
+    internal static void CopyLocalZone(string source, FileStream input, string target, FileStream output)
+    {
+        FileStream marker;
+        try { marker = new FileStream(source + ":Zone.Identifier:$DATA", FileMode.Open, FileAccess.Read, FileShare.Read); }
+        catch (FileNotFoundException) { return; }
+        using (marker)
+        {
+            if (FileObjectIdentity.Read(marker.SafeFileHandle) != FileObjectIdentity.Read(input.SafeFileHandle) ||
+                marker.Length > 64 * 1024) throw new SftpException(SftpFailure.DownloadOrigin);
+            using var copy = new FileStream(target + ":Zone.Identifier:$DATA", FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            if (FileObjectIdentity.Read(copy.SafeFileHandle) != FileObjectIdentity.Read(output.SafeFileHandle))
+                throw new SftpException(SftpFailure.DownloadOrigin);
+            marker.CopyTo(copy, SftpClient.BlockSize);
+            copy.Flush(flushToDisk: true);
+        }
+    }
+
     public unsafe void CreateDirectory(string path)
     {
         if (!GetVolumeInformationByHandleW(parents[^1], 0, 0, out _, out _, out uint features, 0, 0) ||

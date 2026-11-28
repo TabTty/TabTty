@@ -45,8 +45,10 @@ internal static partial class Program
                 var label = container.Children.OfType<Label>().Single(item => item.Target == selector);
                 string heading = language == "en" ? "If a log file already exists" : "同名のログがある場合";
                 string[] labels = language == "en" ? ["Error", "Overwrite", "Append"] : ["エラー", "上書き", "追記"];
+                var displayed = selector.Items.Cast<object>().Select(item =>
+                    item.GetType().GetProperty(selector.DisplayMemberPath)?.GetValue(item) as string);
                 if (((TextBlock)label.Content).Text != heading ||
-                    !selector.Items.Cast<ComboBoxItem>().Select(item => (string)item.Content).SequenceEqual(labels))
+                    !displayed.SequenceEqual(labels))
                     throw new InvalidOperationException("The recording policy choices are incorrectly localized.");
 
                 foreach (string value in new[] { "error", "overwrite", "append" })

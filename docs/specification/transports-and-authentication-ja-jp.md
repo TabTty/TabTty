@@ -8,7 +8,9 @@ DNS 解決と信頼の照会で同じ正規接続先を使う。DNS 名または
 
 DNS には Win32 IdnToAscii を直接使う。UTF-16 入力長を明示し、IDN_USE_STD3_ASCII_RULES だけを設定する。IDN_ALLOW_UNASSIGNED、IDN_RAW_PUNYCODE、IDN_EMAIL_ADDRESS は設定しない。環境によって ICU と NLS を選ぶ .NET IdnMapping を使わず、Windows NLS に固定する。Unicode の区切りはその処理系に従って変換し、明示的な末尾ドット一つを除いてラベルごとに 63 バイト、全体で 253 バイトの上限を適用し、結果を ASCII の小文字にする。末尾ドットの有無は保持する。DNS 検索、別名、正規名の結果を信頼キーに反映しない。別のマッピングを自作せず、この処理系を使う。得られた ASCII の接続先をセッションに記録する。サポートする Windows とランタイムの組み合わせごとにラベルと正規化のベクトルを検証する。OS の変換に変更があれば信頼上の識別の互換性を確認し、既存レコードを黙って別の接続先へ移行しない。
 
-`host-keys.json` は共通のバージョンフィールドと `destinations` を持つ。各項目は `kind`（`dns/ipv4/ipv6`）、正規の `host`、null 許容の `scopeId`、`port`、`keys` を含む。鍵ごとに `format`、正規 Base64 の `publicBlob`、SHA-256 フィンガープリント、UTC の `approvedAt` を持つ。接続先ごとに同じ形式の鍵は一つ。ECDSA は曲線ごとに形式が異なり、RSA SHA-2 署名は `ssh-rsa` 鍵ブロブを共有する。読み込み時にブロブの種類、サイズ、フィンガープリントを検証する。ホストレコードは vault から独立する。
+[Windows で保護した独立の SSH ホスト鍵ファイル](settings-maintenance-ja-jp.md#保存先の分離とローカル復旧)の JSON データは、共通のバージョンフィールドと `destinations` を持つ。各項目は `kind`（`dns/ipv4/ipv6`）、正規の `host`、null 許容の `scopeId`、`port`、`keys` を含む。鍵ごとに `format`、正規 Base64 の `publicBlob`、SHA-256 フィンガープリント、UTC の `approvedAt` を持つ。接続先ごとに同じ形式の鍵は一つ。ECDSA は曲線ごとに形式が異なり、RSA SHA-2 署名は `ssh-rsa` 鍵ブロブを共有する。読み込み時にブロブの種類、サイズ、フィンガープリントを検証する。ホストレコードは vault から独立する。
+
+承認済みの鍵の一覧と個別削除は、[メンテナンスタブ](settings-maintenance-ja-jp.md#ssh-ホスト鍵の管理)から開く。
 
 ホスト署名の優先順は ssh-ed25519、ecdsa-sha2-nistp256、ecdsa-sha2-nistp384、ecdsa-sha2-nistp521、rsa-sha2-512、rsa-sha2-256。その接続先で承認済みの鍵形式を未知の形式より前に移し、グループ内の相対順は保持する。別の鍵や新しい鍵が提示された場合は、合意済みの初回または変更時の承認を要する。信頼の提示や認証情報の使用前に交換署名を検証する。RSA は PKCS#1 v1.5 と SHA-2 を使う。SHA-1 と RSA-PSS は使わない。ホストの別名に信頼を継承せず、機会に応じた鍵の自動学習を行わない。
 

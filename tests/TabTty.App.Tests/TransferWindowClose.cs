@@ -15,7 +15,7 @@ internal static partial class Program
 
     private static async Task CheckTransferWindowClose(string directory, int port)
     {
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(45));
         string profilePath = Path.Combine(directory, "transfer-close.ttty");
         await ConnectionProfile.CreateSsh("Transfer close", "127.0.0.1", "tabtty-sftp", port).SaveNewAsync(profilePath, deadline.Token);
         var interaction = new SshInteraction((_, _) => Task.FromResult(true),
@@ -354,6 +354,12 @@ internal static partial class Program
             if (!upload.IsEnabled || !Equals(localList.SelectedValue, "note.txt"))
                 throw new InvalidOperationException("The duplicate upload fixture did not select note.txt.");
             _ = transfer.Dispatcher.BeginInvoke(() => upload.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)));
+            var irreversible = await WaitForTransferDialogAsync("TransferContinue");
+            if (!FindControls<TextBlock>(irreversible).Any(text => text.Text == App.Text("TransferIrreversible")) ||
+                !FindControls<Button>(irreversible).Single(button => button.IsDefault).IsCancel)
+                throw new InvalidOperationException("The irreversible transfer warning did not offer Cancel as the default.");
+            FindControls<Button>(irreversible).Single(button => Equals(button.Content, App.Text("TransferContinue")))
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             var overwrite = await WaitForTransferDialogAsync("TransferOverwrite");
             try
             {
@@ -424,8 +430,8 @@ internal static partial class Program
                 !Equals(localList.SelectedValue, "clipboard.txt") || !MenuCommand(localList, "TransferRename").IsEnabled)
                 throw new InvalidOperationException("The row menu did not select the item under the pointer.");
             InvokeMenu(localList, "Copy");
-            if (ApplicationCommands.Paste.CanExecute(null, localList) || !ApplicationCommands.Paste.CanExecute(null, remoteList))
-                throw new InvalidOperationException("A captured file was not restricted to cross-pane paste.");
+            if (!ApplicationCommands.Paste.CanExecute(null, localList) || !ApplicationCommands.Paste.CanExecute(null, remoteList))
+                throw new InvalidOperationException("Paste was not available on both sides.");
             ApplicationCommands.Paste.Execute(null, remoteList);
             await WaitForListsAsync(() => remoteList.Items.Count == 3);
             if (!File.Exists(copySource) || !HasRow(remoteList, "clipboard.txt"))
@@ -442,6 +448,10 @@ internal static partial class Program
             await WaitForListsAsync(() => remoteList.Items.Count == 4);
             if (Directory.Exists(moveSource) || !HasRow(remoteList, "clipboard-folder/"))
                 throw new InvalidOperationException("Cross-pane cut did not remove the transferred source folder.");
+            ApplicationCommands.Undo.Execute(null, remoteList);
+            await WaitForListsAsync(() => Directory.Exists(moveSource) && !HasRow(remoteList, "clipboard-folder/"));
+            ApplicationCommands.Redo.Execute(null, localList);
+            await WaitForListsAsync(() => !Directory.Exists(moveSource) && HasRow(remoteList, "clipboard-folder/"));
 
             remoteList.SelectedValue = "clipboard.txt";
             ApplicationCommands.Copy.Execute(null, remoteList);
@@ -457,6 +467,10 @@ internal static partial class Program
             if (HasRow(remoteList, "clipboard.txt") ||
                 await File.ReadAllTextAsync(Path.Combine(downloadTarget, "clipboard.txt"), deadline.Token) != "clipboard copy")
                 throw new InvalidOperationException("Cut and Paste did not move the remote file to the newly listed local folder.");
+            ApplicationCommands.Undo.Execute(null, localList);
+            await WaitForListsAsync(() => !HasRow(localList, "clipboard.txt") && HasRow(remoteList, "clipboard.txt"));
+            ApplicationCommands.Redo.Execute(null, remoteList);
+            await WaitForListsAsync(() => HasRow(localList, "clipboard.txt") && !HasRow(remoteList, "clipboard.txt"));
             Console.WriteLine("PASS SftpClipboardCopiesAndMovesAcrossPanes");
 
             remoteList.SelectedValue = "other.txt";
@@ -520,6 +534,67 @@ internal static partial class Program
             Console.WriteLine("PASS SftpSamePaneDropsMoveFilesAndFolders");
 
             var parents = buttons.Where(button => Equals(button.Content, App.Text("TransferParent"))).ToArray();
+            string duplicate = "clipboard" + App.Text("TransferCopySuffix") + ".txt";
+            string duplicatePath = Path.Combine(downloadTarget, duplicate);
+            localList.SelectedValue = "clipboard.txt";
+            ApplicationCommands.Copy.Execute(null, localList);
+            ApplicationCommands.Paste.Execute(null, localList);
+            await WaitForListsAsync(() => HasRow(localList, duplicate));
+            if (!File.Exists(Path.Combine(downloadTarget, "clipboard.txt")) ||
+                await File.ReadAllTextAsync(duplicatePath + ":Zone.Identifier", deadline.Token) != "[ZoneTransfer]\r\nZoneId=3\r\n" ||
+                ApplicationCommands.Redo.CanExecute(null, remoteList))
+                throw new InvalidOperationException("Same-folder copy did not duplicate the file and preserve its origin mark.");
+            DateTime originalWrite = File.GetLastWriteTimeUtc(duplicatePath);
+            await File.WriteAllTextAsync(duplicatePath, "clipboard edit", deadline.Token);
+            File.SetLastWriteTimeUtc(duplicatePath, originalWrite);
+            ApplicationCommands.Undo.Execute(null, localList);
+            await WaitForListsAsync(() => FindControls<TextBlock>(transfer).Any(text => text.Text == App.Text("SftpSourceChanged")));
+            if (await File.ReadAllTextAsync(duplicatePath, deadline.Token) != "clipboard edit" ||
+                !ApplicationCommands.Undo.CanExecute(null, localList))
+                throw new InvalidOperationException("An Undo preflight changed a modified copy or discarded the history.");
+            await File.WriteAllTextAsync(duplicatePath, "clipboard copy", deadline.Token);
+            File.SetLastWriteTimeUtc(duplicatePath, originalWrite);
+            ApplicationCommands.Undo.Execute(null, localList);
+            await WaitForListsAsync(() => !HasRow(localList, duplicate));
+            ApplicationCommands.Redo.Execute(null, remoteList);
+            await WaitForListsAsync(() => HasRow(localList, duplicate) && ApplicationCommands.Undo.CanExecute(null, localList));
+
+            localList.SelectedValue = duplicate;
+            ApplicationCommands.Cut.Execute(null, localList);
+            ApplicationCommands.Paste.Execute(null, localList);
+            await WaitForListsAsync(() => ApplicationCommands.Paste.CanExecute(null, localList));
+            editors[0].Text = localDropFolder;
+            Press(editors[0], Key.Enter);
+            await WaitForListsAsync(() => editors[0].Text == localDropFolder);
+            ApplicationCommands.Paste.Execute(null, localList);
+            await WaitForListsAsync(() => HasRow(localList, duplicate));
+            if (File.Exists(duplicatePath) || ApplicationCommands.Paste.CanExecute(null, localList))
+                throw new InvalidOperationException("The cut was not consumed after pasting into a different local folder.");
+            ApplicationCommands.Undo.Execute(null, localList);
+            await WaitForListsAsync(() => !HasRow(localList, duplicate) && File.Exists(duplicatePath));
+
+            remoteList.SelectedValue = "clipboard.txt";
+            ApplicationCommands.Copy.Execute(null, remoteList);
+            ApplicationCommands.Paste.Execute(null, remoteList);
+            await WaitForListsAsync(() => HasRow(remoteList, duplicate));
+            _ = transfer.Dispatcher.BeginInvoke(() => ApplicationCommands.Undo.Execute(null, remoteList));
+            var permanent = await WaitForTransferDialogAsync("TransferPermanentlyDelete");
+            if (!FindControls<TextBlock>(permanent).Any(text => text.Text == App.Text("TransferDeletePermanentFile")) ||
+                !FindControls<Button>(permanent).Single(button => button.IsDefault).IsCancel)
+                throw new InvalidOperationException("Undoing a remote copy did not request safe permanent-delete confirmation.");
+            FindControls<Button>(permanent).Single(button => Equals(button.Content, App.Text("TransferPermanentlyDelete")))
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await WaitForListsAsync(() => !HasRow(remoteList, duplicate));
+            ApplicationCommands.Redo.Execute(null, remoteList);
+            await WaitForListsAsync(() => HasRow(remoteList, duplicate));
+            remoteList.SelectedValue = duplicate;
+            _ = transfer.Dispatcher.BeginInvoke(() => Press(remoteList, Key.Delete));
+            permanent = await WaitForTransferDialogAsync("TransferPermanentlyDelete");
+            FindControls<Button>(permanent).Single(button => Equals(button.Content, App.Text("TransferPermanentlyDelete")))
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await WaitForListsAsync(() => !HasRow(remoteList, duplicate) && !ApplicationCommands.Undo.CanExecute(null, remoteList));
+            Console.WriteLine("PASS SftpTransferHistorySameSidePasteAndPermanentDelete");
+
             string driveRoot = Path.GetPathRoot(downloadTarget)!;
             editors[0].Text = driveRoot;
             Press(editors[0], Key.Enter);

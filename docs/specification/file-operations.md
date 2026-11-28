@@ -5,6 +5,11 @@ interview Q1-Q11, including the final shared-understanding review, are accepted.
 Implementation and prototyping require a separate explicit user request.
 No implementation tests were run for this consolidation.
 
+The file-transfer design review on 2026-11-28 settled how the module retains
+retry results, tracks temporary file creation and cleanup, verifies remote
+reads and reports progress, and resumes mutations after both panes refresh.
+All four changes are ready for implementation.
+
 The [architecture interview](../drafts/architecture-deepening.md) records the
 decisions and alternatives. The [SFTP file-transfer contract](file-transfer.md)
 continues to define file behavior, confirmation choices, path handling, limits,
@@ -32,10 +37,14 @@ flowchart TB
 Production and test adapters are alternatives at the internal seam. The diagram
 does not imply that both perform an operation together.
 
+The production I/O adapter uses one remote read completion check for downloads,
+remote-to-remote copies and transfer-history hashes. For a copy it also supplies
+the size used by the progress display. See [Reading a remote file](file-transfer.md#reading-a-remote-file).
+
 | Responsibility | Owner |
 | --- | --- |
 | Browsing, selection, path/name input, drag validity, dialogs, localized display | Transfer window and presentation adapter |
-| Admission, captured request, preflight, confirmation validity, execution, cancellation, results, retry selection | File-operation module |
+| Admission, captured request, preflight, confirmation validity, execution, cancellation, results, retry selection, transfer history | File-operation module |
 | Windows operations, source/destination attributes and identity checks, file data, native recycling, low-level completion facts | Production I/O adapter, reusing the useful `TransferFiles` knowledge |
 | SFTP framing, request replies, channel identity, transport flow control and close | Existing SFTP/SSH implementation |
 | Outstanding-I/O ownership and shared resource/serialization lifetime across windows | Application-wide I/O management, without references to UI controls |
@@ -53,7 +62,9 @@ Use named copy, move, delete, rename, and folder-creation operations with opaque
 module-owned operation identity. Exact C# names and internal decomposition are
 implementation choices. The interface also supports observing read-only state,
 answering confirmation requests, requesting cancellation, retrying eligible
-failed transfer items, and closing the operation context after a close decision.
+failed transfer items, Undo, Redo, and closing the operation context after a
+close decision. A deletion request specifies recycling with confirmed fallback
+or direct permanent deletion, as selected by the command and pane.
 
 An operation request captures its selected entries and destination/name as
 bounded, stable values. Preserve remote raw-name bytes and the selected path
@@ -69,8 +80,18 @@ source folders after their admitted children have been processed. Leave any
 uncopied or newly appearing contents in place. Windows source removal uses the
 checked file handle. SFTP v3 uses a metadata check followed by REMOVE or RMDIR,
 which are separate server operations. Unknown outcomes use the existing refresh
-and close-report rules. Retry failed cut items by explicitly selecting them for
-a new cut and paste so the ordinary copy retry cannot remove a source.
+and close-report rules. Repeating Paste can attempt an eligible, verified source
+still in the cut clipboard. **Retry failed items** remains a copy operation and
+cannot remove a source.
+
+Same-side Paste uses the same captured paths, name checks, and staged-copy
+policy as other copies. A same-side move uses a non-replacing rename where
+supported. A move that needs a copy, such as a move between local volumes,
+uses staged copy and verified source removal with the same non-replacement
+policy. Apply download-only requirements to files received from the endpoint
+into Windows. Determine whether two paths name the same directory or lie in
+the same tree from provider facts before admitting a same-directory duplicate
+or a directory paste. Reject a directory paste into itself or a descendant.
 
 The module decides admission. A disabled button is a presentation of that
 decision, not its enforcement. Reject a start when the connection is unavailable,
@@ -79,11 +100,12 @@ unavailable. Rejected starts do not clear the latest results. Preserve the
 existing immediate-admission model without adding a queue of future operations.
 
 Read-only state identifies the owning module and operation and describes
-admission, progress, pending confirmation, per-item results, retry availability,
-and outstanding I/O or cleanup. Observation begins with current state; updates
-may coalesce progress, while pending questions and retained results remain
-observable. Presentation dispatch must discard callbacks for a detached view or
-an old owner. Detaching observation does not itself request cancellation.
+admission, progress, pending confirmation, per-item results, availability of
+retry, Undo, and Redo, and outstanding I/O or cleanup. Observation begins with
+current state. Updates may coalesce progress while pending questions and
+retained results remain observable. Presentation dispatch discards callbacks for
+a detached view or an old owner. Detaching observation does not itself request
+cancellation.
 
 Ordinary rejection and file-operation failure produce observable outcomes; a
 caller must not infer success from acceptance or infer no effects from
@@ -93,10 +115,11 @@ Logical operation completion and actual I/O completion remain distinct.
 
 ## Confirmation and cancellation
 
-The module determines when the existing initial deletion, overwrite, and
-permanent-deletion fallback confirmations are needed. It supplies the question's
-facts and permitted choices; the presentation adapter owns the dialog and locale
-resources. Names and internal identifiers do not depend on translated text.
+The module determines when to confirm deletion, replacement, permanent-delete
+fallback, and a transfer that cannot be undone. It supplies the question's
+facts and permitted choices. The presentation adapter owns the dialog and
+locale resources. Names and internal identifiers do not depend on translated
+text.
 
 Each pending question belongs to one operation on one connection. Only its
 current answer can authorize the next step. Cancellation, disconnect, or an
@@ -123,6 +146,16 @@ available browsing controls do not guarantee a stalled provider will answer.
 Once I/O has retired, apply the contract's required refresh/rechecks before
 admitting further mutations. A UI refresh alone does not retire pending I/O.
 
+After an unknown outcome, the connection's file-operation owner decides
+when the listing requirement is satisfied. The transfer window reports when
+each pane starts reading and which result it actually displays. The owner
+checks the current window's two displayed listings against the latest unknown
+outcome and the actual completion of outstanding I/O. A newer unknown outcome
+requires fresh reads on both sides. If a pane starts a replacement read while
+recovery is pending, only its new, successfully displayed result can qualify.
+Closing the window discards its listing evidence. On the same connection the
+admission restriction survives, and the new window supplies its own pair.
+
 ## Results and retry
 
 Retain one latest operation's bounded result set together with its eligible
@@ -132,11 +165,25 @@ transfer window discards display results and retry metadata; reopening does not
 restore a history of operations. A disconnected window that remains open keeps
 its results.
 
+The file-operation module owns this switch at admission. The transfer batch
+reports which copies failed and qualify for retry during that execution. For
+example, if a copy of A fails and the next Paste is accepted but skips every
+source during verification, the window shows the Paste results and offers no
+retry of A. A Paste rejected at admission preserves A's result and retry.
+
 Retry uses the module's retained failed transfer items on the original live
 connection, with current source, destination, and collision checks from the
 beginning. Unknown outcomes are not ordinary failed items and must not become
 automatic replay. Preserve existing retry scope; create, rename, or delete do
 not become replayable merely because they share the module.
+
+When **Retry failed items** is accepted, remove the previous failure rows for
+the items being retried. Keep the other retained rows visible in their existing
+order, including any unresolved cleanup paths. Show the current item in the
+progress display. As each new outcome occurs, append it before any omission
+notice. The existing retention limits apply throughout the retry. If the user
+cancels, report items the retry had yet to reach as unfinished. A subsequent
+retry selects only eligible copies that failed during this execution.
 
 Per-item outcome, reason, path facts, and metadata/cleanup warnings are
 independent of rendered strings. Plan, result, and retry storage share the
@@ -150,6 +197,21 @@ first and indicate the omission. Before creating a destination temporary file,
 ensure its path can be retained within the existing limits if cleanup cannot
 be confirmed. If capacity is still insufficient, report the capacity failure
 before starting the write for that file. Keep earlier unresolved details.
+
+For each file, the file-operation module tracks the temporary path and intended
+destination from exclusive creation through final rename and cleanup. For each
+SFTP request, the SFTP adapter reports whether the request could have reached
+the server and which reply, if any, confirmed its outcome. The module uses
+those facts to distinguish an uncertain temporary creation from an uncertain
+final rename.
+
+If the temporary creation request could have reached the server and its outcome
+is unknown, show one unresolved entry in both the result list and the close
+report. Identify the intended file by name, explain that temporary creation
+could not be confirmed, and show the full temporary path. The final rename was
+never issued, so the attempted transfer made no change to the final name.
+Clean up a discovered temporary file only when the module can establish that
+this operation created it. A matching filename alone does not establish that.
 
 When folder creation, rename, or deletion has an unknown outcome, the
 file-operation module records the operation kind and the full paths once
@@ -173,6 +235,32 @@ The window uses the same list through operation completion and the next
 accepted start. An ordinary append updates the affected rows without copying
 the full list. The close report selects unresolved entries from the same
 retained results.
+
+## Transfer history
+
+The file-operation module owns Undo and Redo. Keep the window's single history
+entry independent of the displayed results, the cut/copy clipboard, and the
+failed-copy retry selection. A new accepted attempt can replace displayed
+results without invalidating history if it is confirmed to have made no changes.
+[Undo and Redo contract](file-transfer.md#undo-and-redo)
+
+Build the history entry from confirmed effects. Retain the exact source and
+destination paths, including raw remote name bytes and the final duplicate
+name. Keep the verification facts needed to distinguish newly created objects
+and their directory contents from existing objects, plus confirmed source
+removal for moves. Account for these facts under the existing operation
+metadata bounds. Keep a complete record or report that history is unavailable.
+Use execution outcomes to tell new creation, replacement, existing-directory
+merge, skip, and unresolved changes apart. Rendered result labels and success
+counts cannot establish Undo eligibility.
+
+Run Undo and Redo through regular admission, cancellation, confirmation,
+verification, and provider ownership. Revalidate the full entry before the
+first mutation, then recheck each effect at the mutation boundary. A stale or
+unverifiable preflight identifies the affected path and leaves the history
+entry available. Follow the existing rules for external writers and unknown
+outcomes. Undo and Redo preserve only the effects confirmed to have happened,
+and a late result cannot re-enable history after disconnection or closure.
 
 ## Connection, window, and resource lifetime
 
@@ -235,16 +323,22 @@ named operations, observation, answers, and cancellation used by the window.
 | Target changes during confirmation | Recheck detects it and obtains the required fresh decision. |
 | Cancellation/disconnect wins before an answer is used | A late approval causes no new mutation. |
 | A mutation may succeed but its reply is lost | Unknown outcome is retained; no automatic replay or final-path cleanup occurs. |
+| An upload of `report.csv` loses the reply to exclusive temporary creation. The final rename was never issued. | The result list and close report each count one unresolved temporary creation and show `report.csv` with the full temporary path. Discovering that name alone does not trigger deletion. |
+| The temporary creation request could not have reached the server, or the server explicitly refused it. | Report the transfer failure or cancellation as applicable. There is no unresolved temporary creation for this request. |
 | A folder creation, rename, or deletion is issued once, its reply is lost, both panes refresh, and the user closes the window | The latest results and close report each show one unknown outcome for the affected item with the same operation kind and full path information. A rename shows the old and new full paths on one row. The mutation was issued only once. |
 | Ordinary results fill the display before a later temporary file's cleanup is unconfirmed | The close report still gives the temporary path. If space for another temporary path cannot be retained, that file's write never starts and the capacity failure is visible. |
 | During a transfer, an ordinary result is displaced and an unconfirmed cleanup is recorded | At the next display update, the list shows the retained entries in occurrence order, including the temporary path, with one omission notice at the end. Subsequent results appear above that notice. |
 | Reserving space for a temporary path displaces an ordinary entry and the write then waits | On the next display update the displaced row is gone and the omission notice is visible, even while the next file outcome is still pending. |
 | One transfer batch reports twelve unconfirmed temporary-file cleanups and one unknown final rename | Closing by either route shows counts of twelve and one, ten entries initially, and access to all thirteen results before dismissal. |
 | Provider finishes after cancellation | Q8 admission remains blocked and resources remain owned until actual retirement. |
+| A local read starts before outstanding I/O retires and displays afterward. The remote read starts after retirement and displays successfully. | Further mutations remain blocked until a qualifying local read is displayed. The remote result can count while it remains current in this window. |
+| After I/O retires, the local pane displays its listing and the remote read fails. The user refreshes the remote pane or corrects its path and presses Enter. | While the remote read is pending, the local listing and selection stay visible and mutations remain blocked. Displaying the qualifying remote result satisfies the listing requirement without rereading the local pane. |
+| A newer unknown outcome occurs between two successful pane reads, or the user closes and reopens the transfer window between them. | The two results cannot satisfy admission together. Both current listings must qualify for the latest unknown outcome in the open window. |
 | View closes/reopens during outstanding work | Results are discarded, but I/O ownership and same-connection admission restrictions survive. |
 | Reconnect occurs before old completion | A new owner is used; old results/answers cannot affect it and old resources are not released early. |
 | A start is rejected, then another is accepted | Rejection preserves the latest result/retry set; acceptance replaces it together. |
-| Retry is requested | Only eligible failed transfer items on the original live connection are retried after current checks. |
+| Copy A fails. A Paste of B is first rejected, then accepted after B has changed. | After rejection, A is still displayed and eligible for retry. After the accepted Paste skips B, its result explains the skip and A is no longer eligible. |
+| A, B, and C are copied in order. Only B fails. Retry is accepted on the original live connection. | Only B is rechecked and copied. While B is running, the result list shows the successes for A and C in order, and progress identifies B. When B succeeds, the list shows A, C, B. |
 
 Retain real SSH/SFTP tests for channel separation, request draining, bytes,
 rekey, refusal, and terminal responsiveness; retain Windows tests for recycling,

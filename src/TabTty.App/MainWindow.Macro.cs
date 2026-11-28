@@ -185,6 +185,7 @@ internal sealed partial class MainWindow
             try { MacroTrust.Reset(); return; }
             catch (Exception error) when (error is IOException or Win32Exception or UnauthorizedAccessException)
             {
+                app.ReportUnresolvedStore(error);
                 message = "MacroTrustResetFailed";
                 action = "MacroTrustResetRetry";
             }
@@ -194,13 +195,13 @@ internal sealed partial class MainWindow
     private void ShowMacroLaunchError(string detail) =>
         app.Modal(() => ThemedMessageBox.Show(this, detail, Text("RunMacro"), icon: MessageBoxImage.Error));
 
-    private void ManageMacroTrust()
+    private void ManageMacroTrust(Window owner)
     {
         try
         {
             var groups = MacroTrust.List().GroupBy(entry => entry.SourceDigest)
                 .OrderBy(group => group.Key is null).ThenBy(group => group.Key, StringComparer.Ordinal).ToArray();
-            var dialog = new FormWindow(this, Text("MacroManageTrust")) { Width = 650 };
+            var dialog = new FormWindow(owner, Text("MacroManageTrust")) { Width = 650 };
             if (groups.Length == 0)
             {
                 dialog.AddNotice("MacroTrustEmpty");
@@ -264,8 +265,9 @@ internal sealed partial class MainWindow
                         MacroTrust.Forget(entry.Fingerprint);
                         return Task.FromResult(true);
                     }
-                    catch (Win32Exception)
+                    catch (Exception error) when (error is Win32Exception || ProfileCatalog.IsFileProblem(error))
                     {
+                        app.ReportUnresolvedStore(error);
                         app.Modal(() => ThemedMessageBox.Show(dialog, Text("MacroTrustUnavailable"), dialog.Title,
                             icon: MessageBoxImage.Error));
                         return Task.FromResult(false);
@@ -274,9 +276,9 @@ internal sealed partial class MainWindow
             }
             app.Modal(dialog.ShowDialog);
         }
-        catch (Win32Exception)
+        catch (Exception error) when (error is Win32Exception || ProfileCatalog.IsFileProblem(error))
         {
-            app.Modal(() => ThemedMessageBox.Show(this, Text("MacroTrustUnavailable"), Text("MacroManageTrust"),
+            app.Modal(() => ThemedMessageBox.Show(owner, Text("MacroTrustUnavailable"), Text("MacroManageTrust"),
                 icon: MessageBoxImage.Error));
         }
     }

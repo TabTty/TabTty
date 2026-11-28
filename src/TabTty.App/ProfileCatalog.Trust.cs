@@ -22,7 +22,7 @@ internal sealed partial class ProfileCatalog
 
     private TrustState ReadTrust(string location)
     {
-        var state = LocalState.ReadForProfileTrust();
+        var state = ProfileState.ReadForProfileTrust();
         return new(FindRegistration(state, location)?["registrationId"]?.GetValue<Guid>(),
             state[TrustKey]?[location]?.GetValue<string>(), trustReset, removals.GetValueOrDefault(location));
     }
@@ -40,7 +40,7 @@ internal sealed partial class ProfileCatalog
 
     private void CommitRegistration(string location, ConnectionProfile profile, bool used, string version)
     {
-        LocalState.Change(state =>
+        ProfileState.Change(state =>
         {
             var registration = FindRegistration(state, location);
             if (registration is null)
@@ -82,12 +82,55 @@ internal sealed partial class ProfileCatalog
         {
             trustReset++;
             removals.Clear();
-            LocalState.Change(state => state.Remove(TrustKey));
+            ProfileState.ResetTrust();
         }
         catch (Exception error) when (IsFileProblem(error))
         {
+            app.ReportUnresolvedStore(error);
             reportFailure(new IOException(Text("ProfileTrustWriteFailed"), error));
         }
+    }
+
+    internal void ManageTrust(Window owner)
+    {
+        var records = ProfileState.TrustedLocations();
+        var dialog = new MainWindow.FormWindow(owner, Text("ManageProfileTrust")) { Width = 650 };
+        if (records.Length == 0)
+        {
+            dialog.AddNotice("ProfileTrustEmpty");
+            dialog.AddButtons(() => { }, acceptKey: "OK");
+        }
+        else
+        {
+            var locations = new System.Windows.Controls.ComboBox
+            {
+                ItemsSource = records.Select(record => record.Key), SelectedIndex = 0,
+            };
+            dialog.AddField("ProfileListFilePath", locations);
+            dialog.AddAsyncButtons(() =>
+            {
+                try
+                {
+                    var record = records[locations.SelectedIndex];
+                    if (ReadTrust(record.Key).Version != record.Value) throw new IOException(Text("StoreChanged"));
+                    ForgetTrust(record.Key);
+                    return Task.FromResult(true);
+                }
+                catch (Exception error) when (IsFileProblem(error))
+                {
+                    app.ReportUnresolvedStore(error);
+                    app.Modal(() => ThemedMessageBox.Show(dialog, error.Message, dialog.Title, icon: MessageBoxImage.Error));
+                    return Task.FromResult(false);
+                }
+            }, acceptKey: "RemoveIndividualTrust", cancelDefault: true);
+        }
+        app.Modal(dialog.ShowDialog);
+    }
+
+    private bool ForgetTrust(string location)
+    {
+        removals[location] = removals.GetValueOrDefault(location) + 1;
+        return ProfileState.RemoveTrust(location);
     }
 
     internal sealed record OnceApproval(string Location, string Version);
@@ -148,7 +191,7 @@ internal sealed partial class ProfileCatalog
                     return Complete(profile, unregistered && (!reconnect || previousOnce is not null) ? once : null);
                 if (!unregistered)
                 {
-                    LocalState.Change(state => StoreVersion(state, location, version));
+                    ProfileState.Change(state => StoreVersion(state, location, version));
                     return Complete(profile, null);
                 }
 
@@ -218,7 +261,7 @@ internal sealed partial class ProfileCatalog
         }
 
         string? RememberedMapping() => LocalState.IsTemporary ? temporaryRecordingMappings.GetValueOrDefault(key) :
-            LocalState.ReadForProfileTrust()[RecordingMappingsKey]?[key]?.GetValue<string>();
+            LocalState.ReadForRecording()[RecordingMappingsKey]?[key]?.GetValue<string>();
         static string Digest(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     }
 

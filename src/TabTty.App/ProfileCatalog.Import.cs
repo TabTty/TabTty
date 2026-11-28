@@ -83,7 +83,7 @@ internal sealed partial class ProfileCatalog
                     destination = Path.Combine(normalizedFolder, filename);
                     if (filename.Length > 255 || !OrdinaryWindowsPath.IsValid(destination))
                         throw new IOException(Text("InvalidProfileFileName"));
-                    if (FindRegistration(LocalState.ReadForProfileTrust(), destination) is not null ||
+                    if (FindRegistration(ProfileState.ReadForProfileTrust(), destination) is not null ||
                         await Task.Run(() => Path.Exists(destination), importToken).WaitAsync(importToken))
                         continue;
                     FileObjectIdentity? prepared = null;

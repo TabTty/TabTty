@@ -301,6 +301,12 @@
   <data name="IgnoreCase" xml:space="preserve"><value>大文字と小文字を区別しない</value></data>
   <data name="HighlightForeground" xml:space="preserve"><value>文字色（#RRGGBB または空欄）</value></data>
   <data name="HighlightBackground" xml:space="preserve"><value>背景色（#RRGGBB または空欄）</value></data>
+  <data name="ChooseHighlightColor" xml:space="preserve"><value>色を選択…</value></data>
+  <data name="HighlightColorPicker" xml:space="preserve"><value>色の選択</value></data>
+  <data name="HighlightColorPreview" xml:space="preserve"><value>色のプレビュー</value></data>
+  <data name="ColorRed" xml:space="preserve"><value>赤</value></data>
+  <data name="ColorGreen" xml:space="preserve"><value>緑</value></data>
+  <data name="ColorBlue" xml:space="preserve"><value>青</value></data>
   <data name="HighlightBold" xml:space="preserve"><value>太字（中間状態は端末の属性を使用）</value></data>
   <data name="HighlightUnderline" xml:space="preserve"><value>下線（中間状態は端末の属性を使用）</value></data>
   <data name="InvalidHighlightPattern" xml:space="preserve"><value>有効な正規表現を入力するか、このルールを無効にしてください。</value></data>
@@ -487,6 +493,14 @@
   <data name="TransferRename" xml:space="preserve"><value>名前変更</value></data>
   <data name="TransferCut" xml:space="preserve"><value>切り取り</value></data>
   <data name="TransferDelete" xml:space="preserve"><value>削除</value></data>
+  <data name="TransferCopySuffix" xml:space="preserve"><value> - コピー</value></data>
+  <data name="TransferIrreversible" xml:space="preserve"><value>この操作は元に戻せません。実行しますか？</value></data>
+  <data name="TransferContinue" xml:space="preserve"><value>続行</value></data>
+  <data name="TransferLocation" xml:space="preserve"><value>場所</value></data>
+  <data name="TransferHistoryUnavailable" xml:space="preserve"><value>転送の変更をすべて記録できなかったため、元に戻せません。</value></data>
+  <data name="TransferDeletePermanentFile" xml:space="preserve"><value>このファイルを完全削除しますか？</value></data>
+  <data name="TransferDeletePermanentFolder" xml:space="preserve"><value>このフォルダーとその中身を完全削除しますか？</value></data>
+  <data name="TransferDeletePermanentSelection" xml:space="preserve"><value>選択した項目を完全削除しますか？フォルダーは中身も削除されます。</value></data>
   <data name="TransferName" xml:space="preserve"><value>名前</value></data>
   <data name="TransferSize" xml:space="preserve"><value>サイズ (バイト)</value></data>
   <data name="TransferModified" xml:space="preserve"><value>最終更新日時</value></data>
@@ -604,7 +618,7 @@
   <data name="MacroAlwaysBlock" xml:space="preserve"><value>この引数で常に拒否</value></data>
   <data name="MacroTrustChanged" xml:space="preserve"><value>記憶された判断が変更されました。現在の判断を確認するには、マクロを開き直してください。</value></data>
   <data name="MacroTrustUnavailable" xml:space="preserve"><value>Windows 資格情報マネージャーのマクロ実行設定を読み取り、または更新できませんでした。</value></data>
-  <data name="MacroManageTrust" xml:space="preserve"><value>マクロの許可・拒否を管理…</value></data>
+  <data name="MacroManageTrust" xml:space="preserve"><value>マクロの信頼を管理</value></data>
   <data name="MacroTrustEmpty" xml:space="preserve"><value>記憶されたマクロの許可・拒否はありません。</value></data>
   <data name="MacroPairFingerprint" xml:space="preserve"><value>内容と引数の指紋</value></data>
   <data name="MacroFindArguments" xml:space="preserve"><value>引数で探す…</value></data>
@@ -826,4 +840,44 @@ AI アプリは個別の確認なしでキーや複数行のコマンドを入�
   <data name="NoticeRecordingPaused" xml:space="preserve"><value>記録を一時停止中（パート {0} は保存済み）</value></data>
   <data name="NoticeRecordingSaved" xml:space="preserve"><value>記録を保存済み（パート {0}）</value></data>
   <data name="NoticeBroadcastUncertain" xml:space="preserve"><value>到達範囲は不明</value></data>
+  <data name="TrustStoreInvalid" xml:space="preserve"><value>保護された信頼ファイルを読み込めませんでした。</value></data>
+  <data name="UseTemporaryCatalog" xml:space="preserve"><value>接続プロファイルの登録情報を開けませんでした。一時的な読み取り専用の登録一覧で続行しますか？</value></data>
+  <data name="ProfileCatalogInvalid" xml:space="preserve"><value>接続プロファイルの登録情報が不正です。</value></data>
+  <data name="ProfileRegistrationRollbackFailed" xml:space="preserve"><value>接続プロファイルの登録に失敗し、変更を完全に取り消せませんでした。対象の登録と信頼を再確認してください。</value></data>
+  <data name="ManageProfileTrust" xml:space="preserve"><value>接続プロファイルの信頼を管理</value></data>
+  <data name="ProfileTrustEmpty" xml:space="preserve"><value>記憶している接続プロファイルの信頼はありません。</value></data>
+  <data name="ProfileUnregisterAfterTrustRemovalFailed" xml:space="preserve"><value>信頼は解除済みです。一覧からの登録解除に失敗しました。</value></data>
+  <data name="RetryUnregisterProfile" xml:space="preserve"><value>登録解除を再試行</value></data>
+  <data name="RemoveIndividualTrust" xml:space="preserve"><value>個別解除</value></data>
+  <data name="RemoveAllTrust" xml:space="preserve"><value>一括解除</value></data>
+  <data name="ManageHostKeys" xml:space="preserve"><value>管理</value></data>
+  <data name="ManageApplicationSettings" xml:space="preserve"><value>アプリ設定の管理</value></data>
+  <data name="AssociationRegister" xml:space="preserve"><value>登録</value></data>
+  <data name="AssociationUnregister" xml:space="preserve"><value>登録解除</value></data>
+  <data name="AssociationUnregistered" xml:space="preserve"><value>現在の Windows ユーザーの TabTty ファイル形式の登録を解除しました。</value></data>
+  <data name="AssociationNoChange" xml:space="preserve"><value>Windows のファイル形式の登録に変更はありません。</value></data>
+  <data name="AssociationPartialFailure" xml:space="preserve"><value>Windows のファイル形式の操作が失敗しました。登録の一部が変更された可能性があります。</value></data>
+  <data name="ArchiveFiles" xml:space="preserve"><value>TabTty バックアップ</value></data>
+  <data name="ArchiveBackup" xml:space="preserve"><value>バックアップ</value></data>
+  <data name="ArchiveRestore" xml:space="preserve"><value>復旧</value></data>
+  <data name="ArchiveVerify" xml:space="preserve"><value>バックアップを検証</value></data>
+  <data name="ArchiveInvalid" xml:space="preserve"><value>バックアップが不正か、対応していない形式か、サイズ上限を超えています。</value></data>
+  <data name="ArchiveVaultExcluded" xml:space="preserve"><value>vault はこの ZIP に含まれません。［vault の管理］→［暗号化バックアップを作成］から保存できます。</value></data>
+  <data name="ArchiveProfileFiles" xml:space="preserve"><value>接続プロファイル本体</value></data>
+  <data name="ArchiveProfileRegistrations" xml:space="preserve"><value>接続プロファイルの登録情報</value></data>
+  <data name="ArchiveNoData" xml:space="preserve"><value>データなし</value></data>
+  <data name="ArchiveVerified" xml:space="preserve"><value>バックアップ ZIP の検証に成功しました。</value></data>
+  <data name="ArchiveIncluded" xml:space="preserve"><value>収録済み</value></data>
+  <data name="ArchiveRecyclePaths" xml:space="preserve"><value>ごみ箱に移動する既存ファイル</value></data>
+  <data name="ArchiveRestoreConfirm" xml:space="preserve"><value>選択した項目を、表示した保存先に復旧しますか？</value></data>
+  <data name="ArchiveFailed" xml:space="preserve"><value>失敗</value></data>
+  <data name="ArchiveNotRun" xml:space="preserve"><value>未実行</value></data>
+  <data name="ArchiveCompleted" xml:space="preserve"><value>復旧済み</value></data>
+  <data name="ArchiveSkippedRegistrations" xml:space="preserve"><value>ZIP に本体がなく復旧対象外の登録数: {0}</value></data>
+  <data name="ArchiveAlternativeProfileFolder" xml:space="preserve"><value>復旧先: {0}。このフォルダーの登録を一覧に表示するには、設定で保存先を切り替えてください。</value></data>
+  <data name="ArchiveRecycled" xml:space="preserve"><value>ごみ箱へ移動したファイル</value></data>
+  <data name="ArchivePlacementAfterRecycleFailed" xml:space="preserve"><value>旧版はごみ箱に移動しました。新版の配置を確認できませんでした。ごみ箱から旧版を戻せます。</value></data>
+  <data name="ArchiveMissingFolder" xml:space="preserve"><value>設定されているフォルダーが存在しません。続けるには別のフォルダーを選んでください。</value></data>
+  <data name="StoreRechecked" xml:space="preserve"><value>前回の保存結果を再確認しました。</value></data>
+  <data name="ArchiveRestoreItems" xml:space="preserve"><value>復旧する項目</value></data>
 </root>

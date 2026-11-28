@@ -156,7 +156,8 @@ internal static partial class Program
             await DismissAsync("NewHostKey", "TrustHostKey");
             await held.Issued.Task.WaitAsync(deadline.Token);
             stop.Cancel();
-            if (approving.IsCompleted || !VerifiedFilePublication.IsPublicationActive(hosts.Path))
+            if (approving.IsCompleted || !VerifiedFilePublication.IsPublicationActive(hosts.Path) ||
+                !File.ReadAllBytes(held.Preservation!).AsSpan().SequenceEqual(before))
                 throw new InvalidOperationException("Cancelling login released issued host-key publication.");
             held.Dispose();
             try
@@ -166,8 +167,8 @@ internal static partial class Program
             }
             catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
             if (!app.HostTrust.ApprovedFormats(second.Destination).SequenceEqual([algorithm]) ||
-                !File.ReadAllBytes(held.Preservation!).AsSpan().SequenceEqual(before))
-                throw new InvalidOperationException("Cancellation discarded a verified host-key commit.");
+                File.Exists(held.Preservation!))
+                throw new InvalidOperationException("Cancellation discarded a verified host-key commit or retained an old trust file.");
         }
         Console.WriteLine("PASS StorePublicationExternalChangesCapacityAndCancellation");
 
@@ -367,12 +368,7 @@ internal static partial class Program
 
         async Task RecheckAsync(JsonStoreRecovery.Store store)
         {
-            app.ShowStoreRecovery(owner);
-            var recheck = await VisibleButtonAsync(owner, "RecheckFilePublication");
-            var selection = FindControls<ComboBox>(owner).Single(combo => combo.IsVisible &&
-                combo.Items.OfType<JsonStoreRecovery.Store>().Any());
-            selection.SelectedItem = selection.Items.OfType<JsonStoreRecovery.Store>().Single(item => item.Path == store.Path);
-            Click(recheck);
+            await JsonStoreRecovery.RecheckAsync(app, store);
             await WaitForAsync(() => !VerifiedFilePublication.IsUnresolved(store.Path));
             await app.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle, deadline.Token);
         }

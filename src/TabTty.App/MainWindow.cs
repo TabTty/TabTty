@@ -328,9 +328,9 @@ internal sealed partial class MainWindow : Window
         vaultMenu.Items.Add(MenuAction("RestoreVault", async () => await app.Vault.RestoreFromMenuAsync(this)));
         vaultMenu.Items.Add(MenuAction("ArchiveVault", async () => await app.Vault.ArchiveAsync(this)));
         currentMenu!.Items.Add(vaultMenu);
-        AddButton("HostKeys", ShowHostKeys);
         AddButton("HighlightSets", () => app.Highlights.Show(this));
         AddButton("Settings", EditSettings);
+        AddButton("SettingsMaintenance", OpenMaintenance);
         ApplyApplicationMenuStyle(mainMenu.Items);
         if (closing) SetWindowCloseControls(pending: true);
         foreach (WindowTab item in AllTabs)
@@ -745,16 +745,6 @@ internal sealed partial class MainWindow : Window
         if (!closing) app.Profiles.CreateProfile();
     }
 
-    private void ShowHostKeys()
-    {
-        try { app.HostTrust.Show(this); }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException
-            or FormatException or InvalidOperationException or System.Text.Json.JsonException)
-        {
-            ReportCommandFailure("HostKeys", exception);
-        }
-    }
-
     internal void ReportCommandFailure(string commandKey, Exception error)
     {
         var report = app.StatusReports.CaptureFields(this, Text(commandKey));
@@ -829,17 +819,6 @@ internal sealed partial class MainWindow : Window
             {
                 form.AddField("VaultPath", vaultPath, actionKey: "BrowsePath", action: BrowseVaultPathAsync);
                 form.AddField("ProfileSaveDirectory", profileDirectory, actionKey: "BrowsePath", action: BrowseProfileDirectoryAsync);
-            }),
-            ("SettingsMaintenance", () =>
-            {
-                form.AddActionField("RegisterFileType", "Run", RegisterFileType);
-                form.AddActionField("ProfileTrustReset", "Run", () => app.Profiles.ResetTrust(form.OwnerWindow, form.ReportFailure));
-                form.AddActionField("MacroManageTrust", "Run", () => form.TabOwner?.ManageMacroTrust());
-                form.AddActionField("MacroTrustReset", "Run", () => ResetMacroTrust(form.OwnerWindow));
-                form.AddActionField("RecoverStores", "Run", () =>
-                {
-                    if (form.TabOwner is { } host) app.ShowStoreRecovery(host);
-                });
             }));
         form.AddEditorButtons(async () =>
         {
@@ -900,16 +879,6 @@ internal sealed partial class MainWindow : Window
             var picker = new OpenFolderDialog { Title = Text("ProfileSaveDirectory"), InitialDirectory = profileDirectory.Text };
             if (app.Modal(() => picker.ShowDialog(form.OwnerWindow)) == true) profileDirectory.Text = picker.FolderName;
             return Task.CompletedTask;
-        }
-
-        void RegisterFileType()
-        {
-            try
-            {
-                ProfileFileAssociation.RegisterOpenWith();
-                form.SetStatusResource("AssociationRegistered");
-            }
-            catch (Exception exception) when (ProfileFileAssociation.IsRegistrationFailure(exception)) { form.ReportFailure(exception); }
         }
 
         FixedChoiceBox LocalizedChoice(string[] ids, string selected, params string[] keys)
@@ -1323,6 +1292,7 @@ internal sealed partial class MainWindow : Window
     internal sealed class FormWindow : Window
     {
         private readonly FormView form = new(modal: true);
+        internal FormView Form => form;
 
         public FormWindow(Window? owner, string title, ImageSource? icon = null)
         {

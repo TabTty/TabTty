@@ -57,7 +57,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
         var matches = new List<CredentialProfileMatch>();
         int unavailable = 0;
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        foreach (var registration in ReadRegistrations(LocalState.Read(), allFolders: true).OrderBy(registration => registration.Path, StringComparer.Ordinal))
+        foreach (var registration in ReadRegistrations(ProfileState.Read(), allFolders: true).OrderBy(registration => registration.Path, StringComparer.Ordinal))
         {
             if (timeout.IsCancellationRequested) { unavailable++; continue; }
             try
@@ -154,7 +154,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
             catch (OperationCanceledException) { }
             if (app.Dispatcher.HasShutdownStarted) return;
             RememberMetadata(location, profile);
-            bool saved = LocalState.TryChange(state =>
+            bool saved = ProfileState.TryChange(state =>
             {
                 if (FindRegistration(state, location) is not { } registration) return false;
                 StoreRegistrationGroup(registration, profile.GroupName);
@@ -174,7 +174,7 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
         }
     }
 
-    public IReadOnlyList<Registration> ReadRegistrations() => ReadRegistrations(LocalState.Read());
+    public IReadOnlyList<Registration> ReadRegistrations() => ReadRegistrations(ProfileState.Read());
 
     private IReadOnlyList<Registration> ReadRegistrations(JsonObject state, bool allFolders = false)
     {
@@ -481,20 +481,36 @@ internal sealed partial class ProfileCatalog(App app, Action<string, string, str
             {
                 try
                 {
-                    if (ReadTrust(selected.Path).Registration != selected.Id) return;
-                    LocalState.Change(state =>
+                    if (FindRegistration(ProfileState.Read(), selected.Path)?["registrationId"]?.GetValue<Guid>() != selected.Id)
+                        return;
+                    bool revoked = remove && ForgetTrust(selected.Path);
+                    while (true)
                     {
-                        JsonArray registrations = state["registrations"]!.AsArray();
-                        var target = registrations.OfType<JsonObject>().Single(item =>
-                            item["registrationId"]?.GetValue<Guid>() == selected.Id);
-                        if (remove)
+                        try
                         {
-                            registrations.Remove(target);
-                            (state[TrustKey] as JsonObject)?.Remove(selected.Path);
+                            ProfileState.TryChange(state =>
+                            {
+                                var target = FindRegistration(state, selected.Path);
+                                if (target?["registrationId"]?.GetValue<Guid>() != selected.Id) return false;
+                                if (remove) state["registrations"]!.AsArray().Remove(target);
+                                else target["favorite"] = !target["favorite"]!.GetValue<bool>();
+                                return true;
+                            });
+                            break;
                         }
-                        else target["favorite"] = !target["favorite"]!.GetValue<bool>();
-                    });
-                    if (remove) removals[selected.Path] = removals.GetValueOrDefault(selected.Path) + 1;
+                        catch (Exception error) when (revoked && IsFileProblem(error))
+                        {
+                            app.ReportUnresolvedStore(error);
+                            bool retry = app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow,
+                                Text("ProfileUnregisterAfterTrustRemovalFailed") + "\n\n" + error.Message,
+                                Text("RemoveRegistration"), MessageBoxButton.OKCancel, MessageBoxImage.Warning,
+                                MessageBoxResult.Cancel, acceptKey: "RetryUnregisterProfile")) == MessageBoxResult.OK;
+                            if (!retry) return;
+                            var current = ReadTrust(selected.Path);
+                            if (current.Registration != selected.Id || current.Version is not null)
+                                throw new IOException(Text("StoreChanged"));
+                        }
+                    }
                     ProfileSaved?.Invoke(null);
                     if (!remove && list.SelectedItem is Registration item && item.Id == selected.Id)
                         list.ScrollIntoView(item);

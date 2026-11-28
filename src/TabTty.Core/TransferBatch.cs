@@ -13,26 +13,71 @@ internal sealed class TransferBatch(IFileOperationIo files, Func<string, string,
 
     public async Task RunAsync(TransferItem[] source, TransferPath destination,
         Func<TransferItem, TransferPath, TransferAttributes, ValueTask<TransferChoice>> conflict,
-        Action<string, string> result, Action<string, long, long?> progress, CancellationToken token, bool move = false)
+        Func<TransferPath, ValueTask> warn, Action<string, string> result, Action<string, long, long?> progress,
+        TransferRun run, CancellationToken token, IReadOnlyDictionary<TransferItem, string>? names = null,
+        IReadOnlyDictionary<string, TransferSnapshot>? expected = null)
     {
         failed.Clear();
-        if (move && source.Any(item => (item.Path.Local is null) == (destination.Local is null)))
-            throw new SftpException(SftpFailure.Unsupported);
-        var traversal = new Traversal();
-        Plan[] plan = await PlanAsync(source, destination, 0, traversal, result, token, move);
-        await RunPlansAsync(plan, traversal, conflict, result, progress, token, move);
+        var traversal = new Traversal(run, warn);
+        Plan[] plan = await PlanAsync(source, destination, 0, traversal, result, token, names, expected);
+        await WarnBeforeChangesAsync(plan, traversal, token);
+        await RunPlansAsync(plan, traversal, conflict, result, progress, run.Changes, token);
     }
 
     public async Task RetryAsync(Func<TransferItem, TransferPath, TransferAttributes, ValueTask<TransferChoice>> conflict,
-        Action<string, string> result, Action<string, long, long?> progress, CancellationToken token)
+        Func<TransferPath, ValueTask> warn, Action<string, string> result, Action<string, long, long?> progress,
+        TransferRun run, CancellationToken token)
     {
         Plan[] retry = failed.ToArray();
         failed.Clear();
-        await RunPlansAsync(retry, new Traversal(), conflict, result, progress, token, move: false);
+        var traversal = new Traversal(run, warn);
+        await WarnBeforeChangesAsync(retry, traversal, token);
+        await RunPlansAsync(retry, traversal, conflict, result, progress, run.Changes, token);
+    }
+
+    public Task ReplayAsync(TransferChange change, TransferRun run, Action<string, string> result,
+        Action<string, long, long?> progress, CancellationToken token) =>
+        RunPlansAsync([ReplayPlan(change)], new Traversal(run, _ => ValueTask.CompletedTask),
+            (_, _, _) => ValueTask.FromResult(TransferChoice.Cancel), result, progress, run.Changes, token);
+
+    private Plan ReplayPlan(TransferChange change, TransferPath? parent = null)
+    {
+        parent ??= files.Parent(change.Target);
+        // A replay creates new objects at these names, including new directory identities.
+        TransferPath target = change.Target.Local is { } local
+            ? new TransferPath(local) { ParentPath = parent }
+            : new TransferPath(change.Target.Remote!) { ParentPath = parent };
+        return new(new TransferItem(change.Source, null, "", change.Before.Attributes), target,
+            change.Before.Attributes.Kind == TransferKind.Directory ? change.Children.Select(child => ReplayPlan(child, target)).ToArray() : null,
+            change.Before.Members, RequireNew: true, Expected: change.Before);
+    }
+
+    private async Task WarnBeforeChangesAsync(Plan[] plan, Traversal traversal, CancellationToken token)
+    {
+        if (!files.SupportsHistory || !traversal.Run.AllowReplacement) return;
+        TransferPath? first = null;
+        await FindCollisionsAsync(plan);
+        if (first is not null) await traversal.Warn(first);
+
+        async Task FindCollisionsAsync(Plan[] children)
+        {
+            foreach (Plan item in children)
+            {
+                token.ThrowIfCancellationRequested();
+                TransferAttributes? target;
+                try { target = await files.StatAsync(item.Target, token); }
+                catch (Exception error) when (IsFileError(error)) { continue; }
+                if (item.RequireNew || target is null || target.Kind != item.Source.Attributes.Kind) continue;
+                traversal.Approved[item.Target] = target;
+                first ??= item.Target;
+                if (item.Children is { } nested) await FindCollisionsAsync(nested);
+            }
+        }
     }
 
     private async Task<Plan[]> PlanAsync(TransferItem[] items, TransferPath target, int depth, Traversal traversal,
-        Action<string, string> result, CancellationToken token, bool move)
+        Action<string, string> result, CancellationToken token, IReadOnlyDictionary<TransferItem, string>? names = null,
+        IReadOnlyDictionary<string, TransferSnapshot>? expected = null)
     {
         if (depth > MaxDepth) throw new SftpException(SftpFailure.Capacity);
         var paths = new List<Plan>();
@@ -50,19 +95,23 @@ internal sealed class TransferBatch(IFileOperationIo files, Func<string, string,
             try
             {
                 if (item.Name is null) throw new SftpException(SftpFailure.InvalidName);
-                paths.Add(new Plan(item, files.Child(target, item.Name)));
+                string? duplicate = names?.GetValueOrDefault(item);
+                string destinationName = duplicate ?? item.Name;
+                paths.Add(new Plan(item, files.Child(target, destinationName), RequireNew: duplicate is not null,
+                    Expected: expected?.GetValueOrDefault(TransferSnapshot.NameOf(item.Path)), NameKey: destinationName.Normalize()));
             }
-            catch (Exception error) when (IsFileError(error)) { result(item.Label, ErrorKey(error)); }
+            catch (Exception error) when (IsFileError(error)) { traversal.Run.Failed = true; result(item.Label, ErrorKey(error)); }
         }
 
         var plan = new List<Plan>();
         bool caseSensitive = await files.IsCaseSensitiveAsync(target, token);
-        foreach (IGrouping<string, Plan> group in paths.GroupBy(path => path.Target.Local ?? path.Source.Name!.Normalize(),
+        foreach (IGrouping<string, Plan> group in paths.GroupBy(path => path.Target.Local ?? path.NameKey!,
             caseSensitive ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase))
         {
             Plan[] siblings = group.ToArray();
             if (siblings.Length > 1)
             {
+                traversal.Run.Failed = true;
                 foreach (Plan sibling in siblings) result(sibling.Source.Label, "TransferCollision");
                 continue;
             }
@@ -73,7 +122,9 @@ internal sealed class TransferBatch(IFileOperationIo files, Func<string, string,
                 if (current is null) throw new SftpException(SftpFailure.Missing);
                 if (item.Source.Attributes.Kind != TransferKind.Unknown && current.Kind != item.Source.Attributes.Kind)
                     throw new SftpException(SftpFailure.SourceChanged);
-                if (move && !StillMatchesListing(item.Source.Attributes, current))
+                if (item.Expected is { } snapshot && !TransferAttributes.SameOverwriteTarget(snapshot.Attributes, current))
+                    throw new SftpException(SftpFailure.SourceChanged);
+                if (traversal.Run.Move && !StillMatchesListing(item.Source.Attributes, current))
                     throw new SftpException(SftpFailure.SourceChanged);
                 if (current.Kind is not (TransferKind.File or TransferKind.Directory))
                 {
@@ -84,19 +135,23 @@ internal sealed class TransferBatch(IFileOperationIo files, Func<string, string,
                 if (current.Kind == TransferKind.Directory)
                 {
                     TransferItem[] children = await files.ListAsync(item.Source.Path, token);
-                    item = item with { Children = await PlanAsync(children, item.Target, depth + 1, traversal, result, token, move) };
+                    string[]? members = files.SupportsHistory ? children.Select(child => TransferSnapshot.NameOf(child.Path)).ToArray() : null;
+                    if (item.Expected?.Members is { } previous && (members is null || !previous.ToHashSet(StringComparer.Ordinal).SetEquals(members)))
+                        throw new SftpException(SftpFailure.SourceChanged);
+                    item = item with { Children = await PlanAsync(children, item.Target, depth + 1, traversal, result, token,
+                        expected: item.Expected?.Children), Members = members };
                 }
                 plan.Add(item);
             }
             catch (SftpException error) when (error.Failure == SftpFailure.Capacity) { throw; }
-            catch (Exception error) when (IsFileError(error)) { result(item.Source.Label, ErrorKey(error)); }
+            catch (Exception error) when (IsFileError(error)) { traversal.Run.Failed = true; result(item.Source.Label, ErrorKey(error)); }
         }
         return plan.ToArray();
     }
 
     private async Task RunPlansAsync(Plan[] plan, Traversal traversal,
         Func<TransferItem, TransferPath, TransferAttributes, ValueTask<TransferChoice>> conflict,
-        Action<string, string> result, Action<string, long, long?> progress, CancellationToken token, bool move)
+        Action<string, string> result, Action<string, long, long?> progress, List<TransferChange> changes, CancellationToken token)
     {
         for (int index = 0; index < plan.Length; index++)
         {
@@ -107,26 +162,56 @@ internal sealed class TransferBatch(IFileOperationIo files, Func<string, string,
                 TransferAttributes current = await files.StatAsync(item.Source.Path, token)
                     ?? throw new SftpException(SftpFailure.Missing);
                 if (item.Source.Attributes.Kind != current.Kind ||
-                    move && !TransferAttributes.SameOverwriteTarget(item.Source.Attributes, current))
+                    (traversal.Run.Move || item.Expected is not null) && !TransferAttributes.SameOverwriteTarget(item.Source.Attributes, current))
                     throw new SftpException(SftpFailure.SourceChanged);
-                TransferAttributes? destination;
+                CopyCommit? commit;
+                var children = new List<TransferChange>();
                 if (current.Kind == TransferKind.Directory)
                 {
                     TransferAttributes? target = await files.StatAsync(item.Target, token);
-                    if (target is null) await files.CreateAsync(item.Target, token);
-                    else if (target.Kind != TransferKind.Directory) throw new SftpException(SftpFailure.InvalidName);
+                    if (target is null)
+                    {
+                        await files.CreateAsync(item.Target, token);
+                        traversal.Run.Modified = true;
+                    }
+                    else
+                    {
+                        if (target.Kind != TransferKind.Directory) throw new SftpException(SftpFailure.InvalidName);
+                        await ApproveReplacementAsync(item, target, traversal);
+                        traversal.Run.DescribesChanges = false;
+                    }
                     result(files.Display(item.Target), "TransferDone");
                     traversal.Reported.Add(item);
-                    destination = move ? target ?? await files.StatAsync(item.Target, token) : null;
-                    await RunPlansAsync(item.Children!, traversal, conflict, result, progress, token, move);
+                    TransferAttributes? created = traversal.Run.Move || traversal.Run.DescribesChanges
+                        ? target ?? await files.StatAsync(item.Target, token) : null;
+                    TransferSnapshot? before = await SnapshotAsync(item.Source.Path, current, traversal, token);
+                    await RunPlansAsync(item.Children!, traversal, conflict, result, progress, children, token);
+                    TransferSnapshot? after = null;
+                    if (before is not null && created is not null && traversal.Run.DescribesChanges)
+                    {
+                        TransferAttributes? finalized = await files.StatAsync(item.Target, token);
+                        if (finalized?.Kind != TransferKind.Directory || finalized.LocalIdentity != created.LocalIdentity)
+                            throw new SftpException(SftpFailure.SourceChanged);
+                        after = await SnapshotAsync(item.Target, finalized, traversal, token);
+                        before = AddChildren(before, children, source: true, item.Members);
+                        if (after is not null) after = AddChildren(after, children, source: false, null);
+                    }
+                    if (traversal.Run.DescribesChanges && after is null) DisableHistory(traversal);
+                    commit = new CopyCommit(created, before, after);
                 }
                 else
                 {
-                    destination = await CopyAsync(item with { Source = item.Source with { Attributes = current } },
-                        conflict, result, progress, token, move);
+                    commit = await CopyAsync(item with { Source = item.Source with { Attributes = current } },
+                        traversal, conflict, result, progress, token);
                     traversal.Reported.Add(item);
                 }
-                if (move) await FinishMoveAsync(item, destination, result, token);
+                if (traversal.Run.Move && !await FinishMoveAsync(item, commit, result, token) && commit is not null)
+                {
+                    traversal.Run.Failed = true;
+                    if (traversal.Run.StopOnFailure) throw new SftpException(SftpFailure.SourceChanged);
+                }
+                if (commit is { Before: { } savedSource, After: { } savedTarget } && traversal.Run.DescribesChanges)
+                    changes.Add(new TransferChange(item.Source.Path, item.Target, savedSource, savedTarget, children.ToArray()));
             }
             catch (OperationCanceledException)
             {
@@ -135,14 +220,20 @@ internal sealed class TransferBatch(IFileOperationIo files, Func<string, string,
             }
             catch (Exception error) when (IsFileError(error))
             {
+                traversal.Run.Failed = true;
+                if (error is SftpException { Failure: SftpFailure.UnknownOutcome })
+                {
+                    traversal.Run.Uncertain = true;
+                    traversal.Run.UnknownSources.Add(item.Source.Path);
+                }
                 if (traversal.Reported.Add(item))
                 {
                     result(files.Display(item.Target), ErrorKey(error));
-                    if (!move && error is not SftpException { Failure: SftpFailure.UnknownOutcome }) failed.Add(item);
+                    if (!traversal.Run.Move && !traversal.Run.StopOnFailure && error is not SftpException { Failure: SftpFailure.UnknownOutcome }) failed.Add(item);
                 }
                 if (item.Children is { } children)
                     foreach (Plan child in children) ReportTree(child, traversal, result);
-                if (error is SftpException { Failure: SftpFailure.Disconnected or SftpFailure.Timeout or SftpFailure.InvalidReply or SftpFailure.UnknownOutcome })
+                if (traversal.Run.StopOnFailure || error is SftpException { Failure: SftpFailure.Disconnected or SftpFailure.Timeout or SftpFailure.InvalidReply or SftpFailure.UnknownOutcome })
                 {
                     foreach (Plan remaining in plan[(index + 1)..]) ReportTree(remaining, traversal, result);
                     throw;
@@ -151,9 +242,9 @@ internal sealed class TransferBatch(IFileOperationIo files, Func<string, string,
         }
     }
 
-    private async Task<TransferAttributes?> CopyAsync(Plan item,
+    private async Task<CopyCommit?> CopyAsync(Plan item, Traversal traversal,
         Func<TransferItem, TransferPath, TransferAttributes, ValueTask<TransferChoice>> conflict,
-        Action<string, string> result, Action<string, long, long?> progress, CancellationToken token, bool move)
+        Action<string, string> result, Action<string, long, long?> progress, CancellationToken token)
     {
         string label = files.Display(item.Target);
         TransferAttributes? approval = await files.StatAsync(item.Target, token);
@@ -163,10 +254,21 @@ internal sealed class TransferBatch(IFileOperationIo files, Func<string, string,
         bool created = false;
         try
         {
+            TransferSnapshot? source = item.Expected ?? await SnapshotAsync(item.Source.Path, item.Source.Attributes, traversal, token);
             progress(label, 0, item.Source.Attributes.Size);
             bool warning = await files.StageAsync(item.Source.Path, temporary, item.Source.Attributes,
                 count => progress(label, count, item.Source.Attributes.Size), () => created = true, token);
-            TransferAttributes? staged = move && !warning ? await files.StatAsync(temporary, token) : null;
+            TransferAttributes? staged = (!warning && traversal.Run.Move || source is not null)
+                ? await files.StatAsync(temporary, token) : null;
+            TransferSnapshot? target = staged is not null && source is not null ? await SnapshotAsync(temporary, staged, traversal, token) : null;
+            if (item.Expected is { Fingerprint: not null } && target is null)
+            {
+                if (staged is null) throw new SftpException(SftpFailure.SourceChanged);
+                target = await TransferSnapshot.CaptureAsync(files, temporary, staged, token);
+            }
+            if (target?.Fingerprint is { } fingerprint && !fingerprint.AsSpan().SequenceEqual(source!.Fingerprint))
+                throw new SftpException(SftpFailure.SourceChanged);
+            if (traversal.Run.DescribesChanges && target is null) DisableHistory(traversal);
             while (true)
             {
                 await files.RecheckAsync(item.Source.Path, item.Source.Attributes, null, token);
@@ -192,15 +294,17 @@ internal sealed class TransferBatch(IFileOperationIo files, Func<string, string,
                     }
                 }
                 created = false;
+                traversal.Run.Modified = true;
+                if (now is not null) traversal.Run.DescribesChanges = false;
                 detail?.Dispose();
                 result(label, warning ? "TransferMetadataWarning" : "TransferDone");
-                return staged;
+                return new CopyCommit(warning ? null : staged, source, target);
             }
         }
         catch (SftpException error) when (error.Failure == SftpFailure.UnknownOutcome)
         {
             detail?.Dispose();
-            if (created) result(files.Display(temporary), "TransferTemporaryRemains");
+            if (created) ReportTemporary();
             created = false;
             throw;
         }
@@ -215,38 +319,51 @@ internal sealed class TransferBatch(IFileOperationIo files, Func<string, string,
                     {
                         if (remaining.Kind == TransferKind.File)
                             await files.DeleteAsync(temporary, TransferKind.File, CancellationToken.None);
-                        else result(files.Display(temporary), "TransferTemporaryRemains");
+                        else ReportTemporary();
                     }
                 }
-                catch (Exception error) when (IsFileError(error)) { result(files.Display(temporary), "TransferTemporaryRemains"); }
+                catch (Exception error) when (IsFileError(error)) { ReportTemporary(); }
             }
         }
 
         async ValueTask<bool> ApproveAsync(TransferAttributes existing)
         {
             if (existing.Kind != TransferKind.File) throw new SftpException(SftpFailure.InvalidName);
+            await ApproveReplacementAsync(item, existing, traversal);
             TransferChoice choice = await conflict(item.Source, item.Target, existing);
             token.ThrowIfCancellationRequested();
             if (choice == TransferChoice.Cancel) throw new OperationCanceledException();
             return choice == TransferChoice.Overwrite;
         }
+
+        void ReportTemporary()
+        {
+            traversal.Run.Uncertain = true;
+            result(files.Display(temporary), "TransferTemporaryRemains");
+        }
     }
 
-    private async Task FinishMoveAsync(Plan item, TransferAttributes? staged, Action<string, string> result, CancellationToken token)
+    private async Task<bool> FinishMoveAsync(Plan item, CopyCommit? commit, Action<string, string> result, CancellationToken token)
     {
         var source = item.Source;
         string path = files.Display(source.Path);
         try
         {
-            if (staged is null || !await DestinationMatchesAsync(staged) ||
+            if (commit?.Staged is not { } staged || !await DestinationMatchesAsync(staged) ||
                 source.Attributes.Kind == TransferKind.Directory && (await files.ListAsync(source.Path, token)).Length != 0)
             {
                 result(path, "TransferMoveSourceRetained");
-                return;
+                return false;
+            }
+            if (source.Attributes.Kind == TransferKind.File)
+            {
+                if (commit.Before is not null) await commit.Before.VerifyAsync(files, source.Path, token);
+                if (commit.After is not null) await commit.After.VerifyAsync(files, item.Target, token);
             }
             token.ThrowIfCancellationRequested();
             await files.DeleteMovedSourceAsync(source.Path, source.Attributes, token);
             result(path, "TransferMoved");
+            return true;
         }
         catch (OperationCanceledException)
         {
@@ -259,6 +376,7 @@ internal sealed class TransferBatch(IFileOperationIo files, Func<string, string,
             if (error is SftpException { Failure: SftpFailure.UnknownOutcome or SftpFailure.Disconnected or SftpFailure.Timeout or SftpFailure.InvalidReply })
                 throw;
             result(path, "TransferMoveSourceRetained");
+            return false;
         }
 
         async Task<bool> DestinationMatchesAsync(TransferAttributes expected)
@@ -271,6 +389,44 @@ internal sealed class TransferBatch(IFileOperationIo files, Func<string, string,
                 ? actual.Kind == TransferKind.Directory && actual.LocalIdentity == expected.LocalIdentity
                 : TransferAttributes.SameOverwriteTarget(expected, actual));
         }
+    }
+
+    private async ValueTask ApproveReplacementAsync(Plan item, TransferAttributes existing, Traversal traversal)
+    {
+        if (item.RequireNew || !traversal.Run.AllowReplacement) throw new SftpException(SftpFailure.CannotReplace);
+        if (!files.SupportsHistory || traversal.Approved.TryGetValue(item.Target, out var previously) &&
+            TransferAttributes.SameOverwriteTarget(previously, existing)) return;
+        await traversal.Warn(item.Target);
+        traversal.Approved[item.Target] = existing;
+    }
+
+    private async Task<TransferSnapshot?> SnapshotAsync(TransferPath path, TransferAttributes attributes, Traversal traversal,
+        CancellationToken token)
+    {
+        if (!traversal.Run.DescribesChanges) return null;
+        try
+        {
+            traversal.Run.Budget.Add(path);
+            return await TransferSnapshot.CaptureAsync(files, path, attributes, token);
+        }
+        catch (Exception error) when (!traversal.Run.StopOnFailure && IsFileError(error))
+        {
+            DisableHistory(traversal);
+            return null;
+        }
+    }
+
+    private static void DisableHistory(Traversal traversal)
+    {
+        traversal.Run.DescribesChanges = false;
+        traversal.Run.HistoryUnavailable = true;
+    }
+
+    private static TransferSnapshot AddChildren(TransferSnapshot snapshot, List<TransferChange> children, bool source, string[]? members)
+    {
+        var entries = children.ToDictionary(child => TransferSnapshot.NameOf(source ? child.Source : child.Target),
+            child => source ? child.Before : child.After, StringComparer.Ordinal);
+        return snapshot with { Members = members ?? entries.Keys.ToArray(), Children = entries };
     }
 
     private static bool StillMatchesListing(TransferAttributes listed, TransferAttributes current) =>
@@ -296,10 +452,16 @@ internal sealed class TransferBatch(IFileOperationIo files, Func<string, string,
         _ => "SftpServerError",
     };
 
-    private sealed record Plan(TransferItem Source, TransferPath Target, Plan[]? Children = null);
+    private sealed record Plan(TransferItem Source, TransferPath Target, Plan[]? Children = null,
+        string[]? Members = null, bool RequireNew = false, TransferSnapshot? Expected = null, string? NameKey = null);
 
-    private sealed class Traversal
+    private sealed record CopyCommit(TransferAttributes? Staged, TransferSnapshot? Before, TransferSnapshot? After);
+
+    private sealed class Traversal(TransferRun run, Func<TransferPath, ValueTask> warn)
     {
+        public TransferRun Run { get; } = run;
+        public Func<TransferPath, ValueTask> Warn { get; } = warn;
+        public readonly Dictionary<TransferPath, TransferAttributes> Approved = [];
         public readonly HashSet<Plan> Reported = new(ReferenceEqualityComparer.Instance);
         public int Entries;
         public long Bytes;

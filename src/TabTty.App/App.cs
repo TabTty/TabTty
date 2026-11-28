@@ -23,7 +23,6 @@ public sealed class App : Application
     private JsonObject settings = Defaults();
     private bool settingsReadOnly;
     private byte[]? settingsOriginal;
-    private string? legacyVaultPath;
     private readonly Queue<InstanceLaunch?> pendingActivations = new();
     private bool drainingActivations;
     private readonly List<MainWindow> windowOrder = [];
@@ -72,7 +71,7 @@ public sealed class App : Application
     internal string VaultPath => VaultPathFor(settings);
     internal string ProfileSaveDirectory => settings["profileSaveDirectory"]?.GetValue<string>() ?? DefaultProfileSaveDirectory;
 
-    private static string DefaultProfileSaveDirectory
+    internal static string DefaultProfileSaveDirectory
     {
         get
         {
@@ -133,7 +132,7 @@ public sealed class App : Application
         VaultFiles = vaultFiles;
         Vault = new VaultController(this);
         string storeDirectory = Path.GetDirectoryName(Path.GetFullPath(settingsPath))!;
-        HostTrust = new SshHostTrust(this, Path.Combine(storeDirectory, "host-keys.json"), issueOtherStores);
+        HostTrust = new SshHostTrust(this, Path.Combine(storeDirectory, "ssh-host-keys.dat"), issueOtherStores);
         Highlights = new HighlightCatalog(this, Path.Combine(storeDirectory, "highlighting.json"), issueOtherStores);
         Profiles = new ProfileCatalog(this, issueProfiles, validateProfileStage);
     }
@@ -224,10 +223,7 @@ public sealed class App : Application
         }
 
         ApplySettings();
-        if (!LocalState.Initialize() || !Highlights.Initialize()) { Shutdown(); return; }
-        string? previousVault = LocalState.Read()["selectedVaultPath"]?.GetValue<string>();
-        if (!string.IsNullOrWhiteSpace(previousVault) && Path.IsPathFullyQualified(previousVault))
-            legacyVaultPath = previousVault;
+        if (!LocalState.Initialize() || !ProfileState.Initialize() || !Highlights.Initialize()) { Shutdown(); return; }
         OpenInitialWindows(paths);
     }
 
@@ -403,9 +399,7 @@ public sealed class App : Application
         }
     }
 
-    private string VaultPathFor(JsonObject state) => state.ContainsKey("credentialVaultPath")
-        ? state["credentialVaultPath"]?.GetValue<string>() ?? DefaultVaultPath
-        : legacyVaultPath ?? DefaultVaultPath;
+    private static string VaultPathFor(JsonObject state) => state["credentialVaultPath"]?.GetValue<string>() ?? DefaultVaultPath;
 
     internal sealed record SettingsChanges(string? Language = null, string? Theme = null, string? Bell = null,
         string? FontFamily = null, double? FontSize = null, int? RetainedRows = null, bool? AutoClose = null,
@@ -479,18 +473,31 @@ public sealed class App : Application
         AdoptSettings(candidate, bytes);
     }
 
-    internal void ShowStoreRecovery(MainWindow owner) => JsonStoreRecovery.Show(this, owner,
-    [
-        new JsonStoreRecovery.Store(Text("Settings"), settingsPath, path => _ = ReadSettings(path, out _),
+    internal JsonStoreRecovery.Store SettingsRecoveryStore() =>
+        new(Text("Settings"), settingsPath, path => _ = ReadSettings(path, out _),
             () => { }, () => JsonSerializer.SerializeToUtf8Bytes(Defaults()), candidate =>
         {
             string priorVaultPath = VaultPath;
             JsonObject prepared = ReadSettings(candidate, out byte[] preparedBytes);
             var reservation = ReserveSettingsPublication(priorVaultPath, VaultPathFor(prepared));
             return new JsonStoreRecovery.Adoption(reservation, () => AdoptSettings(prepared, preparedBytes));
-        }),
-        Highlights.RecoveryStore(), LocalState.RecoveryStore(), HostTrust.RecoveryStore(),
-    ]);
+        });
+
+    internal JsonStoreRecovery.Store[] RecoveryStores() =>
+        [SettingsRecoveryStore(), Highlights.RecoveryStore(), ProfileState.RecoveryStore(),
+            LocalState.RecoveryStore(), HostTrust.RecoveryStore()];
+
+    internal IEnumerable<JsonStoreRecovery.Store> RecheckableStores() =>
+        [.. RecoveryStores(), ProfileState.TrustRecoveryStore(), MacroTrust.RecoveryStore()];
+
+    internal void ReportUnresolvedStore(Exception error)
+    {
+        if (error is not FilePublicationException problem || !VerifiedFilePublication.IsUnresolved(problem.Result.TargetPath) ||
+            !RecheckableStores().Any(store => string.Equals(store.Path, problem.Result.TargetPath, StringComparison.OrdinalIgnoreCase)))
+            return;
+        StatusReports.Report(problem.Result.OperationId, null,
+            new(Text("StoreSaveUnverified"), JsonStoreRecovery.FailureFields(problem.Result)));
+    }
 
     private void AdoptSettings(JsonObject verified, byte[] bytes)
     {
@@ -583,7 +590,7 @@ public sealed class App : Application
         return ValidateSettings(JsonStoreRecovery.ParseObject(bytes));
     }
 
-    private static JsonObject ValidateSettings(JsonObject parsed)
+    internal static JsonObject ValidateSettings(JsonObject parsed)
     {
         if (parsed["schemaVersion"]?.GetValue<int>() != 1 ||
             parsed["requiredFeatures"] is not JsonArray { Count: 0 } ||

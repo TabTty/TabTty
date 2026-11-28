@@ -197,12 +197,8 @@ internal static partial class Program
     private static async Task ForgetFromSettings(App app, MainWindow window, MacroTrustKey key,
         Action<Window, ComboBox>? beforeForget = null)
     {
-        OpenSettings(window);
-        var form = (FormView)((TabControl)window.FindName("tabs")).SelectedContent;
-        var navigation = FindControls<ListBox>(form).Single();
-        navigation.SelectedItem = navigation.Items.OfType<ListBoxItem>()
-            .Single(item => item.Content is TextBlock heading && heading.Text == App.Text("SettingsMaintenance"));
-        var manage = SettingsActionButton(form, "MacroManageTrust");
+        var form = OpenMaintenanceForTest(window);
+        var manage = MaintenanceActionButton(form, "MacroManageTrust", "RemoveIndividualTrust");
         var forget = window.Dispatcher.InvokeAsync(() =>
         {
             Window dialog = app.Windows.OfType<Window>().Single(candidate => candidate.Owner == window && candidate.IsVisible);

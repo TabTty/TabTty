@@ -2,6 +2,8 @@
 
 > Consolidated on 2026-11-10: [implementation readiness and completed contracts](../specification/implementation-readiness.md). Accepted product decisions below remain binding; historical lists of unfinished technical design are superseded by those contracts. Implementation and runtime verification have not begun.
 
+> The 2026-11-28 [settings maintenance specification](../specification/settings-maintenance.md) supersedes Q156's archive exclusion and Q157's standalone backup restore entry point. It also specifies the split local stores and protected trust-file recovery.
+
 Status: Q155-Q157 accepted on 2026-11-09. Q155 is clarified: profile changes
 apply on the next connection; application settings normally apply immediately,
 except application defaults resolved through a profile, which apply on the next

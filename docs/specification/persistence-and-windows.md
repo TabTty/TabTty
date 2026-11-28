@@ -5,6 +5,8 @@ Q109-Q116/Q155-Q158. The [profile trust specification](profile-trust.md)
 supersedes the original activation rules. It specifies a future implementation.
 The File Explorer and editor decisions accepted on 2026-11-16 supersede the
 earlier profile-editor tab and terminal-only activation descriptions.
+The [settings maintenance specification](settings-maintenance.md) defines the
+current backup, recovery and trust-store design.
 
 ## Common JSON rules
 
@@ -383,10 +385,11 @@ for creation.
 | settings.json | `language`: `system` (`en/ja/system`), `theme`: `system` (`system/light/dark`), `bell`: `visual` (`visual/off`), `defaultTerminalFont`: family Consolas and sizePoints 11, `defaultRetainedRows`: 5000, optional `autoCloseDisconnectedTabs`: boolean, default `true`, optional `credentialVaultPath`: absolute `.tttykey` path or null for the default, optional `broadcastAcrossWindows`: boolean, default `false` (broadcast extension), optional `maxPasteTextBytes`: positive integer byte count, default `536870912` (512 MiB) |
 | highlighting.json | `sets`: ordered array, initially empty; each has `setId`, `name`, `enabled`, `rules`; each rule has `ruleId`, `name`, `enabled`, `pattern`, `ignoreCase`, `style` |
 | style | Nullable `foreground`/`background` as `#RRGGBB`; nullable booleans `bold` and `underline`; null inherits terminal attributes, never a lower-priority rule |
-| state.json | `registrations`, `lastWindow`, legacy `selectedVaultPath` for settings that predate the vault path field. Contains application state only. |
+| profile-catalog.json | `registrations`. |
+| state.json | `lastWindow` and optional `recordingMappings` for local log drive confirmations. Local to this PC and excluded from backup and restore. |
 | registration | Independent `registrationId`, normalized opened location in `path`, optional `name`, `favorite`, nullable UTC `lastUsed`; missing status is observed locally |
 | lastWindow | Normal bounds in DIPs, monitor identity/work-area/DPI observations, maximized flag; never restore minimized |
-| host-keys.json | Versioned host records defined in the transport contract, independent of vault and portable settings |
+| Protected trust files | Three independent Windows-protected stores for profile trust, macro trust and SSH host keys. The [transport contract](transports-and-authentication.md#destination-and-host-records) defines the host records. |
 
 Store one path per registration. The catalog opens the file at `path` and
 derives its list name from the filename without the `.ttty` extension. New
@@ -564,7 +567,8 @@ Windows app preference live and affects only surrounding UI.
 Active window borders follow the Windows setting for accent colors on title
 bars and window borders.
 
-Limits: profile 1 MiB; settings 64 KiB; highlighting/state/host records 16 MiB
+Limits: profile 1 MiB; settings 64 KiB; highlighting, profile catalog, local
+state and decoded host records 16 MiB
 each; JSON depth 16; host 253 ASCII bytes after IDNA,
 paths 32760 UTF-16 units, advertised terminal type 64 printable ASCII bytes;
 1000 highlight sets, 100 rules/set, 4096 pattern UTF-16 units; 10000 profile
@@ -572,16 +576,16 @@ registrations/host destinations; 32 required features of at most 64 ASCII bytes.
 Unknown-property content counts toward the same size/depth limits. These are
 internal bounded-loading limits, not promises of usable performance at all maxima.
 
-Open the local state, highlight rule set and SSH host-key stores directly. One
+Open the local state, profile catalog, highlight rule set and SSH host-key stores directly. One
 bounded read checks the file length, reads exactly that many bytes, and checks
 for EOF before schema validation. An absent path on open permits first-use
 defaults. Empty, oversized, unreadable or invalid files, including a directory
 where the file should be, take the existing store-specific failure path.
-At startup, local state and highlighting offer their temporary read-only
-mode. An unusable host-key store ends the SSH attempt before any first-seen
-key approval. Use the same reader for the selected backup during restore,
-requiring the source to exist. If it disappears, report restore failure and
-preserve the current store. Keep each store's publication and recovery rules.
+At startup, a damaged profile catalog, local state or highlight store can
+offer a temporary read-only mode. An unusable host-key store ends the SSH attempt before any first-seen
+key approval. Validate ZIP entries with the corresponding ordinary format
+reader before publishing restored data. Preserve each store's publication and
+recovery rules. [Settings maintenance](settings-maintenance.md)
 See [#184](https://github.com/TabTty/TabTty/issues/184) and
 [Microsoft's `File.Exists` behavior](https://learn.microsoft.com/en-us/dotnet/api/system.io.file.exists).
 
@@ -692,8 +696,11 @@ non-overwriting-creates, inspects actual outcome, then publishes the effective
 revision. Profile edits use a `.bak` for verification and remove the owned
 backup after the replacement is verified, including after successful reinspection.
 Keep backups needed for unresolved saves and report cleanup failures without
-undoing a verified save. Application stores preserve their previous validated
-generation. Detected external changes require reload/review, never
+undoing a verified save. Settings, highlights and the profile catalog preserve
+their previous validated generations. For `state.json`, keep temporary artifacts
+only while verifying a save or recreation. Protected trust stores use the scoped recovery
+rules in [Settings maintenance](settings-maintenance.md#separate-stores-and-local-recovery).
+Detected external changes require reload/review, never
 merge/overwrite automatically. A failure
 keeps the draft and last effective settings, reports actual outcome, and must
 not falsely label Saved. File replacement is not a multi-file transaction.
@@ -701,15 +708,15 @@ not falsely label Saved. File replacement is not a multi-file transaction.
 If replacement reports an ambiguous outcome, compare target/candidate/backup
 against expected bytes; freeze affected writes until the publication and required
 preservation are resolved under the contract below. Never assume every error left
-names/content unchanged. Corrupt files
-stay intact for explicit backup restore, temporary defaults, or exit. Temporary
-defaults keep that store read-only until deliberate recovery/recreation after
-preserving the original under a noncolliding name. Newer schema is not silent
-corruption recovery. Missing first-use files use defaults. Highlight failure
+names/content unchanged. Corrupt files stay intact for explicit ZIP restore
+where supported, recreation, temporary defaults, or exit. Temporary defaults keep
+that store read-only until deliberate recovery or recreation. Preserve the
+original under a noncolliding name as required by that store's recovery rules.
+Treat a newer schema as its own error. Missing first-use files use defaults. Highlight failure
 remains nonfatal; local-state save errors are coalesced and do not disconnect.
 
-Temporary defaults and first-use defaults apply only to application settings,
-highlighting, and local-state stores. A missing, corrupt, or unsupported profile
+Temporary read-only defaults apply to application settings, highlighting, the
+profile catalog and local state. A missing, corrupt, or unsupported profile
 cannot start or reconnect a session; restore or explicitly save a valid profile
 first. Host-store failures follow explicit recovery and must not silently turn
 known hosts into unrecognized hosts eligible for fresh first-use approval.
@@ -856,6 +863,10 @@ ordinarily authorized live domain owner. On exit, domain secret lifetimes end
 normally. Operation IDs are not durable, and no journal, automatic recovery,
 hidden process lifetime or post-process cleanup guarantee is introduced. The
 recording five-/ten-second rules do not apply to these file operations.
+
+The [paired profile-registration and trust update](profile-trust.md#trust-removal-and-pending-operations)
+keeps its own durable evidence to resolve or undo a partial update. That
+evidence does not extend the lifetime of a general file operation.
 
 Set finite, versioned internal limits on operation records, owned bytes and
 retained artifact count/bytes. Reserve capacity before admission/allocation;
@@ -1078,9 +1089,10 @@ brings its header back into view.
 
 ## File Explorer and editors
 
-In the unpackaged Windows 11 distribution, register or refresh Explorer file
-types for the current account only when the user selects **Register TabTty file
-types with Windows** under **Maintenance** in the Settings tab.
+In the unpackaged Windows 11 distribution, use **Register** or **Unregister**
+under **Register TabTty file types with Windows** in the **Maintenance** tab to
+change TabTty's Explorer registrations for the current account. Report results
+in a dialog. [Settings maintenance](settings-maintenance.md#windows-file-types)
 
 Register distinct Open and Edit verbs for `.ttty` and `.tttykey`. Windows
 controls the default handler for each extension. The verbs below apply when

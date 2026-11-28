@@ -50,7 +50,7 @@ internal static partial class Program
             var reconnect = await app.Profiles.AdmitAsync(owner, path, null, token, reconnect: true, first.Once)
                 .WaitAsync(TimeSpan.FromSeconds(2), token);
             CheckMacroLaunch(reconnect.Once == first.Once, "An unchanged reconnect did not reuse the tab's decision.");
-            var stateFiles = new[] { Path.Combine(LocalState.DirectoryPath, "state.json"), Path.Combine(LocalState.DirectoryPath, "state.json.bak") };
+            var stateFiles = new[] { Path.Combine(LocalState.DirectoryPath, "profile-catalog.json"), Path.Combine(LocalState.DirectoryPath, "profile-catalog.json.bak") };
             var lastWrites = stateFiles.Select(ReadUsageFile).ToArray();
             await app.Profiles.RememberUsageAsync(path, first.Profile);
             await app.Profiles.RememberUsageAsync(path, reconnect.Profile);
@@ -111,7 +111,7 @@ internal static partial class Program
             groupTabs.SelectedItem = groupTabs.Items.OfType<TabItem>().Single(tab => Equals(tab.Tag, ""));
             list.SelectedIndex = 0;
             const string oldDisplayPath = @"Z:\legacy-display-name.ttty";
-            LocalState.Change(state =>
+            ProfileState.Change(state =>
             {
                 var registration = state["registrations"]!.AsArray().Single()!;
                 CheckMacroLaunch(registration["path"]!.GetValue<string>() == path && registration["displayPath"] is null,
@@ -127,7 +127,7 @@ internal static partial class Program
             const string groupName = "Lab_東京";
             await EditProfileNameAsync("profile (3)", "Main editor version", $" {groupName} ");
             var renamedRegistration = new ProfileCatalog(app).ReadRegistrations().Single();
-            var storedRegistration = LocalState.ReadForProfileTrust()["registrations"]!.AsArray().Single()!;
+            var storedRegistration = ProfileState.ReadForProfileTrust()["registrations"]!.AsArray().Single()!;
             CheckMacroLaunch(renamedRegistration.Id == previousRegistration.Id && renamedRegistration.Favorite &&
                 renamedRegistration.LastUsed == previousRegistration.LastUsed && renamedRegistration.Path == path &&
                 renamedRegistration.Name == "Main editor version" && storedRegistration["displayPath"]!.GetValue<string>() == oldDisplayPath,
@@ -314,7 +314,7 @@ internal static partial class Program
             finally
             {
                 other.Close();
-                LocalState.Change(state =>
+                ProfileState.Change(state =>
                 {
                     var entries = state["registrations"]!.AsArray();
                     entries.Remove(entries.Single(entry => entry!["path"]!.GetValue<string>() == extraPath));
@@ -332,7 +332,7 @@ internal static partial class Program
             var form = (FormView)editor.Content;
             const string savedGroup = "Retained completion";
             ((TextBox)form.FindName("ProfileGroupName")).Text = savedGroup;
-            using (File.Open(Path.Combine(LocalState.DirectoryPath, "state.json"), FileMode.Open, FileAccess.Read, FileShare.Read))
+            using (File.Open(Path.Combine(LocalState.DirectoryPath, "profile-catalog.json"), FileMode.Open, FileAccess.Read, FileShare.Read))
             {
                 Click(editor, "Save");
                 await AcknowledgeReportAsync(editor, App.Text("ProfileRegistrationIncomplete"));

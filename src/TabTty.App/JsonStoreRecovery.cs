@@ -15,102 +15,48 @@ internal static class JsonStoreRecovery
 {
     internal sealed record Store(string Name, string Path, Action<string> Validate, Action Reload, Func<byte[]> Defaults,
         Func<string, Adoption>? PrepareAdoption = null, Func<byte[], byte[]>? SanitizeBackup = null,
-        SemaphoreSlim? WriteGate = null);
+        SemaphoreSlim? WriteGate = null, int MaximumBytes = MaximumStoreBytes, bool KeepPrevious = true);
 
     internal sealed record Adoption(IDisposable? Reservation, Action Apply);
 
-    public static void Show(App app, MainWindow owner, IReadOnlyList<Store> stores) => owner.OpenForm("RecoverStores", form =>
-    {
-        form.AddStatusBar();
-        var choice = new ComboBox { ItemsSource = stores, DisplayMemberPath = nameof(Store.Name), SelectedIndex = 0 };
-        form.AddField("RecoveryStore", choice);
-        form.AddAsyncAction("RecheckFilePublication", async () =>
+    internal static Task<string[]> RecheckAsync(App app, Store store) =>
+        ApplyAsync(app, store, validate =>
         {
-            if (choice.SelectedItem is not Store store) return;
-            Adoption? adoption = null;
-            if (store.WriteGate is { } gate) await gate.WaitAsync();
-            try
-            {
-                using var progress = form.BeginProgress("FileOperationPending");
-                var outcome = await Task.Run(() => VerifiedFilePublication.Reconcile(store.Path, candidate =>
-                {
-                    if (store.PrepareAdoption is { } prepare)
-                        adoption = app.Dispatcher.Invoke(() => prepare(candidate));
-                    else store.Validate(candidate);
-                }));
-                if (outcome is null)
-                {
-                    var stages = await Task.Run(() => VerifiedFilePublication.ReinspectRetainedStages(store.Path));
-                    if (!ShowRetainedStages(form, stages))
-                        form.SetStatusResource("NoFilePublicationToRecheck");
-                    return;
-                }
-                if (outcome.Status != FilePublicationStatus.Verified)
-                    throw new FilePublicationException(Text("StoreSaveUnverified"), outcome);
-                if (adoption is null) store.Reload();
-                else adoption.Apply();
-                ShowRetainedStages(form, VerifiedFilePublication.GetRetainedStagePaths(store.Path));
-            }
-            finally
-            {
-                adoption?.Reservation?.Dispose();
-                store.WriteGate?.Release();
-            }
+            var outcome = VerifiedFilePublication.Reconcile(store.Path, validate);
+            if (outcome is null) return VerifiedFilePublication.ReinspectRetainedStages(store.Path);
+            RequireVerified(outcome);
+            return VerifiedFilePublication.GetRetainedStagePaths(store.Path);
         });
-        form.AddAsyncAction("RestoreStoreBackup", async () =>
-        {
-            if (choice.SelectedItem is not Store store) return;
-            var picker = new OpenFileDialog { Filter = Text("RecoveryFileFilter"),
-                InitialDirectory = LocalState.DirectoryPath, FileName = System.IO.Path.GetFileName(store.Path) + ".bak" };
-            if (app.Modal(() => picker.ShowDialog(form.OwnerWindow)) != true) return;
-            byte[]? original = await Task.Run(() => FileDigest(store.Path));
-            if (!form.IsLoaded || !Confirm(store, "RestoreStoreBackup", picker.FileName)) return;
-            await RunAsync(store, validate => Restore(store.Path, picker.FileName, original, validate, store.SanitizeBackup));
-        });
-        form.AddAsyncAction("RecreateStore", async () =>
-        {
-            if (choice.SelectedItem is not Store store) return;
-            byte[]? original = await Task.Run(() => FileDigest(store.Path));
-            if (!form.IsLoaded || !Confirm(store, "RecreateStore")) return;
-            await RunAsync(store, validate => Commit(store.Path, store.Defaults(), original, recovery: true,
-                validate));
-        });
-        bool Confirm(Store store, string action, string? backup = null)
-        {
-            var context = new StackPanel();
-            context.Children.Add(new DialogField(Text("RecoveryStore"), new DialogText(store.Name)));
-            context.Children.Add(new DialogField(Text("ProfileListFilePath"), new DialogText(store.Path)));
-            if (backup is not null)
-                context.Children.Add(new DialogField(Text("BackupFilePath"), new DialogText(backup)));
-            return app.Modal(() => ThemedMessageBox.Show(form.OwnerWindow, Text("StoreRecoveryWarning"), Text(action),
-                MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No, acceptKey: action,
-                context: context)) == MessageBoxResult.Yes;
-        }
 
-        async Task RunAsync(Store store, Action<Action<string>> action)
+    internal static Task<string[]> RestoreAsync(App app, Store store, byte[] bytes, byte[]? expected) =>
+        ApplyAsync(app, store, validate =>
         {
-            Adoption? adoption = null;
-            if (store.WriteGate is { } gate) await gate.WaitAsync();
-            try
+            Commit(store.Path, bytes, expected, recovery: true, validate, store.MaximumBytes, store.KeepPrevious);
+            return VerifiedFilePublication.GetRetainedStagePaths(store.Path);
+        });
+
+    private static async Task<string[]> ApplyAsync(App app, Store store, Func<Action<string>, string[]> operation)
+    {
+        Adoption? adoption = null;
+        if (store.WriteGate is { } gate) await gate.WaitAsync();
+        try
+        {
+            string[] stages = await Task.Run(() => operation(candidate =>
             {
-                using var progress = form.BeginProgress("FileOperationPending");
-                await Task.Run(() => action(candidate =>
-                {
-                    if (store.PrepareAdoption is { } prepare)
-                        adoption = app.Dispatcher.Invoke(() => prepare(candidate));
-                    else store.Validate(candidate);
-                }));
-                if (adoption is null) store.Reload();
-                else adoption.Apply();
-                ShowRetainedStages(form, VerifiedFilePublication.GetRetainedStagePaths(store.Path));
-            }
-            finally
-            {
-                adoption?.Reservation?.Dispose();
-                store.WriteGate?.Release();
-            }
+                if (store.PrepareAdoption is { } prepare)
+                    adoption = app.Dispatcher.Invoke(() => prepare(candidate));
+                else store.Validate(candidate);
+            }));
+            if (adoption is null) store.Reload();
+            else adoption.Apply();
+            return stages;
         }
-    });
+        finally
+        {
+            adoption?.Reservation?.Dispose();
+            store.WriteGate?.Release();
+        }
+    }
 
     internal static bool ShowRetainedStages(FormView form, string[] stages)
     {
@@ -134,7 +80,8 @@ internal static class JsonStoreRecovery
         Commit(path, sanitize?.Invoke(bytes) ?? bytes, original, recovery: true, validate);
     }
 
-    internal static byte[]? ReadBounded(string path, string invalidMessage, bool allowMissing = false)
+    internal static byte[]? ReadBounded(string path, string invalidMessage, bool allowMissing = false,
+        int maximumBytes = MaximumStoreBytes)
     {
         FileStream file;
         try { file = File.OpenRead(path); }
@@ -145,7 +92,7 @@ internal static class JsonStoreRecovery
         using (file)
         {
             long length = file.Length;
-            if (length is <= 0 or > MaximumStoreBytes) throw new InvalidDataException(Text(invalidMessage));
+            if (length <= 0 || length > maximumBytes) throw new InvalidDataException(Text(invalidMessage));
             byte[] bytes = new byte[(int)length];
             file.ReadExactly(bytes);
             if (file.ReadByte() >= 0) throw new InvalidDataException(Text(invalidMessage));
@@ -153,12 +100,14 @@ internal static class JsonStoreRecovery
         }
     }
 
-    public static void Save(string path, byte[] bytes, byte[]? original, Action<string> validate) =>
-        RequireVerified(BeginSave(path, bytes, original, validate).ObserveAsync().GetAwaiter().GetResult());
+    public static void Save(string path, byte[] bytes, byte[]? original, Action<string> validate, bool keepPrevious = true) =>
+        RequireVerified(BeginSave(path, bytes, original, validate, keepPrevious: keepPrevious)
+            .ObserveAsync().GetAwaiter().GetResult());
 
     internal static FilePublicationOperation BeginSave(string path, byte[] bytes, byte[]? original, Action<string> validate,
-        Action<string, string, string?>? issue = null, CancellationToken beforeIssue = default) =>
-        Begin(path, bytes, original is null ? null : SHA256.HashData(original), recovery: false, validate, issue, beforeIssue);
+        Action<string, string, string?>? issue = null, CancellationToken beforeIssue = default, bool keepPrevious = true) =>
+        Begin(path, bytes, original is null ? null : SHA256.HashData(original), recovery: false, validate, issue,
+            beforeIssue, keepPrevious: keepPrevious);
 
     public static JsonObject ParseObject(ReadOnlySpan<byte> bytes)
     {
@@ -192,20 +141,24 @@ internal static class JsonStoreRecovery
         }
     }
 
-    private const int MaximumStoreBytes = 16 * 1024 * 1024;
+    internal const int MaximumStoreBytes = 16 * 1024 * 1024;
 
     private static byte[]? FileDigest(string path) => VerifiedFilePublication.ReadDigest(path, MaximumStoreBytes);
 
-    private static void Commit(string path, byte[] bytes, byte[]? expected, bool recovery, Action<string>? validate = null)
-        => RequireVerified(Begin(path, bytes, expected, recovery, validate).ObserveAsync().GetAwaiter().GetResult());
+    private static void Commit(string path, byte[] bytes, byte[]? expected, bool recovery, Action<string>? validate = null,
+        int maximumBytes = MaximumStoreBytes, bool keepPrevious = true) =>
+        RequireVerified(Begin(path, bytes, expected, recovery, validate, maximumBytes: maximumBytes,
+            keepPrevious: keepPrevious).ObserveAsync().GetAwaiter().GetResult());
 
     private static FilePublicationOperation Begin(string path, byte[] bytes, byte[]? expected, bool recovery,
-        Action<string>? validate, Action<string, string, string?>? issue = null, CancellationToken beforeIssue = default)
+        Action<string>? validate, Action<string, string, string?>? issue = null, CancellationToken beforeIssue = default,
+        int maximumBytes = MaximumStoreBytes, bool keepPrevious = true)
     {
         string? preservation = expected is null ? null :
-            recovery ? path + ".recovery-" + Guid.NewGuid().ToString("N") : path + ".bak";
-        return VerifiedFilePublication.Begin(new(path, bytes, expected, preservation, MaximumStoreBytes,
-            Validate: validate, Recovery: recovery, CreateDirectory: true, Issue: issue), beforeIssue);
+            recovery || !keepPrevious ? path + ".recovery-" + Guid.NewGuid().ToString("N") : path + ".bak";
+        return VerifiedFilePublication.Begin(new(path, bytes, expected, preservation, maximumBytes,
+            Validate: validate, Recovery: recovery, CreateDirectory: true, Issue: issue,
+            RemovePreservationOnVerified: !keepPrevious), beforeIssue);
     }
 
     internal static void RequireVerified(FilePublicationResult result)

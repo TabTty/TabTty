@@ -77,6 +77,13 @@ internal static partial class Program
 #pragma warning restore WPF0001
         try
         {
+            if (args is ["--maintenance"])
+            {
+                CheckMaintenancePersistence(application, settingsDirectory);
+                RunScenario(application.Dispatcher, () => SettingsSwitchLanguageAndThemeInOpenWindows(application));
+                Console.WriteLine("PASS MaintenanceTabInBothLanguages");
+                return 0;
+            }
             if (args is ["--maximized-work-area"])
             {
                 RunScenario(application.Dispatcher, () => CheckMaximizedWorkAreaAsync(application));
@@ -514,6 +521,7 @@ internal static partial class Program
         var results = new List<string>();
         operations.Changed += update => { if (update is FileOperationUpdate.Entry entry) results.Add(entry.Reason); };
         int approvals = 0;
+        int irreversibleWarnings = 0;
         ValueTask<TransferChoice> Approve(TransferItem incoming, TransferPath _, TransferAttributes existing)
         {
             if (incoming.Attributes.Size != expected.Length || existing.Size != 7)
@@ -521,7 +529,12 @@ internal static partial class Program
             approvals++;
             return ValueTask.FromResult(TransferChoice.Overwrite);
         }
-        ValueTask<TransferChoice> Confirm(TransferQuestion question) => Approve(question.Source!, question.Path, question.Existing!);
+        ValueTask<TransferChoice> Confirm(TransferQuestion question)
+        {
+            if (question.Kind != TransferQuestionKind.Irreversible) return Approve(question.Source!, question.Path, question.Existing!);
+            irreversibleWarnings++;
+            return ValueTask.FromResult(TransferChoice.Overwrite);
+        }
         string uploaded = await operations.Copy(await files.ListAsync(upload, token), remote, Confirm)!;
         var remoteTimes = await client.StatAsync(client.EncodePath("/home/tree/試験.bin"), token);
         if (remoteTimes?.Modified != sourceModified || remoteTimes?.Accessed != sourceModified)
@@ -530,7 +543,7 @@ internal static partial class Program
         if (uploaded != "TransferFinished" || downloaded != "TransferFinished")
             throw new InvalidOperationException($"{uploaded}, {downloaded}");
         byte[] actual = await File.ReadAllBytesAsync(Path.Combine(target, "tree", "試験.bin"), token);
-        if (!actual.SequenceEqual(expected) || approvals != 1 ||
+        if (!actual.SequenceEqual(expected) || approvals != 1 || irreversibleWarnings != 1 || operations.CanUndo ||
             File.ReadAllText(Path.Combine(target, "tree", "試験.bin") + ":Zone.Identifier") != "[ZoneTransfer]\r\nZoneId=3\r\n" ||
             !Directory.Exists(Path.Combine(target, "tree", "empty")) ||
             !PrivateWindowsFile.HasPrivateAccess(new DirectoryInfo(Path.Combine(target, "tree", "empty"))) ||
@@ -1381,10 +1394,7 @@ internal static partial class Program
             {
                 tabs.SelectedIndex = index;
                 var form = (FormView)tabs.SelectedContent;
-                bool detailsPage = titleKeys[index] is "ProfileCatalog" or "ManageVault";
-                var fields = detailsPage
-                    ? form.Body.Children.OfType<StackPanel>().Single(panel => DockPanel.GetDock(panel) == Dock.Top)
-                    : FormFields(form);
+                bool detailsPage = titleKeys[index] is "ProfileCatalog" or "ManageVault" or "HighlightSets";
                 var heading = FindControls<TextBlock>(form).SingleOrDefault(text =>
                     AutomationProperties.GetHeadingLevel(text) == AutomationHeadingLevel.Level1);
                 if (heading?.Text != App.Text(titleKeys[index]))
@@ -1407,19 +1417,7 @@ internal static partial class Program
                     if (frame.ActualHeight <= 0 || tallHeight - frame.ActualHeight < 150)
                         throw new InvalidOperationException("The details frame did not follow the available height.");
                 }
-                else if (titleKeys[index] != "Settings")
-                {
-                    var columns = fields.Children.OfType<Grid>().Single(grid => grid.ColumnDefinitions.Count == 2);
-                    var details = (StackPanel)columns.Children[1];
-                    Layout(new Size(1000, 660));
-                    if (Grid.GetColumn(details) != 1 || Grid.GetRow(details) != 0)
-                        throw new InvalidOperationException("The wide management layout did not show two columns.");
-                    Layout(new Size(520, 660));
-                    if (Grid.GetColumn(details) != 0 || Grid.GetRow(details) != 1)
-                        throw new InvalidOperationException("The narrow management layout did not stack its columns.");
-                }
-
-                if (titleKeys[index] is "HighlightSets" or "Settings")
+                if (titleKeys[index] == "Settings")
                 {
                     foreach (var size in new[] { new Size(1112, 696), new Size(520, 460), new Size(1920, 1040) })
                     {
@@ -1449,7 +1447,7 @@ internal static partial class Program
                 if (titleKeys[index] == "Settings")
                 {
                     AssertNavigation(form, "SettingsLanguageAndTheme", "SettingsTerminalDefaults", "SettingsTabBehavior",
-                        "SettingsKeyboardShortcuts", "SettingsLogNaming", "SettingsVault", "SettingsMaintenance");
+                        "SettingsKeyboardShortcuts", "SettingsLogNaming", "SettingsVault");
                 }
                 if (Environment.GetEnvironmentVariable("TABTTY_MANAGEMENT_RENDER_DIR") is { } folder &&
                     titleKeys[index] is "ManageVault" or "Settings")
@@ -1590,9 +1588,22 @@ internal static partial class Program
     private static StackPanel FormFields(FormView form) =>
         (StackPanel)FindControls<ScrollViewer>(form.Body).Single(view => view.Content is StackPanel).Content;
 
-    private static Button SettingsActionButton(FormView form, string key) => FindControls<Button>(form).Single(button =>
-        Equals(button.Content, App.Text("Run")) && AutomationProperties.GetLabeledBy(button) is Label { Content: TextBlock label } &&
-        label.Text == App.Text(key));
+    private static FormView OpenMaintenanceForTest(MainWindow window)
+    {
+        var menu = (Menu)window.FindName("mainMenu");
+        var tools = menu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, App.Text("ToolsMenu")));
+        var maintenance = tools.Items.OfType<MenuItem>().Single(item => Equals(item.Header, App.Text("SettingsMaintenance")));
+        maintenance.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent, maintenance));
+        return (FormView)((TabControl)window.FindName("tabs")).SelectedContent;
+    }
+
+    private static Button MaintenanceActionButton(FormView form, string section, string action)
+    {
+        var fields = FormFields(form);
+        var label = fields.Children.OfType<TextBlock>().Single(text => text.Text == App.Text(section));
+        var row = (Panel)fields.Children[fields.Children.IndexOf(label) + 1];
+        return row.Children.OfType<Button>().Single(button => Equals(button.Content, App.Text(action)));
+    }
 
     private static FixedChoiceBox SettingsChoice(FormView form, string key) => FindControls<FixedChoiceBox>(form)
         .Single(choice => AutomationProperties.GetLabeledBy(choice) is Label { Content: TextBlock label } &&
@@ -1644,15 +1655,25 @@ internal static partial class Program
                     !vault.Items.OfType<MenuItem>().Any(item => Equals(item.Header, manageLabel)))
                     throw new InvalidOperationException("The open window did not switch its settings and vault menu labels.");
 
-                string runLabel = settingsLabel == "設定" ? "実行" : "Run";
-                foreach (string key in new[] { "RegisterFileType", "ProfileTrustReset", "MacroManageTrust", "MacroTrustReset", "RecoverStores" })
+                if (tools.Items.OfType<MenuItem>().Any(item => Equals(item.Header, App.Text("HostKeys"))))
+                    throw new InvalidOperationException("The SSH host-key command remained in Tools.");
+                var maintenance = OpenMaintenanceForTest(window);
+                if (!ReferenceEquals(maintenance, OpenMaintenanceForTest(window)))
+                    throw new InvalidOperationException("Opening Maintenance again did not activate the existing tab.");
+                foreach (var (section, first, second) in new[]
                 {
-                    var action = SettingsActionButton(form, key);
-                    var label = (Label)AutomationProperties.GetLabeledBy(action);
-                    var section = (Panel)action.Parent;
-                    if (!Equals(action.Content, runLabel) || section.Children.IndexOf(label) + 1 != section.Children.IndexOf(action))
-                        throw new InvalidOperationException($"The maintenance item {key} did not show a localized Run button below its label.");
+                    ("RegisterFileType", "AssociationRegister", "AssociationUnregister"),
+                    ("ManageProfileTrust", "RemoveIndividualTrust", "RemoveAllTrust"),
+                    ("MacroManageTrust", "RemoveIndividualTrust", "RemoveAllTrust"),
+                    ("ManageApplicationSettings", "ArchiveBackup", "ArchiveRestore"),
+                })
+                {
+                    var primary = MaintenanceActionButton(maintenance, section, first);
+                    var secondary = MaintenanceActionButton(maintenance, section, second);
+                    if (!ReferenceEquals(primary.Parent, secondary.Parent))
+                        throw new InvalidOperationException("Maintenance buttons were not in the same row.");
                 }
+                OpenSettings(window);
 #pragma warning disable WPF0001 // .NET 10 Fluent theme integration.
                 var expectedTheme = themeMode == "dark" ? ThemeMode.Dark : themeMode == "light" ? ThemeMode.Light : ThemeMode.System;
                 if (app.ThemeMode != expectedTheme)

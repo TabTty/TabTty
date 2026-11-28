@@ -61,7 +61,7 @@ internal static partial class Program
             await profile.SaveNewAsync(file, token);
             string location = await ProfileCatalog.NormalizeLocationAsync(file, token);
             Guid registration = Guid.NewGuid();
-            LocalState.Change(state => state["registrations"]!.AsArray().Add(new System.Text.Json.Nodes.JsonObject
+            ProfileState.Change(state => state["registrations"]!.AsArray().Add(new System.Text.Json.Nodes.JsonObject
             {
                 ["registrationId"] = registration, ["path"] = location, ["displayPath"] = location,
                 ["favorite"] = false, ["lastUsed"] = null,
@@ -412,7 +412,7 @@ internal static partial class Program
             await profile.SaveNewAsync(path, token);
             path = await ProfileCatalog.NormalizeLocationAsync(path, token);
             if (register)
-                LocalState.Change(state => state["registrations"]!.AsArray().Add(new System.Text.Json.Nodes.JsonObject
+                ProfileState.Change(state => state["registrations"]!.AsArray().Add(new System.Text.Json.Nodes.JsonObject
                 {
                     ["registrationId"] = Guid.NewGuid(), ["path"] = path, ["displayPath"] = path,
                     ["favorite"] = false, ["lastUsed"] = null,

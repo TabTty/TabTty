@@ -227,9 +227,12 @@ One user-started upload or download of the selected files and folder trees to
 one destination directory, with a result for each processed item.
 
 **File operation**:
-A user-requested upload, download, move, deletion, rename, or folder creation
+A user-requested copy, move, deletion, rename, folder creation, Undo, or Redo
 through a transfer window, including the outcomes for the affected entries.
 A transfer batch is a file operation for uploading or downloading.
+
+**Transfer history**:
+The single copy or move held by a transfer window for Undo or Redo.
 
 **Credential reference**:
 The name of a vault entry in the selected vault. The profile field or macro

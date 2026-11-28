@@ -4,6 +4,12 @@ Status: initial-release scope confirmed. This issue-body draft uses independent
 question numbering. Q1–Q36 are resolved. The [transfer contract](../specification/file-transfer.md)
 completes the engineering details for implementation.
 
+The transfer contract also records the agreed follow-up for copying and moving
+by Paste in either pane, undoing and redoing transfers, and deletion shortcuts.
+[Transfer window](../specification/file-transfer.md#transfer-window-and-operation-ownership),
+[Undo and Redo](../specification/file-transfer.md#undo-and-redo),
+[Delete and Shift+Delete](../specification/file-transfer.md#file-management-deadlines-and-limits)
+
 Architecture Q10, amended on 2026-11-16, changes result-window lifetime:
 explicit, bulk, and automatic terminal-tab closure all close their associated
 transfer windows under the same cleanup/reporting policy. Disconnect retains

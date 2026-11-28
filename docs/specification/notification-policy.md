@@ -14,6 +14,8 @@ This policy governs notifications in the Windows app. The inventory records the 
 
 Ordinary success should be visible in the resulting state, for example **Vault lock: Unlocked**. Preserve information the user needs later, such as an archive path. Search, field validation, user-opened detail views and per-file results are parts of their workflows. Tab-header indicators identify which tab needs attention. A close-time report required while its owner still exists, and a startup error before a suitable owner exists, can use a dialog. Preserve the SFTP close report's counts, paths and full detail. [File-operation close reporting](file-operations.md)
 
+Show Windows file-type registration, removal, ZIP verification and restore outcomes in dialogs owned by the main window hosting the Maintenance tab. Include file effects for restore. [Maintenance](settings-maintenance.md)
+
 ## Status bar scope
 
 Choose the side of the bar by asking what the information describes. Keep each indicator independently readable as other indicators change. [Implementation plan #247](https://github.com/TabTty/TabTty/issues/247)

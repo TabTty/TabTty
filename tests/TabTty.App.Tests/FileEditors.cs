@@ -269,11 +269,7 @@ internal static partial class Program
                 throw new InvalidOperationException("Partial settings publication changed the effective owner or revision.");
 
             File.WriteAllBytes(savedSettings + ".bak", original);
-            app.ShowStoreRecovery(terminal);
-            await UntilAsync(() => FindControls<Button>(terminal).Any(button =>
-                button.IsVisible && Equals(button.Content, App.Text("RecheckFilePublication"))));
-            FindControls<Button>(terminal).Single(button => button.IsVisible &&
-                Equals(button.Content, App.Text("RecheckFilePublication"))).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await JsonStoreRecovery.RecheckAsync(app, app.SettingsRecoveryStore());
             await UntilAsync(() => app.VaultPath == copyPath);
             if (app.SettingsRevision != priorRevision + 1 || app.Vault.SelectionEpoch != priorEpoch + 1 ||
                 !candidate.AsSpan().SequenceEqual(File.ReadAllBytes(savedSettings)) ||

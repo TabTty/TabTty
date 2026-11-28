@@ -144,11 +144,7 @@ internal static partial class Program
                 resetOwner.Show();
                 try
                 {
-                    OpenSettings(resetOwner);
-                    var form = (FormView)((TabControl)resetOwner.FindName("tabs")).SelectedContent;
-                    var navigation = FindControls<ListBox>(form).Single();
-                    navigation.SelectedItem = navigation.Items.OfType<ListBoxItem>()
-                        .Single(item => item.Content is TextBlock heading && heading.Text == App.Text("SettingsMaintenance"));
+                    var form = OpenMaintenanceForTest(resetOwner);
                     void ResetFromOtherWindow(params string[] choices)
                     {
                         var answers = choices.Select((choice, index) => resetOwner.Dispatcher.InvokeAsync(() =>
@@ -165,7 +161,7 @@ internal static partial class Program
                             }
                             finally { if (confirm.IsVisible) confirm.Close(); }
                         }, DispatcherPriority.ContextIdle)).ToArray();
-                        var reset = SettingsActionButton(form, "MacroTrustReset");
+                        var reset = MaintenanceActionButton(form, "MacroManageTrust", "RemoveAllTrust");
                         reset.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, reset));
                         foreach (var answer in answers) answer.Task.GetAwaiter().GetResult();
                     }
@@ -174,7 +170,7 @@ internal static partial class Program
                         MacroTrust.Read(otherArgs) == MacroTrustDecision.Block, "Cancelling reset changed remembered decisions.");
                     if (language == "ja")
                     {
-                        deletesBeforeFailure = 2;
+                        deletesBeforeFailure = 1;
                         request = window.OpenExternalMacroAsync(launch);
                         await DecideMacroRequest(app, window, source, App.Text("MacroNoArguments"), "MacroAlwaysAllow",
                             () => ResetFromOtherWindow("MacroTrustReset", "MacroTrustResetRetry"));
@@ -191,6 +187,7 @@ internal static partial class Program
             start.ArgumentList.Add("--macro-reset-relaunch");
             start.ArgumentList.Add(storeId.ToString());
             start.ArgumentList.Add(source);
+            start.Environment["TABTTY_TEST_MACRO_DIRECTORY"] = LocalState.DirectoryPath;
             using var child = Process.Start(start) ?? throw new IOException("Could not start macro reset relaunch test.");
             await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(35));
             CheckMacroLaunch(child.ExitCode == 0, "The restarted app failed to review the cleared decisions.");
@@ -226,7 +223,8 @@ internal static partial class Program
 
     private static async Task CheckMacroResetRelaunch(App app, string storeId, string source)
     {
-        MacroTrust.UseTestStore(storeId: Guid.Parse(storeId));
+        MacroTrust.UseTestStore(storeId: Guid.Parse(storeId),
+            directory: Environment.GetEnvironmentVariable("TABTTY_TEST_MACRO_DIRECTORY"));
         var owner = app.CreateWindow(restorePlacement: false);
         owner.Show();
         try

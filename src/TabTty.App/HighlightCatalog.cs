@@ -5,6 +5,8 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Media;
 using TabTty.Core;
 using static TabTty.App.App;
 
@@ -85,14 +87,16 @@ internal sealed partial class HighlightCatalog(App app, string pathName, Action<
         var showPatternError = form.AddValidation(pattern);
         pattern.TextChanged += (_, _) => RefreshPatternError();
         RefreshPatternError();
-        form.AddField("Enabled", enabled);
-        form.AddField("IgnoreCase", ignoreCase);
-        form.AddField("HighlightForeground", foreground);
-        form.AddField("HighlightBackground", background);
-        form.AddField("HighlightBold", bold);
-        form.AddField("HighlightUnderline", underline);
+        form.AddField("Enabled", enabled, inlineCheckBox: true);
+        form.AddField("IgnoreCase", ignoreCase, inlineCheckBox: true);
+        form.AddField("HighlightForeground", foreground, actionKey: "ChooseHighlightColor",
+            action: () => PickColor(foreground, 0xFFFFFF));
+        form.AddField("HighlightBackground", background, actionKey: "ChooseHighlightColor",
+            action: () => PickColor(background, 0x000000));
+        form.AddField("HighlightBold", bold, inlineCheckBox: true);
+        form.AddField("HighlightUnderline", underline, inlineCheckBox: true);
         TerminalHighlightRule? result = null;
-        form.AddButtons(() =>
+        form.AddAsyncButtons(() =>
         {
             ValidateName(name.Text);
             var style = new TerminalHighlightStyle(ParseColor(foreground.Text), ParseColor(background.Text),
@@ -102,8 +106,17 @@ internal sealed partial class HighlightCatalog(App app, string pathName, Action<
             try { _ = new TerminalHighlightRules([updated]); }
             catch (ArgumentException) { throw new ArgumentException(Text("InvalidHighlightPattern")); }
             result = updated;
-        });
+            return Task.FromResult(true);
+        }, acceptKey: "OK", acceptOnEnter: false);
         return app.Modal(form.ShowDialog) == true ? result : null;
+
+        Task PickColor(TextBox field, uint defaultColor)
+        {
+            uint initial = TryParseColor(field.Text, out uint color) ? color : defaultColor;
+            if (ChooseColor(form, initial) is { } selected)
+                field.Text = FormatColor(selected);
+            return Task.CompletedTask;
+        }
 
         void RefreshPatternError()
         {
@@ -116,6 +129,46 @@ internal sealed partial class HighlightCatalog(App app, string pathName, Action<
             {
                 showPatternError(Text("InvalidHighlightPattern"));
             }
+        }
+    }
+
+    private uint? ChooseColor(Window owner, uint initial)
+    {
+        var picker = new MainWindow.FormWindow(owner, Text("HighlightColorPicker"));
+        Slider red = AddChannel("ColorRed", (byte)(initial >> 16));
+        Slider green = AddChannel("ColorGreen", (byte)(initial >> 8));
+        Slider blue = AddChannel("ColorBlue", (byte)initial);
+        var swatch = new Border { Height = 28, BorderThickness = new Thickness(1) };
+        swatch.SetResourceReference(Border.BorderBrushProperty, "WindowForeground");
+        var value = new TextBlock { Margin = new Thickness(0, 4, 0, 0) };
+        var preview = new StackPanel { Children = { swatch, value } };
+        picker.AddDisplay("HighlightColorPreview", preview);
+        red.ValueChanged += (_, _) => RefreshPreview();
+        green.ValueChanged += (_, _) => RefreshPreview();
+        blue.ValueChanged += (_, _) => RefreshPreview();
+        RefreshPreview();
+        uint selected = initial;
+        picker.AddButtons(() => selected = ReadColor(), acceptKey: "OK");
+        return app.Modal(picker.ShowDialog) == true ? selected : null;
+
+        Slider AddChannel(string label, byte channel)
+        {
+            var slider = new Slider
+            {
+                Maximum = 255, Value = channel, SmallChange = 1, LargeChange = 16,
+                TickFrequency = 1, IsSnapToTickEnabled = true, IsMoveToPointEnabled = true,
+                AutoToolTipPlacement = AutoToolTipPlacement.TopLeft
+            };
+            picker.AddField(label, slider);
+            return slider;
+        }
+
+        uint ReadColor() => ((uint)red.Value << 16) | ((uint)green.Value << 8) | (uint)blue.Value;
+
+        void RefreshPreview()
+        {
+            swatch.Background = new SolidColorBrush(Color.FromRgb((byte)red.Value, (byte)green.Value, (byte)blue.Value));
+            value.Text = FormatColor(ReadColor());
         }
     }
 
@@ -184,6 +237,8 @@ internal sealed partial class HighlightCatalog(App app, string pathName, Action<
         return loaded.ToArray();
     }
 
+    internal static void ValidateArchive(byte[] bytes) => _ = ReadSets(bytes, out _);
+
     private static TerminalHighlightRule ReadRule(JsonNode? value)
     {
         if (value is not JsonObject rule || rule["name"]?.GetValue<string>() is not { } name ||
@@ -244,10 +299,16 @@ internal sealed partial class HighlightCatalog(App app, string pathName, Action<
     private static uint? ParseColor(string? value)
     {
         if (string.IsNullOrEmpty(value)) return null;
-        if (value.Length != 7 || value[0] != '#' ||
-            !uint.TryParse(value.AsSpan(1), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out uint color))
+        if (!TryParseColor(value, out uint color))
             throw new ArgumentException(Text("InvalidHighlightColor"));
         return color;
+    }
+
+    private static bool TryParseColor(string value, out uint color)
+    {
+        color = 0;
+        return value.Length == 7 && value[0] == '#' &&
+            uint.TryParse(value.AsSpan(1), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out color);
     }
 
     private sealed record HighlightChoice(Guid? Id, string Name);

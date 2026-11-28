@@ -124,31 +124,51 @@ the [notification policy](notification-policy.md) for the tab notice and the
 additional modeless notice when the tab is inactive. Acknowledging either
 preserves the completed trust decisions and broadcast selection.
 
-## Reset and pending operations
+## Trust removal and pending operations
 
-Settings offers two independently confirmed commands. Each confirmation names
-the records it will remove and defaults to **Cancel**.
+The **Maintenance** tab offers **Remove individually** and **Remove all** for
+each trust category. Each bulk confirmation names the records it will remove
+and defaults to **Cancel**. For presentation and the separate protected
+stores, see [Settings maintenance](settings-maintenance.md).
 
-| Command | Records removed | Next use |
+| Category | Individual or bulk scope | Next use |
 | --- | --- | --- |
-| Reset all macro trust | Every [v1 macro allow and block record](../drafts/macro-specification.md#macro-trust-record-v1) for this user on this PC | Apply the initial macro review on the next launch |
-| Reset all connection profile trust | All trusted profile versions for this user on this PC, including unregistered locations | Apply the connection table on the next attempt. Keep the profile list, favorites and usage history. |
+| Macro trust | One [v1 macro allow or block record](../drafts/macro-specification.md#macro-trust-record-v1), or all such records for this user on this PC | Apply the initial macro review on the next affected launch |
+| Connection profile trust | The remembered version for one location, or all versions for this user on this PC. Include unregistered locations. | Apply the connection table on the next affected attempt. Keep the profile list, favorites and usage history. |
 
 Neither command removes the other kind of trust, SSH host keys or vault data.
 Already admitted connections and macro runs continue. A running macro that
 has yet to call `Connect` uses the profile trust in force when it does so.
 
 Order registration changes, trust changes and admission across windows.
-On unregister or reset, invalidate pending reviews and save-time trust updates
+On unregister or individual or bulk trust removal, invalidate pending reviews and save-time trust updates
 affected by that change. A stale answer or late save completion cannot restore
 an erased decision or start a connection on the strength of that decision.
 Re-evaluate a still-requested connection using current state. Independent
 requests and the other type of trust keep their decisions.
 
 Make registration with automatic trust, and unregistration with trust removal,
-consistent across failures and restarts. A failed or uncertain write cannot
-authorize a connection or report a successful reset. Report the outcome and
-provide a retry. Recovery must not resurrect erased trust from an old backup.
+consistent across failures and restarts. For a new registration, verify the
+catalog and trust changes before admitting the requested connection. If either
+write fails, verify and undo any changes committed by that registration. Before
+changing either store, retain enough local operation evidence to determine or
+compensate a partial outcome after a restart. That evidence grants no authority
+and stays outside the ZIP. Verify actual effects before undoing an uncertain
+write. Preserve preexisting records and later independent changes.
+
+A failed or uncertain action cannot authorize a connection or report success.
+If undoing an incomplete registration also fails, show the confirmed effects,
+the rollback failure and the remaining changes. Keep the affected new trust
+unusable while the operation remains unresolved. Unregister and trust removal
+must invalidate stale work. Recovery cannot resurrect trust removed by an
+independent action or load it from an old backup.
+
+For **Unregister**, verify that the trust for the location is absent before
+removing its catalog entry. If removal of an existing trust record succeeds and
+catalog removal then fails, keep the trust revoked. Show **Trust was removed.
+Could not remove the registration from the list.** and offer **Retry unregister**.
+Recheck the current registration and trust before retrying so a stale request
+does not act on later changes. The revoked decision stays revoked across restart.
 
 ## Acceptance cases
 
@@ -187,3 +207,7 @@ provide a retry. Recovery must not resurrect erased trust from an old backup.
     logs resolve from the import folder. Switch folders and back. Verify that
     each folder shows its own registrations and that favorites and usage history
     return with their original folder.
+11. During unregistration, fail catalog removal after trust removal succeeds.
+    Verify the report shows the two outcomes. After restart, verify that the
+    profile still requires the ordinary trust review and that retrying can remove
+    the remaining registration.

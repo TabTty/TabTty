@@ -905,7 +905,11 @@ internal sealed class FormView : Grid
         }
     }
 
-    internal void ReportFailure(Exception exception) => ReportFailure(Reports.Report, exception);
+    internal void ReportFailure(Exception exception)
+    {
+        if (Application.Current is App app) app.ReportUnresolvedStore(exception);
+        ReportFailure(Reports.Report, exception);
+    }
 
     internal static void ReportFailure(Action<object, string, ReportField[]> report, Exception exception)
     {

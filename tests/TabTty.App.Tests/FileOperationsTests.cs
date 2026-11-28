@@ -114,6 +114,18 @@ internal static partial class Program
             throw new InvalidOperationException("Unknown recycling permitted another destructive operation.");
         owner.Refreshed();
 
+        int recycled = io.RecycleCalls;
+        int permanentQuestions = 0;
+        await ops.Delete(source, [a], question =>
+        {
+            if (question.Kind != TransferQuestionKind.Delete || !question.Permanent)
+                throw new InvalidOperationException("Direct local deletion did not request permanent confirmation.");
+            permanentQuestions++;
+            return ValueTask.FromResult(TransferChoice.Overwrite);
+        }, permanent: true)!;
+        if (io.RecycleCalls != recycled || permanentQuestions != 1 || !io.Removed.Contains("a"))
+            throw new InvalidOperationException("Direct local deletion used recycling or did not delete the confirmed item.");
+
         var unknown = new ControlledFiles { LoseMutation = true };
         var uncertainOwner = new FileOperationOwnership();
         var uncertain = new FileOperations(unknown, uncertainOwner, CancellationToken.None);

@@ -93,7 +93,7 @@ Ubuntu 24.04 の対向 VM に、別々のディレクトリを使う認証付き
 
 - **11月19日の Codex 連携**。配布物 `pre-release-security-6d9c7712` と専用の Codex App Server で MCP ツール7件を認識した。App Server を通じた明示呼び出しで、共有前は一覧0件、共有後は対向が発行した画面内の文字列を取得でき、操作権を付与する前の入力は拒否された。付与後の入力35バイトは独立したループバック Telnet 対向でハッシュが一致し、受信と応答を各1回記録した。返却後も画面は読め、新たな入力は拒否された。共有終了後は一覧から消え、以前の画面ハンドルは `not_shared` を返した。最初のモデル試行では、試験用スレッドでツールの承認を求められず、一覧の呼び出しが失敗した。承認を要求できる設定に切り替え、試験クライアントが一覧と画面の読み取りだけを承認すると、Codex モデル自身が `tabtty_list_shared_sessions` と `tabtty_read_state` を正常に呼び出せた。モデルによる入力と操作権返却、保持履歴の取得とアクセス失効、全画面アプリは引き続き確認が必要。[Codex の残りの確認手順](ai-collaboration-validation-ja-jp.md)
 
-検証単位は ZIP のハッシュとする。11月19日の試験済み ZIP は SHA-256 `ABF70E0CA53CF1DC54EFB71A2C751DD7943E6B97113C9044D35507B30E88D793`。同梱 README は起動時のファイル形式登録を案内している。現在の仕様は［設定 → メンテナンス］の明示操作による登録なので、項目1はこの変更を含む配布候補で行う。[試験済み ZIP の README](../../artifacts/issue-16-acceptance-80cfee00a0a64545985261f1f0f3b9b0/TabTty-win-x64-verified/README-ja-jp.md) · [現在の配布手順](../../README-ja-jp.md)
+検証単位は ZIP のハッシュとする。11月19日の試験済み ZIP は SHA-256 `ABF70E0CA53CF1DC54EFB71A2C751DD7943E6B97113C9044D35507B30E88D793`。同梱 README は起動時のファイル形式登録を案内している。現在の仕様では、ハンバーガーメニューの［ツール］から開いた［メンテナンス］タブの明示操作で登録する。項目1はこの変更を含む配布候補で行う。[試験済み ZIP の README](../../artifacts/issue-16-acceptance-80cfee00a0a64545985261f1f0f3b9b0/TabTty-win-x64-verified/README-ja-jp.md) · [メンテナンス仕様](settings-maintenance-ja-jp.md#メンテナンスタブ)
 
 ### 未完了 Issue の追加試験
 

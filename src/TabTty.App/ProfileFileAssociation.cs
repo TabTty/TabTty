@@ -10,7 +10,7 @@ internal static class ProfileFileAssociation
     public static bool IsRegistrationFailure(Exception exception) =>
         ProfileCatalog.IsFileProblem(exception) || exception is SecurityException;
 
-    public static void RegisterOpenWith()
+    public static bool RegisterOpenWith()
     {
         string? executable = Environment.ProcessPath;
         if (executable is null || !Path.GetFileName(executable).Equals("TabTty.exe", StringComparison.OrdinalIgnoreCase) ||
@@ -18,21 +18,97 @@ internal static class ProfileFileAssociation
             throw new InvalidOperationException(App.Text("AssociationNeedsExecutable"));
 
         string assets = Path.Combine(Path.GetDirectoryName(executable)!, "Assets");
-        using var classes = Registry.CurrentUser.CreateSubKey(@"Software\Classes");
-        bool changed = Register(classes, executable, assets);
-        const string capabilities = @"Software\TabTty\Capabilities";
-        changed |= SetString(Registry.CurrentUser, @"Software\RegisteredApplications", "TabTty", capabilities);
-        changed |= SetString(Registry.CurrentUser, capabilities, "ApplicationName", "TabTty");
-        changed |= SetString(Registry.CurrentUser, capabilities, "ApplicationDescription", App.Text("FileAssociationDescription"));
-        changed |= SetString(Registry.CurrentUser, $@"{capabilities}\FileAssociations", ".ttty", ProfileId);
-        changed |= SetString(Registry.CurrentUser, $@"{capabilities}\FileAssociations", ".tttykey", VaultId);
-        changed |= SetString(Registry.CurrentUser, $@"{capabilities}\FileAssociations", ".tttym", "TabTty.Macro.1");
-        if (changed)
-            SHChangeNotify(0x08000000, 0, 0, 0);
+        return NotifyChanges(() =>
+        {
+            using var classes = Registry.CurrentUser.CreateSubKey(@"Software\Classes");
+            bool changed = Register(classes, executable, assets);
+            const string capabilities = @"Software\TabTty\Capabilities";
+            changed |= SetString(Registry.CurrentUser, @"Software\RegisteredApplications", "TabTty", capabilities);
+            changed |= SetString(Registry.CurrentUser, capabilities, "ApplicationName", "TabTty");
+            changed |= SetString(Registry.CurrentUser, capabilities, "ApplicationDescription", App.Text("FileAssociationDescription"));
+            foreach (var (extension, handler) in Handlers)
+                changed |= SetString(Registry.CurrentUser, $@"{capabilities}\FileAssociations", extension, handler);
+            return changed;
+        });
     }
 
     private const string ProfileId = "TabTty.Profile.1";
     private const string VaultId = "TabTty.Vault.1";
+    private const string MacroId = "TabTty.Macro.1";
+    private const string ApplicationKey = @"Applications\TabTty.exe";
+    private static readonly (string Extension, string Handler)[] Handlers =
+        [(".ttty", ProfileId), (".tttykey", VaultId), (".tttym", MacroId)];
+
+    public static bool UnregisterOpenWith() => NotifyChanges(() =>
+    {
+        using var software = Registry.CurrentUser.OpenSubKey("Software", writable: true);
+        return software is not null && Unregister(software, Environment.ProcessPath);
+    });
+
+    internal static bool Unregister(RegistryKey software, string? executable)
+    {
+        const string capabilities = @"TabTty\Capabilities";
+        string[] applicationKeys = [.. Handlers.Select(item => item.Handler), ApplicationKey];
+        var folders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (executable is not null && Path.GetDirectoryName(executable) is { } folder) folders.Add(folder);
+        using var classes = software.OpenSubKey("Classes", writable: true);
+        bool changed = false;
+        if (classes is not null)
+        {
+            foreach (string name in applicationKeys)
+            {
+                using var key = classes.OpenSubKey($@"{name}\shell\open\command");
+                if (key?.GetValue("") is string command && command.StartsWith('"') && command.EndsWith("\" \"%1\"", StringComparison.Ordinal) &&
+                    command.Length > 7 && Path.GetDirectoryName(command[1..^6]) is { } registeredFolder &&
+                    Path.GetFileName(command[1..^6]).Equals("TabTty.exe", StringComparison.OrdinalIgnoreCase))
+                    folders.Add(registeredFolder);
+            }
+            foreach (string extension in new[] { ".ttty", ".tttykey", ".tttym", ".tttylog" })
+            {
+                using var icon = classes.OpenSubKey($@"{extension}\DefaultIcon", writable: true);
+                if (icon?.GetValue("", null, RegistryValueOptions.DoNotExpandEnvironmentNames) is string value &&
+                    folders.Any(directory => value.Equals(extension == ".ttty"
+                        ? $"\"{Path.Combine(directory, "TabTty.exe")}\",0"
+                        : $"\"{Path.Combine(directory, "Assets", extension[1..] + ".ico")}\"", StringComparison.OrdinalIgnoreCase)))
+                {
+                    icon.DeleteValue("");
+                    changed = true;
+                }
+            }
+            foreach (var (extension, handler) in Handlers)
+            {
+                using var openWith = classes.OpenSubKey($@"{extension}\OpenWithProgids", writable: true);
+                if (openWith?.GetValueNames().Contains(handler, StringComparer.OrdinalIgnoreCase) != true) continue;
+                openWith.DeleteValue(handler);
+                changed = true;
+            }
+            foreach (string name in applicationKeys) changed |= RemoveOwnedKey(classes, name);
+        }
+        using var registered = software.OpenSubKey("RegisteredApplications", writable: true);
+        if (registered?.GetValue("TabTty") is string registration &&
+            registration.Equals(@"Software\" + capabilities, StringComparison.OrdinalIgnoreCase))
+        {
+            registered.DeleteValue("TabTty");
+            changed = true;
+        }
+        return changed | RemoveOwnedKey(software, capabilities);
+    }
+
+    private static bool RemoveOwnedKey(RegistryKey parent, string name)
+    {
+        var key = parent.OpenSubKey(name);
+        if (key is null) return false;
+        key.Dispose();
+        parent.DeleteSubKeyTree(name);
+        return true;
+    }
+
+    private static bool NotifyChanges(Func<bool> update)
+    {
+        bool notify = true;
+        try { return notify = update(); }
+        finally { if (notify) SHChangeNotify(0x08000000, 0, 0, 0); }
+    }
 
     internal static bool Register(RegistryKey classes, string executable, string assets)
     {
@@ -47,9 +123,9 @@ internal static class ProfileFileAssociation
         changed |= SetDefaultIcon(classes, ".tttylog", IconPath(".tttylog"));
         changed |= RegisterHandler(".ttty", ProfileId, App.Text("ProfileFileType"), profileIcon, "Document");
         changed |= RegisterHandler(".tttykey", VaultId, App.Text("VaultFiles"), vaultIcon, "Single");
-        changed |= RegisterHandler(".tttym", "TabTty.Macro.1", App.Text("RunMacro"), macroIcon);
+        changed |= RegisterHandler(".tttym", MacroId, App.Text("RunMacro"), macroIcon);
 
-        const string application = @"Applications\TabTty.exe";
+        const string application = ApplicationKey;
         changed |= SetString(classes, application, "FriendlyAppName", "TabTty");
         changed |= SetString(classes, $@"{application}\SupportedTypes", ".ttty", "");
         changed |= SetString(classes, $@"{application}\SupportedTypes", ".tttym", "");

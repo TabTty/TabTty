@@ -10,9 +10,15 @@ internal sealed class TransferPath
     public byte[]? Remote { get; }
     public TransferFileIdentity? DirectoryIdentity { get; set; }
     internal FileObjectIdentity? StagedIdentity { get; set; }
+    internal bool DownloadStage { get; set; }
     public TransferPath? ParentPath { get; init; }
     public TransferPath(string local) => Local = local;
     public TransferPath(byte[] remote) => Remote = remote;
+
+    public bool SamePath(TransferPath other) => Local is { } local
+        ? other.Local is { } target && string.Equals(Path.TrimEndingDirectorySeparator(local),
+            Path.TrimEndingDirectorySeparator(target), StringComparison.Ordinal)
+        : other.Remote is { } remote && Remote.AsSpan().SequenceEqual(remote);
 }
 
 internal readonly record struct TransferFileIdentity(uint Volume, ulong File);
@@ -35,12 +41,17 @@ internal interface IFileOperationIo
     Task<bool> StageAsync(TransferPath source, TransferPath temporary, TransferAttributes snapshot,
         Action<long> progress, Action created, CancellationToken token);
     Task RecheckAsync(TransferPath source, TransferAttributes expected, long? length, CancellationToken token);
+    bool SupportsHistory => false;
+    Task<byte[]> FingerprintAsync(TransferPath path, TransferAttributes expected, CancellationToken token) =>
+        Task.FromException<byte[]>(new SftpException(SftpFailure.Unsupported));
+    Task<TransferPath> ResolveDirectoryAsync(TransferPath path, CancellationToken token) => Task.FromResult(path);
 }
 
-internal enum TransferQuestionKind { Overwrite, Delete, PermanentDelete }
+internal enum TransferQuestionKind { Overwrite, Delete, PermanentDelete, Irreversible }
 internal enum FileMutation { CreateFolder, Rename, Delete }
 internal sealed record TransferQuestion(TransferQuestionKind Kind, TransferPath Path,
-    TransferItem? Source = null, TransferAttributes? Existing = null, IReadOnlyList<TransferItem>? Selection = null, CancellationToken Lifetime = default);
+    TransferItem? Source = null, TransferAttributes? Existing = null, IReadOnlyList<TransferItem>? Selection = null,
+    CancellationToken Lifetime = default, bool Permanent = false);
 internal abstract record FileOperationUpdate
 {
     internal sealed record Started : FileOperationUpdate;
@@ -111,7 +122,7 @@ internal sealed class FileOperationOwnership
     }
 }
 
-internal sealed class FileOperations
+internal sealed partial class FileOperations
 {
     private static readonly SemaphoreSlim Batches = new(4);
     private TransferBatch? transferBatch;
@@ -156,14 +167,30 @@ internal sealed class FileOperations
 
     private Task<string>? Transfer(TransferItem[] source, TransferPath target,
         Func<TransferQuestion, ValueTask<TransferChoice>> confirm, bool move)
-        => Start(token => batch.RunAsync(source.ToArray(), target,
+    {
+        var effects = new TransferRun(files.SupportsHistory) { Move = move };
+        return Start(token => RunTransferAsync(source, target, confirm, effects, token), transfer: true, effects: effects);
+    }
+
+    private Task RunTransferAsync(TransferItem[] source, TransferPath target, Func<TransferQuestion, ValueTask<TransferChoice>> confirm,
+        TransferRun effects, CancellationToken token, IReadOnlyDictionary<TransferItem, string>? names = null,
+        IReadOnlyDictionary<string, TransferSnapshot>? expected = null) =>
+        batch.RunAsync(source, target,
             (item, path, attributes) => AskAsync(new(TransferQuestionKind.Overwrite, path, item, attributes), confirm, token),
-            AddResult, Report, token, move), transfer: true);
+            path => WarnIrreversibleAsync(path, confirm, token), AddResult, Report, effects, token, names, expected);
+
+    private static async ValueTask WarnIrreversibleAsync(TransferPath path, Func<TransferQuestion, ValueTask<TransferChoice>> confirm,
+        CancellationToken token)
+    {
+        if (await AskAsync(new(TransferQuestionKind.Irreversible, path), confirm, token) != TransferChoice.Overwrite)
+            throw new OperationCanceledException();
+    }
 
     public Task<string>? Retry(Func<TransferQuestion, ValueTask<TransferChoice>> confirm)
     {
         if (!CanRetry) return null;
         var previous = current.ToArray();
+        var effects = new TransferRun(files.SupportsHistory);
         return Start(async token =>
         {
             var updated = new HashSet<string>(StringComparer.Ordinal);
@@ -171,11 +198,12 @@ internal sealed class FileOperations
             {
                 await batch.RetryAsync(
                     (item, path, attributes) => AskAsync(new(TransferQuestionKind.Overwrite, path, item, attributes), confirm, token),
+                    path => WarnIrreversibleAsync(path, confirm, token),
                     (path, key) =>
                     {
                         updated.Add(path);
                         AddResult(path, key);
-                    }, Report, token);
+                    }, Report, effects, token);
             }
             finally
             {
@@ -183,7 +211,7 @@ internal sealed class FileOperations
                     if (entry.Reason == Omission) MarkOmitted();
                     else if (IsUnresolved(entry.Reason) || !updated.Contains(entry.Path)) AddResult(entry);
             }
-        }, transfer: true);
+        }, transfer: true, effects: effects);
     }
 
     public Task<string>? Create(TransferPath parent, string name) => Start(async token =>
@@ -195,13 +223,21 @@ internal sealed class FileOperations
             AddResult(new(files.Display(path), "SftpUnknownOutcome", FileMutation.CreateFolder));
             throw;
         }
+        activeEffects!.Modified = true;
         AddResult(files.Display(path), "TransferDone");
     });
 
     public Task<string>? Rename(TransferPath parent, TransferItem item, string name) =>
         Start(token => RenameItemAsync(parent, item, name, token));
 
-    public Task<string>? MoveToFolder(TransferItem[] selection, TransferPath folder) => Start(async token =>
+    public Task<string>? MoveToFolder(TransferItem[] selection, TransferPath folder)
+    {
+        var effects = new TransferRun(files.SupportsHistory) { Move = true };
+        return Start(token => MoveWithinAsync(selection, folder, effects, token), effects: effects);
+    }
+
+    private async Task MoveWithinAsync(IEnumerable<TransferItem> selection, TransferPath folder, TransferRun effects, CancellationToken token,
+        IReadOnlyDictionary<string, TransferSnapshot>? expected = null, Func<TransferItem, Task>? remoteFallback = null)
     {
         foreach (TransferItem item in selection)
         {
@@ -210,19 +246,31 @@ internal sealed class FileOperations
             {
                 if ((item.Path.Local is null) != (folder.Local is null)) throw new SftpException(SftpFailure.Unsupported);
                 if (item.Name is null) throw new SftpException(SftpFailure.InvalidName);
-                await RenameItemAsync(folder, item, item.Name, token);
+                TransferPath target = files.Child(folder, item.Name);
+                TransferSnapshot? snapshot = expected?.GetValueOrDefault(TransferSnapshot.NameOf(item.Path));
+                try { await MoveWithHistoryAsync(item, target, effects, token, snapshot); }
+                catch (SftpException error) when (remoteFallback is not null && item.Path.Remote is not null &&
+                    snapshot is not null && error.Failure is SftpFailure.Unsupported or SftpFailure.ServerError)
+                {
+                    if (await files.StatAsync(target, token) is not null) throw;
+                    await snapshot.VerifyAsync(files, item.Path, token);
+                    await remoteFallback(item);
+                }
             }
             catch (Exception error) when (TransferBatch.IsFileError(error) &&
                 error is not SftpException { Failure: SftpFailure.UnknownOutcome or SftpFailure.Disconnected })
             {
+                effects.Failed = true;
                 AddResult(item.Label, TransferBatch.ErrorKey(error));
             }
         }
-    });
+    }
 
-    private async Task RenameItemAsync(TransferPath parent, TransferItem item, string name, CancellationToken token)
+    private Task RenameItemAsync(TransferPath parent, TransferItem item, string name, CancellationToken token)
+        => RenameItemAsync(item, files.Child(parent, name), token);
+
+    private async Task RenameItemAsync(TransferItem item, TransferPath target, CancellationToken token)
     {
-        TransferPath target = files.Child(parent, name);
         if (await files.StatAsync(target, token) is not null) throw new SftpException(SftpFailure.ServerError);
         if (await files.StatAsync(item.Path, token) is not { } current || ChangedAttributes(item.Attributes, current))
             throw new SftpException(SftpFailure.SourceChanged);
@@ -232,19 +280,40 @@ internal sealed class FileOperations
             AddResult(new(files.Display(item.Path), "SftpUnknownOutcome", FileMutation.Rename, files.Display(target)));
             throw;
         }
+        activeEffects!.Modified = true;
         AddResult(files.Display(target), "TransferDone");
     }
 
     public Task<string>? Delete(TransferPath parent, TransferItem[] items,
-        Func<TransferQuestion, ValueTask<TransferChoice>> confirm) => Start(async token =>
+        Func<TransferQuestion, ValueTask<TransferChoice>> confirm, bool permanent = false) => Start(async token =>
     {
         TransferItem[] selection = items.ToArray();
-        if (await AskAsync(new(TransferQuestionKind.Delete, parent, Selection: Array.AsReadOnly(selection)), confirm, token)
+        bool direct = permanent || parent.Remote is not null;
+        if (direct)
+        {
+            var verified = new List<TransferItem>(selection.Length);
+            foreach (TransferItem item in selection)
+            {
+                token.ThrowIfCancellationRequested();
+                try
+                {
+                    TransferAttributes? actual = await files.StatAsync(item.Path, token);
+                    if (actual is null || ChangedAttributes(item.Attributes, actual))
+                        throw new SftpException(SftpFailure.SourceChanged);
+                    verified.Add(item with { Attributes = actual });
+                }
+                catch (Exception error) when (TransferBatch.IsFileError(error)) { AddResult(item.Label, TransferBatch.ErrorKey(error)); }
+            }
+            selection = verified.ToArray();
+            if (selection.Length == 0) return;
+        }
+        if (await AskAsync(new(TransferQuestionKind.Delete, parent, Selection: Array.AsReadOnly(selection), Permanent: direct), confirm, token)
             != TransferChoice.Overwrite) throw new OperationCanceledException();
-        await DeleteTreeAsync(parent.Remote is not null, selection, confirm, token);
+        await DeleteTreeAsync(direct, selection, confirm, token);
     });
 
-    private Task<string>? Start(Func<CancellationToken, Task> execute, bool transfer = false)
+    private Task<string>? Start(Func<CancellationToken, Task> execute, bool transfer = false, TransferRun? effects = null,
+        Func<TransferRun, HistoryEntry>? nextHistory = null)
     {
         if (!CanStart || !ownership.TryEnter()) return null;
         if (transfer && !Batches.Wait(0))
@@ -253,6 +322,8 @@ internal sealed class FileOperations
             return Task.FromResult("SftpCapacity");
         }
         var source = CancellationTokenSource.CreateLinkedTokenSource(lifetime);
+        var run = effects ?? new TransferRun(false);
+        activeEffects = run;
         running = source;
         characters = 0;
         omitted = false;
@@ -261,21 +332,35 @@ internal sealed class FileOperations
 
         async Task<string> RunAsync()
         {
+            bool finished = false;
             try
             {
                 current.Clear();
                 Changed?.Invoke(new FileOperationUpdate.Started());
                 await execute(source.Token);
+                finished = true;
                 return "TransferFinished";
             }
             catch (OperationCanceledException) { return "TransferCancelled"; }
             catch (Exception error) when (TransferBatch.IsFileError(error))
             {
-                if (error is SftpException { Failure: SftpFailure.UnknownOutcome }) ownership.RequireRefresh();
+                if (error is SftpException { Failure: SftpFailure.UnknownOutcome })
+                {
+                    run.Uncertain = true;
+                    ownership.RequireRefresh();
+                }
                 return TransferBatch.ErrorKey(error);
             }
             finally
             {
+                if (lifetime.IsCancellationRequested) history = null;
+                else if (run.Modified || run.Uncertain)
+                    history = finished && !run.Failed && !run.Uncertain && run.DescribesChanges &&
+                        (run.Changes.Count != 0 || nextHistory is not null)
+                        ? nextHistory?.Invoke(run) ?? new(run.Changes.ToArray(), run.Move, Redo: false) : null;
+                if (finished && run.Modified && run.HistoryUnavailable && !lifetime.IsCancellationRequested)
+                    AddResult("", "TransferHistoryUnavailable");
+                activeEffects = null;
                 running = null;
                 source.Dispose();
                 if (transfer) Batches.Release();
@@ -370,9 +455,10 @@ internal sealed class FileOperations
     private static bool ChangedAttributes(TransferAttributes before, TransferAttributes after) =>
         (before.Kind != TransferKind.Unknown && after.Kind != TransferKind.Unknown && before.Kind != after.Kind) ||
         (before.Size.HasValue && after.Size.HasValue && before.Size != after.Size) ||
-        (before.Modified.HasValue && after.Modified.HasValue && before.Modified != after.Modified);
+        (before.Modified.HasValue && after.Modified.HasValue && before.Modified != after.Modified) ||
+        (before.LocalIdentity.HasValue && before.LocalIdentity != after.LocalIdentity);
 
-    private async Task DeleteTreeAsync(bool remote, TransferItem[] items, Func<TransferQuestion, ValueTask<TransferChoice>> confirm, CancellationToken token)
+    private async Task DeleteTreeAsync(bool permanent, TransferItem[] items, Func<TransferQuestion, ValueTask<TransferChoice>> confirm, CancellationToken token)
     {
         var plans = new List<Deletion>();
         int count = 0;
@@ -390,7 +476,7 @@ internal sealed class FileOperations
             {
                 token.ThrowIfCancellationRequested();
                 Deletion plan = plans[index];
-                if (!remote)
+                if (!permanent)
                 {
                     try
                     {
@@ -405,6 +491,7 @@ internal sealed class FileOperations
                     try
                     {
                         await files.RecycleAsync(plan.Item.Path, token);
+                        activeEffects!.Modified = true;
                         plan.Reported = true;
                         AddResult(plan.Item.Label, "TransferDeleted");
                         continue;
@@ -443,7 +530,7 @@ internal sealed class FileOperations
                 throw new SftpException(SftpFailure.Capacity);
             TransferAttributes attributes = await files.StatAsync(item.Path, token) ?? throw new SftpException(SftpFailure.Missing);
             if (attributes.Kind == TransferKind.Unknown) throw new SftpException(SftpFailure.InvalidName);
-            if (attributes.Kind != item.Attributes.Kind && item.Attributes.Kind != TransferKind.Unknown)
+            if (ChangedAttributes(item.Attributes, attributes))
                 throw new SftpException(SftpFailure.SourceChanged);
             var children = new List<Deletion>();
             if (attributes.Kind == TransferKind.Directory)
@@ -469,13 +556,20 @@ internal sealed class FileOperations
                     return false;
                 }
                 token.ThrowIfCancellationRequested();
-                try { await files.DeleteAsync(entry.Item.Path, expected, token); }
+                try
+                {
+                    if ((expected is TransferKind.File or TransferKind.Directory) && entry.Item.Attributes.LocalIdentity is not null)
+                        await files.DeleteMovedSourceAsync(entry.Item.Path, entry.Item.Attributes, token);
+                    else
+                        await files.DeleteAsync(entry.Item.Path, expected, token);
+                }
                 catch (SftpException error) when (error.Failure == SftpFailure.UnknownOutcome)
                 {
                     entry.Reported = true;
                     AddResult(new(files.Display(entry.Item.Path), "SftpUnknownOutcome", FileMutation.Delete));
                     throw;
                 }
+                activeEffects!.Modified = true;
                 entry.Reported = true;
                 AddResult(files.Display(entry.Item.Path), "TransferDeleted");
                 return true;

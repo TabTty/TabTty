@@ -30,12 +30,16 @@ verify label/normalization vectors on each supported Windows/runtime baseline;
 an OS mapping change requires review of trust-identity compatibility, never
 silent migration of old records to a different destination.
 
-`host-keys.json` has common version fields and `destinations`: each contains
+The [independent Windows-protected SSH host-key store](settings-maintenance.md#separate-stores-and-local-recovery)
+contains a JSON payload with common version fields and `destinations`: each contains
 `kind` (`dns/ipv4/ipv6`), canonical `host`, nullable `scopeId`, `port`, and
 `keys`. Each key has `format`, canonical Base64 `publicBlob`, SHA-256 fingerprint,
 and UTC `approvedAt`. One key per format per destination; curve-specific ECDSA
 formats differ, RSA SHA-2 signatures share the `ssh-rsa` key blob. Validate
 blob type/size/fingerprint on load. Host records are independent of the vault.
+
+The [Maintenance tab](settings-maintenance.md#ssh-host-key-management) opens
+the approved-key list and individual deletion controls.
 
 Host signature preference: ssh-ed25519, ecdsa-sha2-nistp256,
 ecdsa-sha2-nistp384, ecdsa-sha2-nistp521,

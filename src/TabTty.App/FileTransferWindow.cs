@@ -56,6 +56,7 @@ internal sealed class FileTransferWindow : Window
     private ListViewItem? highlighted;
     private ContextMenu? dropMenu;
     private FileClipboard? clipboard;
+    private CancellationTokenSource? clipboardCapture;
 
     public FileTransferWindow(TerminalSession session, FileOperationOwnership ownership)
     {
@@ -227,6 +228,12 @@ internal sealed class FileTransferWindow : Window
             (_, _) => CaptureClipboard(pane, Selected(pane), cut: false), (_, args) => args.CanExecute = CanCapture(pane)));
         pane.List.CommandBindings.Add(new CommandBinding(ApplicationCommands.Paste,
             (_, _) => PasteFiles(pane), (_, args) => args.CanExecute = CanPaste(pane)));
+        pane.List.CommandBindings.Add(new CommandBinding(ApplicationCommands.Undo,
+            (_, _) => Observe(operations?.Undo(PresentQuestion)),
+            (_, args) => args.CanExecute = pane.HasDirectory && operations?.CanUndo == true));
+        pane.List.CommandBindings.Add(new CommandBinding(ApplicationCommands.Redo,
+            (_, _) => Observe(operations?.Redo(PresentQuestion)),
+            (_, args) => args.CanExecute = pane.HasDirectory && operations?.CanRedo == true));
         pane.List.SelectionChanged += (_, _) =>
         {
             if (activeDrag?.Source == pane) activeDrag = null;
@@ -237,7 +244,10 @@ internal sealed class FileTransferWindow : Window
         {
             if (args.Key == Key.Enter) OpenFolder(pane, pane.List.SelectedItem as Row);
             else if (args.Key == Key.F2) StartRename(pane, Selected(pane));
-            else if (args.Key == Key.Delete) StartDelete(pane, Selected(pane));
+            else if (args.Key == Key.Delete && Keyboard.Modifiers is ModifierKeys.None or ModifierKeys.Shift)
+            {
+                if (!args.IsRepeat) StartDelete(pane, Selected(pane), permanent: Keyboard.Modifiers == ModifierKeys.Shift);
+            }
             else return;
             args.Handled = true;
         };
@@ -651,25 +661,35 @@ internal sealed class FileTransferWindow : Window
     private bool CanTransfer(int selected) => CanStart && local.HasDirectory && remote.HasDirectory && selected > 0;
     private bool CanMutate(Pane pane) => CanStart && pane.HasDirectory;
     private bool CanCapture(Pane pane) => CanMutate(pane) && pane.List.SelectedItems.Count != 0;
-    private bool CanPaste(Pane pane) => CanMutate(pane) && clipboard is { } captured && captured.Source != pane;
+    private bool CanPaste(Pane pane) => CanMutate(pane) && clipboard is not null;
 
     private void CaptureClipboard(Pane pane, TransferItem[] selection, bool cut)
     {
         if (!CanMutate(pane) || selection.Length == 0) return;
-        clipboard = new(pane, selection, cut);
+        ClearClipboard();
+        clipboardCapture = CancellationTokenSource.CreateLinkedTokenSource(connection.Token);
+        clipboard = new(pane.Remote, operations!.CaptureClipboardAsync(selection, clipboardCapture.Token), cut);
         CommandManager.InvalidateRequerySuggested();
+    }
+
+    private void ClearClipboard()
+    {
+        clipboard = null;
+        clipboardCapture?.Cancel();
+        clipboardCapture?.Dispose();
+        clipboardCapture = null;
     }
 
     private void PasteFiles(Pane pane)
     {
         if (!CanPaste(pane) || clipboard is not { } captured || pane.Directory is not { } target) return;
-        var operation = captured.Cut
-            ? operations?.Move(captured.Items, target, PresentQuestion)
-            : operations?.Copy(captured.Items, target, PresentQuestion);
-        if (operation is null) return;
-        if (captured.Cut && !(operation.IsCompletedSuccessfully && operation.Result == "SftpCapacity"))
-            clipboard = null;
-        Observe(operation);
+        Observe(operations?.Paste(captured.Entries, target, captured.Cut, captured.Remote == pane.Remote,
+            Text("TransferCopySuffix"), PresentQuestion, remaining =>
+            {
+                if (!ReferenceEquals(clipboard, captured)) return;
+                clipboard = remaining.Length == 0 ? null : captured with { Entries = Task.FromResult(remaining) };
+                CommandManager.InvalidateRequerySuggested();
+            }));
     }
 
     private void Observe(Task<string>? result)
@@ -738,6 +758,7 @@ internal sealed class FileTransferWindow : Window
         local.Path.IsEnabled = remote.Path.IsEnabled = IsConnected;
         local.List.IsEnabled = local.IsListed;
         remote.List.IsEnabled = remote.IsListed;
+        CommandManager.InvalidateRequerySuggested();
     }
 
     private sealed class ResultTextConverter : IValueConverter
@@ -763,18 +784,25 @@ internal sealed class FileTransferWindow : Window
 
     private ValueTask<TransferChoice> PresentQuestion(TransferQuestion question)
     {
+        if (question.Kind == TransferQuestionKind.Irreversible)
+            return ValueTask.FromResult(Confirm(Text("TransferIrreversible"), "TransferContinue", question.Lifetime,
+                new DialogField(Text("TransferPath"), new DialogText(files!.Display(question.Path))))
+                ? TransferChoice.Overwrite : TransferChoice.Cancel);
         if (question.Kind == TransferQuestionKind.PermanentDelete)
-            return ValueTask.FromResult(Confirm(Text("TransferDeletePermanent"), "TransferPermanentlyDelete", question.Lifetime,
-                new DialogField(Text("TransferFilePath"), new DialogText(files!.Display(question.Path))), "TransferSkip")
-                ? TransferChoice.Overwrite : TransferChoice.Skip);
+            return ValueTask.FromResult(Confirm(Text(PermanentDeleteMessage([question.Source!])), "TransferPermanentlyDelete",
+                question.Lifetime, new DialogField(Text("TransferFilePath"), new DialogText(files!.Display(question.Path))))
+                ? TransferChoice.Overwrite : TransferChoice.Cancel);
         if (question.Kind == TransferQuestionKind.Delete)
         {
             var items = question.Selection!;
             string names = string.Join('\n', items.Take(40).Select(item => item.Label));
             if (items.Count > 40) names += "\n" + Format("TransferMore", items.Count - 40);
-            string key = question.Path.Remote is null ? "TransferDeleteLocal" : "TransferDeleteRemote";
-            string action = question.Path.Remote is null ? "TransferDelete" : "TransferPermanentlyDelete";
+            string key = question.Permanent ? PermanentDeleteMessage(items) : "TransferDeleteLocal";
+            string action = question.Permanent ? "TransferPermanentlyDelete" : "TransferDelete";
             var context = new StackPanel();
+            if (question.Permanent)
+                context.Children.Add(new DialogField(Text("TransferLocation"),
+                    new DialogText(question.Path.Remote is null ? Text("TransferLocal") : session.FileTransferEndpoint)));
             context.Children.Add(new DialogField(Text("TransferPath"), new DialogText(files!.Display(question.Path))));
             context.Children.Add(new DialogField(Text("TransferSelectedItems"), new DialogText(names, 200)));
             return ValueTask.FromResult(Confirm(Text(key), action, question.Lifetime, context) ? TransferChoice.Overwrite : TransferChoice.Cancel);
@@ -810,6 +838,10 @@ internal sealed class FileTransferWindow : Window
         }
     }
 
+    private static string PermanentDeleteMessage(IReadOnlyList<TransferItem> items) =>
+        items.Count != 1 ? "TransferDeletePermanentSelection" : items[0].Attributes.Kind == TransferKind.Directory
+            ? "TransferDeletePermanentFolder" : "TransferDeletePermanentFile";
+
     private void StartCreate(Pane pane)
     {
         if (!CanMutate(pane) || pane.Directory is not { } parent) return;
@@ -829,10 +861,10 @@ internal sealed class FileTransferWindow : Window
         Observe(operations?.Rename(parent, item, name));
     }
 
-    private void StartDelete(Pane pane, TransferItem[] selection)
+    private void StartDelete(Pane pane, TransferItem[] selection, bool permanent = false)
     {
         if (!CanMutate(pane) || pane.Directory is not { } parent || selection.Length == 0) return;
-        Observe(operations?.Delete(parent, selection, PresentQuestion));
+        Observe(operations?.Delete(parent, selection, PresentQuestion, permanent));
     }
 
     private string? PromptName(string title, string initial)
@@ -867,7 +899,8 @@ internal sealed class FileTransferWindow : Window
     {
         if (disconnected) return;
         disconnected = true;
-        clipboard = null;
+        ClearClipboard();
+        operations?.ClearHistory();
         connection.Cancel();
         SetOperationStatus(Text("SftpDisconnected"));
         UpdateActions();
@@ -993,9 +1026,13 @@ internal sealed class FileTransferWindow : Window
     {
         closing = closed = true;
         CloseDropMenu();
-        clipboard = null;
+        ClearClipboard();
         ownership.Changed -= OwnershipChanged;
-        if (operations is not null) operations.Changed -= OperationChanged;
+        if (operations is not null)
+        {
+            operations.ClearHistory();
+            operations.Changed -= OperationChanged;
+        }
         connection.Cancel();
         client?.Dispose();
         base.OnClosed(e);
@@ -1053,7 +1090,7 @@ internal sealed class FileTransferWindow : Window
         public int PreviewRevision { get; set; }
     }
 
-    private sealed record FileClipboard(Pane Source, TransferItem[] Items, bool Cut);
+    private sealed record FileClipboard(bool Remote, Task<ClipboardEntry[]> Entries, bool Cut);
 
     [DllImport("user32.dll")]
     private static extern bool GetCursorPos(out System.Drawing.Point point);
